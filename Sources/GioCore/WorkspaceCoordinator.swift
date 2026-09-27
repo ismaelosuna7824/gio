@@ -7,6 +7,8 @@ public protocol WorkspaceWindowBridge {
     func capture(_ window: WindowID) throws -> (handle: Handle, frame: CGRect)
     func frame(of handle: Handle) throws -> CGRect
     func move(_ handle: Handle, to origin: CGPoint) throws
+    func canTile(_ handle: Handle) throws -> Bool
+    func apply(_ handle: Handle, frame: CGRect) throws
 }
 
 public enum WorkspaceCoordinatorError: Error {
@@ -23,6 +25,8 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         var handle: Bridge.Handle
         var initial: CGRect
         var parked: Bool = false
+        var preTile: CGRect?
+        var restoredWhileParked: CGRect?
     }
 
     public private(set) var model = WorkspaceModel()
@@ -88,7 +92,7 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         if changes.isEmpty && old.display != display {
             let entry = entries[window]!
             let target = try entry.parked
-                ? parking(on: display, size: entry.initial.size)
+                ? parking(on: display, size: bridge.frame(of: entry.handle).size)
                 : destination(window, on: display, entry: entry)
             try executeMoves([(window, target)], entries: &entries)
         } else {
@@ -98,13 +102,66 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         model = next
     }
 
+    @discardableResult
+    public func reflow(on display: DisplayID, usableBounds: CGRect,
+                       outerGap: CGFloat = 0, innerGap: CGFloat = 0) throws -> [WindowID] {
+        try requireReady()
+        guard let bounds = displays[display] else { throw WorkspaceModelError.unknownDisplay(display) }
+        guard usableBounds.isFinitePositive, bounds.contains(usableBounds) else {
+            throw WorkspaceCoordinatorError.invalidDisplayRect(display)
+        }
+        try bridge.checkPermission()
+        let active = try model.activeWorkspace(on: display)
+        let ids = try controlled.keys.sorted { $0.rawValue < $1.rawValue }.filter {
+            let membership = try model.membership(of: $0)
+            return membership.display == display && membership.workspace == active
+        }
+        var eligible: [WindowID] = []
+        var skipped: [WindowID] = []
+        for id in ids {
+            if try bridge.canTile(controlled[id]!.handle) { eligible.append(id) }
+            else { skipped.append(id) }
+        }
+        let targets = try TileLayout.plan(windows: eligible, in: usableBounds,
+                                          outerGap: outerGap, innerGap: innerGap)
+        var entries = controlled
+        try executeFrames(targets.map { ($0.window, $0.frame) }, entries: &entries, capturePreTile: true)
+        controlled = entries
+        return skipped
+    }
+
+    public func restoreTiledFrames(on display: DisplayID) throws {
+        try requireReady()
+        guard displays[display] != nil else { throw WorkspaceModelError.unknownDisplay(display) }
+        try bridge.checkPermission()
+        var entries = controlled
+        let ids = try entries.keys.sorted { $0.rawValue < $1.rawValue }.filter {
+            try model.membership(of: $0).display == display && entries[$0]!.preTile != nil
+        }
+        let targets: [(WindowID, CGRect)] = try ids.map { id in
+            let entry = entries[id]!
+            let frame = entry.preTile!
+            if entry.parked {
+                let origin = try parking(on: display, size: frame.size)
+                return (id, CGRect(origin: origin, size: frame.size))
+            }
+            return (id, frame)
+        }
+        try executeFrames(targets, entries: &entries)
+        for id in ids {
+            if entries[id]!.parked { entries[id]!.restoredWhileParked = entries[id]!.preTile }
+            entries[id]!.preTile = nil
+        }
+        controlled = entries
+    }
+
     public func removeWindow(_ window: WindowID) throws {
         try requireReady()
         try bridge.checkPermission()
         var next = model
         _ = try next.removeWindow(window)
         var entries = controlled
-        try executeMoves([(window, entries[window]!.initial.origin)], entries: &entries)
+        try executeFrames([(window, entries[window]!.initial)], entries: &entries)
         entries.removeValue(forKey: window)
         controlled = entries
         model = next
@@ -128,7 +185,7 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         let owned = try controlled.keys.sorted { $0.rawValue < $1.rawValue }.filter {
             try model.membership(of: $0).display == display
         }
-        try executeMoves(owned.map { ($0, entries[$0]!.initial.origin) }, entries: &entries)
+        try executeFrames(owned.map { ($0, entries[$0]!.initial) }, entries: &entries)
         for id in owned { entries.removeValue(forKey: id) }
         controlled = entries
         displays.removeValue(forKey: display)
@@ -152,43 +209,47 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         if !controlled.isEmpty { try bridge.checkPermission() }
         var entries = controlled
         let ids = entries.keys.sorted { $0.rawValue < $1.rawValue }
-        var fallbackX: [DisplayID: CGFloat] = [:]
-        var fallbackY: [DisplayID: CGFloat] = [:]
-        var rowHeight: [DisplayID: CGFloat] = [:]
-        let moves: [(WindowID, CGPoint)] = try ids.map { id in
+        // Reserve every retained original placement before allocating any fallback, regardless of ID order.
+        var occupied: [CGRect] = []
+        var displaced: [WindowID] = []
+        var moves: [(WindowID, CGPoint)] = []
+        for id in ids {
             let owner = try model.membership(of: id).display
             let initial = entries[id]!.initial
-            // AX may report a different size since assignment. Plan every move before moving any window.
-            let current = try bridge.frame(of: entries[id]!.handle)
-            let restored = CGRect(origin: initial.origin, size: current.size)
-            if let rect = connectedDisplays[owner], rect.contains(restored) {
-                return (id, initial.origin)
+            _ = try bridge.frame(of: entries[id]!.handle)
+            if (connectedDisplays[owner]?.contains(initial) ?? false) ||
+                connectedDisplays.values.contains(where: { $0.contains(initial) }) {
+                moves.append((id, initial.origin))
+                occupied.append(initial)
+            } else {
+                displaced.append(id)
             }
-            if connectedDisplays.values.contains(where: { $0.contains(restored) }) {
-                return (id, initial.origin)
-            }
-            guard let fallback = connectedDisplays.keys.sorted(by: { $0.rawValue < $1.rawValue }).first(where: {
-                guard let rect = connectedDisplays[$0] else { return false }
-                return current.width <= rect.width && current.height <= rect.height
-            }), let rect = connectedDisplays[fallback] else {
-                throw WorkspaceCoordinatorError.noSafeRestorePosition(id)
-            }
-            var x = fallbackX[fallback] ?? rect.minX
-            var y = fallbackY[fallback] ?? rect.minY
-            if x + current.width > rect.maxX {
-                x = rect.minX
-                y += rowHeight[fallback] ?? 0
-                rowHeight[fallback] = 0
-            }
-            guard y + current.height <= rect.maxY else {
-                throw WorkspaceCoordinatorError.noSafeRestorePosition(id)
-            }
-            fallbackX[fallback] = x + current.width
-            fallbackY[fallback] = y
-            rowHeight[fallback] = max(rowHeight[fallback] ?? 0, current.height)
-            return (id, CGPoint(x: x, y: y))
         }
-        try executeMoves(moves, entries: &entries)
+        for id in displaced {
+            let size = entries[id]!.initial.size
+            var placement: CGRect?
+            for display in connectedDisplays.keys.sorted(by: { $0.rawValue < $1.rawValue }) {
+                guard let bounds = connectedDisplays[display] else { continue }
+                let xs = [bounds.minX] + occupied.map(\.maxX).filter { $0 >= bounds.minX && $0 < bounds.maxX }
+                let ys = [bounds.minY] + occupied.map(\.maxY).filter { $0 >= bounds.minY && $0 < bounds.maxY }
+                for y in ys.sorted() where placement == nil {
+                    for x in xs.sorted() {
+                        let candidate = CGRect(origin: CGPoint(x: x, y: y), size: size)
+                        if bounds.contains(candidate) && !occupied.contains(where: { $0.intersects(candidate) }) {
+                            placement = candidate
+                            break
+                        }
+                    }
+                }
+                if placement != nil { break }
+            }
+            guard let placement else { throw WorkspaceCoordinatorError.noSafeRestorePosition(id) }
+            occupied.append(placement)
+            moves.append((id, placement.origin))
+        }
+        try executeFrames(moves.map { (id, origin) in
+            (id, CGRect(origin: origin, size: entries[id]!.initial.size))
+        }, entries: &entries)
         controlled.removeAll()
         displays.removeAll()
         model = WorkspaceModel()
@@ -197,21 +258,59 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
 
     private func execute(_ changes: [WindowTransition], model next: WorkspaceModel,
                          entries: inout [WindowID: Controlled]) throws {
+        // Parking and workspace visibility remain position-only, never resize a window.
         let moves: [(WindowID, CGPoint)] = try changes.map { change in
             switch change {
             case .hide(let id):
                 let display = try next.membership(of: id).display
-                return (id, try parking(on: display, size: entries[id]!.initial.size))
+                return (id, try parking(on: display, size: bridge.frame(of: entries[id]!.handle).size))
             case .show(let id):
                 let display = try next.membership(of: id).display
                 return (id, try destination(id, on: display, entry: entries[id]!))
             }
         }
-        try executeMoves(moves, entries: &entries)
+        let restoring = changes.contains { change in
+            if case .show(let id) = change { return entries[id]!.restoredWhileParked != nil }
+            return false
+        }
+        if restoring {
+            // Mixed hides and full-frame shows share one rollback boundary.
+            var previous: [(WindowID, CGRect)] = []
+            do {
+                for change in changes {
+                    let id: WindowID
+                    switch change {
+                    case .hide(let window), .show(let window): id = window
+                    }
+                    let before = try bridge.frame(of: entries[id]!.handle)
+                    previous.append((id, before))
+                    if case .show = change, let frame = entries[id]!.restoredWhileParked {
+                        guard let bounds = displays[try next.membership(of: id).display], bounds.contains(frame) else {
+                            throw WorkspaceCoordinatorError.noSafeRestorePosition(id)
+                        }
+                        try bridge.apply(entries[id]!.handle, frame: frame)
+                    } else {
+                        try bridge.move(entries[id]!.handle, to: moves[previous.count - 1].1)
+                    }
+                }
+            } catch {
+                var failures: [Error] = []
+                for (id, frame) in previous.reversed() {
+                    do { try bridge.apply(entries[id]!.handle, frame: frame) }
+                    catch { failures.append(error) }
+                }
+                if !failures.isEmpty { recoveryRequired = true }
+                throw WorkspaceCoordinatorError.operationFailed(error, rollbackFailures: failures)
+            }
+        } else {
+            try executeMoves(moves, entries: &entries)
+        }
         for change in changes {
             switch change {
             case .hide(let id): entries[id]!.parked = true
-            case .show(let id): entries[id]!.parked = false
+            case .show(let id):
+                entries[id]!.parked = false
+                entries[id]!.restoredWhileParked = nil
             }
         }
     }
@@ -236,9 +335,36 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         }
     }
 
+    private func executeFrames(_ targets: [(WindowID, CGRect)], entries: inout [WindowID: Controlled],
+                               capturePreTile: Bool = false) throws {
+        var originals: [(WindowID, CGRect)] = []
+        do {
+            for (id, target) in targets {
+                let handle = entries[id]!.handle
+                let before = try bridge.frame(of: handle)
+                originals.append((id, before)) // A failing AX write may already have mutated the window.
+                try bridge.apply(handle, frame: target)
+            }
+        } catch {
+            var failures: [Error] = []
+            for (id, frame) in originals.reversed() {
+                do { try bridge.apply(entries[id]!.handle, frame: frame) }
+                catch { failures.append(error) }
+            }
+            if !failures.isEmpty { recoveryRequired = true }
+            throw WorkspaceCoordinatorError.operationFailed(error, rollbackFailures: failures)
+        }
+        if capturePreTile {
+            for (id, before) in originals where entries[id]!.preTile == nil {
+                entries[id]!.preTile = before
+            }
+        }
+    }
+
     private func destination(_ id: WindowID, on display: DisplayID, entry: Controlled) throws -> CGPoint {
         guard let rect = displays[display] else { throw WorkspaceModelError.unknownDisplay(display) }
-        if rect.contains(entry.initial) { return entry.initial.origin }
+        let target = entry.restoredWhileParked ?? entry.initial
+        if rect.contains(target) { return target.origin }
         return CGPoint(x: rect.minX + 1, y: rect.minY + 1)
     }
 

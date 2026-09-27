@@ -4,12 +4,15 @@ import GioCore
 
 public enum AXWindowError: Error {
     public enum Stage: String, Sendable {
-        case roleRead, positionRead, sizeRead, positionSettable, positionWrite
+        case roleRead, positionRead, sizeRead, positionSettable, positionWrite, sizeSettable, sizeWrite
     }
     case permissionDenied
     case unsupportedWindow
     case invalidGeometry(Stage)
     case positionNotSettable
+    case sizeNotSettable
+    case frameMismatch(requested: CGRect, actual: CGRect)
+    case frameVerificationFailed(Error)
     case positionMismatch(requested: CGPoint, actual: CGPoint)
     case positionVerificationFailed(Error)
     case accessibility(stage: Stage, error: AXError)
@@ -82,6 +85,58 @@ public final class AXWindowBridge: WorkspaceWindowBridge {
             throw AXWindowError.invalidGeometry(.sizeRead)
         }
         return CGRect(origin: point, size: dimensions)
+    }
+
+    public func canTile(_ handle: AXUIElement) throws -> Bool {
+        try checkPermission()
+        for attribute in [kAXPositionAttribute, kAXSizeAttribute] {
+            var settable = DarwinBoolean(false)
+            let result = AXUIElementIsAttributeSettable(handle, attribute as CFString, &settable)
+            if result != .success || !settable.boolValue { return false }
+        }
+        return true
+    }
+
+    /// Set size first, then position; callers roll back the entire previous frame on failure.
+    public func apply(_ handle: AXUIElement, frame target: CGRect) throws {
+        try checkPermission()
+        guard AXGeometryValidation.isValidFrame(origin: target.origin, size: target.size) else {
+            throw AXWindowError.invalidGeometry(.sizeWrite)
+        }
+        let current = try frame(of: handle)
+        let changes = AXGeometryValidation.changes(from: current, to: target)
+        let required: [(String, AXWindowError.Stage, AXWindowError)] = [
+            (kAXSizeAttribute, .sizeSettable, .sizeNotSettable),
+            (kAXPositionAttribute, .positionSettable, .positionNotSettable)
+        ]
+        for (attribute, stage, notSettable) in required.enumerated().compactMap({ index, item in
+            (index == 0 ? changes.size : changes.position) ? item : nil
+        }) {
+            var settable = DarwinBoolean(false)
+            let result = AXUIElementIsAttributeSettable(handle, attribute as CFString, &settable)
+            guard result == .success else { throw AXWindowError.accessibility(stage: stage, error: result) }
+            guard settable.boolValue else { throw notSettable }
+        }
+        if changes.size {
+            var size = target.size
+            guard let value = AXValueCreate(.cgSize, &size) else { throw AXWindowError.invalidGeometry(.sizeWrite) }
+            let result = AXUIElementSetAttributeValue(handle, kAXSizeAttribute as CFString, value)
+            guard result == .success else { throw AXWindowError.accessibility(stage: .sizeWrite, error: result) }
+        }
+        if changes.position {
+            var point = target.origin
+            guard let value = AXValueCreate(.cgPoint, &point) else {
+                throw AXWindowError.invalidGeometry(.positionWrite)
+            }
+            let result = AXUIElementSetAttributeValue(handle, kAXPositionAttribute as CFString, value)
+            guard result == .success else { throw AXWindowError.accessibility(stage: .positionWrite, error: result) }
+        }
+        let actual: CGRect
+        do { actual = try frame(of: handle) }
+        catch { throw AXWindowError.frameVerificationFailed(error) }
+        guard AXGeometryValidation.matches(requested: target, actual: actual) else {
+            throw AXWindowError.frameMismatch(requested: target, actual: actual)
+        }
     }
 
     public func move(_ handle: AXUIElement, to origin: CGPoint) throws {
