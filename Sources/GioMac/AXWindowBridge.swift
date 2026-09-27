@@ -3,9 +3,16 @@ import Foundation
 import GioCore
 
 public enum AXWindowError: Error {
+    public enum Stage: String, Sendable {
+        case roleRead, positionRead, sizeRead, positionSettable, positionWrite
+    }
     case permissionDenied
     case unsupportedWindow
-    case accessibility(AXError)
+    case invalidGeometry(Stage)
+    case positionNotSettable
+    case positionMismatch(requested: CGPoint, actual: CGPoint)
+    case positionVerificationFailed(Error)
+    case accessibility(stage: Stage, error: AXError)
 }
 
 /// Callers supply a PID and AX window element obtained from public Accessibility APIs.
@@ -34,7 +41,7 @@ public final class AXWindowBridge: WorkspaceWindowBridge {
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value)
         if result == .invalidUIElement { return true }
-        guard result == .success else { throw AXWindowError.accessibility(result) }
+        guard result == .success else { throw AXWindowError.accessibility(stage: .roleRead, error: result) }
         return false
     }
 
@@ -53,30 +60,48 @@ public final class AXWindowBridge: WorkspaceWindowBridge {
         var position: CFTypeRef?
         var size: CFTypeRef?
         let positionResult = AXUIElementCopyAttributeValue(handle, kAXPositionAttribute as CFString, &position)
-        guard positionResult == .success else { throw AXWindowError.accessibility(positionResult) }
+        guard positionResult == .success else { throw AXWindowError.accessibility(stage: .positionRead, error: positionResult) }
         let sizeResult = AXUIElementCopyAttributeValue(handle, kAXSizeAttribute as CFString, &size)
-        guard sizeResult == .success else { throw AXWindowError.accessibility(sizeResult) }
-        guard let position, let size,
-              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID(),
-              AXValueGetType(position as! AXValue) == .cgPoint,
-              AXValueGetType(size as! AXValue) == .cgSize else { throw AXWindowError.unsupportedWindow }
+        guard sizeResult == .success else { throw AXWindowError.accessibility(stage: .sizeRead, error: sizeResult) }
+        guard let position, CFGetTypeID(position) == AXValueGetTypeID(),
+              AXValueGetType(position as! AXValue) == .cgPoint else {
+            throw AXWindowError.invalidGeometry(.positionRead)
+        }
         var point = CGPoint.zero
-        var dimensions = CGSize.zero
         guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-              AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-              dimensions.width > 0, dimensions.height > 0 else { throw AXWindowError.unsupportedWindow }
+              AXGeometryValidation.isValidPosition(point) else {
+            throw AXWindowError.invalidGeometry(.positionRead)
+        }
+        guard let size, CFGetTypeID(size) == AXValueGetTypeID(),
+              AXValueGetType(size as! AXValue) == .cgSize else {
+            throw AXWindowError.invalidGeometry(.sizeRead)
+        }
+        var dimensions = CGSize.zero
+        guard AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
+              AXGeometryValidation.isValidSize(dimensions) else {
+            throw AXWindowError.invalidGeometry(.sizeRead)
+        }
         return CGRect(origin: point, size: dimensions)
     }
 
     public func move(_ handle: AXUIElement, to origin: CGPoint) throws {
         try checkPermission()
+        guard origin.x.isFinite && origin.y.isFinite else { throw AXWindowError.invalidGeometry(.positionWrite) }
+        var settable = DarwinBoolean(false)
+        let settableResult = AXUIElementIsAttributeSettable(handle, kAXPositionAttribute as CFString, &settable)
+        guard settableResult == .success else {
+            throw AXWindowError.accessibility(stage: .positionSettable, error: settableResult)
+        }
+        guard settable.boolValue else { throw AXWindowError.positionNotSettable }
         var point = origin
-        guard let value = AXValueCreate(.cgPoint, &point) else { throw AXWindowError.unsupportedWindow }
+        guard let value = AXValueCreate(.cgPoint, &point) else { throw AXWindowError.invalidGeometry(.positionWrite) }
         let result = AXUIElementSetAttributeValue(handle, kAXPositionAttribute as CFString, value)
-        guard result == .success else { throw AXWindowError.accessibility(result) }
-        let actual = try frame(of: handle).origin
-        guard abs(actual.x - origin.x) <= 1 && abs(actual.y - origin.y) <= 1 else {
-            throw AXWindowError.unsupportedWindow
+        guard result == .success else { throw AXWindowError.accessibility(stage: .positionWrite, error: result) }
+        let actual: CGPoint
+        do { actual = try frame(of: handle).origin }
+        catch { throw AXWindowError.positionVerificationFailed(error) }
+        guard AXGeometryValidation.matches(requested: origin, actual: actual) else {
+            throw AXWindowError.positionMismatch(requested: origin, actual: actual)
         }
     }
 }

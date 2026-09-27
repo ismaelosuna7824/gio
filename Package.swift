@@ -11,6 +11,7 @@ let package = Package(
         .target(name: "GioCore"),
         .target(name: "GioMac", dependencies: ["GioCore"]),
         .executableTarget(name: "GioApp", dependencies: ["GioCore", "GioMac"]),
-        .testTarget(name: "GioCoreTests", dependencies: ["GioCore"])
+        .testTarget(name: "GioCoreTests", dependencies: ["GioCore"]),
+        .testTarget(name: "GioMacTests", dependencies: ["GioMac"])
     ]
 )
