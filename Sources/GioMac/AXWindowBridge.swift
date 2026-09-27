@@ -22,6 +22,11 @@ public final class AXWindowBridge: WorkspaceWindowBridge {
         windows[id] = element
     }
 
+    /// Release a handle only after the owner has definitely terminated.
+    public func forgetTerminatedWindow(_ id: WindowID) {
+        windows.removeValue(forKey: id)
+    }
+
     public func checkPermission() throws {
         guard AXIsProcessTrusted() else { throw AXWindowError.permissionDenied }
     }

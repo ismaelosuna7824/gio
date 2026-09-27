@@ -109,6 +109,15 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         model = next
     }
 
+    /// Only call after independent evidence that the window no longer exists (for example,
+    /// its owning process terminated). No AX access or restoration is possible then.
+    public func forgetClosedWindow(_ window: WindowID) throws {
+        var next = model
+        _ = try next.removeWindow(window)
+        controlled.removeValue(forKey: window)
+        model = next
+    }
+
     public func removeDisplay(_ display: DisplayID) throws {
         try requireReady()
         try bridge.checkPermission()
@@ -126,7 +135,9 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
     }
 
     public func shutdown() throws {
-        try bridge.checkPermission()
+        // With no owned windows, shutdown has nothing to restore through AX.
+        // Keep the permission gate when any ownership remains, including recovery mode.
+        if !controlled.isEmpty { try bridge.checkPermission() }
         var entries = controlled
         let ids = entries.keys.sorted { $0.rawValue < $1.rawValue }
         try executeMoves(ids.map { ($0, entries[$0]!.initial.origin) }, entries: &entries)

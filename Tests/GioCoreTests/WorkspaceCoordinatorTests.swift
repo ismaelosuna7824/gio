@@ -129,6 +129,48 @@ final class WorkspaceCoordinatorTests: XCTestCase {
         XCTAssertThrowsError(try coordinator.model.membership(of: "w"))
     }
 
+    func testShutdownWithoutOwnedWindowsNeedsNoPermissionButOwnedWindowStillDoes() throws {
+        let (empty, emptyBridge) = try setup()
+        emptyBridge.permitted = false
+        try empty.shutdown()
+        XCTAssertThrowsError(try empty.model.activeWorkspace(on: "a"))
+        XCTAssertEqual(emptyBridge.calls, 0)
+
+        let (owned, bridge) = try setup()
+        bridge.frames["w"] = CGRect(x: 10, y: 10, width: 20, height: 20)
+        try owned.assign("w", to: "two", on: "a")
+        let parked = bridge.frames["w"]!.origin
+        let moves = bridge.calls
+        bridge.permitted = false
+        XCTAssertThrowsError(try owned.shutdown()) { error in
+            guard case MockError.denied = error else { return XCTFail("Expected permission denial") }
+        }
+        XCTAssertEqual(bridge.calls, moves)
+        XCTAssertEqual(bridge.frames["w"]!.origin, parked)
+        XCTAssertEqual(try owned.model.membership(of: "w").display, "a")
+        bridge.permitted = true
+        try owned.shutdown()
+        XCTAssertEqual(bridge.frames["w"]!.origin, CGPoint(x: 10, y: 10))
+    }
+
+    func testProvenClosedForgetDoesNotAccessAXButLiveRemovalRestores() throws {
+        let (coordinator, bridge) = try setup()
+        for id: WindowID in ["closed", "live"] {
+            bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
+            try coordinator.assign(id, to: "two", on: "a")
+        }
+        let before = bridge.calls
+        bridge.permitted = false
+        try coordinator.forgetClosedWindow("closed")
+        XCTAssertEqual(bridge.calls, before)
+        XCTAssertThrowsError(try coordinator.model.membership(of: "closed"))
+        XCTAssertThrowsError(try coordinator.removeWindow("live"))
+        bridge.permitted = true
+        try coordinator.removeWindow("live")
+        XCTAssertEqual(bridge.frames["live"]!.origin, CGPoint(x: 10, y: 10))
+        XCTAssertEqual(bridge.calls, before + 1)
+    }
+
     func testParkedCrossDisplayReassignmentRelocatesParking() throws {
         let (coordinator, bridge) = try setup()
         try coordinator.addDisplay("b", rect: CGRect(x: 200, y: 0, width: 100, height: 100), initialWorkspace: "one")
