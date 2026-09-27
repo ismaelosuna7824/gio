@@ -15,6 +15,16 @@ public final class WindowDiscovery {
         return ids
     }
 
+    /// A missing known ID is only a candidate for a retained-handle validity check.
+    public func missingKnownIDs(from windows: [(WindowID, AXUIElement, CGRect)]) -> [WindowID] {
+        let seen = Set(windows.map(\.0))
+        return known.map(\.id).filter { !seen.contains($0) }
+    }
+
+    public func forgetInvalidWindow(_ id: WindowID) {
+        known.removeAll { $0.id == id }
+    }
+
     public func windows() -> [(WindowID, AXUIElement, CGRect)] {
         var result: [(WindowID, AXUIElement, CGRect)] = []
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {

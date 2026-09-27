@@ -27,6 +27,17 @@ public final class AXWindowBridge: WorkspaceWindowBridge {
         windows.removeValue(forKey: id)
     }
 
+    /// Only invalidUIElement proves a retained window handle is gone; all other errors remain uncertain.
+    public func isDefinitelyInvalid(_ id: WindowID) throws -> Bool {
+        try checkPermission()
+        guard let element = windows[id] else { throw AXWindowError.unsupportedWindow }
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &value)
+        if result == .invalidUIElement { return true }
+        guard result == .success else { throw AXWindowError.accessibility(result) }
+        return false
+    }
+
     public func checkPermission() throws {
         guard AXIsProcessTrusted() else { throw AXWindowError.permissionDenied }
     }

@@ -13,6 +13,7 @@ public enum WorkspaceCoordinatorError: Error {
     case unsafeParking(DisplayID)
     case invalidDisplayRect(DisplayID)
     case recoveryRequired
+    case noSafeRestorePosition(WindowID)
     case operationFailed(Error, rollbackFailures: [Error])
 }
 
@@ -134,13 +135,60 @@ public final class WorkspaceCoordinator<Bridge: WorkspaceWindowBridge> {
         model = next
     }
 
-    public func shutdown() throws {
+    /// Connected bounds override stale coordinates when restoring owned windows.
+    public func shutdown(connectedDisplays: [DisplayID: CGRect]) throws {
+        guard !connectedDisplays.isEmpty || controlled.isEmpty,
+              connectedDisplays.values.allSatisfy(\.isFinitePositive) else {
+            throw WorkspaceCoordinatorError.recoveryRequired
+        }
+        try restoreAll(connectedDisplays: connectedDisplays)
+    }
+
+    public func shutdown() throws { try restoreAll(connectedDisplays: displays) }
+
+    private func restoreAll(connectedDisplays: [DisplayID: CGRect]) throws {
         // With no owned windows, shutdown has nothing to restore through AX.
         // Keep the permission gate when any ownership remains, including recovery mode.
         if !controlled.isEmpty { try bridge.checkPermission() }
         var entries = controlled
         let ids = entries.keys.sorted { $0.rawValue < $1.rawValue }
-        try executeMoves(ids.map { ($0, entries[$0]!.initial.origin) }, entries: &entries)
+        var fallbackX: [DisplayID: CGFloat] = [:]
+        var fallbackY: [DisplayID: CGFloat] = [:]
+        var rowHeight: [DisplayID: CGFloat] = [:]
+        let moves: [(WindowID, CGPoint)] = try ids.map { id in
+            let owner = try model.membership(of: id).display
+            let initial = entries[id]!.initial
+            // AX may report a different size since assignment. Plan every move before moving any window.
+            let current = try bridge.frame(of: entries[id]!.handle)
+            let restored = CGRect(origin: initial.origin, size: current.size)
+            if let rect = connectedDisplays[owner], rect.contains(restored) {
+                return (id, initial.origin)
+            }
+            if connectedDisplays.values.contains(where: { $0.contains(restored) }) {
+                return (id, initial.origin)
+            }
+            guard let fallback = connectedDisplays.keys.sorted(by: { $0.rawValue < $1.rawValue }).first(where: {
+                guard let rect = connectedDisplays[$0] else { return false }
+                return current.width <= rect.width && current.height <= rect.height
+            }), let rect = connectedDisplays[fallback] else {
+                throw WorkspaceCoordinatorError.noSafeRestorePosition(id)
+            }
+            var x = fallbackX[fallback] ?? rect.minX
+            var y = fallbackY[fallback] ?? rect.minY
+            if x + current.width > rect.maxX {
+                x = rect.minX
+                y += rowHeight[fallback] ?? 0
+                rowHeight[fallback] = 0
+            }
+            guard y + current.height <= rect.maxY else {
+                throw WorkspaceCoordinatorError.noSafeRestorePosition(id)
+            }
+            fallbackX[fallback] = x + current.width
+            fallbackY[fallback] = y
+            rowHeight[fallback] = max(rowHeight[fallback] ?? 0, current.height)
+            return (id, CGPoint(x: x, y: y))
+        }
+        try executeMoves(moves, entries: &entries)
         controlled.removeAll()
         displays.removeAll()
         model = WorkspaceModel()

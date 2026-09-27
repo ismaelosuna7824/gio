@@ -14,6 +14,7 @@ import GioMac
     private var warning: String?
     private var displayChanged = false
     private var status: NSStatusItem!
+    private var lastSwitchMilliseconds: Double?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -34,6 +35,9 @@ import GioMac
             item.isEnabled = false
             menu.addItem(item)
         }
+        let timing = NSMenuItem(title: lastSwitchMilliseconds.map { String(format: "Last switch: %.1f ms", $0) } ?? "Last switch: not measured", action: nil, keyEquivalent: "")
+        timing.isEnabled = false
+        menu.addItem(timing)
         let trusted = AXIsProcessTrusted()
         let permission = NSMenuItem(title: "Accessibility: \(trusted ? "Granted" : "Not granted")", action: nil, keyEquivalent: "")
         permission.isEnabled = false
@@ -67,7 +71,12 @@ import GioMac
     @objc private func switchWorkspace(_ sender: NSMenuItem) {
         guard let pair = sender.representedObject as? (String, Int) else { return }
         guard !displayChanged else { warn("Display configuration changed; quit to restore windows."); return }
-        do { try coordinator.switchTo(WorkspaceID(String(pair.1)), on: DisplayID(pair.0)); warning = nil }
+        do {
+            let start = ProcessInfo.processInfo.systemUptime
+            try coordinator.switchTo(WorkspaceID(String(pair.1)), on: DisplayID(pair.0))
+            lastSwitchMilliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1_000
+            warning = nil
+        }
         catch { warn("Switch failed: \(error)") }
     }
 
@@ -107,7 +116,25 @@ import GioMac
         }
     }
 
+    private func reconcileClosedWindows() {
+        guard AXIsProcessTrusted() else { return }
+        let found = discovery.windows()
+        for id in discovery.missingKnownIDs(from: found) where managed.contains(id) {
+            do {
+                if try bridge.isDefinitelyInvalid(id) {
+                    try coordinator.forgetClosedWindow(id)
+                    managed.remove(id)
+                    discovery.forgetInvalidWindow(id)
+                    bridge.forgetTerminatedWindow(id)
+                } else {
+                    warn("A managed window is missing from enumeration; ownership retained.")
+                }
+            } catch { warn("Window validity uncertain; ownership retained: \(error)") }
+        }
+    }
+
     private func refresh() {
+        reconcileClosedWindows()
         guard !coordinator.recoveryRequired else { warn("Recovery needed; quit retries restoring windows."); return }
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success else { warn("Cannot list displays."); return }
@@ -152,7 +179,18 @@ import GioMac
     @objc private func quit() { NSApp.terminate(nil) }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        do { try coordinator.shutdown(); return .terminateNow }
+        reconcileClosedWindows()
+        do {
+            var count: UInt32 = 0
+            guard CGGetActiveDisplayList(0, nil, &count) == .success else { throw WorkspaceCoordinatorError.recoveryRequired }
+            var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+            guard CGGetActiveDisplayList(count, &ids, &count) == .success else { throw WorkspaceCoordinatorError.recoveryRequired }
+            let current = Dictionary(uniqueKeysWithValues: ids.prefix(Int(count)).map {
+                (DisplayID(String($0)), CGDisplayBounds($0))
+            })
+            try coordinator.shutdown(connectedDisplays: current)
+            return .terminateNow
+        }
         catch {
             warn("Restore failed; Gio remains running. Retry Quit. \(error)")
             let alert = NSAlert()

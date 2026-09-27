@@ -8,6 +8,7 @@ private final class MockBridge: WorkspaceWindowBridge {
     typealias Handle = WindowID
     var frames: [WindowID: CGRect] = [:]
     var permitted = true
+    var failFrameFor: Set<WindowID> = []
     var failCalls: Set<Int> = []
     var mutateThenFailCalls: Set<Int> = []
     var calls = 0
@@ -16,7 +17,10 @@ private final class MockBridge: WorkspaceWindowBridge {
         guard let frame = frames[window] else { throw MockError.failed }
         return (window, frame)
     }
-    func frame(of handle: WindowID) throws -> CGRect { frames[handle]! }
+    func frame(of handle: WindowID) throws -> CGRect {
+        if failFrameFor.contains(handle) { throw MockError.failed }
+        return frames[handle]!
+    }
     func move(_ handle: WindowID, to origin: CGPoint) throws {
         calls += 1
         if failCalls.contains(calls) { throw MockError.failed }
@@ -192,6 +196,72 @@ final class WorkspaceCoordinatorTests: XCTestCase {
         XCTAssertThrowsError(try coordinator.assign("w", to: "two", on: "a"))
         XCTAssertEqual(bridge.frames["w"]!.origin, CGPoint(x: 10, y: 10))
         XCTAssertThrowsError(try coordinator.model.membership(of: "w"))
+    }
+
+    func testDisconnectedOwnerRestoresMultipleWindowsOntoConnectedDisplay() throws {
+        let (coordinator, bridge) = try setup()
+        try coordinator.addDisplay("b", rect: CGRect(x: 200, y: 0, width: 100, height: 100), initialWorkspace: "one")
+        for id: WindowID in ["first", "second"] {
+            bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
+            try coordinator.assign(id, to: "two", on: "a")
+        }
+        try coordinator.shutdown(connectedDisplays: ["b": CGRect(x: 200, y: 0, width: 100, height: 100)])
+        XCTAssertEqual(bridge.frames["first"]!.origin, CGPoint(x: 200, y: 0))
+        XCTAssertEqual(bridge.frames["second"]!.origin, CGPoint(x: 220, y: 0))
+    }
+
+    func testOversizedWindowCannotBeRestoredAndOwnershipRemains() throws {
+        let (coordinator, bridge) = try setup()
+        bridge.frames["large"] = CGRect(x: 0, y: 0, width: 80, height: 80)
+        try coordinator.assign("large", to: "one", on: "a")
+        let before = bridge.calls
+        XCTAssertThrowsError(try coordinator.shutdown(connectedDisplays: ["small": CGRect(x: 200, y: 0, width: 40, height: 40)])) { error in
+            guard case WorkspaceCoordinatorError.noSafeRestorePosition("large") = error else {
+                return XCTFail("Expected explicit unsafe restore error")
+            }
+        }
+        XCTAssertEqual(bridge.calls, before)
+        XCTAssertEqual(try coordinator.model.membership(of: "large").display, "a")
+    }
+
+    func testResizedWindowUsesCurrentSizeForRestoreLayout() throws {
+        let (coordinator, bridge) = try setup()
+        for id: WindowID in ["first", "second"] {
+            bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
+            try coordinator.assign(id, to: "two", on: "a")
+        }
+        bridge.frames["first"]!.size = CGSize(width: 70, height: 30)
+        bridge.frames["second"]!.size = CGSize(width: 50, height: 30)
+        try coordinator.shutdown(connectedDisplays: ["b": CGRect(x: 200, y: 0, width: 100, height: 100)])
+        XCTAssertEqual(bridge.frames["first"]!.origin, CGPoint(x: 200, y: 0))
+        XCTAssertEqual(bridge.frames["second"]!.origin, CGPoint(x: 200, y: 30))
+    }
+
+    func testResizedOversizeAndFrameReadFailureVetoQuitWithoutMoves() throws {
+        let (coordinator, bridge) = try setup()
+        bridge.frames["w"] = CGRect(x: 10, y: 10, width: 20, height: 20)
+        try coordinator.assign("w", to: "two", on: "a")
+        let before = bridge.calls
+        bridge.failFrameFor = ["w"]
+        XCTAssertThrowsError(try coordinator.shutdown(connectedDisplays: ["b": CGRect(x: 200, y: 0, width: 100, height: 100)]))
+        bridge.failFrameFor = []
+        bridge.frames["w"]!.size = CGSize(width: 101, height: 20)
+        XCTAssertThrowsError(try coordinator.shutdown(connectedDisplays: ["b": CGRect(x: 200, y: 0, width: 100, height: 100)])) { error in
+            guard case WorkspaceCoordinatorError.noSafeRestorePosition("w") = error else {
+                return XCTFail("Expected oversized-window rejection")
+            }
+        }
+        XCTAssertEqual(bridge.calls, before)
+        XCTAssertEqual(try coordinator.model.membership(of: "w").display, "a")
+    }
+
+    func testDisconnectedRestoreFailureRetainsOwnershipAndBlocksExit() throws {
+        let (coordinator, bridge) = try setup()
+        bridge.frames["w"] = CGRect(x: 10, y: 10, width: 20, height: 20)
+        try coordinator.assign("w", to: "two", on: "a")
+        bridge.failCalls = [bridge.calls + 1]
+        XCTAssertThrowsError(try coordinator.shutdown(connectedDisplays: ["b": CGRect(x: 200, y: 0, width: 100, height: 100)]))
+        XCTAssertEqual(try coordinator.model.membership(of: "w").display, "a")
     }
 
     func testPermissionAndDisconnectFailurePreserveOwnership() throws {
