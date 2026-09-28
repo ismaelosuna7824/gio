@@ -181,6 +181,10 @@ public func runTileReflow(
         focused: focusedID,
         currentlyFocused: focusedID
     )
+    GioLog.record(
+        .info,
+        "tile managed=\(managed.count) skipped min=\(skippedMinimized) untileable=\(skippedUntileable) offscreen=\(skippedOffscreen) applied=\(reconcile.applied.count) failed=\(reconcile.failed.count)"
+    )
     return TileReflowReport(
         managed: managed.map(\.id),
         skippedMinimized: skippedMinimized,

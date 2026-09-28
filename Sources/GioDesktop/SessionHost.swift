@@ -65,6 +65,7 @@ final class SessionHost: @unchecked Sendable {
             return "cannot serve IPC: \(error)"
         }
         self.server = server
+        GioLog.record(.info, "session started")
         queue.sync {
             self.initialSync()
         }
@@ -302,6 +303,7 @@ final class SessionHost: @unchecked Sendable {
         }
         if let refused = eventObserver?.refused, !refused.isEmpty {
             print("[gio] observation refused: \(refused.joined(separator: ", "))")
+            GioLog.record(.warn, "observation refused for \(refused.count) app(s)")
         }
         lastPIDs = snapshotPIDs()
     }
@@ -330,6 +332,7 @@ final class SessionHost: @unchecked Sendable {
             hotkeyTap = tap
         } else {
             print("[gio] hotkey tap refused (grant Accessibility, then relaunch)")
+            GioLog.record(.warn, "hotkey tap refused; running without global hotkeys")
         }
     }
 

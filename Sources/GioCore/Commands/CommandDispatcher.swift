@@ -105,6 +105,12 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return lines.joined(separator: "\n")
     case .status:
         return queryStatus(session: session)
+    case .logs(let level):
+        let lines = GioLog.readFile(minLevel: level ?? .trace)
+        if lines.isEmpty {
+            return "no log yet"
+        }
+        return lines.joined(separator: "\n")
     case .setup:
         return runSetup(session: &session)
     case .update:

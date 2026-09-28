@@ -9,7 +9,7 @@ final class CLICommandTests: XCTestCase {
     func testParseFocus() throws {
         XCTAssertEqual(try parseCLICommand(["focus", "2"]).get(), .focus(index: 2))
         XCTAssertEqual(
-            try parseCLICommand(["focus"]).mapError { $0 }.failure,
+            parseCLICommand(["focus"]).mapError { $0 }.failure,
             .missingArgument(name: "index", command: "focus")
         )
     }
@@ -20,7 +20,7 @@ final class CLICommandTests: XCTestCase {
             .move(index: 1, x: 100, y: 200)
         )
         XCTAssertEqual(
-            try parseCLICommand(["move", "1", "x", "200"]).mapError { $0 }.failure,
+            parseCLICommand(["move", "1", "x", "200"]).mapError { $0 }.failure,
             .invalidNumber("x")
         )
     }
@@ -31,7 +31,7 @@ final class CLICommandTests: XCTestCase {
             .resize(index: 0, width: 800, height: 600)
         )
         XCTAssertEqual(
-            try parseCLICommand(["resize", "0", "0", "600"]).mapError { $0 }.failure,
+            parseCLICommand(["resize", "0", "0", "600"]).mapError { $0 }.failure,
             .nonPositiveSize
         )
     }
@@ -40,9 +40,9 @@ final class CLICommandTests: XCTestCase {
         XCTAssertEqual(try parseCLICommand(["events"]).get(), .events)
         XCTAssertEqual(try parseCLICommand(["tile"]).get(), .tile)
         XCTAssertEqual(try parseCLICommand(["help"]).get(), .help)
-        XCTAssertEqual(try parseCLICommand([]).mapError { $0 }.failure, .noArguments)
+        XCTAssertEqual(parseCLICommand([]).mapError { $0 }.failure, .noArguments)
         XCTAssertEqual(
-            try parseCLICommand(["frobnicate"]).mapError { $0 }.failure,
+            parseCLICommand(["frobnicate"]).mapError { $0 }.failure,
             .unknownCommand("frobnicate")
         )
     }

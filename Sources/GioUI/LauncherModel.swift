@@ -111,6 +111,7 @@ func describeAction(_ command: CLICommand) -> String {
     case .update: return "update"
     case .doctor: return "doctor"
     case .uninstall: return "uninstall"
+    case .logs(let level): return level.map { "logs --level \($0.name)" } ?? "logs"
     case .help: return "help"
     }
 }

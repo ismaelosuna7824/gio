@@ -18,6 +18,7 @@ public enum CLICommand: Equatable, Sendable {
     case update
     case doctor
     case uninstall
+    case logs(LogLevel?)
     case help
 }
 
@@ -26,6 +27,7 @@ public enum CLICommandError: Error, Equatable, Sendable {
     case unknownCommand(String)
     case missingArgument(name: String, command: String)
     case invalidWorkspace(String)
+    case invalidLevel(String)
 }
 
 public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandError> {
@@ -76,6 +78,16 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
         return .success(.doctor)
     case "uninstall":
         return .success(.uninstall)
+    case "logs":
+        guard args.count > 1 else {
+            return .success(.logs(nil))
+        }
+        guard args.count == 3, args[1] == "--level",
+              let level = LogLevel(name: args[2])
+        else {
+            return .failure(.invalidLevel(args.dropFirst().joined(separator: " ")))
+        }
+        return .success(.logs(level))
     case "help", "--help", "-h":
         return .success(.help)
     default:
@@ -101,6 +113,7 @@ public func cliUsage() -> String {
       gio update
       gio doctor
       gio uninstall
+      gio logs [--level trace|debug|info|warn|error]
       gio help
 
     Stateful verbs act on the running session via IPC (RW-17).

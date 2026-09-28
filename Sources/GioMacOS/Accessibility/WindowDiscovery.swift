@@ -2,6 +2,7 @@ import ApplicationServices
 import AppKit
 import CoreGraphics
 import Foundation
+import GioCore
 
 public enum AXPermissionError: Error {
     case notTrusted
@@ -78,6 +79,9 @@ public func discoverSystemWindows() throws -> SystemWindowDiscoveryResult {
             )
             found.append(DiscoveredSystemWindow(window: window, element: element, appElement: appElement))
         }
+    }
+    if skipped > 0 {
+        GioLog.record(.debug, "discovery skipped=\(skipped) windows with unreadable attributes")
     }
     return SystemWindowDiscoveryResult(windows: found, skipped: skipped)
 }

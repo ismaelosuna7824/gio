@@ -65,7 +65,7 @@ func ipcSocketAddress(_ path: String) -> sockaddr_un {
     withUnsafeMutablePointer(to: &address.sun_path) { raw in
         let dst = UnsafeMutableRawPointer(raw).assumingMemoryBound(to: CChar.self)
         memset(dst, 0, 104)
-        path.withCString { chars in
+        _ = path.withCString { chars in
             strncpy(dst, chars, 103)
         }
     }
@@ -115,6 +115,7 @@ public final class IPCServer: @unchecked Sendable {
             listenFD = fd
             running = true
         }
+        GioLog.record(.info, "ipc serving \(socketPath)")
         Thread.detachNewThread { [weak self] in
             self?.serve()
         }

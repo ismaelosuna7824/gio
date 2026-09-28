@@ -105,6 +105,13 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 report.focusFailed = true
             }
         }
+        GioLog.record(
+            .debug,
+            "reconcile applied=\(report.applied.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"
+        )
+        if !report.failed.isEmpty {
+            GioLog.record(.warn, "reconcile failures persist; see firstFailure in tile report")
+        }
         return report
     }
 

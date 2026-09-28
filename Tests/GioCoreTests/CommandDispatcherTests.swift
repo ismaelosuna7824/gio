@@ -18,26 +18,26 @@ final class CommandDispatcherTests: XCTestCase {
 
     func testParseRejectsJunk() {
         XCTAssertEqual(
-            try parseCLICommand([]).mapError { $0 }.failure, .noArguments
+            parseCLICommand([]).mapError { $0 }.failure, .noArguments
         )
         XCTAssertEqual(
-            try parseCLICommand(["frobnicate"]).mapError { $0 }.failure,
+            parseCLICommand(["frobnicate"]).mapError { $0 }.failure,
             .unknownCommand("frobnicate")
         )
         XCTAssertEqual(
-            try parseCLICommand(["focus"]).mapError { $0 }.failure,
+            parseCLICommand(["focus"]).mapError { $0 }.failure,
             .missingArgument(name: "left|right|up|down", command: "focus")
         )
         XCTAssertEqual(
-            try parseCLICommand(["focus", "sideways"]).mapError { $0 }.failure,
+            parseCLICommand(["focus", "sideways"]).mapError { $0 }.failure,
             .missingArgument(name: "left|right|up|down", command: "focus")
         )
         XCTAssertEqual(
-            try parseCLICommand(["workspace", "42"]).mapError { $0 }.failure,
+            parseCLICommand(["workspace", "42"]).mapError { $0 }.failure,
             .invalidWorkspace("42")
         )
         XCTAssertEqual(
-            try parseCLICommand(["layout", "fancy"]).mapError { $0 }.failure,
+            parseCLICommand(["layout", "fancy"]).mapError { $0 }.failure,
             .missingArgument(name: "info", command: "layout")
         )
     }
