@@ -86,10 +86,13 @@ public func discoverSystemWindows() throws -> SystemWindowDiscoveryResult {
     return SystemWindowDiscoveryResult(windows: found, skipped: skipped)
 }
 
-/// Pre-tile probe: settable position/size and neither zoomed (maximized,
-/// non-fullscreen) nor fullscreen. Zoomed windows report settable geometry
-/// yet ignore resizes, poisoning whole batches — skip them read-only, never
-/// auto-unzoom. Missing or unreadable flags mean NOT zoomed. Live-only.
+/// Pre-tile probe: settable position/size and not native fullscreen
+/// (fullscreen lives on its own Space — writes there are meaningless).
+/// Zoomed (maximized) windows are ATTEMPTED, not skipped: setting a frame
+/// normally resizes them fine, and the reconciler verifies per window, so
+/// a refusal is recorded individually instead of poisoning anything. The
+/// old skip-zoomed rule dated from one clamp observation that looks more
+/// like minimum-size clamping; real apps decide live now. Live-only.
 public func axIsTileable(_ element: AXUIElement) -> Bool {
     for attribute in [kAXPositionAttribute, kAXSizeAttribute] {
         var settable = DarwinBoolean(false)
@@ -98,12 +101,12 @@ public func axIsTileable(_ element: AXUIElement) -> Bool {
             return false
         }
     }
-    for name in ["AXZoomed", "AXFullScreen", "AXFullscreen"] {
+    for name in ["AXFullScreen", "AXFullscreen"] {
         var raw: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, name as CFString, &raw) == .success else {
             continue
         }
-        if let zoomed = raw as? Bool, zoomed {
+        if let fullscreen = raw as? Bool, fullscreen {
             return false
         }
     }
