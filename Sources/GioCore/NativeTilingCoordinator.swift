@@ -11,7 +11,7 @@ public enum NativeTilingError: Error {
 }
 
 /// Owns only windows explicitly adopted by the caller; Space snapshots never revoke ownership.
-public final class NativeTilingCoordinator<Bridge: WorkspaceWindowBridge> {
+public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
     private struct Owned {
         let handle: Bridge.Handle
         let original: CGRect

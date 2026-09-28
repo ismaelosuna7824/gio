@@ -13,14 +13,12 @@ public enum AXWindowError: Error {
     case sizeNotSettable
     case frameMismatch(requested: CGRect, actual: CGRect)
     case frameVerificationFailed(Error)
-    case positionMismatch(requested: CGPoint, actual: CGPoint)
-    case positionVerificationFailed(Error)
     case accessibility(stage: Stage, error: AXError)
 }
 
 /// Callers supply a PID and AX window element obtained from public Accessibility APIs.
 /// AX window elements have no stable public system-wide window ID; retain the element as the handle.
-public final class AXWindowBridge: WorkspaceWindowBridge {
+public final class AXWindowBridge: WindowFrameBridge {
     public typealias Handle = AXUIElement
     private var windows: [WindowID: AXUIElement] = [:]
 
@@ -136,27 +134,6 @@ public final class AXWindowBridge: WorkspaceWindowBridge {
         catch { throw AXWindowError.frameVerificationFailed(error) }
         guard AXGeometryValidation.matches(requested: target, actual: actual) else {
             throw AXWindowError.frameMismatch(requested: target, actual: actual)
-        }
-    }
-
-    public func move(_ handle: AXUIElement, to origin: CGPoint) throws {
-        try checkPermission()
-        guard origin.x.isFinite && origin.y.isFinite else { throw AXWindowError.invalidGeometry(.positionWrite) }
-        var settable = DarwinBoolean(false)
-        let settableResult = AXUIElementIsAttributeSettable(handle, kAXPositionAttribute as CFString, &settable)
-        guard settableResult == .success else {
-            throw AXWindowError.accessibility(stage: .positionSettable, error: settableResult)
-        }
-        guard settable.boolValue else { throw AXWindowError.positionNotSettable }
-        var point = origin
-        guard let value = AXValueCreate(.cgPoint, &point) else { throw AXWindowError.invalidGeometry(.positionWrite) }
-        let result = AXUIElementSetAttributeValue(handle, kAXPositionAttribute as CFString, value)
-        guard result == .success else { throw AXWindowError.accessibility(stage: .positionWrite, error: result) }
-        let actual: CGPoint
-        do { actual = try frame(of: handle).origin }
-        catch { throw AXWindowError.positionVerificationFailed(error) }
-        guard AXGeometryValidation.matches(requested: origin, actual: actual) else {
-            throw AXWindowError.positionMismatch(requested: origin, actual: actual)
         }
     }
 }

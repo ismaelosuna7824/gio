@@ -4,7 +4,7 @@ import XCTest
 
 private enum NativeMockError: Error { case failed }
 
-private final class NativeMockBridge: WorkspaceWindowBridge {
+private final class NativeMockBridge: WindowFrameBridge {
     typealias Handle = WindowID
     var frames: [WindowID: CGRect] = [:]
     var unsupported: Set<WindowID> = []
@@ -16,7 +16,6 @@ private final class NativeMockBridge: WorkspaceWindowBridge {
         return (window, frame)
     }
     func frame(of handle: WindowID) throws -> CGRect { frames[handle]! }
-    func move(_ handle: WindowID, to origin: CGPoint) throws { frames[handle]!.origin = origin }
     func canTile(_ handle: WindowID) throws -> Bool { !unsupported.contains(handle) }
     func apply(_ handle: WindowID, frame: CGRect) throws {
         writes += 1
