@@ -67,7 +67,7 @@ chrome), never a scope cut.
 - [x] RW-04 — §9 Phase 3 Scrollable Layout Engine: `LayoutEngine.calculate(workspace:viewport:) -> LayoutResult`, column-strip model (NO BSP), mandatory layout tests. Route: inline (delegated writer unavailable); DONE `2da99bf`, 13 engine tests green (one test-math fix, engine was right), full suite 0 failures.
 - [x] RW-05 — §10 Phase 4 Viewport: `Viewport` + `ensureVisible`, clamped offsets. Route: inline; DONE with RW-06 in `18315f1`, 12 viewport+focus tests green, full suite 0 failures.
 - [x] RW-06 — §11 Phase 5 Focus (focus-left/right/up/down, NO-OP on missing target, Alt+HJKL first). Route: inline; DONE with RW-05 in `18315f1`.
-- [ ] RW-07 — §12+§13 Phases 6+7 Move + Resize (move L/R/U/D; resize-width/height + reset; resize mode). Route: delegated writer.
+- [x] RW-07 — §12+§13 Phases 6+7 Move + Resize (move L/R/U/D; resize-width/height + reset; resize mode). Route: inline (delegated writer unavailable); DONE `25656ad`, 15 move/resize tests green, full suite 0 failures. Resize mode (Alt+R) is a Phase 13 hotkey concern.
 - [ ] RW-08 — §14 Phase 8 Window Reconciler: sole physical writer, diff position/size/focus/mode, apply only deltas. Route: delegated writer.
 - [ ] RW-09 — §29/§35 Milestone 0.1 Core assembly: POC -> Registry -> State -> Layout -> Viewport -> Focus -> Reconciler -> macOS, VSCode/Terminal/Chrome scenario, full Core suite green. Route: delegated writer + independent verifier.
 
@@ -121,6 +121,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-03 done, commit `263d79c`. New `GioCore/Workspace/` (WorkspaceID/Workspace/ColumnID/Column, nil-safe focus accessors, value semantics); 5 state tests green, full suite 0 failures, `git diff --check` clean. Next: RW-04 Scrollable Layout Engine.
 - 2026-09-28: RW-04 done, commit `2da99bf`. New `GioCore/Layout/` (LayoutConfig/LayoutResult/LayoutEngine protocol/ScrollableLayoutEngine, absolute frames, clamped offsets, insertion-stable); 13 engine tests green, full suite 0 failures, `git diff --check` clean. Next: RW-05 Viewport.
 - 2026-09-28: RW-05+RW-06 done, commit `18315f1`. New `GioCore/Viewport/` (clamped offsets, minimal-scroll ensureVisible, wide-range pins to start) + `GioCore/Focus/` (pure H/L/J/K moves, NO-OP on missing, per-column memory); 12 tests green, full suite 0 failures, `git diff --check` clean. Focus→ensureVisible→Layout→Reconciler composition lands in RW-09. Next: RW-07 Move + Resize.
+- 2026-09-28: RW-07 done, commit `25656ad`. New `GioCore/Move/` (Niri-style edge growth, emptied-column removal, focus follows, weights travel) + `GioCore/Resize/` (width adjust/reset, height factor/reset); Column gains heightWeights, engine distributes proportionally (equal defaults unchanged); 15 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-08 Window Reconciler.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
