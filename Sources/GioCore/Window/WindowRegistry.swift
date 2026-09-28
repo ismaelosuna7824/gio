@@ -1,0 +1,97 @@
+import CoreGraphics
+import Foundation
+
+public enum WindowRegistryError: Error, Equatable, Sendable {
+    case duplicate(WindowID)
+    case unknown(WindowID)
+}
+
+/// Plan §7 registry: the single owner of window membership. It registers,
+/// removes, finds and updates windows, and distinguishes managed from
+/// ignored windows. Ignored windows are remembered by ID so decks, panels
+/// and other never-tile windows stay out without repeated decisions.
+///
+/// Event sync convention: after each enumeration the adapter calls
+/// `removeStale(keeping:)` with the live ID set. Absence from one
+/// enumeration only removes the record here; ownership lifetime across
+/// Space changes is decided by upper layers, never by this type.
+public final class WindowRegistry {
+    private var windows: [WindowID: ManagedWindow] = [:]
+    private var ignored: Set<WindowID> = []
+
+    public init() {}
+
+    /// Insert a new window. Throws `duplicate` when the ID exists — use
+    /// `update` for metadata changes on known windows.
+    public func register(_ window: ManagedWindow) throws {
+        guard windows[window.id] == nil else {
+            throw WindowRegistryError.duplicate(window.id)
+        }
+        windows[window.id] = window
+    }
+
+    /// Replace the record for a known window. Throws `unknown` for new IDs.
+    public func update(_ window: ManagedWindow) throws {
+        guard windows[window.id] != nil else {
+            throw WindowRegistryError.unknown(window.id)
+        }
+        windows[window.id] = window
+    }
+
+    /// Remove a record, returning it. Also clears any ignore mark.
+    @discardableResult
+    public func remove(_ id: WindowID) -> ManagedWindow? {
+        ignored.remove(id)
+        return windows.removeValue(forKey: id)
+    }
+
+    public func find(_ id: WindowID) -> ManagedWindow? {
+        windows[id]
+    }
+
+    /// Mark an ID as never-managed. Allowed for unknown IDs so a rule can
+    /// precede the window's arrival.
+    public func ignore(_ id: WindowID) {
+        ignored.insert(id)
+    }
+
+    public func unignore(_ id: WindowID) {
+        ignored.remove(id)
+    }
+
+    public func isIgnored(_ id: WindowID) -> Bool {
+        ignored.contains(id)
+    }
+
+    /// Registered and not ignored.
+    public func isManaged(_ id: WindowID) -> Bool {
+        windows[id] != nil && !ignored.contains(id)
+    }
+
+    /// Managed windows in deterministic ID order.
+    public func managedWindows() -> [ManagedWindow] {
+        windows.keys.sorted().compactMap { id in
+            guard !ignored.contains(id) else {
+                return nil
+            }
+            return windows[id]
+        }
+    }
+
+    /// Drop every record whose ID is not live. Returns the removed windows in
+    /// deterministic ID order. Ignore marks for vanished IDs are kept: the
+    /// ignore decision outlives any single enumeration.
+    @discardableResult
+    public func removeStale(keeping liveIDs: Set<WindowID>) -> [ManagedWindow] {
+        let stale = windows.keys.filter { !liveIDs.contains($0) }.sorted()
+        return stale.compactMap { windows.removeValue(forKey: $0) }
+    }
+
+    public var registeredCount: Int {
+        windows.count
+    }
+
+    public var ignoredCount: Int {
+        ignored.count
+    }
+}

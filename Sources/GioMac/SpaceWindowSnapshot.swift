@@ -26,7 +26,7 @@ public enum SpaceWindowSnapshotError: Error, Equatable {
 /// Retained handles are not registered in the bridge. The caller rechecks generation before use.
 public struct SpaceWindowSnapshot {
     public struct Window {
-        public let id: WindowID
+        public let id: LegacyWindowID
         public let element: AXUIElement
         public let pid: pid_t
         public let title: String?

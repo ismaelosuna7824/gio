@@ -5,13 +5,13 @@ import CoreGraphics
 /// the same Space generation. Never move a window solely because this heuristic matches it.
 public enum SpaceWindowEligibility {
     public struct AXCandidate {
-        public let windowID: WindowID
+        public let windowID: LegacyWindowID
         public let pid: Int
         public let title: String?
         public let frame: CGRect?
         public let displayBounds: CGRect?
 
-        public init(windowID: WindowID, pid: Int, title: String?, frame: CGRect?, displayBounds: CGRect?) {
+        public init(windowID: LegacyWindowID, pid: Int, title: String?, frame: CGRect?, displayBounds: CGRect?) {
             self.windowID = windowID
             self.pid = pid
             self.title = title
@@ -44,8 +44,8 @@ public enum SpaceWindowEligibility {
 
     public struct Result {
         /// IDs retain the input AX order; no frames are modified by this evaluator.
-        public let eligibleWindowIDs: [WindowID]
-        public let skipped: [(windowID: WindowID, reason: SkipReason)]
+        public let eligibleWindowIDs: [LegacyWindowID]
+        public let skipped: [(windowID: LegacyWindowID, reason: SkipReason)]
 
         public func count(_ reason: SkipReason) -> Int {
             skipped.filter { $0.reason == reason }.count
@@ -56,9 +56,9 @@ public enum SpaceWindowEligibility {
     /// A straddling window belongs to the display containing its center; offscreen
     /// AX handles and PID/title-only similarities are deliberately excluded.
     public static func onScreenCandidates(ax: [AXCandidate], onScreen: [CGWindow],
-                                          display: CGRect) -> Set<WindowID> {
+                                          display: CGRect) -> Set<LegacyWindowID> {
         guard valid(display) else { return [] }
-        return Set(ax.compactMap { candidate -> WindowID? in
+        return Set(ax.compactMap { candidate -> LegacyWindowID? in
             guard candidate.pid > 0, let frame = candidate.frame, valid(frame),
                   display.contains(CGPoint(x: frame.midX, y: frame.midY)),
                   onScreen.contains(where: { $0.pid == candidate.pid && $0.frame == frame &&
@@ -77,8 +77,8 @@ public enum SpaceWindowEligibility {
                           skipped: ax.map { ($0.windowID, .staleGeneration) })
         }
 
-        var eligible: [WindowID] = []
-        var skipped: [(windowID: WindowID, reason: SkipReason)] = []
+        var eligible: [LegacyWindowID] = []
+        var skipped: [(windowID: LegacyWindowID, reason: SkipReason)] = []
         for candidate in ax {
             let reason: SkipReason?
             if candidate.pid <= 0 || candidate.frame == nil || candidate.displayBounds == nil {

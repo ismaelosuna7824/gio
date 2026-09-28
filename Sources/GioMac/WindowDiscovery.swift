@@ -4,24 +4,24 @@ import GioCore
 
 /// Retains AX elements and compares them with CFEqual, never treating CFHash as unique.
 public final class WindowDiscovery {
-    private var known: [(id: WindowID, element: AXUIElement, pid: pid_t)] = []
+    private var known: [(id: LegacyWindowID, element: AXUIElement, pid: pid_t)] = []
     private var nextID = 0
     public init() {}
 
     /// A termination notification proves this PID's windows are gone; absence from AX does not.
-    public func forgetTerminatedProcess(_ pid: pid_t) -> [WindowID] {
+    public func forgetTerminatedProcess(_ pid: pid_t) -> [LegacyWindowID] {
         let ids = known.filter { $0.pid == pid }.map(\.id)
         known.removeAll { $0.pid == pid }
         return ids
     }
 
     /// A missing known ID is only a candidate for a retained-handle validity check.
-    public func missingKnownIDs(from windows: [(WindowID, AXUIElement, CGRect)]) -> [WindowID] {
+    public func missingKnownIDs(from windows: [(LegacyWindowID, AXUIElement, CGRect)]) -> [LegacyWindowID] {
         let seen = Set(windows.map(\.0))
         return known.map(\.id).filter { !seen.contains($0) }
     }
 
-    public func forgetInvalidWindow(_ id: WindowID) {
+    public func forgetInvalidWindow(_ id: LegacyWindowID) {
         known.removeAll { $0.id == id }
     }
 
@@ -81,12 +81,12 @@ public final class WindowDiscovery {
                   [frame.minX, frame.minY, frame.maxX, frame.maxY].allSatisfy(\.isFinite) else {
                 throw SpaceWindowSnapshotError.incompletePID(pid)
             }
-            let id: WindowID
+            let id: LegacyWindowID
             if let existing = known.first(where: { $0.pid == pid && CFEqual($0.element, element) }) {
                 id = existing.id
             } else {
                 nextID += 1
-                id = WindowID("session-\(nextID)")
+                id = LegacyWindowID("session-\(nextID)")
                 known.append((id, element, pid))
             }
             let bounds = NSScreen.screens.compactMap { screen -> CGRect? in
@@ -100,8 +100,8 @@ public final class WindowDiscovery {
         return result
     }
 
-    public func windows() -> [(WindowID, AXUIElement, CGRect)] {
-        var result: [(WindowID, AXUIElement, CGRect)] = []
+    public func windows() -> [(LegacyWindowID, AXUIElement, CGRect)] {
+        var result: [(LegacyWindowID, AXUIElement, CGRect)] = []
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
             let element = AXUIElementCreateApplication(app.processIdentifier)
             var value: CFTypeRef?
@@ -125,12 +125,12 @@ public final class WindowDiscovery {
                 guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
                       AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
                       dimensions.width > 0, dimensions.height > 0 else { continue }
-                let id: WindowID
+                let id: LegacyWindowID
                 if let existing = known.first(where: { $0.pid == app.processIdentifier && CFEqual($0.element, window) }) {
                     id = existing.id
                 } else {
                     nextID += 1
-                    id = WindowID("session-\(nextID)")
+                    id = LegacyWindowID("session-\(nextID)")
                     known.append((id, window, app.processIdentifier))
                 }
                 result.append((id, window, CGRect(origin: point, size: dimensions)))

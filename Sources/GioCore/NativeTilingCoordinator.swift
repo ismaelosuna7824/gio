@@ -4,11 +4,11 @@ import CoreGraphics
 public enum NativeTilingError: Error {
     case invalidDisplayRect(DisplayID)
     case unknownDisplay(DisplayID)
-    case unknownWindow(WindowID)
-    case noSafeRestorePosition(WindowID)
+    case unknownWindow(LegacyWindowID)
+    case noSafeRestorePosition(LegacyWindowID)
     case recoveryRequired
-    case rollbackFrameMismatch(WindowID, expected: CGRect, actual: CGRect)
-    case rollbackFrameReadFailed(WindowID, Error)
+    case rollbackFrameMismatch(LegacyWindowID, expected: CGRect, actual: CGRect)
+    case rollbackFrameReadFailed(LegacyWindowID, Error)
     case operationFailed(Error, rollbackFailures: [Error])
 }
 
@@ -23,7 +23,7 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
 
     private let bridge: Bridge
     private var displays: [DisplayID: CGRect] = [:]
-    private var owned: [WindowID: Owned] = [:]
+    private var owned: [LegacyWindowID: Owned] = [:]
     public private(set) var recoveryRequired = false
 
     public init(bridge: Bridge) { self.bridge = bridge }
@@ -39,7 +39,7 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
     }
 
     /// Call only for positively selected current-Space windows, never for an inferred match.
-    public func adopt(_ id: WindowID, on display: DisplayID) throws {
+    public func adopt(_ id: LegacyWindowID, on display: DisplayID) throws {
         try ready()
         guard displays[display] != nil else { throw NativeTilingError.unknownDisplay(display) }
         if owned[id] != nil {
@@ -55,8 +55,8 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
 
     /// Selected IDs are the caller's positively identified active-Space cohort.
     @discardableResult
-    public func reflow(on display: DisplayID, selected: Set<WindowID>, usableBounds: CGRect,
-                       outerGap: CGFloat = 0, innerGap: CGFloat = 0) throws -> [WindowID] {
+    public func reflow(on display: DisplayID, selected: Set<LegacyWindowID>, usableBounds: CGRect,
+                       outerGap: CGFloat = 0, innerGap: CGFloat = 0) throws -> [LegacyWindowID] {
         try ready()
         guard let bounds = displays[display] else { throw NativeTilingError.unknownDisplay(display) }
         guard usableBounds.isFinitePositive, bounds.contains(usableBounds) else {
@@ -67,8 +67,8 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
             guard let entry = owned[id], entry.display == display else { throw NativeTilingError.unknownWindow(id) }
         }
         try bridge.checkPermission()
-        var eligible: [WindowID] = []
-        var skipped: [WindowID] = []
+        var eligible: [LegacyWindowID] = []
+        var skipped: [LegacyWindowID] = []
         for id in ids {
             if try bridge.canTile(owned[id]!.handle) { eligible.append(id) }
             else { skipped.append(id) }
@@ -134,7 +134,7 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
     }
 
     /// Requires trusted closure evidence from the caller. Snapshot absence is not closure evidence.
-    public func forgetClosedWindow(_ id: WindowID) {
+    public func forgetClosedWindow(_ id: LegacyWindowID) {
         owned.removeValue(forKey: id)
     }
 
@@ -149,8 +149,8 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
         let ids = owned.keys.sorted { $0.rawValue < $1.rawValue }.filter { owned[$0]!.preTile != nil }
         if !ids.isEmpty { try bridge.checkPermission() }
         var occupied: [CGRect] = []
-        var displaced: [WindowID] = []
-        var targets: [(WindowID, CGRect)] = []
+        var displaced: [LegacyWindowID] = []
+        var targets: [(LegacyWindowID, CGRect)] = []
         for id in ids {
             let original = owned[id]!.original
             if connectedDisplays.values.contains(where: { $0.contains(original) }) {
@@ -188,18 +188,18 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
 
     private struct ApplyFailure: Error {
         let operation: NativeTilingError
-        let failedWrite: WindowID?
-        let previous: [(WindowID, CGRect)]
+        let failedWrite: LegacyWindowID?
+        let previous: [(LegacyWindowID, CGRect)]
     }
 
-    private func apply(_ targets: [(WindowID, CGRect)]) throws -> [(WindowID, CGRect)] {
+    private func apply(_ targets: [(LegacyWindowID, CGRect)]) throws -> [(LegacyWindowID, CGRect)] {
         do { return try applyDetailed(targets) }
         catch let failure as ApplyFailure { throw failure.operation }
     }
 
-    private func applyDetailed(_ targets: [(WindowID, CGRect)]) throws -> [(WindowID, CGRect)] {
-        var previous: [(WindowID, CGRect)] = []
-        var failedWrite: WindowID?
+    private func applyDetailed(_ targets: [(LegacyWindowID, CGRect)]) throws -> [(LegacyWindowID, CGRect)] {
+        var previous: [(LegacyWindowID, CGRect)] = []
+        var failedWrite: LegacyWindowID?
         do {
             for (id, target) in targets {
                 let handle = owned[id]!.handle

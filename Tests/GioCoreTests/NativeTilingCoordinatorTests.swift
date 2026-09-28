@@ -8,30 +8,30 @@ private struct MockMismatch: WindowFrameMismatch {
 }
 
 private final class NativeMockBridge: WindowFrameBridge {
-    typealias Handle = WindowID
-    var frames: [WindowID: CGRect] = [:]
-    var unsupported: Set<WindowID> = []
+    typealias Handle = LegacyWindowID
+    var frames: [LegacyWindowID: CGRect] = [:]
+    var unsupported: Set<LegacyWindowID> = []
     var writes = 0
     var failWrites: Set<Int> = []
-    var constrained: Set<WindowID> = []
+    var constrained: Set<LegacyWindowID> = []
     var clampWidth: CGFloat = 60
     var clampUpTo: CGFloat = 99
     var impreciseRollback = false
-    var attempts: [WindowID] = []
+    var attempts: [LegacyWindowID] = []
     var failReads: Set<Int> = []
     var reads = 0
     func checkPermission() throws {}
-    func capture(_ window: WindowID) throws -> (handle: WindowID, frame: CGRect) {
+    func capture(_ window: LegacyWindowID) throws -> (handle: LegacyWindowID, frame: CGRect) {
         guard let frame = frames[window] else { throw NativeMockError.failed }
         return (window, frame)
     }
-    func frame(of handle: WindowID) throws -> CGRect {
+    func frame(of handle: LegacyWindowID) throws -> CGRect {
         reads += 1
         if failReads.contains(reads) { throw NativeMockError.failed }
         return frames[handle]!
     }
-    func canTile(_ handle: WindowID) throws -> Bool { !unsupported.contains(handle) }
-    func apply(_ handle: WindowID, frame: CGRect) throws {
+    func canTile(_ handle: LegacyWindowID) throws -> Bool { !unsupported.contains(handle) }
+    func apply(_ handle: LegacyWindowID, frame: CGRect) throws {
         writes += 1
         attempts.append(handle)
         if constrained.contains(handle), frame.width <= clampUpTo, frame.width > 20 {
@@ -53,8 +53,8 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
         let original = CGRect(x: 10, y: 10, width: 20, height: 20)
-        for id: WindowID in ["a", "b", "outside"] { bridge.frames[id] = original }
-        for id: WindowID in ["a", "b"] { try coordinator.adopt(id, on: "a") }
+        for id: LegacyWindowID in ["a", "b", "outside"] { bridge.frames[id] = original }
+        for id: LegacyWindowID in ["a", "b"] { try coordinator.adopt(id, on: "a") }
         bridge.constrained = ["a"]
         XCTAssertEqual(try coordinator.reflow(on: "a", selected: ["a", "b"], usableBounds: bounds), ["a"])
         XCTAssertEqual(bridge.frames["a"], original)
@@ -71,7 +71,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
         let original = CGRect(x: 10, y: 10, width: 20, height: 20)
-        for id: WindowID in ["a", "b"] { bridge.frames[id] = original; try coordinator.adopt(id, on: "a") }
+        for id: LegacyWindowID in ["a", "b"] { bridge.frames[id] = original; try coordinator.adopt(id, on: "a") }
         bridge.constrained = ["a"]
         bridge.impreciseRollback = true
         XCTAssertThrowsError(try coordinator.reflow(on: "a", selected: ["a", "b"], usableBounds: bounds)) {
@@ -97,7 +97,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
         let original = CGRect(x: 10, y: 10, width: 20, height: 20)
-        for id: WindowID in ["a", "b"] { bridge.frames[id] = original; try coordinator.adopt(id, on: "a") }
+        for id: LegacyWindowID in ["a", "b"] { bridge.frames[id] = original; try coordinator.adopt(id, on: "a") }
         bridge.constrained = ["a"]
         bridge.failReads = [bridge.reads + 2]
         XCTAssertThrowsError(try coordinator.reflow(on: "a", selected: ["a", "b"], usableBounds: bounds)) {
@@ -119,7 +119,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let bridge = NativeMockBridge()
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
-        for id: WindowID in ["a", "b", "u1", "u2", "u3", "u4"] {
+        for id: LegacyWindowID in ["a", "b", "u1", "u2", "u3", "u4"] {
             bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
             try coordinator.adopt(id, on: "a")
         }
@@ -134,7 +134,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let bridge = NativeMockBridge()
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
-        for id: WindowID in ["a", "b"] {
+        for id: LegacyWindowID in ["a", "b"] {
             bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
             try coordinator.adopt(id, on: "a")
         }
@@ -167,7 +167,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
         let original = CGRect(x: 10, y: 10, width: 20, height: 20)
-        for id: WindowID in ["a", "b"] { bridge.frames[id] = original; try coordinator.adopt(id, on: "a") }
+        for id: LegacyWindowID in ["a", "b"] { bridge.frames[id] = original; try coordinator.adopt(id, on: "a") }
         try coordinator.reflow(on: "a", selected: ["a"], usableBounds: bounds)
         bridge.constrained = ["b"]
         XCTAssertThrowsError(try coordinator.reflow(on: "a", selected: ["a", "b"], usableBounds: bounds))
@@ -179,7 +179,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let bridge = NativeMockBridge()
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
-        for id: WindowID in ["a", "b", "c", "d", "e"] {
+        for id: LegacyWindowID in ["a", "b", "c", "d", "e"] {
             bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
             try coordinator.adopt(id, on: "a")
         }
@@ -197,7 +197,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let bridge = NativeMockBridge()
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
-        for id: WindowID in ["a", "b"] {
+        for id: LegacyWindowID in ["a", "b"] {
             bridge.frames[id] = CGRect(x: 10, y: 10, width: 20, height: 20)
             try coordinator.adopt(id, on: "a")
         }
@@ -215,8 +215,8 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
         let original = CGRect(x: 10, y: 10, width: 20, height: 20)
-        for id: WindowID in ["first", "second", "skip", "unselected"] { bridge.frames[id] = original }
-        for id: WindowID in ["first", "second", "skip"] { try coordinator.adopt(id, on: "a") }
+        for id: LegacyWindowID in ["first", "second", "skip", "unselected"] { bridge.frames[id] = original }
+        for id: LegacyWindowID in ["first", "second", "skip"] { try coordinator.adopt(id, on: "a") }
         bridge.unsupported = ["skip"]
         XCTAssertEqual(try coordinator.reflow(on: "a", selected: ["first", "skip"], usableBounds: bounds), ["skip"])
         XCTAssertEqual(bridge.frames["first"], bounds)
@@ -234,7 +234,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         let coordinator = NativeTilingCoordinator(bridge: bridge)
         try coordinator.registerDisplay("a", bounds: bounds)
         let original = CGRect(x: 10, y: 10, width: 20, height: 20)
-        for id: WindowID in ["a", "b"] {
+        for id: LegacyWindowID in ["a", "b"] {
             bridge.frames[id] = original
             try coordinator.adopt(id, on: "a")
         }

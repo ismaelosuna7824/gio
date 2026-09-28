@@ -15,7 +15,7 @@ import GioMac
     private var pendingReflow = Set<DisplayID>()
     private var reflowScheduled = false
     private var applyingFrames = false
-    private var managed = Set<WindowID>()
+    private var managed = Set<LegacyWindowID>()
     private var spaceGeneration: UInt64 = 0
     private var warning: String?
     private var reflowFailures: [DisplayID: String] = [:]

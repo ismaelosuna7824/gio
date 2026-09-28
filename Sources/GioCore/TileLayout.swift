@@ -1,7 +1,7 @@
 import Foundation
 
 public enum TileLayoutError: Error, Equatable {
-    case duplicateWindow(WindowID)
+    case duplicateWindow(LegacyWindowID)
     case invalidBounds
     case invalidGap
     case insufficientSpace
@@ -9,10 +9,10 @@ public enum TileLayoutError: Error, Equatable {
 
 /// A target frame only; applying it is the caller's responsibility.
 public struct TileTarget: Equatable {
-    public let window: WindowID
+    public let window: LegacyWindowID
     public let frame: CGRect
 
-    public init(window: WindowID, frame: CGRect) {
+    public init(window: LegacyWindowID, frame: CGRect) {
         self.window = window
         self.frame = frame
     }
@@ -21,9 +21,9 @@ public struct TileTarget: Equatable {
 /// Pure, ordered layout in CoreGraphics points. Equal axes split horizontally.
 public enum TileLayout {
     public static func plan(
-        windows: [WindowID], in bounds: CGRect, outerGap: CGFloat = 0, innerGap: CGFloat = 0
+        windows: [LegacyWindowID], in bounds: CGRect, outerGap: CGFloat = 0, innerGap: CGFloat = 0
     ) throws -> [TileTarget] {
-        var seen = Set<WindowID>()
+        var seen = Set<LegacyWindowID>()
         for window in windows where !seen.insert(window).inserted {
             throw TileLayoutError.duplicateWindow(window)
         }
@@ -54,7 +54,7 @@ public enum TileLayout {
             rect.maxX.isFinite && rect.maxY.isFinite
     }
 
-    private static func split(_ windows: ArraySlice<WindowID>, in rect: CGRect, gap: CGFloat) throws -> [TileTarget] {
+    private static func split(_ windows: ArraySlice<LegacyWindowID>, in rect: CGRect, gap: CGFloat) throws -> [TileTarget] {
         guard validFrame(rect) else { throw TileLayoutError.insufficientSpace }
         if windows.count == 1 { return [TileTarget(window: windows.first!, frame: rect)] }
         let horizontal = rect.width >= rect.height

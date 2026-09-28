@@ -27,23 +27,23 @@ extension AXWindowError: WindowFrameMismatch {
 /// AX window elements have no stable public system-wide window ID; retain the element as the handle.
 public final class AXWindowBridge: WindowFrameBridge {
     public typealias Handle = AXUIElement
-    private var windows: [WindowID: AXUIElement] = [:]
+    private var windows: [LegacyWindowID: AXUIElement] = [:]
 
     public init() {}
 
-    public func register(_ id: WindowID, element: AXUIElement) throws {
+    public func register(_ id: LegacyWindowID, element: AXUIElement) throws {
         try checkPermission()
         _ = try frame(of: element)
         windows[id] = element
     }
 
     /// Release a handle only after the owner has definitely terminated.
-    public func forgetTerminatedWindow(_ id: WindowID) {
+    public func forgetTerminatedWindow(_ id: LegacyWindowID) {
         windows.removeValue(forKey: id)
     }
 
     /// Only invalidUIElement proves a retained window handle is gone; all other errors remain uncertain.
-    public func isDefinitelyInvalid(_ id: WindowID) throws -> Bool {
+    public func isDefinitelyInvalid(_ id: LegacyWindowID) throws -> Bool {
         try checkPermission()
         guard let element = windows[id] else { throw AXWindowError.unsupportedWindow }
         var value: CFTypeRef?
@@ -57,7 +57,7 @@ public final class AXWindowBridge: WindowFrameBridge {
         guard AXIsProcessTrusted() else { throw AXWindowError.permissionDenied }
     }
 
-    public func capture(_ window: WindowID) throws -> (handle: AXUIElement, frame: CGRect) {
+    public func capture(_ window: LegacyWindowID) throws -> (handle: AXUIElement, frame: CGRect) {
         try checkPermission()
         guard let element = windows[window] else { throw AXWindowError.unsupportedWindow }
         return (element, try frame(of: element))

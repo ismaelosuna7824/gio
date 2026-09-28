@@ -5,7 +5,7 @@ final class SpaceWindowEligibilityTests: XCTestCase {
     private let frame = CGRect(x: 110, y: 120, width: 300, height: 200)
     private let display = CGRect(x: 100, y: 100, width: 1000, height: 800)
 
-    private func ax(_ id: WindowID, title: String? = "Editor", frame: CGRect? = nil,
+    private func ax(_ id: LegacyWindowID, title: String? = "Editor", frame: CGRect? = nil,
                     display: CGRect? = nil) -> SpaceWindowEligibility.AXCandidate {
         .init(windowID: id, pid: 42, title: title, frame: frame ?? self.frame,
               displayBounds: display ?? self.display)
