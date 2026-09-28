@@ -94,4 +94,59 @@ public final class WindowRegistry {
     public var ignoredCount: Int {
         ignored.count
     }
+
+    /// Plan §17 mode lifecycle. Set any mode; unknown IDs throw.
+    public func setMode(_ mode: WindowMode, for id: WindowID) throws {
+        guard var window = windows[id] else {
+            throw WindowRegistryError.unknown(id)
+        }
+        window.mode = mode
+        windows[id] = window
+    }
+
+    /// Toggle tiled ↔ floating, returning the new mode. From fullscreen it
+    /// exits to tiled (the grid), not to floating — leaving fullscreen and
+    /// floating are separate actions. Unknown IDs throw.
+    @discardableResult
+    public func toggleFloating(for id: WindowID) throws -> WindowMode {
+        guard var window = windows[id] else {
+            throw WindowRegistryError.unknown(id)
+        }
+        switch window.mode {
+        case .tiled:
+            window.mode = .floating
+        case .floating, .fullscreen:
+            window.mode = .tiled
+        }
+        windows[id] = window
+        return window.mode
+    }
+
+    /// Enter fullscreen on the given display frame, capturing the record to
+    /// restore on exit. Unknown IDs throw.
+    @discardableResult
+    public func beginFullscreen(id: WindowID, frame: CGRect) throws -> FullscreenRecord {
+        guard var window = windows[id] else {
+            throw WindowRegistryError.unknown(id)
+        }
+        let record = FullscreenRecord(
+            id: id, previousFrame: window.frame, previousMode: window.mode
+        )
+        window.mode = .fullscreen
+        window.frame = frame
+        windows[id] = window
+        return record
+    }
+
+    /// Restore a captured record (frame + mode). Last writer wins by design:
+    /// concurrent mode changes between begin and end are overwritten.
+    /// Unknown IDs throw.
+    public func endFullscreen(_ record: FullscreenRecord) throws {
+        guard var window = windows[record.id] else {
+            throw WindowRegistryError.unknown(record.id)
+        }
+        window.mode = record.previousMode
+        window.frame = record.previousFrame
+        windows[record.id] = window
+    }
 }

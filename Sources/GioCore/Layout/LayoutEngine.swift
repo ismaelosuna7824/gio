@@ -42,6 +42,29 @@ public protocol LayoutEngine {
     func calculate(workspace: Workspace, viewport: CGRect) throws -> LayoutResult
 }
 
+/// Plan §17: floating and fullscreen windows never enter the strip. Filter
+/// columns to tiled members (unknown IDs count as tiled — workspace
+/// membership implies a managed window), dropping emptied columns so the
+/// strip compacts. Focus indices are clamped, never invented; the engine
+/// ignores focus anyway, it only needs positions.
+public func tilingWorkspace(
+    from workspace: Workspace,
+    modes: [WindowID: WindowMode]
+) -> Workspace {
+    var filtered = workspace
+    filtered.columns = workspace.columns.compactMap { column in
+        var kept = column
+        kept.windows = column.windows.filter { modes[$0, default: .tiled] == .tiled }
+        return kept.windows.isEmpty ? nil : kept
+    }
+    if filtered.columns.isEmpty {
+        filtered.focusedColumn = 0
+    } else {
+        filtered.focusedColumn = min(max(workspace.focusedColumn, 0), filtered.columns.count - 1)
+    }
+    return filtered
+}
+
 /// Plan §9 scrollable column engine. Explicitly NOT BSP: the workspace is a
 /// horizontal strip (`Column 1 | Column 2 | …`) and the monitor is a viewport
 /// over it. Windows inside one column share its height equally. Appending or

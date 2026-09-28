@@ -9,10 +9,25 @@ public enum WindowMode: String, Equatable, Sendable {
     case fullscreen
 }
 
+/// Plan §17 fullscreen memory: what to restore on exit. Captured on entry
+/// because the record's own frame is overwritten by the fullscreen frame.
+public struct FullscreenRecord: Equatable, Sendable {
+    public let id: WindowID
+    public let previousFrame: CGRect
+    public let previousMode: WindowMode
+
+    public init(id: WindowID, previousFrame: CGRect, previousMode: WindowMode) {
+        self.id = id
+        self.previousFrame = previousFrame
+        self.previousMode = previousMode
+    }
+}
+
 /// A window tracked by the registry. `title` is `""` when Accessibility
 /// reports no title — unknown titles never block management. `frame` is the
 /// last known logical frame; only the reconciler (Phase 8) writes physical
-/// frames from it.
+/// frames from it. Floating windows keep their frame untouched by layout;
+/// fullscreen overwrites it and restores from a `FullscreenRecord` on exit.
 public struct ManagedWindow: Equatable, Sendable {
     public let id: WindowID
     public let pid: pid_t
