@@ -19,6 +19,7 @@ public struct TileReflowReport: Equatable, Sendable {
     public var skippedUntileable: Int
     public var skippedDiscovery: Int
     public var reconcile: ReconcileReport
+    public var displayInfo: String = ""
 
     public func describe() -> String {
         var lines = ["tiled=\(tiled.count)"]
@@ -32,8 +33,24 @@ public struct TileReflowReport: Equatable, Sendable {
         if let first = reconcile.firstFailure {
             lines.append("firstFailure=\(first)")
         }
+        if !displayInfo.isEmpty {
+            lines.append(displayInfo)
+        }
         return lines.joined(separator: "\n")
     }
+}
+
+/// Live screen geometry readout: chosen viewport plus every NSScreen frame
+/// and visibleFrame. When macOS clamps a requested frame, these numbers name
+/// the real usable area — no guessing from stale assumptions.
+public func describeDisplayGeometry(chosen viewport: CGRect) -> String {
+    var lines = ["viewport=\(describeFrame(viewport))"]
+    for (index, screen) in NSScreen.screens.enumerated() {
+        lines.append(
+            "screen\(index) frame=\(describeFrame(screen.frame)) visible=\(describeFrame(screen.visibleFrame))"
+        )
+    }
+    return lines.joined(separator: "\n")
 }
 
 /// Drop minimized windows before tiling. Pure; the AX tileability probe
@@ -119,6 +136,7 @@ public func runTileReflow(
         skippedMinimized: skippedMinimized,
         skippedUntileable: skippedUntileable,
         skippedDiscovery: found.skipped,
-        reconcile: reconcile
+        reconcile: reconcile,
+        displayInfo: describeDisplayGeometry(chosen: display)
     )
 }
