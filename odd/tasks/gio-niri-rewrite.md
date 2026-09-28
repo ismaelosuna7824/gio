@@ -62,7 +62,7 @@ chrome), never a scope cut.
 ## Tasks — Core 0.1 (plan §6-§14, §35)
 - [x] RW-00 — Freeze current work at `archive/pre-rewrite-niri-plan` (e126424). Route: inline (git state op). Evidence: branch listed, log matches HEAD.
 - [x] RW-01 — §6 Phase 0 Accessibility POC: `gio-poc list-windows|focus|move|resize` + events (created/destroyed/focus/moved/resized/activated). DoD §6. Route: inline slices, DONE inline 2026-09-28 (delegated writer unavailable).
-- [ ] RW-02 — §7 Phase 1 Window Registry: `WindowID`/`ManagedWindow`/`WindowMode`, register/remove/find/update, managed-vs-ignored, stale handling + tests. Route: delegated writer.
+- [x] RW-02 — §7 Phase 1 Window Registry: `WindowID`/`ManagedWindow`/`WindowMode`, register/remove/find/update, managed-vs-ignored, stale handling + tests. Route: inline (delegated writer unavailable); legacy string identity renamed to LegacyWindowID (pure rename, behavior unchanged).
 - [ ] RW-03 — §8 Phase 2 Workspace State: pure `Workspace`/`Column` model, zero macOS imports. Route: delegated writer.
 - [ ] RW-04 — §9 Phase 3 Scrollable Layout Engine: `LayoutEngine.calculate(workspace:viewport:) -> LayoutResult`, column-strip model (NO BSP), mandatory layout tests. Route: delegated writer.
 - [ ] RW-05 — §10 Phase 4 Viewport: `Viewport` + `ensureVisible`, clamped offsets. Route: inline or delegated by size.
@@ -117,6 +117,7 @@ chrome), never a scope cut.
 ## Progress
 - 2026-09-28: RW-00 done (freeze branch created). Gap mapping done inline (delegated `explore` unavailable: provider free-tier restriction). Scope expanded to all 37 plan sections per user note (was: 0.1-alpha only). Next: RW-01 Phase 0 POC.
 - 2026-09-28: RW-01 done, commit `f05d0f9` (892 insertions, new standalone tool; exceeds ~400 advisory — cohesive new target, no size-only split). Follow-up promotion `1600e4d`: logic lives in final `GioMacOS` (SystemWindow/discover/actions/events), `gio-poc` is a thin CLI; tests split into `GioMacOSTests` (4) + `GioPOCTests` (6), full suite 0 failures. `swift build --target GioPOC` ok; `swift test` 0 failures (9 new GioPOCTests, existing suites green); `git diff --check` clean. New files: Sources/GioPOC (POCWindow/POCCommand/POCDiscovery/POCActions/POCEvents/main), Tests/GioPOCTests, Package.swift targets. Live AX retest pending (signed binary + user Accessibility grant). Next: RW-02 Window Registry.
+- 2026-09-28: RW-02 done, commit `546c523`. New `GioCore/Window/` (WindowID pid+elementID with Comparable ordering, ManagedWindow, WindowMode, WindowRegistry with register/update/remove/find/ignore/removeStale); 9 registry tests green, full suite 0 failures, `git diff --check` clean. elementID is adapter-assigned session identity (no stable public OS window number exists). Next: RW-03 Workspace State.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
