@@ -12,7 +12,7 @@ let package = Package(
     targets: [
         .target(name: "GioCore"),
         .target(name: "GioMac", dependencies: ["GioCore"]),
-        .target(name: "GioMacOS"),
+        .target(name: "GioMacOS", dependencies: ["GioCore"]),
         .executableTarget(name: "GioPOC", dependencies: ["GioMacOS"]),
         .executableTarget(name: "GioApp", dependencies: ["GioCore", "GioMac"]),
         .testTarget(name: "GioCoreTests", dependencies: ["GioCore"]),

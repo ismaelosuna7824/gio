@@ -15,6 +15,7 @@ public enum SystemWindowActionError: Error, CustomStringConvertible {
     case readbackFailed(attribute: String, status: AXError)
     case focusRefused(pid: pid_t)
     case frameMismatch(requested: CGRect, actual: CGRect)
+    case unknownHandle(elementID: UInt64)
 
     public var description: String {
         switch self {
@@ -34,6 +35,8 @@ public enum SystemWindowActionError: Error, CustomStringConvertible {
             return "focusRefused: pid=\(pid)"
         case .frameMismatch(let requested, let actual):
             return "frameMismatch: requested=\(describeFrame(requested)) actual=\(describeFrame(actual))"
+        case .unknownHandle(let elementID):
+            return "unknownHandle: elementID=\(elementID)"
         }
     }
 }
@@ -84,25 +87,32 @@ func framesMatch(_ requested: CGRect, _ actual: CGRect) -> Bool {
 /// when the window does not become focused.
 public func focusSystemWindow(_ target: DiscoveredSystemWindow) throws {
     try actionAXPermission()
-    guard let app = NSRunningApplication(processIdentifier: target.window.pid) else {
-        throw SystemWindowActionError.appNotRunning(pid: target.window.pid)
+    try focusAXWindow(
+        appElement: target.appElement, element: target.element, pid: target.window.pid
+    )
+}
+
+/// Shared focus primitive used by the CLI and the reconciler actuator.
+func focusAXWindow(appElement: AXUIElement, element: AXUIElement, pid: pid_t) throws {
+    guard let app = NSRunningApplication(processIdentifier: pid) else {
+        throw SystemWindowActionError.appNotRunning(pid: pid)
     }
     app.activate()
     let status = AXUIElementSetAttributeValue(
-        target.appElement, kAXFocusedWindowAttribute as CFString, target.element
+        appElement, kAXFocusedWindowAttribute as CFString, element
     )
     guard status == .success else {
-        throw SystemWindowActionError.focusRefused(pid: target.window.pid)
+        throw SystemWindowActionError.focusRefused(pid: pid)
     }
     var raw: CFTypeRef?
     guard AXUIElementCopyAttributeValue(
-        target.appElement, kAXFocusedWindowAttribute as CFString, &raw
+        appElement, kAXFocusedWindowAttribute as CFString, &raw
     ) == .success,
         let focused = raw,
         CFGetTypeID(focused) == AXUIElementGetTypeID(),
-        CFEqual(focused as! AXUIElement, target.element)
+        CFEqual(focused as! AXUIElement, element)
     else {
-        throw SystemWindowActionError.focusRefused(pid: target.window.pid)
+        throw SystemWindowActionError.focusRefused(pid: pid)
     }
 }
 
