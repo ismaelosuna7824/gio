@@ -92,7 +92,13 @@ chrome), never a scope cut.
 ## Tasks — 1.0 desktop (plan §27-§29, §33)
 - [x] RW-22 — §27 Phase 21 Themes: `~/.config/gio/themes/` (colors/gaps/borders/launcher/bar/wallpaper/typography). Route: inline (delegated writer unavailable); DONE `027d095`, 8 theme tests green, full suite 0 failures. Bar/launcher consumption deferred to desktop integration.
 - [x] RW-23 — §28 Phase 22 Omarchy-like: `gio setup|update|doctor|uninstall` (+ autostart); doctor covers AX permission/config/version/process/IPC/displays/errors. Route: inline (delegated writer unavailable); DONE `da1636b`, 6 doctor/setup tests green, full suite 0 failures. Update/uninstall honest pre-1.0; autostart deferred (no stable binary).
-- [ ] RW-24 — §29 Milestone 0.2 verification (workspaces/multi-monitor/floating/fullscreen/rules). Route: verifier.
+- [x] RW-24 — §29 Milestone 0.2 verification (workspaces/multi-monitor/floating/fullscreen/rules). Route: inline verifier; DONE `4625e09` + verdicts below, full suite 0 failures.
+  - Workspaces: CODE PASS (9 tests) / LIVE PENDING (switching needs daemon).
+  - Multi-monitor: CODE PASS (7 tests incl. unplug) / LIVE PENDING (single display so far).
+  - Floating: CODE PASS (8 tests) / LIVE EXERCISABLE (config rule + tile).
+  - Fullscreen: CODE PASS (capture/restore tested) / LIVE PENDING (no driver yet).
+  - Rules: CODE PASS (7 tests) / LIVE EXERCISABLE (config [[window-rules]] + tile).
+  - Gap closed in verification: tile ignored rules/config — now loads live config, filters modes, honest managed[] report.
 - [ ] RW-25 — §29 Milestone 0.3 verification (hotkeys/TOML/CLI/IPC/recovery). Route: verifier.
 - [ ] RW-26 — §29 Milestone 0.4 verification (animations/menu bar/launcher). Route: verifier.
 - [ ] RW-27 — §29 Milestone 1.0 + §30 + §33: full 18-step DoD flow, LayoutEngine coverage (insert/delete/focus/move/resize/viewport/boundaries/columns/windows/switching), Core-without-GUI integration chain (event -> registry -> state -> layout -> reconciler). Route: verifier.
@@ -142,6 +148,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-21 done, commit `35cf404`. New `GioLauncher` (fuzzy search, `>`/`!` routing, NSWorkspace/shell/IPC execution) + `GioLauncherTests`; 5 tests green, full suite 0 failures, `git diff --check` clean. Scheme GioLauncher auto-appears. Next: RW-22 Themes.
 - 2026-09-28: RW-22 done, commit `027d095`. New `GioCore/Themes/` (hex colors, selective overrides, TOML loader with user→builtin→default chain, 4 baked-in palettes); 8 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-23 Omarchy experience.
 - 2026-09-28: RW-23 done, commit `da1636b`. New verbs + DoctorSetup (session facts, template install, lock-dir fix) + single-sourced template; 6 tests green, full suite 0 failures, `git diff --check` clean. ALL 23 PHASES CODE-COMPLETE. Next: RW-24..RW-27 milestone verifications.
+- 2026-09-28: RW-24 done, commit `4625e09`. Tile assembly now honors live config (rules→modes→filter, gaps→engine) with honest managed[] reporting; verdicts recorded above. Full suite 0 failures, `git diff --check` clean. Next: RW-25 (0.3 DX verification).
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
