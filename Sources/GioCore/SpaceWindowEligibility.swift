@@ -52,6 +52,22 @@ public enum SpaceWindowEligibility {
         }
     }
 
+    /// Approximate on-screen AX candidate handles for menu reporting, not write authority.
+    /// A straddling window belongs to the display containing its center; offscreen
+    /// AX handles and PID/title-only similarities are deliberately excluded.
+    public static func onScreenCandidates(ax: [AXCandidate], onScreen: [CGWindow],
+                                          display: CGRect) -> Set<WindowID> {
+        guard valid(display) else { return [] }
+        return Set(ax.compactMap { candidate -> WindowID? in
+            guard candidate.pid > 0, let title = candidate.title, !title.isEmpty,
+                  let frame = candidate.frame, valid(frame),
+                  display.contains(CGPoint(x: frame.midX, y: frame.midY)),
+                  onScreen.contains(where: { $0.pid == candidate.pid && $0.title == title &&
+                      $0.frame == frame && $0.frame.map(valid) == true }) else { return nil }
+            return candidate.windowID
+        })
+    }
+
     /// Epochs are supplied by the snapshot owner and must change on every Space notification.
     /// A stale or non-simultaneous snapshot fails closed for every candidate.
     public static func evaluate(ax: [AXCandidate], axGeneration: UInt64,

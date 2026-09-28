@@ -72,6 +72,33 @@ final class SpaceWindowEligibilityTests: XCTestCase {
         XCTAssertEqual(result.count(.missingOnScreenMatch), 1)
     }
 
+    func testMenuCandidatesCountStraddlingRejectedWindowButNotOffscreenOrSimilarity() {
+        let straddling = CGRect(x: 900, y: 120, width: 300, height: 200)
+        let offscreen = CGRect(x: 2100, y: 120, width: 300, height: 200)
+        let windows: [SpaceWindowEligibility.AXCandidate] = [
+            .init(windowID: "straddle", pid: 42, title: "Editor", frame: straddling, displayBounds: nil),
+            .init(windowID: "offscreen", pid: 42, title: "Editor", frame: offscreen, displayBounds: nil),
+            .init(windowID: "similar", pid: 42, title: "Editor", frame: frame, displayBounds: display)
+        ]
+        let cgWindows: [SpaceWindowEligibility.CGWindow] = [cg(frame: straddling), cg(frame: offscreen),
+            cg("Other", frame: frame)]
+        let candidates = SpaceWindowEligibility.onScreenCandidates(ax: windows, onScreen: cgWindows,
+            display: display)
+        XCTAssertEqual(candidates, ["straddle"])
+        let result = evaluate(windows, cgWindows)
+        XCTAssertFalse(result.eligibleWindowIDs.contains("straddle"))
+        XCTAssertEqual(result.count(.missingMetadata), 2)
+    }
+
+    func testMenuCandidatesRequireExactPIDTitleFrameAndCenter() {
+        let windows = [ax("1"), ax("2", title: "Other", frame: CGRect(x: 100, y: 100, width: 10, height: 10))]
+        XCTAssertTrue(SpaceWindowEligibility.onScreenCandidates(ax: windows,
+            onScreen: [.init(pid: 7, title: "Editor", frame: frame), cg("Other")],
+            display: display).isEmpty)
+        XCTAssertEqual(SpaceWindowEligibility.onScreenCandidates(ax: windows,
+            onScreen: [cg()], display: display), ["1"])
+    }
+
     func testPIDOnlyOrTitleOnlyNeverMatches() {
         let result = evaluate([ax("1")], [.init(pid: 7, title: "Editor", frame: frame),
                                           .init(pid: 42, title: "Other", frame: frame)])
