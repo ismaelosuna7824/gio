@@ -248,7 +248,7 @@ final class SessionHost: @unchecked Sendable {
                 continue
             }
             let visible = visibleFrames[display.id] ?? display.frame
-            let layout: LayoutResult
+            var layout: LayoutResult
             do {
                 layout = try engine().calculate(
                     workspace: tilingWorkspace(from: workspace, modes: modes),
@@ -256,6 +256,22 @@ final class SessionHost: @unchecked Sendable {
                 )
             } catch {
                 continue
+            }
+            // Niri rule: the focused column is always visible. Reveal it
+            // first, then lay out again from the scrolled offset so every
+            // frame below is computed against the viewport users see.
+            if let revealed = revealOffset(
+                workspace: workspace, layout: layout, viewport: visible
+            ), revealed != workspace.viewportOffset {
+                var scrolled = workspace
+                scrolled.viewportOffset = revealed
+                if let relaid = try? engine().calculate(
+                    workspace: tilingWorkspace(from: scrolled, modes: modes),
+                    viewport: visible
+                ) {
+                    layout = relaid
+                    workspace.viewportOffset = revealed
+                }
             }
             let (placed, _) = splitVisibleFrames(layout.frames, in: visible)
             let focused = workspace.focusedWindow
@@ -268,6 +284,27 @@ final class SessionHost: @unchecked Sendable {
                 Viewport(offset: layout.viewportOffset, width: visible.width), for: display.id
             )
         }
+    }
+
+    /// Focused column's content range revealed into the viewport.
+    /// Nil when nothing needs scrolling (or no focused window to reveal).
+    private func revealOffset(
+        workspace: Workspace, layout: LayoutResult, viewport: CGRect
+    ) -> CGFloat? {
+        guard let focused = workspace.focusedWindow,
+              let column = workspace.columns.first(where: { $0.windows.contains(focused) })
+        else {
+            return nil
+        }
+        let frames = column.windows.compactMap { layout.frames[$0] }
+        guard !frames.isEmpty else {
+            return nil
+        }
+        let lower = frames.map(\.origin.x).min()!
+        let upper = frames.map(\.maxX).max()!
+        let revealed = Viewport(offset: workspace.viewportOffset, width: viewport.width)
+            .ensureVisible(range: lower..<upper, contentWidth: layout.contentWidth)
+        return revealed.offset == workspace.viewportOffset ? nil : revealed.offset
     }
 
     func scheduleReflow() {

@@ -55,7 +55,10 @@ public struct LogEntry: Equatable, Sendable {
             return nil
         }
         let timestamp = String(parts[0].dropFirst())
-        let levelName = String(parts[1]).trimmingCharacters(in: .whitespaces).lowercased()
+        var levelName = String(parts[1]).trimmingCharacters(in: .whitespaces)
+        if levelName.hasPrefix("[") {
+            levelName.removeFirst()
+        }
         guard let level = LogLevel(name: levelName) else {
             return nil
         }

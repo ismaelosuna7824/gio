@@ -82,10 +82,11 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
         guard args.count > 1 else {
             return .success(.logs(nil))
         }
-        guard args.count == 3, args[1] == "--level",
-              let level = LogLevel(name: args[2])
-        else {
+        guard args.count == 3, args[1] == "--level" else {
             return .failure(.invalidLevel(args.dropFirst().joined(separator: " ")))
+        }
+        guard let level = LogLevel(name: args[2]) else {
+            return .failure(.invalidLevel(args[2]))
         }
         return .success(.logs(level))
     case "help", "--help", "-h":
