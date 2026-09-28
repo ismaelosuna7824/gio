@@ -68,7 +68,7 @@ chrome), never a scope cut.
 - [x] RW-05 — §10 Phase 4 Viewport: `Viewport` + `ensureVisible`, clamped offsets. Route: inline; DONE with RW-06 in `18315f1`, 12 viewport+focus tests green, full suite 0 failures.
 - [x] RW-06 — §11 Phase 5 Focus (focus-left/right/up/down, NO-OP on missing target, Alt+HJKL first). Route: inline; DONE with RW-05 in `18315f1`.
 - [x] RW-07 — §12+§13 Phases 6+7 Move + Resize (move L/R/U/D; resize-width/height + reset; resize mode). Route: inline (delegated writer unavailable); DONE `25656ad`, 15 move/resize tests green, full suite 0 failures. Resize mode (Alt+R) is a Phase 13 hotkey concern.
-- [ ] RW-08 — §14 Phase 8 Window Reconciler: sole physical writer, diff position/size/focus/mode, apply only deltas. Route: delegated writer.
+- [x] RW-08 — §14 Phase 8 Window Reconciler: sole physical writer, diff position/size/focus/mode, apply only deltas. Route: inline (delegated writer unavailable); DONE `9eaa4c4`, 6 reconciler tests green, full suite 0 failures. GioMacOS now depends on GioCore (adapters → core).
 - [ ] RW-09 — §29/§35 Milestone 0.1 Core assembly: POC -> Registry -> State -> Layout -> Viewport -> Focus -> Reconciler -> macOS, VSCode/Terminal/Chrome scenario, full Core suite green. Route: delegated writer + independent verifier.
 
 ## Tasks — WM 0.2 (plan §15-§18)
@@ -122,6 +122,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-04 done, commit `2da99bf`. New `GioCore/Layout/` (LayoutConfig/LayoutResult/LayoutEngine protocol/ScrollableLayoutEngine, absolute frames, clamped offsets, insertion-stable); 13 engine tests green, full suite 0 failures, `git diff --check` clean. Next: RW-05 Viewport.
 - 2026-09-28: RW-05+RW-06 done, commit `18315f1`. New `GioCore/Viewport/` (clamped offsets, minimal-scroll ensureVisible, wide-range pins to start) + `GioCore/Focus/` (pure H/L/J/K moves, NO-OP on missing, per-column memory); 12 tests green, full suite 0 failures, `git diff --check` clean. Focus→ensureVisible→Layout→Reconciler composition lands in RW-09. Next: RW-07 Move + Resize.
 - 2026-09-28: RW-07 done, commit `25656ad`. New `GioCore/Move/` (Niri-style edge growth, emptied-column removal, focus follows, weights travel) + `GioCore/Resize/` (width adjust/reset, height factor/reset); Column gains heightWeights, engine distributes proportionally (equal defaults unchanged); 15 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-08 Window Reconciler.
+- 2026-09-28: RW-08 done, commit `9eaa4c4`. New `GioCore/Reconciliation/` (WindowActuator protocol, ReconcileReport, WindowReconciler with minimal writes/tolerance/vanished-failed recording/focus-last) + `AXWindowActuator` (growth-aware order, readback, pid-reuse guard, shared focus primitive); 6 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-09 milestone 0.1-alpha assembly.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
