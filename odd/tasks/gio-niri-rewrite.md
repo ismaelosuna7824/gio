@@ -75,7 +75,7 @@ chrome), never a scope cut.
 - [x] RW-10 — §15 Phase 9 Workspaces: `WorkspaceManager`, 1-9 + Alt+N / Alt+Shift+N, per-workspace columns/focus/viewport. Route: inline (delegated writer unavailable); DONE `c07874a`, 9 manager tests green, full suite 0 failures. Hotkeys deferred to RW-14.
 - [x] RW-11 — §16 Phase 10 Multi-monitor: `DisplayState`, connect/disconnect/resolution/scale handling, independent workspace/viewport/focus per display. Route: inline (delegated writer unavailable); DONE `bcad74e`, 7 manager tests green, full suite 0 failures. Event wiring deferred to daemon assembly.
 - [x] RW-12 — §17 Phase 11 Floating + Fullscreen: floating outside layout, state-preserving fullscreen. Route: inline; DONE `e6f1937`, 8 mode tests green, full suite 0 failures. Live driver (hotkeys/daemon) deferred to RW-14+.
-- [ ] RW-13 — §18 Phase 12 Window Rules: TOML `[[window-rules]]`, created -> rules -> workspace/mode -> layout pipeline. Route: delegated writer.
+- [x] RW-13 — §18 Phase 12 Window Rules: TOML `[[window-rules]]`, created -> rules -> workspace/mode -> layout pipeline. Route: inline (delegated writer unavailable); DONE `7a7aae1`, 7 rule tests green, full suite 0 failures. TOML parsing deferred to RW-15.
 
 ## Tasks — DX 0.3 (plan §19-§23)
 - [ ] RW-14 — §19 Phase 13 Hotkey system: keyboard event -> `Action` only, logic lives in Core use cases. Route: delegated writer.
@@ -131,6 +131,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-10 done, commit `c07874a`. `WorkspaceManager` (nine pre-created, switch, update, cross-workspace moves with focus repair + weight carry); 9 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-11 Multi-monitor.
 - 2026-09-28: RW-11 done, commit `bcad74e`. New `GioCore/Display/` (DisplayID companion, DisplayState, DisplayManager with connect-refresh/disconnect-safe/reassign) + `GioMacOS/Displays/` live snapshot; legacy renamed LegacyDisplayID untouched; 7 tests green incl. unplug-B-keeps-A, full suite 0 failures, `git diff --check` clean. Next: RW-12 Floating + Fullscreen.
 - 2026-09-28: RW-12 done, commit `e6f1937`. Layout `tilingWorkspace` filter + registry mode lifecycle (setMode/toggleFloating/begin-endFullscreen with records); 8 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-13 Window Rules.
+- 2026-09-28: RW-13 done, commit `7a7aae1`. New `GioCore/Rules/` (WindowRule/evaluate first-match-wins/placeWindow pipeline); 7 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-14 Hotkeys.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
