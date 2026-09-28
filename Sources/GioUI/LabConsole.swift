@@ -57,6 +57,10 @@ public struct GioLabView: View {
                 Button("Tile Main Display") {
                     run(labTileMainDisplay)
                 }
+                Button("Show Log") {
+                    let lines = GioLog.entries().suffix(30).map { $0.line() }
+                    append(lines.isEmpty ? "(log empty)" : lines.joined(separator: "\n"))
+                }
                 Button("Clear Log") {
                     log = ""
                 }

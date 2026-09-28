@@ -320,6 +320,12 @@ final class SessionHost: @unchecked Sendable {
         if let main = NSScreen.main {
             actuator?.updateDisplayHeight(main.frame.height)
         }
+        // The tap starts once at launch; if permission arrived later it
+        // stayed deaf — retry here so granting + any window event heals it
+        // without relaunching.
+        if hotkeyTap == nil {
+            startTap()
+        }
         enumerateAndPlace()
         if Set(lastPIDs) != Set(snapshotPIDs()) {
             refreshEventObservation()
@@ -392,6 +398,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func apply(_ action: HotkeyAction) {
+        GioLog.record(.debug, "hotkey \(action)")
         var workspace = session.manager.currentWorkspace()
         switch action {
         case .focusLeft:
