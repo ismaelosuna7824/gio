@@ -115,6 +115,7 @@ final class IPCTests: XCTestCase {
         ) as! [String: Any]
         XCTAssertEqual(filled["columns"] as! Int, 1)
         XCTAssertEqual(filled["focusedWindow"] as! String, "7:3")
+        XCTAssertEqual(filled["windows"] as! Int, 1)
     }
 
     func testDispatchStatusAndUnknown() {

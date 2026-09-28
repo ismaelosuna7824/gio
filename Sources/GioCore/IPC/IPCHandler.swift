@@ -7,10 +7,12 @@ public func queryStatus(session: CommandSession) -> String {
     let workspace = session.manager.currentWorkspace()
     let focused: Any = workspace.focusedWindow.map { "\($0.pid):\($0.elementID)" }
         ?? NSNull()
+    let windows = workspace.columns.map(\.windows.count).reduce(0, +)
     let dict: [String: Any] = [
         "workspace": session.manager.current,
         "focusedWindow": focused,
         "columns": workspace.columns.count,
+        "windows": windows,
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
           let text = String(data: data, encoding: .utf8)
