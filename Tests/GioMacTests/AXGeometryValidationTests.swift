@@ -39,4 +39,35 @@ final class AXGeometryValidationTests: XCTestCase {
         XCTAssertFalse(AXGeometryValidation.matches(requested: requested, actual: CGPoint(x: 0, y: 99)))
         XCTAssertFalse(AXGeometryValidation.matches(requested: requested, actual: CGPoint(x: CGFloat.nan, y: 99)))
     }
+
+    func testApplyOrderIsPositionFirstOnWidthGrowth() {
+        let from = CGRect(x: 456, y: 47, width: 440, height: 1130)
+        let to = CGRect(x: 0, y: 39, width: 1800, height: 1130)
+        XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: to), .positionFirst)
+    }
+
+    func testApplyOrderIsPositionFirstOnHeightGrowth() {
+        let from = CGRect(x: 0, y: 39, width: 440, height: 400)
+        let to = CGRect(x: 0, y: 39, width: 440, height: 1130)
+        XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: to), .positionFirst)
+    }
+
+    func testApplyOrderIsSizeFirstOnShrink() {
+        let from = CGRect(x: 0, y: 39, width: 1800, height: 1130)
+        let to = CGRect(x: 456, y: 47, width: 440, height: 553)
+        XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: to), .sizeFirst)
+    }
+
+    func testApplyOrderIsSizeFirstOnEqualSize() {
+        let from = CGRect(x: 456, y: 47, width: 440, height: 553)
+        XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: from), .sizeFirst)
+        let moved = CGRect(x: 0, y: 39, width: 440, height: 553)
+        XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: moved), .sizeFirst)
+    }
+
+    func testApplyOrderIsPositionFirstOnMixedGrowOneShrinkOne() {
+        let from = CGRect(x: 456, y: 47, width: 440, height: 1130)
+        let to = CGRect(x: 0, y: 39, width: 1800, height: 400)
+        XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: to), .positionFirst)
+    }
 }

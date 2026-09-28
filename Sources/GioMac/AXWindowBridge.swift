@@ -102,7 +102,9 @@ public final class AXWindowBridge: WindowFrameBridge {
         return true
     }
 
-    /// Set size first, then position; callers roll back the entire previous frame on failure.
+    /// Growth applies position-first so the enlarged frame fits the display;
+    /// shrink and moves keep the size-first order. Callers roll back the
+    /// entire previous frame on failure.
     public func apply(_ handle: AXUIElement, frame target: CGRect) throws {
         try checkPermission()
         guard AXGeometryValidation.isValidFrame(origin: target.origin, size: target.size) else {
@@ -110,31 +112,25 @@ public final class AXWindowBridge: WindowFrameBridge {
         }
         let current = try frame(of: handle)
         let changes = AXGeometryValidation.changes(from: current, to: target)
-        let required: [(String, AXWindowError.Stage, AXWindowError)] = [
-            (kAXSizeAttribute, .sizeSettable, .sizeNotSettable),
-            (kAXPositionAttribute, .positionSettable, .positionNotSettable)
-        ]
-        for (attribute, stage, notSettable) in required.enumerated().compactMap({ index, item in
-            (index == 0 ? changes.size : changes.position) ? item : nil
-        }) {
+        let order = AXGeometryValidation.applyOrder(from: current, to: target)
+        let sizeCheck = (kAXSizeAttribute, AXWindowError.Stage.sizeSettable,
+                         AXWindowError.sizeNotSettable, changes.size)
+        let positionCheck = (kAXPositionAttribute, AXWindowError.Stage.positionSettable,
+                             AXWindowError.positionNotSettable, changes.position)
+        let ordered = order == .positionFirst ? [positionCheck, sizeCheck] : [sizeCheck, positionCheck]
+        for (attribute, stage, notSettable, changed) in ordered where changed {
             var settable = DarwinBoolean(false)
             let result = AXUIElementIsAttributeSettable(handle, attribute as CFString, &settable)
             guard result == .success else { throw AXWindowError.accessibility(stage: stage, error: result) }
             guard settable.boolValue else { throw notSettable }
         }
-        if changes.size {
-            var size = target.size
-            guard let value = AXValueCreate(.cgSize, &size) else { throw AXWindowError.invalidGeometry(.sizeWrite) }
-            let result = AXUIElementSetAttributeValue(handle, kAXSizeAttribute as CFString, value)
-            guard result == .success else { throw AXWindowError.accessibility(stage: .sizeWrite, error: result) }
-        }
-        if changes.position {
-            var point = target.origin
-            guard let value = AXValueCreate(.cgPoint, &point) else {
-                throw AXWindowError.invalidGeometry(.positionWrite)
-            }
-            let result = AXUIElementSetAttributeValue(handle, kAXPositionAttribute as CFString, value)
-            guard result == .success else { throw AXWindowError.accessibility(stage: .positionWrite, error: result) }
+        switch order {
+        case .positionFirst:
+            if changes.position { try writePosition(handle, point: target.origin) }
+            if changes.size { try writeSize(handle, size: target.size) }
+        case .sizeFirst:
+            if changes.size { try writeSize(handle, size: target.size) }
+            if changes.position { try writePosition(handle, point: target.origin) }
         }
         let actual: CGRect
         do { actual = try frame(of: handle) }
@@ -142,5 +138,21 @@ public final class AXWindowBridge: WindowFrameBridge {
         guard AXGeometryValidation.matches(requested: target, actual: actual) else {
             throw AXWindowError.frameMismatch(requested: target, actual: actual)
         }
+    }
+
+    private func writeSize(_ handle: AXUIElement, size: CGSize) throws {
+        var size = size
+        guard let value = AXValueCreate(.cgSize, &size) else { throw AXWindowError.invalidGeometry(.sizeWrite) }
+        let result = AXUIElementSetAttributeValue(handle, kAXSizeAttribute as CFString, value)
+        guard result == .success else { throw AXWindowError.accessibility(stage: .sizeWrite, error: result) }
+    }
+
+    private func writePosition(_ handle: AXUIElement, point: CGPoint) throws {
+        var point = point
+        guard let value = AXValueCreate(.cgPoint, &point) else {
+            throw AXWindowError.invalidGeometry(.positionWrite)
+        }
+        let result = AXUIElementSetAttributeValue(handle, kAXPositionAttribute as CFString, value)
+        guard result == .success else { throw AXWindowError.accessibility(stage: .positionWrite, error: result) }
     }
 }

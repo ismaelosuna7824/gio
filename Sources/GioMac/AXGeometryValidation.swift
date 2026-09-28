@@ -19,6 +19,22 @@ public enum AXGeometryValidation {
         (current.size != target.size, current.origin != target.origin)
     }
 
+    /// Write order for applying a frame change.
+    ///
+    /// Growing size-first from a tiled position can overflow the display and
+    /// get clamped (e.g. restoring 1800pt wide from x=456 clamps the width),
+    /// so any growth moves position-first. Shrinking size-first is safe and
+    /// keeps the window on screen while it gets smaller. Equal sizes (moves
+    /// or no-ops) stay on the size-first path.
+    public enum ApplyOrder {
+        case sizeFirst
+        case positionFirst
+    }
+
+    public static func applyOrder(from current: CGRect, to target: CGRect) -> ApplyOrder {
+        (target.width > current.width || target.height > current.height) ? .positionFirst : .sizeFirst
+    }
+
     public static func matches(requested: CGRect, actual: CGRect) -> Bool {
         matches(requested: requested.origin, actual: actual.origin)
             && isValidSize(requested.size) && isValidSize(actual.size)

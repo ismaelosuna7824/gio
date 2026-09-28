@@ -337,6 +337,21 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         XCTAssertEqual(bridge.frames["w"], manual)
     }
 
+    func testLargeOriginalRestoresExactlyAfterMinSizeClamp() throws {
+        let bridge = NativeMockBridge()
+        let coordinator = NativeTilingCoordinator(bridge: bridge)
+        try coordinator.registerDisplay("a", bounds: bounds)
+        let original = CGRect(x: 0, y: 39, width: 1800, height: 1130)
+        bridge.frames["w"] = original
+        try coordinator.adopt("w", on: "a")
+        bridge.constrained = ["w"]
+        bridge.clampUpTo = 100
+        // The tiled target is narrow enough to hit the mock min-size clamp,
+        // so the forward write fails and the coordinator rolls back.
+        XCTAssertEqual(try coordinator.reflow(on: "a", selected: ["w"], usableBounds: bounds), ["w"])
+        XCTAssertEqual(bridge.frames["w"], original)
+    }
+
     func testUntouchedManualMoveIsNeverRestoredOnQuit() throws {
         let bridge = NativeMockBridge()
         let coordinator = NativeTilingCoordinator(bridge: bridge)
