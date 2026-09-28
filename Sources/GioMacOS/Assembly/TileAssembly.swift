@@ -22,6 +22,7 @@ public struct TileReflowReport: Equatable, Sendable {
     public var skippedMinimized: Int
     public var skippedUntileable: Int
     public var skippedDiscovery: Int
+    public var skippedOffscreen: Int = 0
     public var reconcile: ReconcileReport
     public var displayInfo: String = ""
 
@@ -30,7 +31,7 @@ public struct TileReflowReport: Equatable, Sendable {
         for id in tiled {
             lines.append("  pid=\(id.pid) element=\(id.elementID)")
         }
-        lines.append("skipped minimized=\(skippedMinimized) untileable=\(skippedUntileable) discovery=\(skippedDiscovery)")
+        lines.append("skipped minimized=\(skippedMinimized) untileable=\(skippedUntileable) discovery=\(skippedDiscovery) offscreen=\(skippedOffscreen)")
         lines.append(
             "reconcile applied=\(reconcile.applied.count) already=\(reconcile.alreadyCorrect.count) vanished=\(reconcile.vanished.count) failed=\(reconcile.failed.count) focusChanged=\(reconcile.focusChanged) focusFailed=\(reconcile.focusFailed)"
         )
@@ -72,6 +73,26 @@ public func selectTileCandidates(_ found: [DiscoveredSystemWindow]) -> (
         }
     }
     return (candidates, skipped)
+}
+
+/// Split layout frames into visible and off-screen sets. macOS refuses
+/// fully off-screen placements (learned live: writes outside the display
+/// never stick), so only intersecting frames are attempted. The rest stay
+/// managed state for future scrolled reflows — skipped, never failed.
+public func splitVisibleFrames(
+    _ frames: [WindowID: CGRect],
+    in viewport: CGRect
+) -> (visible: [WindowID: CGRect], skippedOffscreen: Int) {
+    var visible: [WindowID: CGRect] = [:]
+    var skipped = 0
+    for (id, frame) in frames {
+        if frame.intersects(viewport) {
+            visible[id] = frame
+        } else {
+            skipped += 1
+        }
+    }
+    return (visible, skipped)
 }
 
 /// One column per window, focused on the first, viewport at zero.
@@ -130,11 +151,12 @@ public func runTileReflow(
     }
     let workspace = makeTileWorkspace(windows: managed)
     let layout = try engine.calculate(workspace: workspace, viewport: display)
+    let (visibleFrames, skippedOffscreen) = splitVisibleFrames(layout.frames, in: display)
     // Never steal focus: the desired focus is the currently focused window,
     // and only when it is among the tiled ones (it always is here).
     let reconciler = WindowReconciler(actuator: actuator)
     let reconcile = reconciler.reconcile(
-        frames: layout.frames,
+        frames: visibleFrames,
         focused: focusedID,
         currentlyFocused: focusedID
     )
@@ -143,6 +165,7 @@ public func runTileReflow(
         skippedMinimized: skippedMinimized,
         skippedUntileable: skippedUntileable,
         skippedDiscovery: found.skipped,
+        skippedOffscreen: skippedOffscreen,
         reconcile: reconcile,
         displayInfo: describeDisplayGeometry(chosen: display)
     )

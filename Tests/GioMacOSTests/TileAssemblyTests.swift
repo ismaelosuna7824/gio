@@ -69,6 +69,18 @@ final class TileAssemblyTests: XCTestCase {
         XCTAssertNil(workspace.focusedWindow)
     }
 
+    func testSplitVisibleFrames() {
+        let viewport = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let frames = [
+            WindowID(pid: 1, elementID: 1): CGRect(x: 8, y: 8, width: 400, height: 784),
+            WindowID(pid: 1, elementID: 2): CGRect(x: 900, y: 8, width: 400, height: 784),
+            WindowID(pid: 1, elementID: 3): CGRect(x: 1200, y: 8, width: 400, height: 784),
+        ]
+        let (visible, skipped) = splitVisibleFrames(frames, in: viewport)
+        XCTAssertEqual(Set(visible.keys), [WindowID(pid: 1, elementID: 1), WindowID(pid: 1, elementID: 2)])
+        XCTAssertEqual(skipped, 1)
+    }
+
     func testReportDescribesCounts() {
         let report = TileReflowReport(
             tiled: [WindowID(pid: 1, elementID: 1)],
