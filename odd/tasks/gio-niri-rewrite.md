@@ -85,7 +85,7 @@ chrome), never a scope cut.
 - [x] RW-18 — §23 Phase 17 Recovery: dead apps, vanished/late windows, display loss, invalid config, lost AX permission; stale-window purge pipeline. Route: inline (delegated writer unavailable); DONE `a2bd19d`, 7 recovery tests green, full suite 0 failures.
 
 ## Tasks — UI 0.4 (plan §24-§26)
-- [ ] RW-19 — §24 Phase 18 Animations (only after stable layout): move/resize/scroll/workspace/focus; animations never touch logical state. Route: delegated writer.
+- [x] RW-19 — §24 Phase 18 Animations (only after stable layout): move/resize/scroll/workspace/focus; animations never touch logical state. Route: inline (delegated writer unavailable); DONE `ebc49d7`, 6 animation tests green, full suite 0 failures. Player (per-frame sampling) deferred to daemon.
 - [ ] RW-20 — §25 Phase 19 Menu Bar app: workspaces, window count, WM state, reload/preferences/quit. Route: delegated writer.
 - [ ] RW-21 — §26 Phase 20 Launcher: search/open/run/workspace-switch/Gio-action via IPC (never direct Core access). Route: delegated writer.
 
@@ -137,6 +137,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-16 done, commit `564e77f`. New `GioCore/Commands/` (CLICommand/parse/usage, dispatcher over session bundle, flock lock); 5 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-17 IPC (+ `gio` executable).
 - 2026-09-28: RW-17 done, commit `af50876`. New `GioCore/IPC/` (Codable protocol, socket transport, status query, shared dispatch) + `GioCLI` executable; 7 tests green incl. real round-trips, full suite 0 failures, `git diff --check` clean. Next: RW-18 Recovery.
 - 2026-09-28: RW-18 done, commit `a2bd19d`. New `GioCore/Recovery/` (recover with reap-always/freeze-otherwise rules) + registry pid-reaping + workspace stripping; 7 tests green, full suite 0 failures, `git diff --check` clean. Invalid config + permission loss already covered by loader freeze. Next: RW-19 Animations.
+- 2026-09-28: RW-19 done, commit `ebc49d7`. New `GioCore/Animation/` (easing, lerp, WindowAnimation sampled by caller time); 6 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-20 Menu Bar.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
