@@ -116,6 +116,7 @@ chrome), never a scope cut.
 
 ## Tasks — transversal (plan §31)
 - [ ] RW-28 — §31 Logging: error/warn/info/debug/trace from early phases; `gio logs [--level]`; never log window titles via Screen Recording. Starts at RW-01, ships here. Route: inline slices.
+- [x] RW-29 — Unified GioDesktop app (user request 2026-09-28): bar+launcher+lab in one accessory process with session host (config/lock/IPC/registry/workspaces/displays/actuator), event-driven debounced reflows, display watching, global hotkey tap with swallow. DONE `f247ede`, 241 tests 0 failures, xcodebuild verified. Standalone GioBar/GioLauncher/GioLab removed; gio-poc + gio CLI stay.
 
 ## Acceptance criteria (§33 DoD + §30)
 - `swift test` green for every completed RW task; each task closes only on observed test + `git diff --check` evidence.
@@ -163,6 +164,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-25 done (no code changes — verification only). Full suite 234 tests 0 failures; `gio` binary verified headless (usage + no-session paths); GioBar/GioLauncher/GioCLI all build. Next: RW-26 (0.4 UI verification).
 - 2026-09-28: RW-26 done (no code changes — verification only). GioBar/GioLauncher/GioLab build; all one-click schemes present; full suite 0 failures. Next: RW-27 (1.0 + DoD) then RW-28 logging.
 - 2026-09-28: RW-27 done, commit `7085650`. Integration pipeline test (created→rules→registry→layout→reconcile→refocus→switch→recover, 4 tests) + gio-doctor one-click scheme (verified build; CLI stays thin client, doctor needs daemon). Full suite 238 tests 0 failures. 1.0 NOT declared — DoD walk recorded above. Next: RW-28 logging (last).
+- 2026-09-28: RW-29 done, commit `f247ede`. GioUI library + GioDesktop (SessionHost serial-queue session, IPC serving, AX/display observers, Alt+Space/HJKL/numbers tap); event refcon refactor; 241 tests 0 failures, 0 warnings, xcodebuild verified. Known limits: single-height flip (multi-display), no tap timeout recovery, swallowed keys documented. Next: RW-28 logging, then user live run of GioDesktop.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
