@@ -116,7 +116,7 @@ chrome), never a scope cut.
 
 ## Progress
 - 2026-09-28: RW-00 done (freeze branch created). Gap mapping done inline (delegated `explore` unavailable: provider free-tier restriction). Scope expanded to all 37 plan sections per user note (was: 0.1-alpha only). Next: RW-01 Phase 0 POC.
-- 2026-09-28: RW-01 done. `swift build --target GioPOC` ok; `swift test` 0 failures (9 new GioPOCTests, existing suites green); `git diff --check` clean. New files: Sources/GioPOC (POCWindow/POCCommand/POCDiscovery/POCActions/POCEvents/main), Tests/GioPOCTests, Package.swift targets. Live AX retest pending (signed binary + user Accessibility grant). Next: RW-02 Window Registry.
+- 2026-09-28: RW-01 done, commit `f05d0f9` (892 insertions, new standalone tool; exceeds ~400 advisory — cohesive new target, no size-only split). `swift build --target GioPOC` ok; `swift test` 0 failures (9 new GioPOCTests, existing suites green); `git diff --check` clean. New files: Sources/GioPOC (POCWindow/POCCommand/POCDiscovery/POCActions/POCEvents/main), Tests/GioPOCTests, Package.swift targets. Live AX retest pending (signed binary + user Accessibility grant). Next: RW-02 Window Registry.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
