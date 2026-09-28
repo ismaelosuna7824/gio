@@ -16,6 +16,13 @@ public enum AXWindowError: Error {
     case accessibility(stage: Stage, error: AXError)
 }
 
+extension AXWindowError: WindowFrameMismatch {
+    public var mismatchedFrames: (requested: CGRect, actual: CGRect)? {
+        guard case .frameMismatch(let requested, let actual) = self else { return nil }
+        return (requested, actual)
+    }
+}
+
 /// Callers supply a PID and AX window element obtained from public Accessibility APIs.
 /// AX window elements have no stable public system-wide window ID; retain the element as the handle.
 public final class AXWindowBridge: WindowFrameBridge {

@@ -7,6 +7,8 @@ public enum NativeTilingError: Error {
     case unknownWindow(WindowID)
     case noSafeRestorePosition(WindowID)
     case recoveryRequired
+    case rollbackFrameMismatch(WindowID, expected: CGRect, actual: CGRect)
+    case rollbackFrameReadFailed(WindowID, Error)
     case operationFailed(Error, rollbackFailures: [Error])
 }
 
@@ -71,11 +73,51 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
             if try bridge.canTile(owned[id]!.handle) { eligible.append(id) }
             else { skipped.append(id) }
         }
-        let targets = try TileLayout.plan(windows: eligible, in: usableBounds,
-                                          outerGap: outerGap, innerGap: innerGap)
-        let before = try apply(targets.map { ($0.window, $0.frame) })
-        for (id, frame) in before where owned[id]!.preTile == nil { owned[id]!.preTile = frame }
-        return skipped
+        // A skipped old tile would remain in place and could overlap the replanned subset.
+        let mayRetry = !ids.contains { owned[$0]!.preTile != nil }
+        var constrainedRetries = 0
+        while true {
+            let targets = try TileLayout.plan(windows: eligible, in: usableBounds,
+                                              outerGap: outerGap, innerGap: innerGap)
+            do {
+                let before = try applyDetailed(targets.map { ($0.window, $0.frame) })
+                for (id, frame) in before where owned[id]!.preTile == nil { owned[id]!.preTile = frame }
+                return skipped
+            } catch let failure as ApplyFailure {
+                let error = failure.operation
+                guard case NativeTilingError.operationFailed(let underlying, let failures) = error,
+                      failures.isEmpty, mayRetry, constrainedRetries < 4,
+                      let mismatch = (underlying as? WindowFrameMismatch)?.mismatchedFrames,
+                      ConstrainedFrame.isPlausible(requested: mismatch.requested, actual: mismatch.actual),
+                      let failed = failure.failedWrite,
+                      targets.first(where: { $0.window == failed })?.frame == mismatch.requested,
+                      eligible.contains(failed) else { throw error }
+                // AX's normal ±1pt postwrite tolerance is insufficient to prove that
+                // retrying leaves every attempted window exactly where it began.
+                var verificationFailures: [Error] = []
+                for (id, expected) in failure.previous {
+                    do {
+                        let actual = try bridge.frame(of: owned[id]!.handle)
+                        if actual != expected {
+                            verificationFailures.append(NativeTilingError.rollbackFrameMismatch(
+                                id, expected: expected, actual: actual))
+                        }
+                    } catch {
+                        verificationFailures.append(NativeTilingError.rollbackFrameReadFailed(id, error))
+                    }
+                }
+                if !verificationFailures.isEmpty {
+                    recoveryRequired = true
+                    for (id, frame) in failure.previous where owned[id]!.preTile == nil {
+                        owned[id]!.preTile = frame
+                    }
+                    throw NativeTilingError.operationFailed(underlying, rollbackFailures: verificationFailures)
+                }
+                constrainedRetries += 1
+                eligible.removeAll { $0 == failed }
+                skipped.append(failed)
+            }
+        }
     }
 
     /// Disabling one display restores its owned tiled windows, including inactive-Space cohorts.
@@ -144,14 +186,28 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
         recoveryRequired = false
     }
 
+    private struct ApplyFailure: Error {
+        let operation: NativeTilingError
+        let failedWrite: WindowID?
+        let previous: [(WindowID, CGRect)]
+    }
+
     private func apply(_ targets: [(WindowID, CGRect)]) throws -> [(WindowID, CGRect)] {
+        do { return try applyDetailed(targets) }
+        catch let failure as ApplyFailure { throw failure.operation }
+    }
+
+    private func applyDetailed(_ targets: [(WindowID, CGRect)]) throws -> [(WindowID, CGRect)] {
         var previous: [(WindowID, CGRect)] = []
+        var failedWrite: WindowID?
         do {
             for (id, target) in targets {
                 let handle = owned[id]!.handle
                 let before = try bridge.frame(of: handle)
                 previous.append((id, before)) // A failed AX write may already have mutated its target.
+                failedWrite = id
                 try bridge.apply(handle, frame: target)
+                failedWrite = nil
             }
         } catch {
             var failures: [Error] = []
@@ -167,7 +223,8 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
                     owned[id]!.preTile = frame
                 }
             }
-            throw NativeTilingError.operationFailed(error, rollbackFailures: failures)
+            throw ApplyFailure(operation: .operationFailed(error, rollbackFailures: failures),
+                               failedWrite: failures.isEmpty ? failedWrite : nil, previous: previous)
         }
         return previous
     }
