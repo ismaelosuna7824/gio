@@ -25,6 +25,69 @@ public final class WindowDiscovery {
         known.removeAll { $0.id == id }
     }
 
+    /// Enumerate all standard AX windows for a relevant PID, including other Spaces.
+    /// Any uncertain role or incomplete standard window invalidates the whole PID snapshot.
+    public func snapshotWindows(pid: pid_t) throws -> [SpaceWindowSnapshot.Window] {
+        let app = AXUIElementCreateApplication(pid)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value) == .success,
+              let elements = value as? [AXUIElement] else {
+            throw SpaceWindowSnapshotError.incompletePID(pid)
+        }
+        var result: [SpaceWindowSnapshot.Window] = []
+        for element in elements {
+            func attribute(_ name: String) throws -> CFTypeRef {
+                var value: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success,
+                      let value else { throw SpaceWindowSnapshotError.incompletePID(pid) }
+                return value
+            }
+            guard let role = try attribute(kAXRoleAttribute as String) as? String else {
+                throw SpaceWindowSnapshotError.incompletePID(pid)
+            }
+            if role != (kAXWindowRole as String) { continue }
+            guard let subrole = try attribute(kAXSubroleAttribute as String) as? String else {
+                throw SpaceWindowSnapshotError.incompletePID(pid)
+            }
+            if subrole != (kAXStandardWindowSubrole as String) { continue }
+            guard let title = try attribute(kAXTitleAttribute as String) as? String,
+                  !title.isEmpty else { throw SpaceWindowSnapshotError.incompletePID(pid) }
+            let position = try attribute(kAXPositionAttribute as String)
+            let size = try attribute(kAXSizeAttribute as String)
+            guard CFGetTypeID(position) == AXValueGetTypeID(),
+                  CFGetTypeID(size) == AXValueGetTypeID() else {
+                throw SpaceWindowSnapshotError.incompletePID(pid)
+            }
+            var point = CGPoint.zero
+            var dimensions = CGSize.zero
+            guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
+                  AXValueGetValue(size as! AXValue, .cgSize, &dimensions) else {
+                throw SpaceWindowSnapshotError.incompletePID(pid)
+            }
+            let frame = CGRect(origin: point, size: dimensions)
+            guard dimensions.width > 0, dimensions.height > 0,
+                  [frame.minX, frame.minY, frame.maxX, frame.maxY].allSatisfy(\.isFinite) else {
+                throw SpaceWindowSnapshotError.incompletePID(pid)
+            }
+            let id: WindowID
+            if let existing = known.first(where: { $0.pid == pid && CFEqual($0.element, element) }) {
+                id = existing.id
+            } else {
+                nextID += 1
+                id = WindowID("session-\(nextID)")
+                known.append((id, element, pid))
+            }
+            let bounds = NSScreen.screens.compactMap { screen -> CGRect? in
+                guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return nil }
+                let bounds = CGDisplayBounds(CGDirectDisplayID(number.uint32Value))
+                return bounds.contains(frame) ? bounds : nil
+            }.first
+            result.append(.init(id: id, element: element, pid: pid, title: title,
+                                frame: frame, displayBounds: bounds))
+        }
+        return result
+    }
+
     public func windows() -> [(WindowID, AXUIElement, CGRect)] {
         var result: [(WindowID, AXUIElement, CGRect)] = []
         for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {

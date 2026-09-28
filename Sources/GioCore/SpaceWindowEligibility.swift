@@ -5,13 +5,13 @@ import CoreGraphics
 /// the same Space generation. Never move a window solely because this heuristic matches it.
 public enum SpaceWindowEligibility {
     public struct AXCandidate {
-        public let windowID: Int
+        public let windowID: WindowID
         public let pid: Int
         public let title: String?
         public let frame: CGRect?
         public let displayBounds: CGRect?
 
-        public init(windowID: Int, pid: Int, title: String?, frame: CGRect?, displayBounds: CGRect?) {
+        public init(windowID: WindowID, pid: Int, title: String?, frame: CGRect?, displayBounds: CGRect?) {
             self.windowID = windowID
             self.pid = pid
             self.title = title
@@ -44,8 +44,8 @@ public enum SpaceWindowEligibility {
 
     public struct Result {
         /// IDs retain the input AX order; no frames are modified by this evaluator.
-        public let eligibleWindowIDs: [Int]
-        public let skipped: [(windowID: Int, reason: SkipReason)]
+        public let eligibleWindowIDs: [WindowID]
+        public let skipped: [(windowID: WindowID, reason: SkipReason)]
 
         public func count(_ reason: SkipReason) -> Int {
             skipped.filter { $0.reason == reason }.count
@@ -62,8 +62,8 @@ public enum SpaceWindowEligibility {
                           skipped: ax.map { ($0.windowID, .staleGeneration) })
         }
 
-        var eligible: [Int] = []
-        var skipped: [(windowID: Int, reason: SkipReason)] = []
+        var eligible: [WindowID] = []
+        var skipped: [(windowID: WindowID, reason: SkipReason)] = []
         for candidate in ax {
             let reason: SkipReason?
             if candidate.pid <= 0 || candidate.title?.isEmpty != false ||
