@@ -7,10 +7,10 @@ public enum SpaceCGMetadata {
     public static func parse(_ rows: [[String: Any]]) -> [SpaceWindowEligibility.CGWindow] {
         rows.compactMap { row in
             guard let number = row[kCGWindowOwnerPID as String] as? NSNumber,
-                  number.intValue > 0 else { return nil }
+                  number.int64Value > 0, number.int64Value <= Int32.max else { return nil }
             let bounds = row[kCGWindowBounds as String] as? [String: Any]
             let frame = bounds.flatMap { CGRect(dictionaryRepresentation: $0 as CFDictionary) }
-            return .init(pid: number.intValue, title: row[kCGWindowName as String] as? String,
+            return .init(pid: Int(number.int64Value), title: row[kCGWindowName as String] as? String,
                          frame: frame)
         }
     }
@@ -29,7 +29,7 @@ public struct SpaceWindowSnapshot {
         public let id: WindowID
         public let element: AXUIElement
         public let pid: pid_t
-        public let title: String
+        public let title: String?
         public let frame: CGRect
         public let displayBounds: CGRect?
 
@@ -57,7 +57,7 @@ public struct SpaceWindowSnapshot {
         for pid in pids.sorted() {
             do {
                 let found = try enumerate(pid)
-                guard found.allSatisfy({ $0.pid == pid && !$0.title.isEmpty &&
+                guard found.allSatisfy({ $0.pid == pid &&
                     $0.frame.width > 0 && $0.frame.height > 0 &&
                     [$0.frame.minX, $0.frame.minY, $0.frame.maxX, $0.frame.maxY].allSatisfy(\.isFinite)
                 }) else { throw SpaceWindowSnapshotError.incompletePID(pid) }
@@ -77,7 +77,7 @@ public struct SpaceWindowSnapshot {
     private struct Fingerprint: Hashable {
         let id: UInt32
         let pid: Int
-        let title: String
+        let title: String?
         let frame: CGRect
     }
 
@@ -85,11 +85,13 @@ public struct SpaceWindowSnapshot {
         var seenIDs: Set<UInt32> = []
         var entries: Set<Fingerprint> = []
         for row in rows {
-            guard let pid = row[kCGWindowOwnerPID as String] as? NSNumber,
-                  regularPIDs.contains(pid.int32Value) else { continue }
+            guard let pid = row[kCGWindowOwnerPID as String] as? NSNumber else { continue }
+            guard pid.int64Value > 0, pid.int64Value <= Int32.max else {
+                throw SpaceWindowSnapshotError.incompleteCGMetadata
+            }
+            guard regularPIDs.contains(pid.int32Value) else { continue }
             guard let id = row[kCGWindowNumber as String] as? NSNumber,
                   id.int64Value > 0, id.int64Value <= UInt32.max,
-                  let title = row[kCGWindowName as String] as? String, !title.isEmpty,
                   let bounds = row[kCGWindowBounds as String] as? [String: Any],
                   let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary),
                   frame.width > 0, frame.height > 0,
@@ -97,8 +99,8 @@ public struct SpaceWindowSnapshot {
                   seenIDs.insert(id.uint32Value).inserted else {
                 throw SpaceWindowSnapshotError.incompleteCGMetadata
             }
-            entries.insert(Fingerprint(id: id.uint32Value, pid: pid.intValue,
-                                       title: title, frame: frame))
+            entries.insert(Fingerprint(id: id.uint32Value, pid: Int(pid.int64Value),
+                                       title: row[kCGWindowName as String] as? String, frame: frame))
         }
         return entries
     }

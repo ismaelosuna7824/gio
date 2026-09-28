@@ -59,11 +59,10 @@ public enum SpaceWindowEligibility {
                                           display: CGRect) -> Set<WindowID> {
         guard valid(display) else { return [] }
         return Set(ax.compactMap { candidate -> WindowID? in
-            guard candidate.pid > 0, let title = candidate.title, !title.isEmpty,
-                  let frame = candidate.frame, valid(frame),
+            guard candidate.pid > 0, let frame = candidate.frame, valid(frame),
                   display.contains(CGPoint(x: frame.midX, y: frame.midY)),
-                  onScreen.contains(where: { $0.pid == candidate.pid && $0.title == title &&
-                      $0.frame == frame && $0.frame.map(valid) == true }) else { return nil }
+                  onScreen.contains(where: { $0.pid == candidate.pid && $0.frame == frame &&
+                      $0.frame.map(valid) == true && compatible(candidate.title, $0.title) }) else { return nil }
             return candidate.windowID
         })
     }
@@ -82,8 +81,7 @@ public enum SpaceWindowEligibility {
         var skipped: [(windowID: WindowID, reason: SkipReason)] = []
         for candidate in ax {
             let reason: SkipReason?
-            if candidate.pid <= 0 || candidate.title?.isEmpty != false ||
-                candidate.frame == nil || candidate.displayBounds == nil {
+            if candidate.pid <= 0 || candidate.frame == nil || candidate.displayBounds == nil {
                 reason = .missingMetadata
             } else if !valid(candidate.frame!) || !valid(candidate.displayBounds!) {
                 reason = .invalidFrame
@@ -92,17 +90,17 @@ public enum SpaceWindowEligibility {
             } else {
                 // Count across the FULL AX enumeration, including other Spaces and displays.
                 let axMatches = ax.filter {
-                    $0.pid == candidate.pid && $0.title == candidate.title && $0.frame == candidate.frame
+                    $0.pid == candidate.pid && $0.frame == candidate.frame
                 }.count
                 if axMatches != 1 {
                     reason = .ambiguousAX
                 } else {
                     let cgMatches = onScreen.filter {
-                        $0.pid == candidate.pid && $0.title == candidate.title &&
-                        $0.title?.isEmpty == false && $0.frame == candidate.frame &&
+                        $0.pid == candidate.pid && $0.frame == candidate.frame &&
                         $0.frame.map(valid) == true
-                    }.count
-                    reason = cgMatches == 1 ? nil : (cgMatches == 0 ? .missingOnScreenMatch : .ambiguousCG)
+                    }
+                    reason = cgMatches.count != 1 ? (cgMatches.isEmpty ? .missingOnScreenMatch : .ambiguousCG)
+                        : (compatible(candidate.title, cgMatches[0].title) ? nil : .missingOnScreenMatch)
                 }
             }
             if let reason {
@@ -112,6 +110,11 @@ public enum SpaceWindowEligibility {
             }
         }
         return Result(eligibleWindowIDs: eligible, skipped: skipped)
+    }
+
+    private static func compatible(_ ax: String?, _ cg: String?) -> Bool {
+        guard let ax, !ax.isEmpty, let cg, !cg.isEmpty else { return true }
+        return ax == cg
     }
 
     private static func valid(_ rect: CGRect) -> Bool {

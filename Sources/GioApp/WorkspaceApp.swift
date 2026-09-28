@@ -181,7 +181,8 @@ import GioMac
             return true
         } catch {
             skipped.removeValue(forKey: id)
-            reflowFailures[id] = "Tiling failed on display \(id.rawValue); metadata may be incomplete or stale. Retry Refresh Windows or Quit: \(error)"
+            let retry = preferences.tilingEnabled(on: id.rawValue) ? "Refresh Windows" : "Enable Automatic Tiling"
+            reflowFailures[id] = "Tiling failed on display \(id.rawValue); metadata may be incomplete or stale. Retry \(retry) or Quit: \(error)"
             updateStatus()
             return false
         }

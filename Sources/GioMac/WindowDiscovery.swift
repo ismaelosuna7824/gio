@@ -25,6 +25,17 @@ public final class WindowDiscovery {
         known.removeAll { $0.id == id }
     }
 
+    /// Only an explicitly absent AX title is optional; malformed success is not absence.
+    static func normalizedTitle(status: AXError, value: CFTypeRef?, pid: pid_t) throws -> String? {
+        switch status {
+        case .noValue, .attributeUnsupported: return nil
+        case .success:
+            guard let title = value as? String else { throw SpaceWindowSnapshotError.incompletePID(pid) }
+            return title.isEmpty ? nil : title
+        default: throw SpaceWindowSnapshotError.incompletePID(pid)
+        }
+    }
+
     /// Enumerate all standard AX windows for a relevant PID, including other Spaces.
     /// Any uncertain role or incomplete standard window invalidates the whole PID snapshot.
     public func snapshotWindows(pid: pid_t) throws -> [SpaceWindowSnapshot.Window] {
@@ -50,8 +61,9 @@ public final class WindowDiscovery {
                 throw SpaceWindowSnapshotError.incompletePID(pid)
             }
             if subrole != (kAXStandardWindowSubrole as String) { continue }
-            guard let title = try attribute(kAXTitleAttribute as String) as? String,
-                  !title.isEmpty else { throw SpaceWindowSnapshotError.incompletePID(pid) }
+            var titleValue: CFTypeRef?
+            let titleStatus = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &titleValue)
+            let title = try Self.normalizedTitle(status: titleStatus, value: titleValue, pid: pid)
             let position = try attribute(kAXPositionAttribute as String)
             let size = try attribute(kAXSizeAttribute as String)
             guard CFGetTypeID(position) == AXValueGetTypeID(),

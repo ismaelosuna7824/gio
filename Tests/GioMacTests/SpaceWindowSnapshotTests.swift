@@ -31,6 +31,35 @@ final class SpaceWindowSnapshotTests: XCTestCase {
         XCTAssertEqual(parsed[0].pid, parsed[1].pid)
     }
 
+    func testMalformedCGPIDNeverWrapsIntoRegularPID() throws {
+        let wrapped = row(pid: Int(UInt32.max) + 43)
+        XCTAssertTrue(SpaceCGMetadata.parse([wrapped]).isEmpty)
+        XCTAssertThrowsError(try assemble([wrapped]) { _ in
+            XCTFail("Malformed PID must fail before enumeration")
+            return []
+        }) { XCTAssertEqual($0 as? SpaceWindowSnapshotError, .incompleteCGMetadata) }
+        let wrapsToNonregular = row(pid: Int(UInt32.max) + 44)
+        XCTAssertTrue(SpaceCGMetadata.parse([wrapsToNonregular]).isEmpty)
+        XCTAssertThrowsError(try assemble([row(), wrapsToNonregular]) { _ in
+            XCTFail("Malformed nonregular-wrapping PID must fail before enumeration")
+            return []
+        }) { XCTAssertEqual($0 as? SpaceWindowSnapshotError, .incompleteCGMetadata) }
+        XCTAssertEqual(SpaceCGMetadata.parse([row()]).map(\.pid), [42])
+    }
+
+    func testAXTitleNormalizationRejectsMalformedSuccess() throws {
+        XCTAssertNil(try WindowDiscovery.normalizedTitle(status: .noValue, value: nil, pid: 42))
+        XCTAssertNil(try WindowDiscovery.normalizedTitle(status: .attributeUnsupported, value: nil, pid: 42))
+        XCTAssertNil(try WindowDiscovery.normalizedTitle(status: .success, value: "" as CFString, pid: 42))
+        XCTAssertEqual(try WindowDiscovery.normalizedTitle(status: .success,
+            value: "Editor" as CFString, pid: 42), "Editor")
+        for value: CFTypeRef? in [nil, NSNumber(value: 7)] {
+            XCTAssertThrowsError(try WindowDiscovery.normalizedTitle(status: .success, value: value, pid: 42)) {
+                XCTAssertEqual($0 as? SpaceWindowSnapshotError, .incompletePID(42))
+            }
+        }
+    }
+
     func testEmptyCGSkipsAXWithoutPromptOrRuntimeAccess() throws {
         let snapshot = try assemble([]) { _ in
             XCTFail("No on-screen PID should be enumerated")
@@ -71,7 +100,7 @@ final class SpaceWindowSnapshotTests: XCTestCase {
     }
 
     func testIncompleteRelevantCGMetadataFailsBeforeAXAndIrrelevantRowsDoNotBlock() throws {
-        let incomplete: [[[String: Any]]] = [[row(), row()], [row(title: nil)],
+        let incomplete: [[[String: Any]]] = [[row(), row()],
             [[kCGWindowOwnerPID as String: 42, kCGWindowNumber as String: 2]],
             [row(id: 0)]]
         for rows in incomplete {
@@ -79,6 +108,11 @@ final class SpaceWindowSnapshotTests: XCTestCase {
                 XCTFail("Incomplete CG metadata must not enumerate AX")
                 return []
             }) { XCTAssertEqual($0 as? SpaceWindowSnapshotError, .incompleteCGMetadata) }
+        }
+        for title: String? in [nil, ""] {
+            let snapshot = try assemble([row(title: title)]) { _ in [] }
+            XCTAssertEqual(snapshot.onScreen.count, 1)
+            XCTAssertEqual(snapshot.onScreen[0].title, title)
         }
         let irrelevant: [[String: Any]] = [[kCGWindowOwnerPID as String: 99],
                                           [kCGWindowOwnerPID as String: 99, kCGWindowNumber as String: 1]]

@@ -49,9 +49,22 @@ final class SpaceWindowEligibilityTests: XCTestCase {
         let result = evaluate([ax("1", title: nil), ax("2", title: ""),
                                ax("3", frame: invalid), ax("4", frame: .zero), ax("5")], [])
         XCTAssertTrue(result.eligibleWindowIDs.isEmpty)
-        XCTAssertEqual(result.count(.missingMetadata), 2)
+        XCTAssertEqual(result.count(.ambiguousAX), 3)
         XCTAssertEqual(result.count(.invalidFrame), 2)
-        XCTAssertEqual(result.count(.missingOnScreenMatch), 1)
+    }
+
+    func testOptionalTitlesAndGeometryUniqueness() {
+        for title: String? in [nil, ""] {
+            XCTAssertEqual(evaluate([ax("1")], [cg(title)]).eligibleWindowIDs, ["1"])
+            XCTAssertEqual(evaluate([ax("1", title: title)], [cg()]).eligibleWindowIDs, ["1"])
+            XCTAssertEqual(SpaceWindowEligibility.onScreenCandidates(ax: [ax("1", title: title)],
+                onScreen: [cg()], display: display), ["1"])
+        }
+        XCTAssertEqual(evaluate([ax("1", title: "A"), ax("2", title: "B")], [cg("A")]).count(.ambiguousAX), 2)
+        XCTAssertEqual(evaluate([ax("1")], [cg("Editor"), cg("Other")]).count(.ambiguousCG), 1)
+        XCTAssertEqual(evaluate([ax("1")], [cg("Other")]).count(.missingOnScreenMatch), 1)
+        XCTAssertTrue(SpaceWindowEligibility.onScreenCandidates(ax: [ax("1")],
+            onScreen: [cg("Other")], display: display).isEmpty)
     }
 
     func testEitherSnapshotFromPreviousGenerationFailsClosed() {
@@ -69,7 +82,7 @@ final class SpaceWindowEligibilityTests: XCTestCase {
         let result = evaluate([ax("1", title: "Other", display: otherDisplay), ax("2")], [cg(frame: shifted)])
         XCTAssertTrue(result.eligibleWindowIDs.isEmpty)
         XCTAssertEqual(result.count(.outOfDisplay), 1)
-        XCTAssertEqual(result.count(.missingOnScreenMatch), 1)
+        XCTAssertEqual(result.count(.ambiguousAX), 1)
     }
 
     func testMenuCandidatesCountStraddlingRejectedWindowButNotOffscreenOrSimilarity() {
