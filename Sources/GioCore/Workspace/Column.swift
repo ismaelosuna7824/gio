@@ -18,17 +18,23 @@ public struct Column: Equatable, Sendable {
     public var width: CGFloat
     public var windows: [WindowID]
     public var focusedWindowIndex: Int
+    /// Relative height weights per window; absent means 1.0. The layout
+    /// engine distributes column height proportionally (Phase 3); resize
+    /// operations (Phase 7) and moves maintain this map.
+    public var heightWeights: [WindowID: CGFloat]
 
     public init(
         id: ColumnID,
         width: CGFloat,
         windows: [WindowID] = [],
-        focusedWindowIndex: Int = 0
+        focusedWindowIndex: Int = 0,
+        heightWeights: [WindowID: CGFloat] = [:]
     ) {
         self.id = id
         self.width = width
         self.windows = windows
         self.focusedWindowIndex = focusedWindowIndex
+        self.heightWeights = heightWeights
     }
 
     /// The focused window, or nil when the column is empty or the index is

@@ -99,15 +99,21 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         for (index, column) in framedColumns.enumerated() {
             let width = widths[index]
             let count = column.windows.count
-            let height = max((usableHeight - gap * CGFloat(count - 1)) / CGFloat(count), 1)
-            for (row, id) in column.windows.enumerated() {
-                let frame = CGRect(
+            let totalWeight = column.windows.reduce(CGFloat(0)) {
+                $0 + (column.heightWeights[$1] ?? 1)
+            }
+            let distributable = usableHeight - gap * CGFloat(count - 1)
+            var y = viewport.minY + pad
+            for winID in column.windows {
+                let share = (column.heightWeights[winID] ?? 1) / totalWeight
+                let height = max(distributable * share, 1)
+                frames[winID] = CGRect(
                     x: viewport.minX + cursor - offset,
-                    y: viewport.minY + pad + CGFloat(row) * (height + gap),
+                    y: y,
                     width: width,
                     height: height
                 )
-                frames[id] = frame
+                y += height + gap
             }
             cursor += width + gap
         }
