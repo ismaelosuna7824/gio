@@ -110,7 +110,9 @@ chrome), never a scope cut.
   - Menu Bar: CODE PASS (builds, 4 pure tests, honest no-session states) / LIVE PENDING (meaningful with daemon session; user run).
   - Launcher: CODE PASS (builds, 5 tests incl. fixtures) / LIVE PENDING (user run; global hotkey needs daemon).
   - One-click play verified: GioBar, GioLab, GioLauncher, gio-poc-list, gio-poc-tile schemes all present.
-- [ ] RW-27 — §29 Milestone 1.0 + §30 + §33: full 18-step DoD flow, LayoutEngine coverage (insert/delete/focus/move/resize/viewport/boundaries/columns/windows/switching), Core-without-GUI integration chain (event -> registry -> state -> layout -> reconciler). Route: verifier.
+- [x] RW-27 — §29 Milestone 1.0 + §30 + §33: full 18-step DoD flow, LayoutEngine coverage (insert/delete/focus/move/resize/viewport/boundaries/columns/windows/switching), Core-without-GUI integration chain (event -> registry -> state -> layout -> reconciler). Route: inline verifier; DONE `7085650` (pipeline test + doctor scheme), full suite 0 failures. 1.0 NOT declared — see DoD walk below.
+  - DoD walk (§33): detect 3 windows LIVE PROVEN · columns/live placement PROVEN (2 placed, rest offscreen-skipped) · insert/remove/recover logic proven + live re-enumeration observed · H/J/K/L nav, scroll, move, resize, workspace switch, dual-monitor, floating-restore, doctor-run: logic proven, LIVE PENDING (daemon/hotkeys) · full Core suite green PROVEN (238 tests).
+  - Missing for 1.0: daemon session (serves IPC, owns event loop), OS hotkey capture, signed .app packaging, autostart (no stable binary), multi-display live. Verdict: 0.1 live-validated; 0.2–0.4 code-complete; 1.0 awaits daemon + packaging.
 
 ## Tasks — transversal (plan §31)
 - [ ] RW-28 — §31 Logging: error/warn/info/debug/trace from early phases; `gio logs [--level]`; never log window titles via Screen Recording. Starts at RW-01, ships here. Route: inline slices.
@@ -160,6 +162,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-24 done, commit `4625e09`. Tile assembly now honors live config (rules→modes→filter, gaps→engine) with honest managed[] reporting; verdicts recorded above. Full suite 0 failures, `git diff --check` clean. Next: RW-25 (0.3 DX verification).
 - 2026-09-28: RW-25 done (no code changes — verification only). Full suite 234 tests 0 failures; `gio` binary verified headless (usage + no-session paths); GioBar/GioLauncher/GioCLI all build. Next: RW-26 (0.4 UI verification).
 - 2026-09-28: RW-26 done (no code changes — verification only). GioBar/GioLauncher/GioLab build; all one-click schemes present; full suite 0 failures. Next: RW-27 (1.0 + DoD) then RW-28 logging.
+- 2026-09-28: RW-27 done, commit `7085650`. Integration pipeline test (created→rules→registry→layout→reconcile→refocus→switch→recover, 4 tests) + gio-doctor one-click scheme (verified build; CLI stays thin client, doctor needs daemon). Full suite 238 tests 0 failures. 1.0 NOT declared — DoD walk recorded above. Next: RW-28 logging (last).
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
