@@ -16,12 +16,14 @@ let package = Package(
         .executableTarget(name: "GioPOC", dependencies: ["GioMacOS"]),
         .executableTarget(name: "GioCLI", dependencies: ["GioCore"]),
         .executableTarget(name: "GioBar", dependencies: ["GioCore"]),
+        .executableTarget(name: "GioLauncher", dependencies: ["GioCore"]),
         .executableTarget(name: "GioLab", dependencies: ["GioCore", "GioMacOS"]),
         .executableTarget(name: "GioApp", dependencies: ["GioCore", "GioMac"]),
         .testTarget(name: "GioCoreTests", dependencies: ["GioCore"]),
         .testTarget(name: "GioMacTests", dependencies: ["GioMac"]),
         .testTarget(name: "GioMacOSTests", dependencies: ["GioMacOS"]),
         .testTarget(name: "GioBarTests", dependencies: ["GioBar"]),
+        .testTarget(name: "GioLauncherTests", dependencies: ["GioLauncher"]),
         .testTarget(name: "GioPOCTests", dependencies: ["GioPOC"])
     ]
 )
