@@ -87,7 +87,7 @@ chrome), never a scope cut.
 ## Tasks — UI 0.4 (plan §24-§26)
 - [x] RW-19 — §24 Phase 18 Animations (only after stable layout): move/resize/scroll/workspace/focus; animations never touch logical state. Route: inline (delegated writer unavailable); DONE `ebc49d7`, 6 animation tests green, full suite 0 failures. Player (per-frame sampling) deferred to daemon.
 - [x] RW-20 — §25 Phase 19 Menu Bar app: workspaces, window count, WM state, reload/preferences/quit. Route: inline (delegated writer unavailable); DONE `53c36e6` (GioBar SPM executable, accessory, IPC-driven, 4 tests), full suite 0 failures. Signed .app deferred to 1.0 packaging; xcodeproj untouched (external edits).
-- [ ] RW-21 — §26 Phase 20 Launcher: search/open/run/workspace-switch/Gio-action via IPC (never direct Core access). Route: delegated writer.
+- [x] RW-21 — §26 Phase 20 Launcher: search/open/run/workspace-switch/Gio-action via IPC (never direct Core access). Route: inline (delegated writer unavailable); DONE `35cf404`, 5 launcher tests green, full suite 0 failures. Global summon hotkey deferred to daemon.
 
 ## Tasks — 1.0 desktop (plan §27-§29, §33)
 - [ ] RW-22 — §27 Phase 21 Themes: `~/.config/gio/themes/` (colors/gaps/borders/launcher/bar/wallpaper/typography). Route: delegated writer.
@@ -139,6 +139,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-18 done, commit `a2bd19d`. New `GioCore/Recovery/` (recover with reap-always/freeze-otherwise rules) + registry pid-reaping + workspace stripping; 7 tests green, full suite 0 failures, `git diff --check` clean. Invalid config + permission loss already covered by loader freeze. Next: RW-19 Animations.
 - 2026-09-28: RW-19 done, commit `ebc49d7`. New `GioCore/Animation/` (easing, lerp, WindowAnimation sampled by caller time); 6 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-20 Menu Bar.
 - 2026-09-28: RW-20 done, commit `53c36e6`. New `GioBar` (status item, workspace menu, counts, reload, preferences+template, quit; polls IPC status, honest no-session); status JSON gains windows count; 4 tests green, full suite 0 failures, `git diff --check` clean. Scheme GioBar auto-appears for one-click play. Next: RW-21 Launcher.
+- 2026-09-28: RW-21 done, commit `35cf404`. New `GioLauncher` (fuzzy search, `>`/`!` routing, NSWorkspace/shell/IPC execution) + `GioLauncherTests`; 5 tests green, full suite 0 failures, `git diff --check` clean. Scheme GioLauncher auto-appears. Next: RW-22 Themes.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
