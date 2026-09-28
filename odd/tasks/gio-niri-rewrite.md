@@ -79,7 +79,7 @@ chrome), never a scope cut.
 
 ## Tasks — DX 0.3 (plan §19-§23)
 - [x] RW-14 — §19 Phase 13 Hotkey system: keyboard event -> `Action` only, logic lives in Core use cases. Route: inline (delegated writer unavailable); DONE `47d4d1b`, 5 hotkey tests green, full suite 0 failures. OS capture deferred to daemon.
-- [ ] RW-15 — §20 Phase 14 Config: `~/.config/gio/config.toml`, parser/validation/defaults/errors/reload, invalid config never breaks the WM. Route: delegated writer.
+- [x] RW-15 — §20 Phase 14 Config: `~/.config/gio/config.toml`, parser/validation/defaults/errors/reload, invalid config never breaks the WM. Route: inline (delegated writer unavailable); DONE `e88ce8b` (~500-line cohesive unit: model+parser+11 tests), full suite 0 failures. Fraction widths (≤1) vs points (>1) honored per plan.
 - [ ] RW-16 — §21 Phase 15 CLI: `gio reload|restart|list-windows|list-workspaces|focus|move|workspace|layout info`, single-instance guard. Route: delegated writer.
 - [ ] RW-17 — §22 Phase 16 IPC: CLI <-> Gio (focus/move/resize/workspace/reload/query/layout), JSON responses for scripts/launcher/bar. Route: delegated writer.
 - [ ] RW-18 — §23 Phase 17 Recovery: dead apps, vanished/late windows, display loss, invalid config, lost AX permission; stale-window purge pipeline. Route: delegated writer.
@@ -133,6 +133,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-12 done, commit `e6f1937`. Layout `tilingWorkspace` filter + registry mode lifecycle (setMode/toggleFloating/begin-endFullscreen with records); 8 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-13 Window Rules.
 - 2026-09-28: RW-13 done, commit `7a7aae1`. New `GioCore/Rules/` (WindowRule/evaluate first-match-wins/placeWindow pipeline); 7 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-14 Hotkeys.
 - 2026-09-28: RW-14 done, commit `47d4d1b`. New `GioCore/Hotkeys/` (HotkeyCombo/parser/canonical describe, HotkeyAction plan enum, dispatcher with 26 plan defaults); 5 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-15 Config.
+- 2026-09-28: RW-15 done, commit `e88ce8b`. New `GioCore/Config/` (model+defaults+resolvers, subset TOML parser, safe loader); 11 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-16 CLI.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
