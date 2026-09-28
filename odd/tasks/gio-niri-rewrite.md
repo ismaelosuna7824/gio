@@ -168,6 +168,7 @@ chrome), never a scope cut.
 - 2026-09-28: scroll-follow wired (`041ca65`): every daemon reflow reveals the focused column (Niri rule) and re-lays-out from the scrolled offset — Alt+L past the edge now scrolls. Same commit fixes LogEntry.parse (bracket bug: zero lines ever parsed; earlier green misread through truncated grep) + invalidLevel naming. Suite re-verified without truncation: 247 tests, 0 failures.
 - 2026-09-28: RW-29 done, commit `f247ede`. GioUI library + GioDesktop (SessionHost serial-queue session, IPC serving, AX/display observers, Alt+Space/HJKL/numbers tap); event refcon refactor; 241 tests 0 failures, 0 warnings, xcodebuild verified. Known limits: single-height flip (multi-display), no tap timeout recovery, swallowed keys documented. Next: RW-28 logging, then user live run of GioDesktop.
 - 2026-09-28: first live GioDesktop run showed nothing — MenuBarController.setup never ran (not an app delegate anymore). Fix `3187208`: explicit start() + debug console auto-opens without permission. Bonus signal: 2 tests failed only because the live daemon held the lock and answered IPC — suite now daemon-agnostic.
+- 2026-09-28: permission re-grant loop fixed (`ab7222f`): the Gio app target now builds the unified desktop (same bundle ID + team + LSUIElement, Swift 6 mode), so TCC identity is stable across rebuilds. Verified signed TeamIdentifier=2CAK428VHF. Run from Xcode with the Gio scheme from now on (not the SPM GioDesktop scheme).
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
