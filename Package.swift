@@ -7,6 +7,7 @@ let package = Package(
     products: [.library(name: "GioCore", targets: ["GioCore"]),
                .library(name: "GioMac", targets: ["GioMac"]),
                .library(name: "GioMacOS", targets: ["GioMacOS"]),
+               .library(name: "GioUI", targets: ["GioUI"]),
                .executable(name: "gio-poc", targets: ["GioPOC"]),
                .executable(name: "GioApp", targets: ["GioApp"])],
     targets: [
