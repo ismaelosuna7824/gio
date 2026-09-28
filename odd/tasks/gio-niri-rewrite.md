@@ -73,7 +73,7 @@ chrome), never a scope cut.
 
 ## Tasks — WM 0.2 (plan §15-§18)
 - [x] RW-10 — §15 Phase 9 Workspaces: `WorkspaceManager`, 1-9 + Alt+N / Alt+Shift+N, per-workspace columns/focus/viewport. Route: inline (delegated writer unavailable); DONE `c07874a`, 9 manager tests green, full suite 0 failures. Hotkeys deferred to RW-14.
-- [ ] RW-11 — §16 Phase 10 Multi-monitor: `DisplayState`, connect/disconnect/resolution/scale handling, independent workspace/viewport/focus per display. Route: delegated writer.
+- [x] RW-11 — §16 Phase 10 Multi-monitor: `DisplayState`, connect/disconnect/resolution/scale handling, independent workspace/viewport/focus per display. Route: inline (delegated writer unavailable); DONE `bcad74e`, 7 manager tests green, full suite 0 failures. Event wiring deferred to daemon assembly.
 - [ ] RW-12 — §17 Phase 11 Floating + Fullscreen: floating outside layout, state-preserving fullscreen. Route: inline or delegated by size.
 - [ ] RW-13 — §18 Phase 12 Window Rules: TOML `[[window-rules]]`, created -> rules -> workspace/mode -> layout pipeline. Route: delegated writer.
 
@@ -129,6 +129,7 @@ chrome), never a scope cut.
 - 2026-09-28: tile re-run after flip fix: applied=2 (writes now succeed), rest failed on off-screen columns (x=1824 on 1800 display — macOS never places fully off-screen windows). Fix `aec9643`: only intersecting frames are attempted, rest counted as skipped-offscreen for future scrolled reflows. Awaiting re-run expecting applied≈2-3, failed=0.
 - 2026-09-28: MILESTONE 0.1 LIVE-VALIDATED. Re-run: failed=0, already=2 (placed windows persist across runs, idempotent), offscreen=9 skipped by design, 0 bad skips. Placement + stability proven on real macOS. RW-09 CLOSED. Next: RW-10 Workspaces (0.2) or user live retest.
 - 2026-09-28: RW-10 done, commit `c07874a`. `WorkspaceManager` (nine pre-created, switch, update, cross-workspace moves with focus repair + weight carry); 9 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-11 Multi-monitor.
+- 2026-09-28: RW-11 done, commit `bcad74e`. New `GioCore/Display/` (DisplayID companion, DisplayState, DisplayManager with connect-refresh/disconnect-safe/reassign) + `GioMacOS/Displays/` live snapshot; legacy renamed LegacyDisplayID untouched; 7 tests green incl. unplug-B-keeps-A, full suite 0 failures, `git diff --check` clean. Next: RW-12 Floating + Fullscreen.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
