@@ -13,6 +13,10 @@ import GioCore
 /// (the §35 strip), minimized and untileable windows skipped with counts,
 /// focus never stolen (the desired focus is the currently focused window
 /// when it is among the tiled ones, else nil).
+///
+/// Coordinates: `display` is Cocoa (e.g. `visibleFrame`); `displayHeight` is
+/// the FULL display height for the AX flip. Discovery frames arrive AX-native
+/// and are converted on ingest; layout and reconcile run in Cocoa.
 public struct TileReflowReport: Equatable, Sendable {
     public var tiled: [WindowID]
     public var skippedMinimized: Int
@@ -86,10 +90,13 @@ public func makeTileWorkspace(windows: [ManagedWindow]) -> Workspace {
 
 public func runTileReflow(
     display: CGRect,
+    displayHeight: CGFloat,
     engine: ScrollableLayoutEngine = ScrollableLayoutEngine(),
-    actuator: AXWindowActuator = AXWindowActuator(),
+    actuator: AXWindowActuator? = nil,
     registry: WindowRegistry = WindowRegistry()
 ) throws -> TileReflowReport {
+    let flip = AXVerticalFlip(displayHeight: displayHeight)
+    let actuator = actuator ?? AXWindowActuator(displayHeight: displayHeight)
     let found = try discoverSystemWindows()
     let (candidates, skippedMinimized) = selectTileCandidates(found.windows)
     var managed: [ManagedWindow] = []
@@ -112,7 +119,7 @@ public func runTileReflow(
             pid: candidate.window.pid,
             application: candidate.window.appName,
             title: candidate.window.title ?? "",
-            frame: candidate.window.frame,
+            frame: flip.toCocoa(candidate.window.frame),
             mode: .tiled
         )
         try registry.register(window)

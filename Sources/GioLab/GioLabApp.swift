@@ -28,13 +28,15 @@ func labListWindows() -> String {
 }
 
 func labTileMainDisplay() -> String {
-    guard let display = NSScreen.main?.visibleFrame,
-          display.width > 0, display.height > 0
+    guard let screen = NSScreen.main,
+          screen.visibleFrame.width > 0, screen.visibleFrame.height > 0
     else {
         return "tile failed: no usable main display"
     }
     do {
-        return try runTileReflow(display: display).describe()
+        return try runTileReflow(
+            display: screen.visibleFrame, displayHeight: screen.frame.height
+        ).describe()
     } catch {
         return "tile failed: \(error)"
     }

@@ -91,11 +91,15 @@ case .events:
     }
     listenForSystemWindowEvents()
 case .tile:
-    guard let display = NSScreen.main?.visibleFrame, display.width > 0, display.height > 0 else {
+    guard let screen = NSScreen.main,
+          screen.visibleFrame.width > 0, screen.visibleFrame.height > 0
+    else {
         cliFail("tile failed: no usable main display")
     }
     do {
-        let report = try runTileReflow(display: display)
+        let report = try runTileReflow(
+            display: screen.visibleFrame, displayHeight: screen.frame.height
+        )
         print(report.describe())
     } catch is AXPermissionError {
         cliPermissionDenied()

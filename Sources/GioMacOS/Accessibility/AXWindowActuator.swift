@@ -22,8 +22,13 @@ public final class AXWindowActuator: WindowActuator {
     }
 
     private var handles: [UInt64: Handle] = [:]
+    private let flip: AXVerticalFlip
 
-    public init() {}
+    /// - Parameter displayHeight: FULL display height for the AX/Cocoa flip
+    ///   (RW-09: main display). Frames cross this boundary in Cocoa coords.
+    public init(displayHeight: CGFloat) {
+        self.flip = AXVerticalFlip(displayHeight: displayHeight)
+    }
 
     public func register(
         elementID: UInt64,
@@ -50,14 +55,17 @@ public final class AXWindowActuator: WindowActuator {
         guard let handle = handle(for: id) else {
             return nil
         }
-        return try readFrame(handle.element)
+        return try readFrame(handle.element).map { flip.toCocoa($0) }
     }
 
     public func setFrame(_ frame: CGRect, for id: WindowID) throws {
+        // Cocoa in, AX on the wire: convert first, then all logic below is
+        // in AX space (order rule, verification). Returned frame is Cocoa.
+        let target = flip.toAX(frame)
         try actuatorPermission()
-        guard frame.origin.x.isFinite, frame.origin.y.isFinite,
-              frame.size.width.isFinite, frame.size.height.isFinite,
-              frame.size.width > 0, frame.size.height > 0
+        guard target.origin.x.isFinite, target.origin.y.isFinite,
+              target.size.width.isFinite, target.size.height.isFinite,
+              target.size.width > 0, target.size.height > 0
         else {
             throw SystemWindowActionError.writeFailed(attribute: "frame", status: .failure)
         }
@@ -69,24 +77,24 @@ public final class AXWindowActuator: WindowActuator {
             // Vanished between diff and write: report honestly, write nothing.
             throw SystemWindowActionError.frameMismatch(requested: frame, actual: .zero)
         }
-        if framesEqual(current, frame) {
+        if framesEqual(current, target) {
             return
         }
         try checkAXSettable(handle.element, attribute: kAXPositionAttribute as String)
         try checkAXSettable(handle.element, attribute: kAXSizeAttribute as String)
-        let growing = frame.size.width > current.size.width + 1
-            || frame.size.height > current.size.height + 1
+        let growing = target.size.width > current.size.width + 1
+            || target.size.height > current.size.height + 1
         if growing {
-            try writeAXPosition(frame.origin, to: handle.element)
-            try writeAXSize(frame.size, to: handle.element)
+            try writeAXPosition(target.origin, to: handle.element)
+            try writeAXSize(target.size, to: handle.element)
         } else {
-            try writeAXSize(frame.size, to: handle.element)
-            try writeAXPosition(frame.origin, to: handle.element)
+            try writeAXSize(target.size, to: handle.element)
+            try writeAXPosition(target.origin, to: handle.element)
         }
         let actual = try readFrame(handle.element)
-        guard let actual, framesEqual(actual, frame) else {
+        guard let actual, framesEqual(actual, target) else {
             throw SystemWindowActionError.frameMismatch(
-                requested: frame, actual: actual ?? .zero
+                requested: frame, actual: actual.map { flip.toCocoa($0) } ?? .zero
             )
         }
     }
