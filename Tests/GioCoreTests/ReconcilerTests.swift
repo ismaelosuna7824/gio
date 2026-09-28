@@ -99,6 +99,8 @@ final class ReconcilerTests: XCTestCase {
         XCTAssertEqual(report.vanished, [id(1)])
         XCTAssertEqual(report.failed, [id(2)])
         XCTAssertEqual(report.applied, [id(3)])
+        XCTAssertEqual(report.failureNotes, [id(2): "unreadable"])
+        XCTAssertEqual(report.firstFailure, "unreadable")
     }
 
     func testFocusAppliedLastOnlyWhenChanged() {

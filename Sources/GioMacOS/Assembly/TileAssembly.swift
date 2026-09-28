@@ -29,6 +29,9 @@ public struct TileReflowReport: Equatable, Sendable {
         lines.append(
             "reconcile applied=\(reconcile.applied.count) already=\(reconcile.alreadyCorrect.count) vanished=\(reconcile.vanished.count) failed=\(reconcile.failed.count) focusChanged=\(reconcile.focusChanged) focusFailed=\(reconcile.focusFailed)"
         )
+        if let first = reconcile.firstFailure {
+            lines.append("firstFailure=\(first)")
+        }
         return lines.joined(separator: "\n")
     }
 }

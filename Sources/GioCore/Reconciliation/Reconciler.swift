@@ -21,6 +21,9 @@ public struct ReconcileReport: Equatable, Sendable {
     public var alreadyCorrect: [WindowID]
     public var vanished: [WindowID]
     public var failed: [WindowID]
+    /// First error description per failed window, so live retests report
+    /// causes instead of bare IDs. Deterministic: sorted by ID on read.
+    public var failureNotes: [WindowID: String]
     public var focusChanged: Bool
     public var focusFailed: Bool
 
@@ -29,6 +32,7 @@ public struct ReconcileReport: Equatable, Sendable {
         alreadyCorrect: [WindowID] = [],
         vanished: [WindowID] = [],
         failed: [WindowID] = [],
+        failureNotes: [WindowID: String] = [:],
         focusChanged: Bool = false,
         focusFailed: Bool = false
     ) {
@@ -36,8 +40,14 @@ public struct ReconcileReport: Equatable, Sendable {
         self.alreadyCorrect = alreadyCorrect
         self.vanished = vanished
         self.failed = failed
+        self.failureNotes = failureNotes
         self.focusChanged = focusChanged
         self.focusFailed = focusFailed
+    }
+
+    /// Deterministic first failure for display.
+    public var firstFailure: String? {
+        failureNotes.keys.sorted().first.flatMap { failureNotes[$0] }
     }
 }
 
@@ -68,6 +78,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 actual = try actuator.frame(of: id)
             } catch {
                 report.failed.append(id)
+                report.failureNotes[id] = String(describing: error)
                 continue
             }
             guard let actual else {
@@ -83,6 +94,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 report.applied.append(id)
             } catch {
                 report.failed.append(id)
+                report.failureNotes[id] = String(describing: error)
             }
         }
         if let focused, focused != currentlyFocused {
