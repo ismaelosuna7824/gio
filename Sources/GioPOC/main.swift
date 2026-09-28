@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import GioMacOS
@@ -82,4 +83,16 @@ case .events:
         cliFail(cliPermissionMessage())
     }
     listenForSystemWindowEvents()
+case .tile:
+    guard let display = NSScreen.main?.visibleFrame, display.width > 0, display.height > 0 else {
+        cliFail("tile failed: no usable main display")
+    }
+    do {
+        let report = try runTileReflow(display: display)
+        print(report.describe())
+    } catch is AXPermissionError {
+        cliFail(cliPermissionMessage())
+    } catch {
+        cliFail("tile failed: \(error)")
+    }
 }

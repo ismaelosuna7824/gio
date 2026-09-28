@@ -38,6 +38,7 @@ final class CLICommandTests: XCTestCase {
 
     func testParseEventsHelpAndUnknown() throws {
         XCTAssertEqual(try parseCLICommand(["events"]).get(), .events)
+        XCTAssertEqual(try parseCLICommand(["tile"]).get(), .tile)
         XCTAssertEqual(try parseCLICommand(["help"]).get(), .help)
         XCTAssertEqual(try parseCLICommand([]).mapError { $0 }.failure, .noArguments)
         XCTAssertEqual(
@@ -48,7 +49,7 @@ final class CLICommandTests: XCTestCase {
 
     func testUsageMentionsAllVerbs() {
         let usage = cliUsage()
-        for verb in ["list-windows", "focus", "move", "resize", "events"] {
+        for verb in ["list-windows", "focus", "move", "resize", "tile", "events"] {
             XCTAssertTrue(usage.contains(verb), "usage missing \(verb)")
         }
     }

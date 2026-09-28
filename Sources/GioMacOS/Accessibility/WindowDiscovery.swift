@@ -82,6 +82,30 @@ public func discoverSystemWindows() throws -> SystemWindowDiscoveryResult {
     return SystemWindowDiscoveryResult(windows: found, skipped: skipped)
 }
 
+/// Pre-tile probe: settable position/size and neither zoomed (maximized,
+/// non-fullscreen) nor fullscreen. Zoomed windows report settable geometry
+/// yet ignore resizes, poisoning whole batches — skip them read-only, never
+/// auto-unzoom. Missing or unreadable flags mean NOT zoomed. Live-only.
+public func axIsTileable(_ element: AXUIElement) -> Bool {
+    for attribute in [kAXPositionAttribute, kAXSizeAttribute] {
+        var settable = DarwinBoolean(false)
+        let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
+        guard status == .success, settable.boolValue else {
+            return false
+        }
+    }
+    for name in ["AXZoomed", "AXFullScreen", "AXFullscreen"] {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &raw) == .success else {
+            continue
+        }
+        if let zoomed = raw as? Bool, zoomed {
+            return false
+        }
+    }
+    return true
+}
+
 func axIsStandardWindow(_ element: AXUIElement) -> Bool {
     var rawRole: CFTypeRef?
     var rawSubrole: CFTypeRef?
