@@ -14,6 +14,13 @@ func cliPermissionMessage() -> String {
     "Accessibility permission missing: enable gio-poc under System Settings → Privacy & Security → Accessibility, then retry."
 }
 
+/// Shows the system accessibility dialog first (CLI tools never get it
+/// otherwise), then exits with guidance.
+func cliPermissionDenied() -> Never {
+    _ = requestAXPermission()
+    cliFail(cliPermissionMessage())
+}
+
 let cliArguments = Array(CommandLine.arguments.dropFirst())
 let cliCommand: CLICommand = {
     switch parseCLICommand(cliArguments) {
@@ -28,7 +35,7 @@ func cliEnumerate() -> SystemWindowDiscoveryResult {
     do {
         return try discoverSystemWindows()
     } catch is AXPermissionError {
-        cliFail(cliPermissionMessage())
+        cliPermissionDenied()
     } catch {
         cliFail("discovery failed: \(error)")
     }
@@ -80,7 +87,7 @@ case .events:
     do {
         try requireAXPermission()
     } catch {
-        cliFail(cliPermissionMessage())
+        cliPermissionDenied()
     }
     listenForSystemWindowEvents()
 case .tile:
@@ -91,7 +98,7 @@ case .tile:
         let report = try runTileReflow(display: display)
         print(report.describe())
     } catch is AXPermissionError {
-        cliFail(cliPermissionMessage())
+        cliPermissionDenied()
     } catch {
         cliFail("tile failed: \(error)")
     }
