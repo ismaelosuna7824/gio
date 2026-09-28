@@ -165,6 +165,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-26 done (no code changes — verification only). GioBar/GioLauncher/GioLab build; all one-click schemes present; full suite 0 failures. Next: RW-27 (1.0 + DoD) then RW-28 logging.
 - 2026-09-28: RW-27 done, commit `7085650`. Integration pipeline test (created→rules→registry→layout→reconcile→refocus→switch→recover, 4 tests) + gio-doctor one-click scheme (verified build; CLI stays thin client, doctor needs daemon). Full suite 238 tests 0 failures. 1.0 NOT declared — DoD walk recorded above. Next: RW-28 logging (last).
 - 2026-09-28: RW-29 done, commit `f247ede`. GioUI library + GioDesktop (SessionHost serial-queue session, IPC serving, AX/display observers, Alt+Space/HJKL/numbers tap); event refcon refactor; 241 tests 0 failures, 0 warnings, xcodebuild verified. Known limits: single-height flip (multi-display), no tap timeout recovery, swallowed keys documented. Next: RW-28 logging, then user live run of GioDesktop.
+- 2026-09-28: first live GioDesktop run showed nothing — MenuBarController.setup never ran (not an app delegate anymore). Fix `3187208`: explicit start() + debug console auto-opens without permission. Bonus signal: 2 tests failed only because the live daemon held the lock and answered IPC — suite now daemon-agnostic.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
