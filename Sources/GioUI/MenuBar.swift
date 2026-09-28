@@ -8,6 +8,7 @@ import GioCore
 /// events; shows an honest `Gio` with everything disabled when no session
 /// answers. Runs accessory (no Dock icon) straight from the SPM executable;
 /// the signed .app bundle is 1.0 packaging work.
+@MainActor
 public final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
@@ -19,12 +20,18 @@ public final class MenuBarController: NSObject {
         super.init()
     }
 
-    func applicationDidFinishLaunching(_ note: Notification) {
+    /// Build the status item and start polling. Call once from the host
+    /// (this controller is no longer an app delegate — nothing calls it
+    /// back automatically).
+    public func start() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.title = "Gio"
         statusItem.menu = buildMenu(state: nil)
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            self?.refresh()
+            // Fires on the main run loop thread by construction.
+            MainActor.assumeIsolated {
+                self?.refresh()
+            }
         }
         timer?.tolerance = 1
         refresh()

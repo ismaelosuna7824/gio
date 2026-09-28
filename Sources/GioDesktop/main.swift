@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GioMacOS
 import GioUI
 import SwiftUI
 
@@ -33,8 +34,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         let bar = MenuBarController()
         bar.onOpenLauncher = { [weak self] in self?.showLauncher() }
         bar.onOpenDebug = { [weak self] in self?.toggleLab() }
+        bar.start()
         self.bar = bar
         host.onSummonLauncher = { [weak self] in self?.showLauncher() }
+        // First contact: no permission means a deaf session — open the
+        // debug console on its Request Access button instead of silence.
+        if !hasAXPermission() {
+            toggleLab()
+        }
     }
 
     private func showLauncher() {
