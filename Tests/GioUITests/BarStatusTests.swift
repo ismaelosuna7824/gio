@@ -1,5 +1,5 @@
 import XCTest
-@testable import GioBar
+@testable import GioUI
 
 /// Bar state parsing and title rendering. The AppKit shell (status item,
 /// menu, timer) is thin and live-only by design.

@@ -8,9 +8,16 @@ import GioCore
 /// events; shows an honest `Gio` with everything disabled when no session
 /// answers. Runs accessory (no Dock icon) straight from the SPM executable;
 /// the signed .app bundle is 1.0 packaging work.
-final class BarDelegate: NSObject, NSApplicationDelegate {
+public final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
+    /// Host-provided: summon the launcher window / debug console.
+    public var onOpenLauncher: (() -> Void)?
+    public var onOpenDebug: (() -> Void)?
+
+    public override init() {
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ note: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -70,6 +77,16 @@ final class BarDelegate: NSObject, NSApplicationDelegate {
         )
         preferences.target = self
         menu.addItem(preferences)
+        let launcher = NSMenuItem(
+            title: "Launcher…", action: #selector(openLauncher), keyEquivalent: ""
+        )
+        launcher.target = self
+        menu.addItem(launcher)
+        let debug = NSMenuItem(
+            title: "Debug Console", action: #selector(openDebug), keyEquivalent: ""
+        )
+        debug.target = self
+        menu.addItem(debug)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
             title: "Quit GioBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""
@@ -98,12 +115,12 @@ final class BarDelegate: NSObject, NSApplicationDelegate {
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
-}
 
-func runGioBar() {
-    let delegate = BarDelegate()
-    let app = NSApplication.shared
-    app.delegate = delegate
-    app.setActivationPolicy(.accessory)
-    app.run()
+    @objc private func openLauncher() {
+        onOpenLauncher?()
+    }
+
+    @objc private func openDebug() {
+        onOpenDebug?()
+    }
 }

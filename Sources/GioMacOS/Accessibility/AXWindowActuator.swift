@@ -22,12 +22,24 @@ public final class AXWindowActuator: WindowActuator {
     }
 
     private var handles: [UInt64: Handle] = [:]
-    private let flip: AXVerticalFlip
+    private var flip: AXVerticalFlip
 
-    /// - Parameter displayHeight: FULL display height for the AX/Cocoa flip
+    /// - Parameter displayHeight: FULL display height for the AX flip
     ///   (RW-09: main display). Frames cross this boundary in Cocoa coords.
     public init(displayHeight: CGFloat) {
         self.flip = AXVerticalFlip(displayHeight: displayHeight)
+    }
+
+    /// Refresh the flip height (display topology changed). Handles stay
+    /// registered — only the coordinate frame updates.
+    public func updateDisplayHeight(_ height: CGFloat) {
+        flip = AXVerticalFlip(displayHeight: height)
+    }
+
+    /// Raw element for live probes (tileability checks at reflow time).
+    /// Pid-guarded like every other access.
+    public func element(for id: WindowID) -> AXUIElement? {
+        handle(for: id)?.element
     }
 
     public func register(

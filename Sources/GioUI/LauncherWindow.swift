@@ -43,7 +43,12 @@ func runLauncherEntry(_ entry: LauncherEntry) -> String {
     }
 }
 
-struct GioLauncherView: View {
+public struct GioLauncherView: View {
+    var dismiss: () -> Void = {}
+
+    public init(dismiss: @escaping () -> Void = {}) {
+        self.dismiss = dismiss
+    }
     @State private var text = ""
     @State private var status = "Type to search apps, `> ` for Gio commands, `! ` for shell."
     @State private var apps: [LauncherEntry] = scanApplications(directories: defaultApplicationDirectories())
@@ -59,7 +64,7 @@ struct GioLauncherView: View {
         return Array(searchLauncherEntries(trimmed, in: apps).prefix(8))
     }
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("> vscode · > workspace 2 · !ls", text: $text, onCommit: commit)
                 .textFieldStyle(.roundedBorder)
@@ -80,25 +85,16 @@ struct GioLauncherView: View {
     private func commit() {
         switch routeLauncherInput(text, apps: apps) {
         case .empty:
-            NSApplication.shared.terminate(nil)
+            dismiss()
         case .runEntry(let entry):
             status = runLauncherEntry(entry)
             if case .app = entry {
-                NSApplication.shared.terminate(nil)
+                dismiss()
             }
         case .noMatch:
             status = "no match"
         case .invalid(let message):
             status = message
-        }
-    }
-}
-
-@main
-struct GioLauncherApp: App {
-    var body: some Scene {
-        WindowGroup {
-            GioLauncherView()
         }
     }
 }

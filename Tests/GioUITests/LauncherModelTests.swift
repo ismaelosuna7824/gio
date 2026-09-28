@@ -1,5 +1,5 @@
 import XCTest
-@testable import GioLauncher
+@testable import GioUI
 
 /// Plan §26: ranking, routing, app scanning over fixtures.
 final class LauncherModelTests: XCTestCase {

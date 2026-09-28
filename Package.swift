@@ -13,17 +13,15 @@ let package = Package(
         .target(name: "GioCore"),
         .target(name: "GioMac", dependencies: ["GioCore"]),
         .target(name: "GioMacOS", dependencies: ["GioCore"]),
+        .target(name: "GioUI", dependencies: ["GioCore", "GioMacOS"]),
         .executableTarget(name: "GioPOC", dependencies: ["GioMacOS"]),
         .executableTarget(name: "GioCLI", dependencies: ["GioCore"]),
-        .executableTarget(name: "GioBar", dependencies: ["GioCore"]),
-        .executableTarget(name: "GioLauncher", dependencies: ["GioCore"]),
-        .executableTarget(name: "GioLab", dependencies: ["GioCore", "GioMacOS"]),
+        .executableTarget(name: "GioDesktop", dependencies: ["GioCore", "GioMacOS", "GioUI"]),
         .executableTarget(name: "GioApp", dependencies: ["GioCore", "GioMac"]),
         .testTarget(name: "GioCoreTests", dependencies: ["GioCore"]),
         .testTarget(name: "GioMacTests", dependencies: ["GioMac"]),
         .testTarget(name: "GioMacOSTests", dependencies: ["GioMacOS"]),
-        .testTarget(name: "GioBarTests", dependencies: ["GioBar"]),
-        .testTarget(name: "GioLauncherTests", dependencies: ["GioLauncher"]),
+        .testTarget(name: "GioUITests", dependencies: ["GioUI"]),
         .testTarget(name: "GioPOCTests", dependencies: ["GioPOC"])
     ]
 )

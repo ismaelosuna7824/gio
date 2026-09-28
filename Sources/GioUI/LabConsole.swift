@@ -3,19 +3,6 @@ import GioCore
 import GioMacOS
 import SwiftUI
 
-/// GioLab: minimal validation harness for the 0.1-alpha pipeline. NOT the
-/// RW-20 menu bar app — a throwaway-window tool so live retests run from
-/// Xcode with buttons instead of CLI permission dances. Thin by design:
-/// all logic lives in GioMacOS/GioCore; this file only renders state.
-@main
-struct GioLabApp: App {
-    var body: some Scene {
-        WindowGroup {
-            GioLabView()
-        }
-    }
-}
-
 func labListWindows() -> String {
     do {
         let result = try discoverSystemWindows()
@@ -42,12 +29,13 @@ func labTileMainDisplay() -> String {
     }
 }
 
-struct GioLabView: View {
+public struct GioLabView: View {
+    public init() {}
     @State private var trusted = hasAXPermission()
     @State private var log = "Ready. Grant access, then List or Tile.\n"
     @State private var running = false
 
-    var body: some View {
+    public var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Accessibility: \(trusted ? "granted" : "missing")")
