@@ -82,7 +82,7 @@ chrome), never a scope cut.
 - [x] RW-15 — §20 Phase 14 Config: `~/.config/gio/config.toml`, parser/validation/defaults/errors/reload, invalid config never breaks the WM. Route: inline (delegated writer unavailable); DONE `e88ce8b` (~500-line cohesive unit: model+parser+11 tests), full suite 0 failures. Fraction widths (≤1) vs points (>1) honored per plan.
 - [x] RW-16 — §21 Phase 15 CLI: `gio reload|restart|list-windows|list-workspaces|focus|move|workspace|layout info`, single-instance guard. Route: inline (delegated writer unavailable); DONE `564e77f` (language+dispatcher+lock, 5 tests), full suite 0 failures. Executable deferred to RW-17 (hollow without transport) — explicit ordering call.
 - [x] RW-17 — §22 Phase 16 IPC: CLI <-> Gio (focus/move/resize/workspace/reload/query/layout), JSON responses for scripts/launcher/bar. Route: inline (delegated writer unavailable); DONE `af50876` (transport+status+`gio` binary, 7 tests incl. real round-trips), full suite 0 failures. Daemon hosting deferred.
-- [ ] RW-18 — §23 Phase 17 Recovery: dead apps, vanished/late windows, display loss, invalid config, lost AX permission; stale-window purge pipeline. Route: delegated writer.
+- [x] RW-18 — §23 Phase 17 Recovery: dead apps, vanished/late windows, display loss, invalid config, lost AX permission; stale-window purge pipeline. Route: inline (delegated writer unavailable); DONE `a2bd19d`, 7 recovery tests green, full suite 0 failures.
 
 ## Tasks — UI 0.4 (plan §24-§26)
 - [ ] RW-19 — §24 Phase 18 Animations (only after stable layout): move/resize/scroll/workspace/focus; animations never touch logical state. Route: delegated writer.
@@ -136,6 +136,7 @@ chrome), never a scope cut.
 - 2026-09-28: RW-15 done, commit `e88ce8b`. New `GioCore/Config/` (model+defaults+resolvers, subset TOML parser, safe loader); 11 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-16 CLI.
 - 2026-09-28: RW-16 done, commit `564e77f`. New `GioCore/Commands/` (CLICommand/parse/usage, dispatcher over session bundle, flock lock); 5 tests green, full suite 0 failures, `git diff --check` clean. Next: RW-17 IPC (+ `gio` executable).
 - 2026-09-28: RW-17 done, commit `af50876`. New `GioCore/IPC/` (Codable protocol, socket transport, status query, shared dispatch) + `GioCLI` executable; 7 tests green incl. real round-trips, full suite 0 failures, `git diff --check` clean. Next: RW-18 Recovery.
+- 2026-09-28: RW-18 done, commit `a2bd19d`. New `GioCore/Recovery/` (recover with reap-always/freeze-otherwise rules) + registry pid-reaping + workspace stripping; 7 tests green, full suite 0 failures, `git diff --check` clean. Invalid config + permission loss already covered by loader freeze. Next: RW-19 Animations.
 
 ## Verification evidence
 - `git branch --list archive/*` -> `archive/pre-rewrite-niri-plan` present.
