@@ -107,20 +107,38 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// Enumerate, register arrivals (rules decide mode and workspace),
-    /// refresh handles. Add-only: disappearance is handled by reaping
-    /// dead pids below, never by absence alone.
+    /// refresh handles. Identity is stable across scans: retained handles
+    /// matched with `CFEqual` reuse their IDs (and refresh metadata);
+    /// only genuinely new windows get fresh IDs and placed columns.
+    /// Add-only: disappearance is handled by reaping dead pids below,
+    /// never by absence alone.
     private func enumerateAndPlace() {
         guard let found = try? discoverSystemWindows() else {
             return
         }
+        let flip = AXVerticalFlip(displayHeight: mainHeight())
         var liveIDs = Set<WindowID>()
+        var focusedID: WindowID?
         for candidate in found.windows where !candidate.window.isMinimized {
+            if let known = actuator?.id(
+                matching: candidate.element, pid: candidate.window.pid
+            ) {
+                liveIDs.insert(known)
+                if var record = session.registry.find(known) {
+                    record.frame = flip.toCocoa(candidate.window.frame)
+                    if let title = candidate.window.title, !title.isEmpty {
+                        record.title = title
+                    }
+                    try? session.registry.update(record)
+                }
+                if candidate.window.isFocused {
+                    focusedID = known
+                }
+                continue
+            }
             nextElementID += 1
             let id = WindowID(pid: candidate.window.pid, elementID: nextElementID)
             liveIDs.insert(id)
-            guard session.registry.find(id) == nil else {
-                continue
-            }
             actuator?.register(
                 elementID: id.elementID, pid: id.pid,
                 element: candidate.element, appElement: candidate.appElement
@@ -159,6 +177,17 @@ final class SessionHost: @unchecked Sendable {
                 current.columns.append(column)
                 current.focusedColumn = current.columns.count - 1
                 current.focusedWindow = id
+                session.manager.update(current)
+            }
+        }
+        // Clicks change macOS focus behind our back: adopt the observed
+        // focus instead of fighting it on the next reflow.
+        if let focusedID {
+            var current = session.manager.currentWorkspace()
+            if let row = current.columns.firstIndex(where: { $0.windows.contains(focusedID) }) {
+                current.focusedColumn = row
+                current.columns[row].focusedWindowIndex = current.columns[row].windows.firstIndex(of: focusedID)!
+                current.focusedWindow = focusedID
                 session.manager.update(current)
             }
         }

@@ -42,6 +42,14 @@ public final class AXWindowActuator: WindowActuator {
         handle(for: id)?.element
     }
 
+    /// Stable identity across re-enumerations: AX exposes no window number,
+    /// so a retained handle matched with `CFEqual` is the identity. Nil
+    /// means genuinely new (register it); never invent an ID per scan.
+    public func id(matching element: AXUIElement, pid: pid_t) -> WindowID? {
+        handles.first { $0.value.pid == pid && CFEqual($0.value.element, element) }
+            .map { WindowID(pid: pid, elementID: $0.key) }
+    }
+
     public func register(
         elementID: UInt64,
         pid: pid_t,
