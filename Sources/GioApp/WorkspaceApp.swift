@@ -22,9 +22,13 @@ import GioMac
 
     private var displayedWarning: String? {
         if gapDiverged { return divergenceWarning }
-        if let warning { return warning }
-        return reflowFailures.keys.sorted(by: { $0.rawValue < $1.rawValue })
-            .compactMap { reflowFailures[$0] }.first
+        if let warning, !coordinator.recoveryRequired { return warning }
+        if !reflowFailures.isEmpty {
+            return coordinator.recoveryRequired
+                ? "Tiling failed; show error details. Recovery needed: retry Quit."
+                : "Tiling failed; show error details. Retry tiling."
+        }
+        return warning
     }
 
     private func updateStatus() {
@@ -59,6 +63,9 @@ import GioMac
             let item = NSMenuItem(title: "Warning: \(displayedWarning)", action: nil, keyEquivalent: "")
             item.isEnabled = false
             menu.addItem(item)
+        }
+        if !reflowFailures.isEmpty {
+            menu.addItem(NSMenuItem(title: "Show Tiling Error Details…", action: #selector(showLastTilingError), keyEquivalent: ""))
         }
         let trusted = AXIsProcessTrusted()
         let permission = NSMenuItem(title: "Accessibility: \(trusted ? "Granted" : "Not granted")", action: nil, keyEquivalent: "")
@@ -97,6 +104,16 @@ import GioMac
         menu.addItem(gapItem)
         menu.addItem(NSMenuItem(title: "Refresh Windows", action: #selector(refreshAction), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Quit Gio", action: #selector(quit), keyEquivalent: "q"))
+    }
+
+    @objc private func showLastTilingError() {
+        guard !reflowFailures.isEmpty else { return }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Tiling error details"
+        alert.informativeText = reflowFailures.keys.sorted { $0.rawValue < $1.rawValue }
+            .compactMap { reflowFailures[$0] }.joined(separator: "\n\n")
+        alert.runModal()
     }
 
     @objc private func requestAccess() {
@@ -182,7 +199,11 @@ import GioMac
         } catch {
             skipped.removeValue(forKey: id)
             let retry = preferences.tilingEnabled(on: id.rawValue) ? "Refresh Windows" : "Enable Automatic Tiling"
-            reflowFailures[id] = "Tiling failed on display \(id.rawValue); metadata may be incomplete or stale. Retry \(retry) or Quit: \(error)"
+            let nextStep = coordinator.recoveryRequired
+                ? "Recovery needed; Quit retries restoring windows."
+                : "Retry \(retry)."
+            reflowFailures[id] = "Tiling failed on display \(id.rawValue). \(nextStep) Error: \(error)"
+            if !gapDiverged && warning != nil && !coordinator.recoveryRequired { warning = nil }
             updateStatus()
             return false
         }
@@ -227,7 +248,10 @@ import GioMac
 
     private func refresh(reflowDiscovered: Bool = true) {
         guard !gapDiverged else { return }
-        guard !coordinator.recoveryRequired else { warn("Recovery needed; quit retries restoring windows."); return }
+        guard !coordinator.recoveryRequired else {
+            if reflowFailures.isEmpty { warn("Recovery needed; quit retries restoring windows.") }
+            return
+        }
         do {
             let current = try connectedDisplays()
             if !displays.isEmpty && current != displays {
