@@ -11,8 +11,13 @@ public final class SingleInstanceLock {
     public init() {}
 
     /// True when the lock is ours. False when another process holds it or
-    /// the file cannot be opened.
+    /// the file cannot be opened. Creates the parent directory so first
+    /// boot with no config dir still locks.
     public func acquire(path: String) -> Bool {
+        try? FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
         let descriptor = open(path, O_CREAT | O_RDWR, 0o644)
         guard descriptor >= 0 else {
             return false

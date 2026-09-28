@@ -3,20 +3,34 @@ import Foundation
 
 /// The live state commands act on. Owned by the session host (one-shot
 /// callers, the IPC server in RW-17, the daemon later) — the dispatcher
-/// never stores it.
+/// never stores it. Environment facts the host fills in when known
+/// (`permissionGranted`, `displayCount`, `configPath`); nil means unknown
+/// and renders honestly instead of guessing.
 public struct CommandSession {
     public var registry: WindowRegistry
     public var manager: WorkspaceManager
     public var config: GioConfig
+    public var permissionGranted: Bool?
+    public var displayCount: Int?
+    public var recentErrors: [String]
+    public var configPath: String?
 
     public init(
         registry: WindowRegistry = WindowRegistry(),
         manager: WorkspaceManager = WorkspaceManager(),
-        config: GioConfig = defaultGioConfig()
+        config: GioConfig = defaultGioConfig(),
+        permissionGranted: Bool? = nil,
+        displayCount: Int? = nil,
+        recentErrors: [String] = [],
+        configPath: String? = nil
     ) {
         self.registry = registry
         self.manager = manager
         self.config = config
+        self.permissionGranted = permissionGranted
+        self.displayCount = displayCount
+        self.recentErrors = recentErrors
+        self.configPath = configPath
     }
 }
 
@@ -91,5 +105,13 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return lines.joined(separator: "\n")
     case .status:
         return queryStatus(session: session)
+    case .setup:
+        return runSetup(session: &session)
+    case .update:
+        return runUpdate()
+    case .doctor:
+        return runDoctor(session: &session)
+    case .uninstall:
+        return runUninstall()
     }
 }

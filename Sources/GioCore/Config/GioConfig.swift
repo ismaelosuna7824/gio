@@ -1,6 +1,9 @@
 import CoreGraphics
 import Foundation
 
+/// Single version source, bumped per release milestone.
+public let gioVersion = "0.1.0-alpha"
+
 /// Plan §20 configuration model. Mirrors `~/.config/gio/config.toml`.
 /// Flags the engine does not consume yet (`centerFocusedColumn`,
 /// behaviors, animations) are parsed, validated and stored — never silently

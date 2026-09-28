@@ -107,6 +107,10 @@ func describeAction(_ command: CLICommand) -> String {
     case .workspace(let number): return "workspace \(number)"
     case .layoutInfo: return "layout info"
     case .status: return "status"
+    case .setup: return "setup"
+    case .update: return "update"
+    case .doctor: return "doctor"
+    case .uninstall: return "uninstall"
     case .help: return "help"
     }
 }

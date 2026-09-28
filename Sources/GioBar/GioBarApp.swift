@@ -94,39 +94,10 @@ final class BarDelegate: NSObject, NSApplicationDelegate {
                 atPath: (path as NSString).deletingLastPathComponent,
                 withIntermediateDirectories: true
             )
-            try? configTemplate().write(toFile: path, atomically: true, encoding: .utf8)
+            try? defaultConfigTemplate().write(toFile: path, atomically: true, encoding: .utf8)
         }
         NSWorkspace.shared.open(URL(fileURLWithPath: path))
     }
-}
-
-/// Starter config written only when none exists. Mirrors the parser subset
-/// and the plan example — edit freely, invalid files fall back to defaults
-/// with messages instead of breaking anything.
-func configTemplate() -> String {
-    """
-    # Gio config — see RW-15. Unknown keys warn, invalid values fall back
-    # to defaults; nothing here can break the window manager.
-    [layout]
-    gaps = 8
-    padding = 8
-    default-column-width = 0.5
-    center-focused-column = true
-
-    [behavior]
-    focus-follows-mouse = false
-    mouse-follows-focus = true
-
-    [keybindings]
-    "Alt+H" = "focus-left"
-    "Alt+L" = "focus-right"
-    "Alt+J" = "focus-down"
-    "Alt+K" = "focus-up"
-
-    [[window-rules]]
-    app = "Calculator"
-    mode = "floating"
-    """
 }
 
 func runGioBar() {

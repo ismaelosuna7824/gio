@@ -14,6 +14,10 @@ public enum CLICommand: Equatable, Sendable {
     case workspace(Int)
     case layoutInfo
     case status
+    case setup
+    case update
+    case doctor
+    case uninstall
     case help
 }
 
@@ -64,6 +68,14 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
         return .success(.layoutInfo)
     case "status":
         return .success(.status)
+    case "setup":
+        return .success(.setup)
+    case "update":
+        return .success(.update)
+    case "doctor":
+        return .success(.doctor)
+    case "uninstall":
+        return .success(.uninstall)
     case "help", "--help", "-h":
         return .success(.help)
     default:
@@ -85,6 +97,10 @@ public func cliUsage() -> String {
       gio workspace 1...9
       gio layout info
       gio status
+      gio setup
+      gio update
+      gio doctor
+      gio uninstall
       gio help
 
     Stateful verbs act on the running session via IPC (RW-17).
