@@ -3,34 +3,34 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-public enum POCPermissionError: Error {
+public enum AXPermissionError: Error {
     case notTrusted
 }
 
 /// One enumerated window plus the retained AX handles needed to act on it.
 /// Handles are valid for this process lifetime; a relaunch re-enumerates.
-public struct POCDiscoveredWindow {
-    public let window: POCWindow
+public struct DiscoveredSystemWindow {
+    public let window: SystemWindow
     public let element: AXUIElement
     public let appElement: AXUIElement
 }
 
-public struct POCDiscoveryResult {
-    public let windows: [POCDiscoveredWindow]
+public struct SystemWindowDiscoveryResult {
+    public let windows: [DiscoveredSystemWindow]
     /// Windows skipped because a required AX attribute was unreadable.
     /// Skips are evidence, never silent: callers must report the count.
     public let skipped: Int
 }
 
-public func pocRequirePermission() throws {
+public func requireAXPermission() throws {
     guard AXIsProcessTrusted() else {
-        throw POCPermissionError.notTrusted
+        throw AXPermissionError.notTrusted
     }
 }
 
-public func pocDiscoverWindows() throws -> POCDiscoveryResult {
-    try pocRequirePermission()
-    var found: [POCDiscoveredWindow] = []
+public func discoverSystemWindows() throws -> SystemWindowDiscoveryResult {
+    try requireAXPermission()
+    var found: [DiscoveredSystemWindow] = []
     var skipped = 0
     let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
     for app in apps {
@@ -55,34 +55,34 @@ public func pocDiscoverWindows() throws -> POCDiscoveryResult {
             return (candidate as! AXUIElement)
         }()
         for element in elements {
-            guard pocIsStandardWindow(element) else {
+            guard axIsStandardWindow(element) else {
                 continue
             }
-            guard let frame = pocFrame(of: element) else {
+            guard let frame = axFrame(of: element) else {
                 skipped += 1
                 continue
             }
-            let minimized = pocBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false
-            let fullscreen = pocBool(of: element, attribute: "AXFullScreen")
-                ?? pocBool(of: element, attribute: "AXFullscreen")
+            let minimized = axBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false
+            let fullscreen = axBool(of: element, attribute: "AXFullScreen")
+                ?? axBool(of: element, attribute: "AXFullscreen")
             let focused = focusedElement.map { CFEqual($0, element) } ?? false
-            let window = POCWindow(
+            let window = SystemWindow(
                 index: found.count,
                 pid: app.processIdentifier,
                 appName: app.localizedName ?? "unknown",
-                title: pocTitle(of: element),
+                title: axTitle(of: element),
                 frame: frame,
                 isFocused: focused,
                 isMinimized: minimized,
                 isFullscreen: fullscreen
             )
-            found.append(POCDiscoveredWindow(window: window, element: element, appElement: appElement))
+            found.append(DiscoveredSystemWindow(window: window, element: element, appElement: appElement))
         }
     }
-    return POCDiscoveryResult(windows: found, skipped: skipped)
+    return SystemWindowDiscoveryResult(windows: found, skipped: skipped)
 }
 
-func pocIsStandardWindow(_ element: AXUIElement) -> Bool {
+func axIsStandardWindow(_ element: AXUIElement) -> Bool {
     var rawRole: CFTypeRef?
     var rawSubrole: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &rawRole) == .success,
@@ -96,7 +96,7 @@ func pocIsStandardWindow(_ element: AXUIElement) -> Bool {
     return true
 }
 
-func pocFrame(of element: AXUIElement) -> CGRect? {
+func axFrame(of element: AXUIElement) -> CGRect? {
     var rawPosition: CFTypeRef?
     var rawSize: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &rawPosition)
@@ -122,7 +122,7 @@ func pocFrame(of element: AXUIElement) -> CGRect? {
     return CGRect(origin: point, size: dimensions)
 }
 
-func pocTitle(of element: AXUIElement) -> String? {
+func axTitle(of element: AXUIElement) -> String? {
     var raw: CFTypeRef?
     let status = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &raw)
     switch status {
@@ -138,7 +138,7 @@ func pocTitle(of element: AXUIElement) -> String? {
     }
 }
 
-func pocBool(of element: AXUIElement, attribute: String) -> Bool? {
+func axBool(of element: AXUIElement, attribute: String) -> Bool? {
     var raw: CFTypeRef?
     guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else {
         return nil

@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// CLI verbs supported by the Phase 0 POC. Window indices are positional
-/// within one fresh enumeration per invocation.
-public enum POCCommand: Equatable, Sendable {
+/// CLI verbs for `gio-poc`. Window indices are positional within one fresh
+/// enumeration per invocation. Pure parsing, no macOS calls — unit tested.
+public enum CLICommand: Equatable, Sendable {
     case listWindows
     case focus(index: Int)
     case move(index: Int, x: CGFloat, y: CGFloat)
@@ -12,7 +12,7 @@ public enum POCCommand: Equatable, Sendable {
     case help
 }
 
-public enum POCCommandError: Error, Equatable, Sendable {
+public enum CLICommandError: Error, Equatable, Sendable {
     case noArguments
     case unknownCommand(String)
     case missingArgument(name: String, command: String)
@@ -20,7 +20,7 @@ public enum POCCommandError: Error, Equatable, Sendable {
     case nonPositiveSize
 }
 
-public func parsePOCCommand(_ args: [String]) -> Result<POCCommand, POCCommandError> {
+public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandError> {
     guard let verb = args.first else {
         return .failure(.noArguments)
     }
@@ -75,7 +75,7 @@ public func parsePOCCommand(_ args: [String]) -> Result<POCCommand, POCCommandEr
     }
 }
 
-public func pocUsage() -> String {
+public func cliUsage() -> String {
     """
     gio-poc — Gio Phase 0 Accessibility POC
 

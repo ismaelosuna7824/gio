@@ -1,9 +1,9 @@
 import XCTest
-@testable import GioPOC
+@testable import GioMacOS
 
-final class POCWindowTests: XCTestCase {
+final class SystemWindowTests: XCTestCase {
     func testDescribeFullWindow() {
-        let window = POCWindow(
+        let window = SystemWindow(
             index: 3,
             pid: 1234,
             appName: "Code",
@@ -20,7 +20,7 @@ final class POCWindowTests: XCTestCase {
     }
 
     func testDescribeUnknownsAndMinimized() {
-        let window = POCWindow(
+        let window = SystemWindow(
             index: 0,
             pid: 42,
             appName: "unknown",
@@ -37,7 +37,7 @@ final class POCWindowTests: XCTestCase {
     }
 
     func testDescribeFullscreenFlag() {
-        let window = POCWindow(
+        let window = SystemWindow(
             index: 1,
             pid: 7,
             appName: "Safari",
@@ -49,5 +49,9 @@ final class POCWindowTests: XCTestCase {
         )
         XCTAssertTrue(window.describe().contains("fullscreen"))
         XCTAssertFalse(window.describe().contains("fullscreen=<unknown>"))
+    }
+
+    func testDescribeFrame() {
+        XCTAssertEqual(describeFrame(CGRect(x: 8, y: 47, width: 440, height: 553)), "(8,47,440,553)")
     }
 }

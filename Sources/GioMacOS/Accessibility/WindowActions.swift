@@ -3,9 +3,10 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-/// Typed failures for single-window POC actions. Every case names the stage so
-/// a live retest can report exactly what macOS refused.
-public enum POCActionError: Error, CustomStringConvertible {
+/// Typed failures for single-window actions. Every case names the stage so a
+/// live retest can report exactly what macOS refused. The reconciler (Phase 8)
+/// will reuse these errors instead of inventing its own.
+public enum SystemWindowActionError: Error, CustomStringConvertible {
     case permissionDenied
     case badIndex(requested: Int, count: Int)
     case appNotRunning(pid: pid_t)
@@ -18,7 +19,7 @@ public enum POCActionError: Error, CustomStringConvertible {
     public var description: String {
         switch self {
         case .permissionDenied:
-            return "permissionDenied: enable gio-poc under System Settings → Privacy & Security → Accessibility, then retry"
+            return "permissionDenied: enable the app under System Settings → Privacy & Security → Accessibility, then retry"
         case .badIndex(let requested, let count):
             return "badIndex: requested=\(requested) count=\(count)"
         case .appNotRunning(let pid):
@@ -37,63 +38,61 @@ public enum POCActionError: Error, CustomStringConvertible {
     }
 }
 
-func describeFrame(_ frame: CGRect) -> String {
-    "(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.size.width)),\(Int(frame.size.height)))"
-}
-
-func pocActionPermission() throws {
+func actionAXPermission() throws {
     do {
-        try pocRequirePermission()
+        try requireAXPermission()
     } catch {
-        throw POCActionError.permissionDenied
+        throw SystemWindowActionError.permissionDenied
     }
 }
 
-func pocWindow(at index: Int, in windows: [POCDiscoveredWindow]) throws -> POCDiscoveredWindow {
+public func systemWindow(at index: Int, in windows: [DiscoveredSystemWindow]) throws
+    -> DiscoveredSystemWindow
+{
     guard index >= 0, index < windows.count else {
-        throw POCActionError.badIndex(requested: index, count: windows.count)
+        throw SystemWindowActionError.badIndex(requested: index, count: windows.count)
     }
     return windows[index]
 }
 
-func pocCheckSettable(_ element: AXUIElement, attribute: String) throws {
+func checkSettable(_ element: AXUIElement, attribute: String) throws {
     var settable = DarwinBoolean(false)
     let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
     guard status == .success, settable.boolValue else {
         if status != .success {
-            throw POCActionError.writeFailed(attribute: attribute, status: status)
+            throw SystemWindowActionError.writeFailed(attribute: attribute, status: status)
         }
-        throw POCActionError.notSettable(attribute: attribute)
+        throw SystemWindowActionError.notSettable(attribute: attribute)
     }
 }
 
-func pocReadFrame(_ element: AXUIElement) throws -> CGRect {
-    guard let frame = pocFrame(of: element) else {
-        throw POCActionError.readbackFailed(attribute: "position/size", status: .failure)
+func readAXFrame(_ element: AXUIElement) throws -> CGRect {
+    guard let frame = axFrame(of: element) else {
+        throw SystemWindowActionError.readbackFailed(attribute: "position/size", status: .failure)
     }
     return frame
 }
 
-func pocFramesMatch(_ requested: CGRect, _ actual: CGRect) -> Bool {
+func framesMatch(_ requested: CGRect, _ actual: CGRect) -> Bool {
     abs(requested.origin.x - actual.origin.x) <= 1
         && abs(requested.origin.y - actual.origin.y) <= 1
         && abs(requested.size.width - actual.size.width) <= 1
         && abs(requested.size.height - actual.size.height) <= 1
 }
 
-/// Activate the app and ask macOS to focus this window. Returns silently on
-/// success; throws `focusRefused` when the window does not become focused.
-public func pocFocus(_ target: POCDiscoveredWindow) throws {
-    try pocActionPermission()
+/// Activate the app and ask macOS to focus this window. Throws `focusRefused`
+/// when the window does not become focused.
+public func focusSystemWindow(_ target: DiscoveredSystemWindow) throws {
+    try actionAXPermission()
     guard let app = NSRunningApplication(processIdentifier: target.window.pid) else {
-        throw POCActionError.appNotRunning(pid: target.window.pid)
+        throw SystemWindowActionError.appNotRunning(pid: target.window.pid)
     }
     app.activate()
     let status = AXUIElementSetAttributeValue(
         target.appElement, kAXFocusedWindowAttribute as CFString, target.element
     )
     guard status == .success else {
-        throw POCActionError.focusRefused(pid: target.window.pid)
+        throw SystemWindowActionError.focusRefused(pid: target.window.pid)
     }
     var raw: CFTypeRef?
     guard AXUIElementCopyAttributeValue(
@@ -103,48 +102,48 @@ public func pocFocus(_ target: POCDiscoveredWindow) throws {
         CFGetTypeID(focused) == AXUIElementGetTypeID(),
         CFEqual(focused as! AXUIElement, target.element)
     else {
-        throw POCActionError.focusRefused(pid: target.window.pid)
+        throw SystemWindowActionError.focusRefused(pid: target.window.pid)
     }
 }
 
 /// Move a window, then verify with readback. Returns the observed frame.
-public func pocMove(_ target: POCDiscoveredWindow, to point: CGPoint) throws -> CGRect {
-    try pocActionPermission()
-    try pocCheckSettable(target.element, attribute: kAXPositionAttribute as String)
+public func moveSystemWindow(_ target: DiscoveredSystemWindow, to point: CGPoint) throws -> CGRect {
+    try actionAXPermission()
+    try checkSettable(target.element, attribute: kAXPositionAttribute as String)
     var moving = point
     guard let value = AXValueCreate(.cgPoint, &moving) else {
-        throw POCActionError.writeFailed(attribute: "position", status: .failure)
+        throw SystemWindowActionError.writeFailed(attribute: "position", status: .failure)
     }
     let status = AXUIElementSetAttributeValue(
         target.element, kAXPositionAttribute as CFString, value
     )
     guard status == .success else {
-        throw POCActionError.writeFailed(attribute: "position", status: status)
+        throw SystemWindowActionError.writeFailed(attribute: "position", status: status)
     }
-    let current = try pocReadFrame(target.element)
+    let current = try readAXFrame(target.element)
     let requested = CGRect(origin: point, size: target.window.frame.size)
-    guard pocFramesMatch(requested, current) else {
-        throw POCActionError.frameMismatch(requested: requested, actual: current)
+    guard framesMatch(requested, current) else {
+        throw SystemWindowActionError.frameMismatch(requested: requested, actual: current)
     }
     return current
 }
 
 /// Resize a window, then verify with readback. Returns the observed frame.
-public func pocResize(_ target: POCDiscoveredWindow, to size: CGSize) throws -> CGRect {
-    try pocActionPermission()
-    try pocCheckSettable(target.element, attribute: kAXSizeAttribute as String)
+public func resizeSystemWindow(_ target: DiscoveredSystemWindow, to size: CGSize) throws -> CGRect {
+    try actionAXPermission()
+    try checkSettable(target.element, attribute: kAXSizeAttribute as String)
     var resizing = size
     guard let value = AXValueCreate(.cgSize, &resizing) else {
-        throw POCActionError.writeFailed(attribute: "size", status: .failure)
+        throw SystemWindowActionError.writeFailed(attribute: "size", status: .failure)
     }
     let status = AXUIElementSetAttributeValue(target.element, kAXSizeAttribute as CFString, value)
     guard status == .success else {
-        throw POCActionError.writeFailed(attribute: "size", status: status)
+        throw SystemWindowActionError.writeFailed(attribute: "size", status: status)
     }
-    let current = try pocReadFrame(target.element)
+    let current = try readAXFrame(target.element)
     let requested = CGRect(origin: target.window.frame.origin, size: size)
-    guard pocFramesMatch(requested, current) else {
-        throw POCActionError.frameMismatch(requested: requested, actual: current)
+    guard framesMatch(requested, current) else {
+        throw SystemWindowActionError.frameMismatch(requested: requested, actual: current)
     }
     return current
 }

@@ -2,8 +2,8 @@ import ApplicationServices
 import AppKit
 import Foundation
 
-/// Event intake for the POC: per-app `AXObserver` subscriptions plus
-/// `NSWorkspace` activation notes. Prints one line per event to stdout.
+/// Event intake: per-app `AXObserver` subscriptions plus `NSWorkspace`
+/// activation notes. Prints one line per event to stdout.
 ///
 /// Covered notifications: window created, focused-window changed, moved,
 /// resized, miniaturized, deminiaturized, title changed, element destroyed,
@@ -11,14 +11,14 @@ import Foundation
 /// refuses observation is reported once and skipped, never fatal.
 ///
 /// The retained refcon labels intentionally live for the process lifetime.
-public func pocListenForEvents() {
+public func listenForSystemWindowEvents() {
     let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
     var observers: [AXObserver] = []
     observers.reserveCapacity(apps.count)
     var watched = 0
     for app in apps {
         let label = "app=\(app.localizedName ?? "unknown") pid=\(app.processIdentifier)"
-        guard pocObserveApplication(pid: app.processIdentifier, label: label, keeping: &observers) else {
+        guard observeApplication(pid: app.processIdentifier, label: label, keeping: &observers) else {
             print("[warn] observation refused: \(label)")
             continue
         }
@@ -39,7 +39,7 @@ public func pocListenForEvents() {
     RunLoop.main.run()
 }
 
-func pocObserveApplication(
+func observeApplication(
     pid: pid_t,
     label: String,
     keeping observers: inout [AXObserver]
@@ -67,14 +67,14 @@ func pocObserveApplication(
     }
     let appElement = AXUIElementCreateApplication(pid)
     for notification in [kAXWindowCreatedNotification, kAXFocusedWindowChangedNotification] as [CFString] {
-        pocAddNotification(observer: observer, element: appElement, notification: notification, label: label)
+        addEventNotification(observer: observer, element: appElement, notification: notification, label: label)
     }
     var rawWindows: CFTypeRef?
     if AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &rawWindows)
         == .success,
         let elements = rawWindows as? [AXUIElement]
     {
-        for element in elements where pocIsStandardWindow(element) {
+        for element in elements where axIsStandardWindow(element) {
             for notification in [
                 kAXWindowMovedNotification,
                 kAXWindowResizedNotification,
@@ -83,7 +83,7 @@ func pocObserveApplication(
                 kAXTitleChangedNotification,
                 kAXUIElementDestroyedNotification,
             ] as [CFString] {
-                pocAddNotification(
+                addEventNotification(
                     observer: observer, element: element, notification: notification, label: label
                 )
             }
@@ -94,7 +94,7 @@ func pocObserveApplication(
     return true
 }
 
-func pocAddNotification(
+func addEventNotification(
     observer: AXObserver,
     element: AXUIElement,
     notification: CFString,

@@ -3,10 +3,12 @@ import Foundation
 
 /// Snapshot of one standard window seen through public Accessibility APIs.
 ///
-/// Everything uncertain stays explicit: a missing title or fullscreen flag is
-/// reported as `<unknown>` and never blocks listing. Indices are positional
-/// within a single `gio-poc` invocation, not stable window identities.
-public struct POCWindow: Equatable, Sendable {
+/// This is the long-lived discovery model: later phases map it into the
+/// registry (`ManagedWindow`) instead of replacing it. Everything uncertain
+/// stays explicit — a missing title or fullscreen flag is reported as
+/// `<unknown>` and never blocks listing. Indices are positional within a
+/// single enumeration, not stable window identities.
+public struct SystemWindow: Equatable, Sendable {
     public let index: Int
     public let pid: pid_t
     public let appName: String
@@ -62,4 +64,9 @@ public struct POCWindow: Equatable, Sendable {
         }
         return parts.joined(separator: " ")
     }
+}
+
+/// One-line frame rendering shared by CLI output and error messages.
+public func describeFrame(_ frame: CGRect) -> String {
+    "(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.size.width)),\(Int(frame.size.height)))"
 }
