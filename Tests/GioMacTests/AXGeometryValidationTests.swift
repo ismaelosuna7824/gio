@@ -70,4 +70,13 @@ final class AXGeometryValidationTests: XCTestCase {
         let to = CGRect(x: 0, y: 39, width: 1800, height: 400)
         XCTAssertEqual(AXGeometryValidation.applyOrder(from: from, to: to), .positionFirst)
     }
+
+    func testIsZoomedFlagAcceptsOnlyExplicitTrue() {
+        XCTAssertTrue(AXGeometryValidation.isZoomedFlag(kCFBooleanTrue as CFTypeRef))
+        XCTAssertFalse(AXGeometryValidation.isZoomedFlag(kCFBooleanFalse as CFTypeRef))
+        XCTAssertFalse(AXGeometryValidation.isZoomedFlag(NSNumber(value: 0) as CFTypeRef))
+        XCTAssertFalse(AXGeometryValidation.isZoomedFlag(NSNumber(value: 1) as CFTypeRef))
+        XCTAssertFalse(AXGeometryValidation.isZoomedFlag(nil))
+        XCTAssertFalse(AXGeometryValidation.isZoomedFlag("yes" as CFString))
+    }
 }

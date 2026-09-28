@@ -99,7 +99,23 @@ public final class AXWindowBridge: WindowFrameBridge {
             let result = AXUIElementIsAttributeSettable(handle, attribute as CFString, &settable)
             if result != .success || !settable.boolValue { return false }
         }
+        // Maximized (zoom-button, non-fullscreen) windows report settable
+        // position/size yet ignore resizes, poisoning the whole batch.
+        // Skip them read-only: never write, never auto-unzoom. A missing or
+        // unreadable flag means NOT zoomed so prior behavior is preserved.
+        if isZoomedOrFullscreen(handle) { return false }
         return true
+    }
+
+    /// Read-only zoom/fullscreen probe via public AX reads only.
+    private func isZoomedOrFullscreen(_ handle: AXUIElement) -> Bool {
+        for name in ["AXZoomed", "AXFullScreen", "AXFullscreen"] {
+            var value: CFTypeRef?
+            let result = AXUIElementCopyAttributeValue(handle, name as CFString, &value)
+            guard result == .success else { continue }
+            if AXGeometryValidation.isZoomedFlag(value) { return true }
+        }
+        return false
     }
 
     /// Growth applies position-first so the enlarged frame fits the display;

@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 /// Pure checks shared by AX reads and post-write verification.
 public enum AXGeometryValidation {
@@ -45,5 +46,15 @@ public enum AXGeometryValidation {
     public static func matches(requested: CGPoint, actual: CGPoint) -> Bool {
         [requested.x, requested.y, actual.x, actual.y].allSatisfy(\.isFinite)
             && abs(actual.x - requested.x) <= 1 && abs(actual.y - requested.y) <= 1
+    }
+
+    /// Interprets a zoomed/fullscreen AX flag without touching AX.
+    /// Returns true only for an explicit boolean true; missing, unreadable,
+    /// numeric, or garbage values all mean NOT zoomed so callers preserve
+    /// the previous tiling behavior.
+    public static func isZoomedFlag(_ value: CFTypeRef?) -> Bool {
+        guard let value else { return false }
+        guard CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
+        return CFBooleanGetValue(value as! CFBoolean)
     }
 }
