@@ -95,6 +95,17 @@ public final class WindowRegistry {
         ignored.count
     }
 
+    /// Remove every record owned by a terminated process, returning them in
+    /// ID order. Termination notifications are proof of death (unlike mere
+    /// absence from an enumeration), so this runs even when snapshots are
+    /// incomplete — see Recovery. Ignore marks for unknown IDs survive: a
+    /// rule may precede the window's arrival, and bare IDs match nothing.
+    @discardableResult
+    public func removeWindows(ofPID pid: pid_t) -> [ManagedWindow] {
+        let ids = windows.values.filter { $0.pid == pid }.map(\.id).sorted()
+        return ids.compactMap { remove($0) }
+    }
+
     /// Plan §17 mode lifecycle. Set any mode; unknown IDs throw.
     public func setMode(_ mode: WindowMode, for id: WindowID) throws {
         guard var window = windows[id] else {

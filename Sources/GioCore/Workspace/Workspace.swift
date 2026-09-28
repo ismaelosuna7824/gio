@@ -42,4 +42,45 @@ public struct Workspace: Equatable, Sendable {
         }
         return columns[focusedColumn]
     }
+
+    /// Remove every listed window (reaped processes, stale records),
+    /// dropping emptied columns and repairing focus: a surviving focused
+    /// window keeps its (possibly shifted) index, otherwise focus falls to
+    /// the neighbor, then to the column focus, then to nil. Recovery's
+    /// pruning path; move operations keep their own single-index repair.
+    public mutating func stripWindows(_ ids: Set<WindowID>) {
+        guard !ids.isEmpty else {
+            return
+        }
+        for index in columns.indices {
+            let oldFocused = columns[index].focusedWindowID
+            columns[index].windows.removeAll { ids.contains($0) }
+            columns[index].heightWeights = columns[index].heightWeights.filter {
+                !ids.contains($0.key)
+            }
+            if let oldFocused, !ids.contains(oldFocused),
+               let at = columns[index].windows.firstIndex(of: oldFocused)
+            {
+                columns[index].focusedWindowIndex = at
+            } else {
+                columns[index].focusedWindowIndex = min(
+                    columns[index].focusedWindowIndex,
+                    max(0, columns[index].windows.count - 1)
+                )
+            }
+        }
+        columns.removeAll { $0.windows.isEmpty }
+        if columns.isEmpty {
+            focusedColumn = 0
+            focusedWindow = nil
+            return
+        }
+        focusedColumn = min(max(focusedColumn, 0), columns.count - 1)
+        if let focused = focusedWindow,
+           columns.flatMap(\.windows).contains(focused)
+        {
+            return
+        }
+        focusedWindow = columns[focusedColumn].focusedWindowID
+    }
 }
