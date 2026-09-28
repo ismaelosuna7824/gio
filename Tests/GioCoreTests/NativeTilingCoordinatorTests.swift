@@ -283,7 +283,7 @@ final class NativeTilingCoordinatorTests: XCTestCase {
         try coordinator.adopt("inactive", on: "a")
         try coordinator.adopt("connected", on: "b")
         try coordinator.reflow(on: "a", selected: ["inactive"], usableBounds: bounds)
-        let connected = [DisplayID("b"): CGRect(x: 200, y: 0, width: 100, height: 100)]
+        let connected = [LegacyDisplayID("b"): CGRect(x: 200, y: 0, width: 100, height: 100)]
         // Registered A bounds remain cached, but only the fresh B snapshot may authorize Quit.
         try coordinator.shutdown(connectedDisplays: connected)
         XCTAssertEqual(bridge.frames["inactive"], CGRect(x: 200, y: 0, width: 50, height: 50))

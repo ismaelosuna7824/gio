@@ -1,5 +1,6 @@
-/// Stable identifiers supplied by the caller; the model never interprets their contents.
-public struct DisplayID: Hashable, Sendable, ExpressibleByStringLiteral {
+/// Legacy prototype identity. Untouched reference for the pre-rewrite stack;
+/// the plan's `DisplayID` (CGDirectDisplayID companion) lives in `Display/`.
+public struct LegacyDisplayID: Hashable, Sendable, ExpressibleByStringLiteral {
     public let rawValue: String
     public init(_ value: String) { rawValue = value }
     public init(stringLiteral value: String) { self.init(value) }

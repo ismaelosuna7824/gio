@@ -2,8 +2,8 @@ import Foundation
 import CoreGraphics
 
 public enum NativeTilingError: Error {
-    case invalidDisplayRect(DisplayID)
-    case unknownDisplay(DisplayID)
+    case invalidDisplayRect(LegacyDisplayID)
+    case unknownDisplay(LegacyDisplayID)
     case unknownWindow(LegacyWindowID)
     case noSafeRestorePosition(LegacyWindowID)
     case recoveryRequired
@@ -17,12 +17,12 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
     private struct Owned {
         let handle: Bridge.Handle
         let original: CGRect
-        var display: DisplayID
+        var display: LegacyDisplayID
         var preTile: CGRect?
     }
 
     private let bridge: Bridge
-    private var displays: [DisplayID: CGRect] = [:]
+    private var displays: [LegacyDisplayID: CGRect] = [:]
     private var owned: [LegacyWindowID: Owned] = [:]
     public private(set) var recoveryRequired = false
 
@@ -32,14 +32,14 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
         if recoveryRequired { throw NativeTilingError.recoveryRequired }
     }
 
-    public func registerDisplay(_ id: DisplayID, bounds: CGRect) throws {
+    public func registerDisplay(_ id: LegacyDisplayID, bounds: CGRect) throws {
         try ready()
         guard bounds.isFinitePositive else { throw NativeTilingError.invalidDisplayRect(id) }
         displays[id] = bounds
     }
 
     /// Call only for positively selected current-Space windows, never for an inferred match.
-    public func adopt(_ id: LegacyWindowID, on display: DisplayID) throws {
+    public func adopt(_ id: LegacyWindowID, on display: LegacyDisplayID) throws {
         try ready()
         guard displays[display] != nil else { throw NativeTilingError.unknownDisplay(display) }
         if owned[id] != nil {
@@ -55,7 +55,7 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
 
     /// Selected IDs are the caller's positively identified active-Space cohort.
     @discardableResult
-    public func reflow(on display: DisplayID, selected: Set<LegacyWindowID>, usableBounds: CGRect,
+    public func reflow(on display: LegacyDisplayID, selected: Set<LegacyWindowID>, usableBounds: CGRect,
                        outerGap: CGFloat = 0, innerGap: CGFloat = 0) throws -> [LegacyWindowID] {
         try ready()
         guard let bounds = displays[display] else { throw NativeTilingError.unknownDisplay(display) }
@@ -121,7 +121,7 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
     }
 
     /// Disabling one display restores its owned tiled windows, including inactive-Space cohorts.
-    public func restoreTiledFrames(on display: DisplayID) throws {
+    public func restoreTiledFrames(on display: LegacyDisplayID) throws {
         try ready()
         guard displays[display] != nil else { throw NativeTilingError.unknownDisplay(display) }
         let ids = owned.keys.sorted { $0.rawValue < $1.rawValue }.filter { owned[$0]!.display == display }
@@ -140,7 +140,7 @@ public final class NativeTilingCoordinator<Bridge: WindowFrameBridge> {
 
     /// Caller must supply a fresh connected-display snapshot; registered bounds can be stale
     /// after a disconnect and must never authorize restoration or release ownership.
-    public func shutdown(connectedDisplays: [DisplayID: CGRect]) throws {
+    public func shutdown(connectedDisplays: [LegacyDisplayID: CGRect]) throws {
         guard connectedDisplays.values.allSatisfy(\.isFinitePositive) else {
             throw NativeTilingError.recoveryRequired
         }

@@ -9,16 +9,16 @@ import GioMac
     private let discovery = WindowDiscovery()
     private let preferences = WorkspacePreferences()
     private lazy var coordinator = NativeTilingCoordinator(bridge: bridge)
-    private var displays: [DisplayID: CGRect] = [:]
-    private var usable: [DisplayID: CGRect] = [:]
-    private var skipped: [DisplayID: Int] = [:]
-    private var pendingReflow = Set<DisplayID>()
+    private var displays: [LegacyDisplayID: CGRect] = [:]
+    private var usable: [LegacyDisplayID: CGRect] = [:]
+    private var skipped: [LegacyDisplayID: Int] = [:]
+    private var pendingReflow = Set<LegacyDisplayID>()
     private var reflowScheduled = false
     private var applyingFrames = false
     private var managed = Set<LegacyWindowID>()
     private var spaceGeneration: UInt64 = 0
     private var warning: String?
-    private var reflowFailures: [DisplayID: String] = [:]
+    private var reflowFailures: [LegacyDisplayID: String] = [:]
 
     private var displayedWarning: String? {
         if gapDiverged { return divergenceWarning }
@@ -125,7 +125,7 @@ import GioMac
 
     @objc private func toggleTiling(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String else { return }
-        let id = DisplayID(raw)
+        let id = LegacyDisplayID(raw)
         guard !gapDiverged else { warn(divergenceWarning); return }
         guard AXIsProcessTrusted(), !displayChanged, !coordinator.recoveryRequired else {
             warn("Grant Accessibility access and resolve recovery before changing tiling."); return
@@ -164,7 +164,7 @@ import GioMac
         }
     }
 
-    @discardableResult private func reflow(_ id: DisplayID, gap: Int? = nil) -> Bool {
+    @discardableResult private func reflow(_ id: LegacyDisplayID, gap: Int? = nil) -> Bool {
         guard !gapDiverged, !applyingFrames, !displayChanged, let bounds = usable[id], AXIsProcessTrusted(),
               !coordinator.recoveryRequired else { return false }
         applyingFrames = true
@@ -214,7 +214,7 @@ import GioMac
 
     /// Builds the log-only diagnostics appended to a tiling-failure message.
     /// Reads live display state; never refreshes or mutates the `usable` cache.
-    private func failureDiagnostics(for id: DisplayID, error: Error) -> String {
+    private func failureDiagnostics(for id: LegacyDisplayID, error: Error) -> String {
         var parts: [String] = []
         if Self.isShrinkMismatch(error) {
             parts.append("shrink=true (AX applied a smaller frame than requested; cached usable bounds may be stale)")
@@ -244,7 +244,7 @@ import GioMac
 
     /// Fresh visible-area snapshot for one display: live CG bounds plus a live
     /// NSScreen read. Returns nil when the display has no matching live screen.
-    private func freshVisibleAreaLine(for id: DisplayID) -> String? {
+    private func freshVisibleAreaLine(for id: LegacyDisplayID) -> String? {
         guard let number = UInt32(id.rawValue) else { return nil }
         let bounds = CGDisplayBounds(CGDirectDisplayID(number))
         for screen in NSScreen.screens {
@@ -257,7 +257,7 @@ import GioMac
         return nil
     }
 
-    private func scheduleReflow(_ ids: Set<DisplayID>) {
+    private func scheduleReflow(_ ids: Set<LegacyDisplayID>) {
         guard !gapDiverged else { return }
         pendingReflow.formUnion(ids.filter { preferences.tilingEnabled(on: $0.rawValue) })
         guard !pendingReflow.isEmpty, !reflowScheduled else { return }
@@ -308,10 +308,10 @@ import GioMac
                 return
             }
             if displayChanged { return }
-            var visible: [DisplayID: CGRect] = [:]
+            var visible: [LegacyDisplayID: CGRect] = [:]
             for screen in NSScreen.screens {
                 guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { continue }
-                let id = DisplayID(String(number.uint32Value))
+                let id = LegacyDisplayID(String(number.uint32Value))
                 guard let full = current[id], let area = DisplayUsableBounds.convert(
                     screenFrame: screen.frame, visibleFrame: screen.visibleFrame, displayBounds: full) else { continue }
                 guard visible[id] == nil else { throw NativeTilingError.recoveryRequired }
@@ -328,14 +328,14 @@ import GioMac
         } catch { warn("Cannot refresh displays; retry Refresh Windows or Quit: \(error)") }
     }
 
-    private func connectedDisplays() throws -> [DisplayID: CGRect] {
+    private func connectedDisplays() throws -> [LegacyDisplayID: CGRect] {
         var count: UInt32 = 0
         guard CGGetActiveDisplayList(0, nil, &count) == .success else { throw NativeTilingError.recoveryRequired }
         var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
         guard CGGetActiveDisplayList(count, &ids, &count) == .success else { throw NativeTilingError.recoveryRequired }
-        var current: [DisplayID: CGRect] = [:]
+        var current: [LegacyDisplayID: CGRect] = [:]
         for cgID in ids.prefix(Int(count)) {
-            let id = DisplayID(String(cgID))
+            let id = LegacyDisplayID(String(cgID))
             guard current[id] == nil else { throw NativeTilingError.recoveryRequired }
             current[id] = CGDisplayBounds(cgID)
         }
