@@ -89,5 +89,7 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             lines.append("column\(index) windows=\(column.windows.count) width=\(column.width)")
         }
         return lines.joined(separator: "\n")
+    case .status:
+        return queryStatus(session: session)
     }
 }
