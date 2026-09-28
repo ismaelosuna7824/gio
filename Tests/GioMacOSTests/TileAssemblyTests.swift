@@ -83,14 +83,14 @@ final class TileAssemblyTests: XCTestCase {
 
     func testReportDescribesCounts() {
         let report = TileReflowReport(
-            tiled: [WindowID(pid: 1, elementID: 1)],
+            managed: [WindowID(pid: 1, elementID: 1)],
             skippedMinimized: 1,
             skippedUntileable: 2,
             skippedDiscovery: 0,
             reconcile: ReconcileReport(applied: [WindowID(pid: 1, elementID: 1)])
         )
         let text = report.describe()
-        XCTAssertTrue(text.contains("tiled=1"))
+        XCTAssertTrue(text.contains("managed=1"))
         XCTAssertTrue(text.contains("minimized=1"))
         XCTAssertTrue(text.contains("untileable=2"))
         XCTAssertTrue(text.contains("applied=1"))

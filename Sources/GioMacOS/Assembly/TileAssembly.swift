@@ -17,18 +17,23 @@ import GioCore
 /// Coordinates: `display` is Cocoa (e.g. `visibleFrame`); `displayHeight` is
 /// the FULL display height for the AX flip. Discovery frames arrive AX-native
 /// and are converted on ingest; layout and reconcile run in Cocoa.
+///
+/// Config: `config` defaults to the live file (rules, gaps). Failing config
+/// surfaces in `configMessages` while defaults tile on — same contract as
+/// the loader.
 public struct TileReflowReport: Equatable, Sendable {
-    public var tiled: [WindowID]
+    public var managed: [WindowID]
     public var skippedMinimized: Int
     public var skippedUntileable: Int
     public var skippedDiscovery: Int
     public var skippedOffscreen: Int = 0
     public var reconcile: ReconcileReport
     public var displayInfo: String = ""
+    public var configMessages: [String] = []
 
     public func describe() -> String {
-        var lines = ["tiled=\(tiled.count)"]
-        for id in tiled {
+        var lines = ["managed=\(managed.count)"]
+        for id in managed {
             lines.append("  pid=\(id.pid) element=\(id.elementID)")
         }
         lines.append("skipped minimized=\(skippedMinimized) untileable=\(skippedUntileable) discovery=\(skippedDiscovery) offscreen=\(skippedOffscreen)")
@@ -40,6 +45,9 @@ public struct TileReflowReport: Equatable, Sendable {
         }
         if !displayInfo.isEmpty {
             lines.append(displayInfo)
+        }
+        for message in configMessages {
+            lines.append("config: \(message)")
         }
         return lines.joined(separator: "\n")
     }
@@ -112,15 +120,24 @@ public func makeTileWorkspace(windows: [ManagedWindow]) -> Workspace {
 public func runTileReflow(
     display: CGRect,
     displayHeight: CGFloat,
-    engine: ScrollableLayoutEngine = ScrollableLayoutEngine(),
+    config: GioConfig? = nil,
+    engine: ScrollableLayoutEngine? = nil,
     actuator: AXWindowActuator? = nil,
     registry: WindowRegistry = WindowRegistry()
 ) throws -> TileReflowReport {
+    let (loaded, configMessages): (GioConfig, [String]) = config.map { ($0, []) } ?? {
+        let (loaded, messages) = loadGioConfig()
+        return (loaded, messages)
+    }()
+    let engine = engine ?? ScrollableLayoutEngine(
+        config: loaded.makeLayoutConfig(viewportWidth: display.width)
+    )
     let flip = AXVerticalFlip(displayHeight: displayHeight)
     let actuator = actuator ?? AXWindowActuator(displayHeight: displayHeight)
     let found = try discoverSystemWindows()
     let (candidates, skippedMinimized) = selectTileCandidates(found.windows)
     var managed: [ManagedWindow] = []
+    var modes: [WindowID: WindowMode] = [:]
     var skippedUntileable = 0
     var focusedID: WindowID?
     for (index, candidate) in candidates.enumerated() {
@@ -135,22 +152,26 @@ public func runTileReflow(
             element: candidate.element,
             appElement: candidate.appElement
         )
+        let mode = evaluateRules(loaded.rules, app: candidate.window.appName).mode ?? .tiled
         let window = ManagedWindow(
             id: id,
             pid: candidate.window.pid,
             application: candidate.window.appName,
             title: candidate.window.title ?? "",
             frame: flip.toCocoa(candidate.window.frame),
-            mode: .tiled
+            mode: mode
         )
         try registry.register(window)
         managed.append(window)
+        modes[id] = mode
         if candidate.window.isFocused {
             focusedID = id
         }
     }
     let workspace = makeTileWorkspace(windows: managed)
-    let layout = try engine.calculate(workspace: workspace, viewport: display)
+    let layout = try engine.calculate(
+        workspace: tilingWorkspace(from: workspace, modes: modes), viewport: display
+    )
     let (visibleFrames, skippedOffscreen) = splitVisibleFrames(layout.frames, in: display)
     // Never steal focus: the desired focus is the currently focused window,
     // and only when it is among the tiled ones (it always is here).
@@ -161,12 +182,13 @@ public func runTileReflow(
         currentlyFocused: focusedID
     )
     return TileReflowReport(
-        tiled: managed.map(\.id),
+        managed: managed.map(\.id),
         skippedMinimized: skippedMinimized,
         skippedUntileable: skippedUntileable,
         skippedDiscovery: found.skipped,
         skippedOffscreen: skippedOffscreen,
         reconcile: reconcile,
-        displayInfo: describeDisplayGeometry(chosen: display)
+        displayInfo: describeDisplayGeometry(chosen: display),
+        configMessages: configMessages
     )
 }
