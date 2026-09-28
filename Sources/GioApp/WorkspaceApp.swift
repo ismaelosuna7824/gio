@@ -202,11 +202,59 @@ import GioMac
             let nextStep = coordinator.recoveryRequired
                 ? "Recovery needed; Quit retries restoring windows."
                 : "Retry \(retry)."
-            reflowFailures[id] = "Tiling failed on display \(id.rawValue). \(nextStep) Error: \(error)"
+            // Diagnostics only: fresh NSScreen read at failure time, never the cache.
+            // No behavior change — fail-closed handling below stays exactly as is.
+            let diagnostics = failureDiagnostics(for: id, error: error)
+            reflowFailures[id] = "Tiling failed on display \(id.rawValue). \(nextStep) Error: \(error)\(diagnostics.isEmpty ? "" : " \(diagnostics)")"
             if !gapDiverged && warning != nil && !coordinator.recoveryRequired { warning = nil }
             updateStatus()
             return false
         }
+    }
+
+    /// Builds the log-only diagnostics appended to a tiling-failure message.
+    /// Reads live display state; never refreshes or mutates the `usable` cache.
+    private func failureDiagnostics(for id: DisplayID, error: Error) -> String {
+        var parts: [String] = []
+        if Self.isShrinkMismatch(error) {
+            parts.append("shrink=true (AX applied a smaller frame than requested; cached usable bounds may be stale)")
+        }
+        if let line = freshVisibleAreaLine(for: id) { parts.append(line) }
+        return parts.joined(separator: " ")
+    }
+
+    /// True when the failure carries a frame mismatch where AX applied a
+    /// smaller frame than requested — the stale-usable-bounds signature.
+    private static func isShrinkMismatch(_ error: Error) -> Bool {
+        let candidates: [Error]
+        if case NativeTilingError.operationFailed(let underlying, _) = error {
+            candidates = [underlying, error]
+        } else {
+            candidates = [error]
+        }
+        for candidate in candidates {
+            if let frames = (candidate as? WindowFrameMismatch)?.mismatchedFrames,
+               frames.actual.width < frames.requested.width
+                || frames.actual.height < frames.requested.height {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Fresh visible-area snapshot for one display: live CG bounds plus a live
+    /// NSScreen read. Returns nil when the display has no matching live screen.
+    private func freshVisibleAreaLine(for id: DisplayID) -> String? {
+        guard let number = UInt32(id.rawValue) else { return nil }
+        let bounds = CGDisplayBounds(CGDirectDisplayID(number))
+        for screen in NSScreen.screens {
+            guard let screenNumber = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber,
+                  String(screenNumber.uint32Value) == id.rawValue else { continue }
+            return VisibleAreaDiagnostic(displayID: id.rawValue, displayBounds: bounds,
+                                         screenFrame: screen.frame, visibleFrame: screen.visibleFrame,
+                                         cachedUsable: usable[id]).summary()
+        }
+        return nil
     }
 
     private func scheduleReflow(_ ids: Set<DisplayID>) {
