@@ -7,9 +7,12 @@ import GioCore
 public struct SessionSnapshot: Sendable {
     /// Config-file keybindings (layered over the defaults by the catalog).
     public var keybindings: [(HotkeyCombo, HotkeyAction)]
+    /// Session, permission and window facts; nil before the first fetch.
+    public var facts: SessionFacts?
 
-    public init(keybindings: [(HotkeyCombo, HotkeyAction)] = []) {
+    public init(keybindings: [(HotkeyCombo, HotkeyAction)] = [], facts: SessionFacts? = nil) {
         self.keybindings = keybindings
+        self.facts = facts
     }
 }
 

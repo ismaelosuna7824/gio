@@ -71,7 +71,7 @@ public struct GioMainView: View {
     @ViewBuilder
     private func detail(for section: MainSection) -> some View {
         switch section {
-        case .overview: OverviewPlaceholderView()
+        case .overview: OverviewView(model: model)
         case .shortcuts: ShortcutsView(model: model)
         case .logs: LogsView()
         default: PlaceholderView(section: section)
@@ -90,31 +90,6 @@ struct PlaceholderView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-
-/// Interim Overview: Accessibility state and the Request Access button
-/// that used to live in the debug console.
-struct OverviewPlaceholderView: View {
-    @State private var trusted = hasAXPermission()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Overview").font(.title2)
-            HStack {
-                Text("Accessibility: \(trusted ? "granted" : "missing")").font(.headline)
-                Spacer()
-                Button("Request Access") { trusted = requestAXPermission() }
-                Button("Refresh") { trusted = hasAXPermission() }
-            }
-            if !trusted {
-                Text("Gio needs Accessibility access to move windows and hear shortcuts.")
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding()
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 

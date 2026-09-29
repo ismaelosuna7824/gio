@@ -38,6 +38,8 @@ final class SessionHost: @unchecked Sendable {
     /// by the tap, rebuilt on the session queue at start and on reload.
     private let dispatcherLock = NSLock()
     private var dispatcherTable = HotkeyDispatcher()
+    /// Config load messages (errors and warnings) for the Overview; on `queue`.
+    private var configMessages: [String] = []
     private var isShuttingDown = false
     private var reflowDeferral = ReflowDeferral()
     /// MO-04: where each window physically is (last applied or sampled
@@ -82,6 +84,7 @@ final class SessionHost: @unchecked Sendable {
         let (config, configMessages) = loadGioConfig()
         session.config = config
         refreshDispatcher()
+        self.configMessages = configMessages
         for message in configMessages {
             print("[gio] config: \(message)")
         }
@@ -159,8 +162,45 @@ final class SessionHost: @unchecked Sendable {
     /// on the session queue.
     func snapshot() -> SessionSnapshot {
         queue.sync {
-            SessionSnapshot(keybindings: session.config.keybindings)
+            SessionSnapshot(keybindings: session.config.keybindings, facts: sessionFacts())
         }
+    }
+
+    /// Must run on `queue`.
+    private func sessionFacts() -> SessionFacts {
+        let displayStates = displays.allDisplays()
+        let shown = displayStates.isEmpty
+            ? [session.manager.current]
+            : displayStates.map { Int($0.workspace.rawValue) }
+        var owner: [WindowID: Int] = [:]
+        for index in WorkspaceManager.range {
+            for column in session.manager.workspace(index)?.columns ?? [] {
+                for id in column.windows {
+                    owner[id] = index
+                }
+            }
+        }
+        let windows = session.registry.managedWindows().map { window -> WindowFact in
+            let workspace = owner[window.id]
+            return WindowFact(
+                id: "\(window.id.pid):\(window.id.elementID)",
+                application: window.application, title: window.title, workspace: workspace,
+                mode: window.mode, floatReason: window.floatReason,
+                isMinimized: window.isMinimized,
+                workspaceIsShown: workspace.map(shown.contains) ?? true
+            )
+        }
+        let path = session.configPath
+            ?? (FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml")
+        return SessionFacts(
+            configPath: path, configExists: FileManager.default.fileExists(atPath: path),
+            configMessages: configMessages, accessibilityGranted: hasAXPermission(),
+            currentWorkspace: session.manager.current,
+            displays: displayStates.map {
+                DisplayFact(id: $0.id.rawValue, workspace: Int($0.workspace.rawValue))
+            },
+            windows: windows
+        )
     }
 
     // MARK: - IPC
@@ -172,6 +212,7 @@ final class SessionHost: @unchecked Sendable {
             switch command {
             case .reload:
                 refreshDispatcher()
+                configMessages = loadGioConfig().messages
                 reapplyRules()
                 reflowAll()
             case .focus, .move, .workspace:
