@@ -1699,6 +1699,8 @@ final class SessionHost: @unchecked Sendable {
         eventObserver?.detach(pid: pid)
         observationBook.didDetach(pid)
         let ids = session.registry.managedWindows().map(\.id).filter { $0.pid == pid }
+        // PA-05: tear down the app's persistent write lane and cached name.
+        reconciler?.forgetApp(pid: pid)
         purge(ids)
         reflowAll()
     }

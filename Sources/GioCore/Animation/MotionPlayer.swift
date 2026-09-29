@@ -15,9 +15,11 @@ public struct MotionWrite: Equatable, Sendable {
     }
 }
 
-/// Where the player's frames go. `submitMotion` never blocks and never
-/// queues: it returns false when the app's previous frame is still being
-/// written, and the player drops that frame for that app.
+/// Where the player's frames go. `submitMotion` never blocks: it returns
+/// false when the app cannot take a frame at all (the player then counts a
+/// drop and resumes from the last frame the app really received). A sink may
+/// keep only the latest pending frame per app and report the overwritten ones
+/// as `MotionWriteStats.drops`.
 public protocol MotionFrameSink: AnyObject {
     func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool
     /// Blocks (bounded) until every accepted frame has been written.
@@ -207,7 +209,9 @@ public final class MotionPlayer {
         }
         let slowest = slowestPid.map { (app: names.display($0), milliseconds: stats[$0]!.maxMilliseconds) }
         let summary = MotionSummary(
-            windows: runWindows.count, frames: frames, dropped: dropped,
+            windows: runWindows.count, frames: frames,
+            // Rejected submissions plus frames the lanes overwrote before writing them.
+            dropped: dropped + stats.values.reduce(0) { $0 + $1.drops },
             duration: clock() - runStart, slowest: slowest,
             curve: runUsedSpring ? "spring" : "ease-out"
         )

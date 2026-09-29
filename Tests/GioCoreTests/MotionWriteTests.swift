@@ -16,6 +16,8 @@ final class MotionWriteTests: XCTestCase {
         func seed(_ id: WindowID, _ frame: CGRect) { lock.withLock { frames[id] = frame } }
         var verifies: [Bool] { lock.withLock { verifyFlags } }
         func current(_ id: WindowID) -> CGRect? { lock.withLock { frames[id] } }
+        private var history: [WindowID: [CGRect]] = [:]
+        func written(_ id: WindowID) -> [CGRect] { lock.withLock { history[id] ?? [] } }
 
         func frame(of id: WindowID) throws -> CGRect? { lock.withLock { frames[id] } }
         func setFrame(_ frame: CGRect, for id: WindowID) throws {
@@ -30,6 +32,7 @@ final class MotionWriteTests: XCTestCase {
             Thread.sleep(forTimeInterval: delay)
             lock.withLock {
                 frames[id] = frame
+                history[id, default: []].append(frame)
                 verifyFlags.append(verify)
             }
         }
@@ -58,21 +61,26 @@ final class MotionWriteTests: XCTestCase {
         XCTAssertTrue(reconciler.takeMotionStats().isEmpty)
     }
 
-    func testBusyAppRejectsTheNextFrameInsteadOfQueueing() {
+    func testBusyAppKeepsOnlyTheLatestPendingFrame() {
         let actuator = Actuator()
         actuator.gate = true
         let id = window(1)
         actuator.seed(id, start)
         let reconciler = WindowReconciler(actuator: actuator)
-        let write = MotionWrite(id: id, from: start, to: start.offsetBy(dx: 10, dy: 0))
-        XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [write]))
+        let first = start.offsetBy(dx: 10, dy: 0)
+        XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [MotionWrite(id: id, from: start, to: first)]))
         actuator.entered.wait()
-        XCTAssertFalse(reconciler.submitMotion(pid: 10, writes: [write]))
+        // Accepted while the first write is in flight; the second overwrites
+        // the first pending frame (latest wins) and inherits its `from`.
+        XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [MotionWrite(id: id, from: first, to: start.offsetBy(dx: 20, dy: 0))]))
+        XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [MotionWrite(id: id, from: start.offsetBy(dx: 20, dy: 0), to: start.offsetBy(dx: 30, dy: 0))]))
         XCTAssertTrue(reconciler.submitMotion(pid: 11, writes: [MotionWrite(id: window(2, pid: 11), from: start, to: start)]))
         actuator.proceed.signal()
         actuator.proceed.signal()
+        actuator.proceed.signal()
         reconciler.waitForMotionIdle(timeout: 2)
-        XCTAssertEqual(actuator.verifies.count, 2)
+        XCTAssertEqual(actuator.written(id), [first, start.offsetBy(dx: 30, dy: 0)])
+        XCTAssertEqual(actuator.verifies.count, 3)
     }
 
     func testReconcileWaitsForInFlightMotionInsteadOfSkippingTheApp() {
@@ -142,7 +150,7 @@ final class MotionWriteTests: XCTestCase {
         XCTAssertTrue(reconciler.takeMotionStats().isEmpty)
     }
 
-    func testBusyRejectionIsCountedAsADropForThatPid() {
+    func testOverwrittenPendingFramesAreCountedAsDropsForThatPid() {
         let actuator = Actuator()
         actuator.gate = true
         let id = window(1)
@@ -151,8 +159,10 @@ final class MotionWriteTests: XCTestCase {
         let write = MotionWrite(id: id, from: start, to: start.offsetBy(dx: 10, dy: 0))
         XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [write]))
         actuator.entered.wait()
-        XCTAssertFalse(reconciler.submitMotion(pid: 10, writes: [write]))
-        XCTAssertFalse(reconciler.submitMotion(pid: 10, writes: [write]))
+        for _ in 0..<3 {
+            XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [write]))
+        }
+        actuator.proceed.signal()
         actuator.proceed.signal()
         reconciler.waitForMotionIdle(timeout: 2)
         XCTAssertEqual(reconciler.takeMotionStats()[10]?.drops, 2)

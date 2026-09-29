@@ -91,8 +91,9 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let clock: ReflowClock
     private let names: AppNameCache
     private let concurrency: LaneConcurrency
-    private let executor = LaneExecutor()
-    private let motion = MotionBook()
+    private let executor: LaneExecutor
+    private let motion: MotionBook
+    private let motionLanes: MotionLanes
     private var failureGate = FailureLogGate()
 
     /// Timing of the most recent `reconcile` pass (MO-01).
@@ -111,6 +112,12 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         self.concurrency = concurrency
         self.clock = clock
         self.names = AppNameCache(resolve: appName)
+        let executor = LaneExecutor()
+        let motion = MotionBook()
+        let worker = MotionWorker(actuator: actuator, clock: clock)
+        self.executor = executor
+        self.motion = motion
+        motionLanes = MotionLanes(executor: executor, book: motion) { worker.write($0, into: motion) }
     }
 
     /// What happened to one window; folded into the report in serial order.
@@ -333,25 +340,13 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
     }
 
-    /// MO-04 animation frame: written on the app's own lane, position and/or
-    /// size only, unverified (the final reconcile verifies). Never blocks and
-    /// never queues; false means the app is still busy and the frame is dropped.
+    /// MO-04 animation frame (PA-05): stored as the latest pending frame of
+    /// the app's persistent lane, written position and/or size only,
+    /// unverified (the final reconcile verifies). Never blocks. A frame the
+    /// lane has not started yet is overwritten by a newer one (counted as a
+    /// drop); false means an abandoned reconcile lane still holds the app.
     public func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool {
-        guard executor.claim(pid) else {
-            motion.recordDrop(pid: pid)
-            return false
-        }
-        motion.group.enter()
-        let worker = MotionWorker(actuator: actuator, clock: clock)
-        let executor = executor, motion = motion
-        DispatchQueue.global(qos: .userInteractive).async {
-            for write in writes {
-                worker.write(write, into: motion)
-            }
-            executor.release(pid)
-            motion.group.leave()
-        }
-        return true
+        motionLanes.submit(pid: pid, writes: writes)
     }
 
     /// NC-07 / HD-02: put hidden incoming windows just below their target
@@ -426,8 +421,16 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return written.sorted()
     }
 
+    /// Bounded wait for the in-flight motion writes; frames still pending
+    /// after the timeout are discarded (see `MotionLanes.waitForIdle`).
     public func waitForMotionIdle(timeout: TimeInterval) {
-        _ = motion.group.wait(timeout: .now() + timeout)
+        motionLanes.waitForIdle(timeout: timeout)
+    }
+
+    var motionLaneCount: Int { motionLanes.count }
+
+    func motionLaneIdentity(pid: pid_t) -> AnyObject? {
+        motionLanes.lane(pid: pid)
     }
 
     /// Per-app motion write stats accumulated since the last call.
@@ -438,6 +441,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// The app is gone: drop what is cached for its pid.
     public func forgetApp(pid: pid_t) {
         names.forget(pid)
+        motionLanes.forget(pid: pid)
     }
 
     /// Gio is leaving: bring every listed window that is parked or off-screen
@@ -487,9 +491,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     public static var maxParkedStrip: CGFloat { parkedStripLimit }
 }
 
-/// Timings and the in-flight marker of motion frames (MO-04).
+/// Aggregated timings of motion frames (MO-04).
 final class MotionBook: @unchecked Sendable {
-    let group = DispatchGroup()
     private let lock = NSLock()
     private var stats: [pid_t: MotionWriteStats] = [:]
 

@@ -252,4 +252,18 @@ final class MotionPlayerTests: XCTestCase {
         clock.now = 1
         XCTAssertEqual(player.tick().summary?.slowest?.app, "app20")
     }
+
+    func testSummaryDroppedAlsoCountsFramesTheLanesOverwrote() {
+        let clock = FakeClock(), sink = FakeSink()
+        let slow = id(1, pid: 20)
+        let player = makePlayer(clock, sink)
+        player.start([slide(slow)])
+        sink.busy = [20]
+        clock.now = 0.25
+        _ = player.tick()   // rejected by the sink: one drop counted by the player
+        sink.busy = []
+        sink.stats = [20: MotionWriteStats(count: 3, sumMilliseconds: 30, maxMilliseconds: 12, drops: 3, axCalls: 0)]
+        clock.now = 1
+        XCTAssertEqual(player.tick().summary?.dropped, 4)
+    }
 }
