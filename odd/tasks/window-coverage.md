@@ -79,6 +79,13 @@ Window admission, observation and registration only. Out of scope: animation/per
   is adopted. Fix: log focus adoption (source, id, column, scroll), and for mouse-driven
   focus adopt only a window containing the click point after the focus settles.
   DONE `9d25405`: FocusSettle (mouse-down via existing tap, settle 80ms, click-point validation, one re-read then drop, coalesce), single requestFocusAdoption entry, `focus adopt`/`focus dropped` debug logs. Code confirmed double adoption per click + unchecked AXFocusedWindow read; stale read itself LIVE PENDING. 15 tests RED -> GREEN, 343 executed 0 failures (parent spot-check). Review: UNAVAILABLE.
+- [x] WC-10 — Reveal geometry (live retest 2026-09-29 with WC-09 logs): no `focus dropped`,
+  adopted windows were the clicked visible ones, yet `scroll=1824->0`, `1816->916`, `0->16`.
+  Root causes: (1) `revealOffset` compared screen-space frames with the content-space
+  offset; (2) fraction widths ignored padding/gap so two 0.5 columns overflowed by 16pt.
+  DONE `592c89d` (route: inline, 3 source files, understood fix): content-space conversion +
+  `proportionalColumnWidth` (Niri semantics). 4 tests RED with the live numbers -> GREEN;
+  347 executed 0 failures; signed build OK; diff --check clean. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -114,3 +121,4 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: WC-08 `cb1781f` + WC-07 `4a6351b` done; 328 executed 0 failures (parent spot-check). Next: user live retest, then phase 2 perf.
 - 2026-09-29: live retest: test 5 (quit restore) PASS; test 2 (click) intermittent FAIL with many windows. Added WC-09. Route: delegated writer.
 - 2026-09-29: WC-09 done `9d25405`. Next: user live retest of click (look for `focus dropped` / `focus adopt ... parked`).
+- 2026-09-29: WC-09 hypothesis (stale focus) REFUTED by logs; real cause reveal geometry. WC-10 done. Next: live retest click.
