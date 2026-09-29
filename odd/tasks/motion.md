@@ -69,3 +69,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: MO-01..MO-03 done. Next: user live timing sample, then MO-04.
 - 2026-09-29: live timing (25 reflows, 9 windows): total 2-12ms, axCalls 19-26, 0 lane timeouts; one Slack write hit 250ms, Xcode 42ms once. User still sees 2-by-2 jumps: expected, no animation yet. Perceived lag likely app repaint, unmeasured. AX animation budget confirmed feasible. Starting MO-04 (route: delegated writer).
 - 2026-09-29: MO-04 done. Next: user live evaluation via `anim done` lines; decide keep AX vs snapshot fallback.
+- 2026-09-29: LIVE PASS: 20 `anim done` samples, 25 frames/200ms (~125fps our side), dropped 0 (max 2, Chrome). Keep AX animation; snapshot fallback not needed. Feature closed; next work in odd/tasks/niri-controls.md.
