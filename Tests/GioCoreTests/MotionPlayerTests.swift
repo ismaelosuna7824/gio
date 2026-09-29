@@ -167,14 +167,14 @@ final class MotionPlayerTests: XCTestCase {
         XCTAssertEqual(sink.idleWaits, 1)
         XCTAssertEqual(
             summary?.logLine,
-            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=Slack 42ms"
+            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=Slack 42ms curve=ease-out"
         )
     }
 
     func testSummaryLineWithoutTimingsSaysNone() {
         let summary = MotionSummary(windows: 3, frames: 12, dropped: 2, duration: 0.2, slowest: nil)
         XCTAssertEqual(
-            summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none"
+            summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none curve=ease-out"
         )
     }
 }

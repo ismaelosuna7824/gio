@@ -34,11 +34,14 @@ public struct MotionSummary: Equatable, Sendable {
     public let duration: TimeInterval
     /// The app with the single slowest frame write.
     public let slowest: (app: String, milliseconds: Double)?
+    /// NF-04: `spring` or `ease-out`.
+    public let curve: String
 
     public init(
         windows: Int, frames: Int, dropped: Int, duration: TimeInterval,
-        slowest: (app: String, milliseconds: Double)?
+        slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out"
     ) {
+        self.curve = curve
         self.windows = windows
         self.frames = frames
         self.dropped = dropped
@@ -47,18 +50,18 @@ public struct MotionSummary: Equatable, Sendable {
     }
 
     public static func == (lhs: MotionSummary, rhs: MotionSummary) -> Bool {
-        lhs.windows == rhs.windows && lhs.frames == rhs.frames && lhs.dropped == rhs.dropped
+        lhs.windows == rhs.windows && lhs.curve == rhs.curve && lhs.frames == rhs.frames && lhs.dropped == rhs.dropped
             && lhs.duration == rhs.duration && lhs.slowest?.app == rhs.slowest?.app
             && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds
     }
 
-    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms`
+    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve>`
     /// `frames` counts sampled display ticks, `dropped` counts per-app frames
     /// skipped because that app was still writing. IDs and app names only.
     public var logLine: String {
         let slowestText = slowest.map { "\($0.app) \(Int($0.milliseconds.rounded()))ms" } ?? "none"
         return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) "
-            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText)"
+            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve)"
     }
 }
 
@@ -88,6 +91,10 @@ public final class MotionPlayer {
     private var runWindows: Set<WindowID> = []
     private var frames = 0
     private var dropped = 0
+    /// Elapsed time (in the current segment) of the last sampled tick: the
+    /// instant the windows' last written positions belong to.
+    private var lastElapsed: TimeInterval = 0
+    private var runUsedSpring = false
 
     public private(set) var sampledFrames: [WindowID: CGRect] = [:]
 
@@ -102,8 +109,13 @@ public final class MotionPlayer {
 
     public var isActive: Bool { !animations.isEmpty }
 
+    /// The flights in progress (tests inspect retarget velocities).
+    var currentAnimations: [WindowAnimation] { animations }
+
     /// Begin, or retarget a run in flight: the new animations replace the
-    /// old ones and time restarts, while the run's counters continue.
+    /// old ones and time restarts, while the run's counters continue. A spring
+    /// flight inherits the velocity its predecessor had at the last sampled
+    /// instant (NF-04), so rapid retargets flow instead of restarting from rest.
     public func start(_ next: [WindowAnimation]) {
         guard !next.isEmpty else {
             return
@@ -116,9 +128,22 @@ public final class MotionPlayer {
             runWindows = []
             submitted = [:]
             sampledFrames = [:]
+            runUsedSpring = false
         }
+        var previous: [WindowID: WindowAnimation] = [:]
+        for animation in animations {
+            previous[animation.id] = animation
+        }
+        let sampledAt = lastElapsed
         segmentStart = now
-        animations = next
+        lastElapsed = 0
+        animations = next.map { animation in
+            guard let spring = animation.spring, let old = previous[animation.id], old.spring != nil else {
+                return animation
+            }
+            return animation.springing(spring, velocity: old.velocity(at: sampledAt))
+        }
+        runUsedSpring = runUsedSpring || animations.contains { $0.spring != nil }
         for animation in next {
             runWindows.insert(animation.id)
             if submitted[animation.id] == nil {
@@ -138,6 +163,7 @@ public final class MotionPlayer {
             return MotionTick(sampled: [:], summary: nil)
         }
         let elapsed = clock() - segmentStart
+        lastElapsed = elapsed
         frames += 1
         var sampled: [WindowID: CGRect] = [:]
         var perPid: [pid_t: [MotionWrite]] = [:]
@@ -182,7 +208,8 @@ public final class MotionPlayer {
             .map { (app: $0.app.isEmpty ? (appName($0.id.pid) ?? "pid\($0.id.pid)") : $0.app, milliseconds: $0.milliseconds) }
         let summary = MotionSummary(
             windows: runWindows.count, frames: frames, dropped: dropped,
-            duration: clock() - runStart, slowest: slowest
+            duration: clock() - runStart, slowest: slowest,
+            curve: runUsedSpring ? "spring" : "ease-out"
         )
         animations = []
         submitted = [:]

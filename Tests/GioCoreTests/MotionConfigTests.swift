@@ -54,6 +54,70 @@ final class MotionConfigTests: XCTestCase {
         let (config, warnings) = try parseGioConfig(template).get()
         XCTAssertTrue(warnings.isEmpty)
         XCTAssertEqual(config.animations.durationMilliseconds, 200)
+        XCTAssertTrue(template.contains("curve"))
+        XCTAssertTrue(template.contains("spring-stiffness"))
+    }
+
+    func testSpringIsTheDefaultCurveWithNiriParameters() {
+        let animations = defaultGioConfig().animations
+        XCTAssertEqual(animations.curve, .spring)
+        XCTAssertEqual(animations.springDampingRatio, 1.0)
+        XCTAssertEqual(animations.springStiffness, 800)
+        XCTAssertEqual(animations.spring, SpringParameters.niri)
+    }
+
+    func testParsesCurveAndSpringParameters() throws {
+        let text = "[animations]\ncurve = \"ease-out\"\nspring-damping-ratio = 0.8\nspring-stiffness = 1200\n"
+        let (config, warnings) = try parseGioConfig(text).get()
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertEqual(config.animations.curve, .easeOut)
+        XCTAssertEqual(config.animations.springDampingRatio, 0.8)
+        XCTAssertEqual(config.animations.springStiffness, 1200)
+        let (spring, _) = try parseGioConfig("[animations]\ncurve = \"spring\"\n").get()
+        XCTAssertEqual(spring.animations.curve, .spring)
+    }
+
+    func testSpringParametersAreClampedWithWarnings() throws {
+        let (config, warnings) = try parseGioConfig(
+            "[animations]\nspring-damping-ratio = 9\nspring-stiffness = 5\n"
+        ).get()
+        XCTAssertEqual(config.animations.springDampingRatio, SpringParameters.dampingRatioRange.upperBound)
+        XCTAssertEqual(config.animations.springStiffness, SpringParameters.stiffnessRange.lowerBound)
+        XCTAssertEqual(warnings.count, 2)
+        XCTAssertTrue(warnings[0].contains("animations.spring-damping-ratio"))
+        XCTAssertTrue(warnings[1].contains("animations.spring-stiffness"))
+    }
+
+    func testUnknownCurveWarnsAndKeepsTheDefault() throws {
+        let (config, warnings) = try parseGioConfig("[animations]\ncurve = \"bouncy\"\n").get()
+        XCTAssertEqual(config.animations.curve, .spring)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("animations.curve"))
+    }
+
+    func testNonNumericSpringParameterIsAnError() {
+        switch parseGioConfig("[animations]\nspring-stiffness = \"stiff\"\n") {
+        case .success:
+            XCTFail("expected an error")
+        case .failure(let errors):
+            XCTAssertEqual(errors.messages, ["line 2: animations.spring-stiffness expects a number"])
+        }
+    }
+
+    func testAnimationEditsCarryCurveAndSpringWhenGiven() {
+        XCTAssertEqual(
+            animationEdits(
+                enabled: true, durationMilliseconds: 200,
+                curve: .spring, springDampingRatio: 0.9, springStiffness: 700
+            ),
+            [
+                .set(table: "animations", key: "enabled", value: .bool(true)),
+                .set(table: "animations", key: "duration-ms", value: .int(200)),
+                .set(table: "animations", key: "curve", value: .string("spring")),
+                .set(table: "animations", key: "spring-damping-ratio", value: .number(0.9)),
+                .set(table: "animations", key: "spring-stiffness", value: .number(700)),
+            ]
+        )
     }
 
     func testEchoGateSuppressesByTimeWithoutNeedingTheObservedFrame() {

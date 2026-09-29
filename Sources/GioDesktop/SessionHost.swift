@@ -944,6 +944,9 @@ final class SessionHost: @unchecked Sendable {
         }
         plans.append(inactive)
         hoverFrames = hovered
+        if settings.curve == .spring {
+            animations = animations.map { $0.springing(settings.spring) }
+        }
         if !animations.isEmpty {
             applyPrepositions(prepositions, reconciler: reconciler)
             startMotion(animations, reconciler: reconciler)

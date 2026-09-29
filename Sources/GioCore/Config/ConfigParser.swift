@@ -317,9 +317,46 @@ func applyAnimationsKey(
             )
         }
         config.animations.durationMilliseconds = rounded
+    } else if key == "curve" {
+        guard case .string(let text) = value else {
+            errors.append("line \(line): animations.curve expects \"spring\" or \"ease-out\"")
+            return
+        }
+        if let curve = MotionCurveKind(rawValue: text) {
+            config.animations.curve = curve
+        } else {
+            warnings.append("line \(line): animations.curve '\(text)' is not \"spring\" or \"ease-out\", using the default")
+        }
+    } else if key == "spring-damping-ratio" {
+        applySpringNumber(
+            key, value: value, line: line, range: SpringParameters.dampingRatioRange,
+            errors: &errors, warnings: &warnings
+        ) { config.animations.springDampingRatio = $0 }
+    } else if key == "spring-stiffness" {
+        applySpringNumber(
+            key, value: value, line: line, range: SpringParameters.stiffnessRange,
+            errors: &errors, warnings: &warnings
+        ) { config.animations.springStiffness = $0 }
     } else {
         warnings.append("line \(line): unknown animations key '\(key)', ignored")
     }
+}
+
+private func applySpringNumber(
+    _ key: String, value: ConfigValue, line: Int, range: ClosedRange<Double>,
+    errors: inout [String], warnings: inout [String], set: (Double) -> Void
+) {
+    guard let number = value.number, number.isFinite else {
+        errors.append("line \(line): animations.\(key) expects a number")
+        return
+    }
+    let clamped = min(max(number, range.lowerBound), range.upperBound)
+    if clamped != number {
+        warnings.append(
+            "line \(line): animations.\(key) clamped to \(clamped) (valid \(range.lowerBound)-\(range.upperBound))"
+        )
+    }
+    set(clamped)
 }
 
 func applyFocusRingKey(

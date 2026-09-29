@@ -48,6 +48,12 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
     }
 }
 
+/// NF-04: how motion is timed.
+public enum MotionCurveKind: String, Equatable, Sendable {
+    case spring
+    case easeOut = "ease-out"
+}
+
 public struct AnimationsSectionConfig: Equatable, Sendable {
     public static let durationRange = 0...1000
 
@@ -55,10 +61,30 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var enabled: Bool
     /// Length of one animation, clamped to `durationRange` by the parser.
     public var durationMilliseconds: Int
+    /// NF-04: `spring` (default) ignores `durationMilliseconds` except that
+    /// 0 still means instant; `ease-out` uses it as the flight length.
+    public var curve: MotionCurveKind
+    public var springDampingRatio: Double
+    public var springStiffness: Double
 
-    public init(enabled: Bool = true, durationMilliseconds: Int = 200) {
+    public init(
+        enabled: Bool = true, durationMilliseconds: Int = 200,
+        curve: MotionCurveKind = .spring,
+        springDampingRatio: Double = SpringParameters.niri.dampingRatio,
+        springStiffness: Double = SpringParameters.niri.stiffness
+    ) {
         self.enabled = enabled
         self.durationMilliseconds = durationMilliseconds
+        self.curve = curve
+        self.springDampingRatio = springDampingRatio
+        self.springStiffness = springStiffness
+    }
+
+    public var spring: SpringParameters {
+        SpringParameters(
+            dampingRatio: springDampingRatio, stiffness: springStiffness,
+            epsilon: SpringParameters.niri.epsilon
+        )
     }
 
     public var duration: TimeInterval { TimeInterval(durationMilliseconds) / 1000 }

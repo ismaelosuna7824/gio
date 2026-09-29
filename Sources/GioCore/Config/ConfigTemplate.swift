@@ -26,7 +26,15 @@ public func defaultConfigTemplate() -> String {
 
     [animations]
     enabled = true
+    # "spring" (Niri-style, default) or "ease-out". A spring keeps the speed
+    # of a move it interrupts, so rapid key presses flow; duration-ms only
+    # sets the length of "ease-out" (0 still means instant for both).
+    curve = "spring"
     duration-ms = 200
+    # Spring tuning: damping ratio 0.2-3 (1 = no overshoot, lower bounces),
+    # stiffness 100-3000 (higher is faster).
+    spring-damping-ratio = 1.0
+    spring-stiffness = 800
 
     [focus-ring]
     # A rounded outline drawn around the focused window (click-through overlay).

@@ -134,6 +134,9 @@ struct AnimationsSettingsView: View {
     @ObservedObject var model: DesktopModel
     @State private var enabled: Bool
     @State private var duration: Double
+    @State private var curve: MotionCurveKind
+    @State private var dampingRatio: Double
+    @State private var stiffness: Double
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
@@ -141,18 +144,49 @@ struct AnimationsSettingsView: View {
         let animations = model.snapshot.config.animations
         _enabled = State(initialValue: animations.enabled)
         _duration = State(initialValue: Double(animations.durationMilliseconds))
+        _curve = State(initialValue: animations.curve)
+        _dampingRatio = State(initialValue: animations.springDampingRatio)
+        _stiffness = State(initialValue: animations.springStiffness)
     }
 
     var body: some View {
         Form {
             Section("Motion") {
                 Toggle("Animate scrolling and focus changes", isOn: $enabled)
-                HStack {
-                    Slider(value: $duration, in: 0...1000, step: 10)
-                    Text("\(Int(duration)) ms").monospacedDigit().frame(width: 70, alignment: .trailing)
+                Picker("Curve", selection: $curve) {
+                    Text("Spring").tag(MotionCurveKind.spring)
+                    Text("Ease out").tag(MotionCurveKind.easeOut)
                 }
+                .pickerStyle(.segmented)
                 .disabled(!enabled)
-                Text("0 ms or off makes every move instant.").font(.caption).foregroundStyle(.secondary)
+                if curve == .spring {
+                    HStack {
+                        Text("Damping")
+                        Slider(
+                            value: $dampingRatio,
+                            in: SpringParameters.dampingRatioRange, step: 0.05
+                        )
+                        Text(String(format: "%.2f", dampingRatio)).monospacedDigit()
+                            .frame(width: 70, alignment: .trailing)
+                    }
+                    .disabled(!enabled)
+                    HStack {
+                        Text("Stiffness")
+                        Slider(value: $stiffness, in: SpringParameters.stiffnessRange, step: 50)
+                        Text("\(Int(stiffness))").monospacedDigit()
+                            .frame(width: 70, alignment: .trailing)
+                    }
+                    .disabled(!enabled)
+                    Text("Damping 1 never overshoots; lower bounces. Higher stiffness is faster. A spring keeps the speed of a move it interrupts, so rapid key presses flow.")
+                        .font(.caption).foregroundStyle(.secondary)
+                } else {
+                    HStack {
+                        Slider(value: $duration, in: 0...1000, step: 10)
+                        Text("\(Int(duration)) ms").monospacedDigit().frame(width: 70, alignment: .trailing)
+                    }
+                    .disabled(!enabled)
+                    Text("0 ms or off makes every move instant.").font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section {
                 HStack {
@@ -167,13 +201,19 @@ struct AnimationsSettingsView: View {
     }
 
     private func apply() {
-        feedback = model.apply(animationEdits(enabled: enabled, durationMilliseconds: Int(duration)))
+        feedback = model.apply(animationEdits(
+            enabled: enabled, durationMilliseconds: Int(duration),
+            curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness
+        ))
     }
 
     private func revert() {
         let animations = model.snapshot.config.animations
         enabled = animations.enabled
         duration = Double(animations.durationMilliseconds)
+        curve = animations.curve
+        dampingRatio = animations.springDampingRatio
+        stiffness = animations.springStiffness
         feedback = nil
     }
 }

@@ -70,7 +70,7 @@ Validation outcomes:
 | --- | --- |
 | Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used**, and every message (with its line number) is shown in the app (**Overview**, **Diagnostics**) and returned by `gio reload`. |
 | Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility). |
-| `animations.duration-ms` outside 0 to 1000, `focus-ring.width` outside 0 to 20 | **Warning.** Clamped into range. |
+| `animations.duration-ms` outside 0 to 1000, `animations.spring-damping-ratio` outside 0.2 to 3, `animations.spring-stiffness` outside 100 to 3000, `focus-ring.width` outside 0 to 20 | **Warning.** Clamped into range. |
 | Missing file | Silent defaults (first run). |
 
 An invalid config never stops the window manager.
@@ -97,7 +97,10 @@ An invalid config never stops the window manager.
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Off makes every reflow instant. |
-| `duration-ms` | number | `200` | Length of one animation. Rounded and clamped to `0...1000` with a warning. `0` is instant. |
+| `curve` | string | `"spring"` | `"spring"` (Niri-style) or `"ease-out"`. A spring keeps the speed of a move it interrupts, so rapid key presses flow instead of restarting. An unknown name warns and keeps the default. |
+| `duration-ms` | number | `200` | Length of one `ease-out` animation. Rounded and clamped to `0...1000` with a warning. `0` is instant for both curves. |
+| `spring-damping-ratio` | number | `1.0` | `0.2...3`. `1` settles without overshoot; lower values bounce. Clamped with a warning. |
+| `spring-stiffness` | number | `800` | `100...3000`. Higher is faster. Clamped with a warning. A spring never runs longer than 1 s. |
 
 ### `[focus-ring]`
 
@@ -136,7 +139,10 @@ preset-column-widths = [0.33333, 0.5, 0.66667]
 
 [animations]
 enabled = true
+curve = "spring"
 duration-ms = 200
+spring-damping-ratio = 1.0
+spring-stiffness = 800
 
 [focus-ring]
 enabled = true

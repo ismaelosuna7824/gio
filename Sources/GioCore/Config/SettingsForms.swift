@@ -89,11 +89,24 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     }
 }
 
-public func animationEdits(enabled: Bool, durationMilliseconds: Int) -> [ConfigEdit] {
-    [
+public func animationEdits(
+    enabled: Bool, durationMilliseconds: Int,
+    curve: MotionCurveKind? = nil, springDampingRatio: Double? = nil, springStiffness: Double? = nil
+) -> [ConfigEdit] {
+    var edits: [ConfigEdit] = [
         .set(table: "animations", key: "enabled", value: .bool(enabled)),
         .set(table: "animations", key: "duration-ms", value: .int(durationMilliseconds)),
     ]
+    if let curve {
+        edits.append(.set(table: "animations", key: "curve", value: .string(curve.rawValue)))
+    }
+    if let springDampingRatio {
+        edits.append(.set(table: "animations", key: "spring-damping-ratio", value: .number(springDampingRatio)))
+    }
+    if let springStiffness {
+        edits.append(.set(table: "animations", key: "spring-stiffness", value: .number(springStiffness)))
+    }
+    return edits
 }
 
 public func focusRingEdits(enabled: Bool, width: Int, colorHex: String) -> [ConfigEdit] {
