@@ -145,6 +145,15 @@ final class WorkspaceVisibilityTests: XCTestCase {
         XCTAssertTrue(book.isHidden(id(1)))
     }
 
+    func testBookPeekKeepsTheMemoryUntilRevealed() {
+        // A retarget mid-flight must still find the floating window's frame.
+        var book = HiddenWindowBook()
+        book.hide(id(1), from: frame)
+        XCTAssertEqual(book.frames(of: [id(1), id(9)]), [id(1): frame])
+        XCTAssertEqual(book.frames(of: [id(1)]), [id(1): frame])
+        XCTAssertEqual(book.reveal([id(1)]), [id(1): frame])
+    }
+
     // MARK: display follows the current workspace
 
     func testShowingCurrentWorkspaceReassignsTheDisplayThatShowedThePrevious() {

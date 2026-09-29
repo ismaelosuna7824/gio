@@ -51,6 +51,17 @@ public struct HiddenWindowBook: Equatable, Sendable {
         }
     }
 
+    /// The remembered frames of those that are hidden, without forgetting.
+    public func frames(of ids: some Sequence<WindowID>) -> [WindowID: CGRect] {
+        var found: [WindowID: CGRect] = [:]
+        for id in ids {
+            if let frame = originals[id] {
+                found[id] = frame
+            }
+        }
+        return found
+    }
+
     /// Forget and return the remembered frames of those that were hidden.
     public mutating func reveal(_ ids: some Sequence<WindowID>) -> [WindowID: CGRect] {
         var restored: [WindowID: CGRect] = [:]

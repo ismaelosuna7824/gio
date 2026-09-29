@@ -552,7 +552,9 @@ final class SessionHost: @unchecked Sendable {
         let modes = tileableModes()
         var plans: [ParkingPlan] = []
         var animations: [WindowAnimation] = []
-        for display in displays.allDisplays() {
+        var prepositions: [WindowID: CGRect] = [:]
+        let inactive = planInactiveWorkspaces()
+        for (index, display) in displays.allDisplays().enumerated() {
             guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
                 continue
             }
@@ -566,11 +568,20 @@ final class SessionHost: @unchecked Sendable {
             }
             plans.append(planned.plan)
             if animating {
-                learnPhysicalFrames(of: planned.plan.visible.keys)
-                animations += planMotion(
-                    current: physicalFrames, visible: planned.plan.visible,
-                    parked: planned.plan.parked, viewport: visible, duration: settings.duration
+                // NC-07: the first display also carries the workspace switch:
+                // hidden windows drop below its bottom edge, revealed ones rise.
+                let carriesSwitch = index == 0
+                let motionFrames = carriesSwitch
+                    ? planned.plan.visible.merging(inactive.visible) { first, _ in first }
+                    : planned.plan.visible
+                learnPhysicalFrames(of: motionFrames.keys)
+                let motion = planWorkspaceSwitchMotion(
+                    current: physicalFrames, visible: motionFrames,
+                    parked: planned.plan.parked, hidden: carriesSwitch ? inactive.parked : [:],
+                    viewport: visible, display: display.frame, duration: settings.duration
                 )
+                animations += motion.animations
+                prepositions.merge(motion.prepositions) { _, new in new }
             }
             // Logical state moves at once; only the physical writes animate.
             session.manager.update(planned.workspace)
@@ -578,8 +589,9 @@ final class SessionHost: @unchecked Sendable {
                 Viewport(offset: planned.layout.viewportOffset, width: visible.width), for: display.id
             )
         }
-        plans.append(planInactiveWorkspaces())
+        plans.append(inactive)
         if !animations.isEmpty {
+            applyPrepositions(prepositions)
             startMotion(animations, reconciler: reconciler)
             return
         }
@@ -649,7 +661,17 @@ final class SessionHost: @unchecked Sendable {
         let active = shown.flatMap { index in
             (session.manager.workspace(index)?.columns ?? []).flatMap(\.windows)
         }
-        plan.visible = hiddenBook.reveal(active.filter { windows[$0]?.mode == .floating })
+        // Keep the memory until the window really sits at its frame: a
+        // retarget mid-flight (or an abandoned animation) must find it again.
+        let floating = active.filter { windows[$0]?.mode == .floating }
+        plan.visible = hiddenBook.frames(of: floating)
+        for (id, frame) in plan.visible {
+            if let physical = physicalFrames[id],
+               abs(physical.minX - frame.minX) <= 1, abs(physical.minY - frame.minY) <= 1
+            {
+                _ = hiddenBook.reveal([id])
+            }
+        }
         return plan
     }
 
@@ -662,6 +684,19 @@ final class SessionHost: @unchecked Sendable {
             if let frame = try? actuator?.frame(of: id) {
                 physicalFrames[id] = frame
             }
+        }
+    }
+
+    /// Place hidden incoming windows directly below their target before the
+    /// player starts (off-screen, so the jump is invisible).
+    private func applyPrepositions(_ frames: [WindowID: CGRect]) {
+        for id in frames.keys.sorted() {
+            guard let frame = frames[id], let from = physicalFrames[id] else {
+                continue
+            }
+            try? actuator?.setFrame(frame, from: from, for: id, verify: false)
+            physicalFrames[id] = frame
+            echoGate.recordApplied([id: frame], at: ProcessInfo.processInfo.systemUptime)
         }
     }
 
