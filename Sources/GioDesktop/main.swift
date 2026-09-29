@@ -26,7 +26,11 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private lazy var mainWindow = MainWindowController(
         model: DesktopModel(
             fetch: { [host] in host.snapshot() },
-            actions: DesktopActions(applyEdits: { [host] in host.applyConfigEdits($0) })
+            actions: DesktopActions(
+                applyEdits: { [host] in host.applyConfigEdits($0) },
+                reloadConfig: { [host] in host.reloadConfig() },
+                restoreAllWindows: { [host] in host.restoreAllWindows() }
+            )
         )
     )
     private var signalSources: [DispatchSourceSignal] = []

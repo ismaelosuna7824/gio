@@ -137,12 +137,38 @@ final class SessionHost: @unchecked Sendable {
         instanceLock.release()
     }
 
-    private func restoreOffscreenWindows(_ ids: [WindowID]) {
+    @discardableResult
+    private func restoreOffscreenWindows(_ ids: [WindowID]) -> ReconcileReport? {
         guard let actuator, !ids.isEmpty else {
-            return
+            return nil
         }
-        WindowReconciler(actuator: actuator)
+        return WindowReconciler(actuator: actuator)
             .restoreOffscreen(ids: ids, displays: restoreDisplays())
+    }
+
+    /// Diagnostics action: same restore the quit path runs, without
+    /// quitting. Tiling stays active, so the next reflow re-parks
+    /// off-viewport columns; this is a rescue, not a pause. Returns how
+    /// many windows were moved.
+    func restoreAllWindows() -> Int {
+        queue.sync {
+            pendingReflow?.cancel()
+            stopMotion()
+            reconciler?.waitForMotionIdle(timeout: 0.3)
+            let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
+            let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
+            GioLog.record(.info, "restore-all requested from the app moved=\(moved)")
+            return moved
+        }
+    }
+
+    /// Same effect as the IPC `reload` verb, driven by the app.
+    func reloadConfig() {
+        queue.sync {
+            dispatch(.reload, session: &session)
+            applyReloadedConfig()
+            GioLog.record(.info, "config reloaded from the app")
+        }
     }
 
     private func refreshDispatcher() {

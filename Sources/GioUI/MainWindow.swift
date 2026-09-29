@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Sidebar sections of the unified Gio window.
 public enum MainSection: String, CaseIterable, Identifiable, Sendable {
-    case overview, shortcuts, layout, animations, rules, logs
+    case overview, shortcuts, layout, animations, rules, logs, diagnostics
 
     public var id: String { rawValue }
 
@@ -17,6 +17,7 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
         case .animations: return "Animations"
         case .rules: return "Rules"
         case .logs: return "Logs"
+        case .diagnostics: return "Diagnostics"
         }
     }
 
@@ -28,6 +29,7 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
         case .animations: return "wand.and.stars"
         case .rules: return "list.bullet.rectangle"
         case .logs: return "text.alignleft"
+        case .diagnostics: return "stethoscope"
         }
     }
 }
@@ -68,36 +70,8 @@ public struct GioMainView: View {
         case .animations: AnimationsSettingsView(model: model)
         case .rules: RulesSettingsView(model: model)
         case .logs: LogsView()
+        case .diagnostics: DiagnosticsView(model: model)
         }
-    }
-}
-
-struct LogsView: View {
-    @State private var text = ""
-    private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Logs").font(.title2)
-                Spacer()
-                Button("Refresh") { reload() }
-            }
-            ScrollView {
-                Text(text.isEmpty ? "(log empty)" : text)
-                    .font(.system(.body, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .border(Color.secondary.opacity(0.3))
-        }
-        .padding()
-        .onAppear { reload() }
-        .onReceive(ticker) { _ in reload() }
-    }
-
-    private func reload() {
-        text = GioLog.entries().suffix(200).map { $0.line() }.joined(separator: "\n")
     }
 }
 

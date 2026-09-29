@@ -28,10 +28,20 @@ public struct DesktopActions: Sendable {
     /// Patch config.toml, then reload it in the running session.
     public var applyEdits: @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>
 
+    /// Re-read config.toml in the running session (same as `gio reload`).
+    public var reloadConfig: @Sendable () -> Void
+    /// Bring every parked or off-screen window back on screen without
+    /// quitting; returns how many windows were moved.
+    public var restoreAllWindows: @Sendable () -> Int
+
     public init(
-        applyEdits: @escaping @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>
+        applyEdits: @escaping @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
+        reloadConfig: @escaping @Sendable () -> Void = {},
+        restoreAllWindows: @escaping @Sendable () -> Int = { 0 }
     ) {
         self.applyEdits = applyEdits
+        self.reloadConfig = reloadConfig
+        self.restoreAllWindows = restoreAllWindows
     }
 
     /// Actions that only report "unavailable" (previews and tests).
@@ -79,5 +89,18 @@ public final class DesktopModel: ObservableObject {
         }
         refresh()
         return feedback
+    }
+
+    public func reloadConfig() {
+        actions.reloadConfig()
+        refresh()
+    }
+
+    /// Windows moved back on screen. Tiling keeps running: the next reflow
+    /// parks off-viewport columns again.
+    public func restoreAllWindows() -> Int {
+        let moved = actions.restoreAllWindows()
+        refresh()
+        return moved
     }
 }
