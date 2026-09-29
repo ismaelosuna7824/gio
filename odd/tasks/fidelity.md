@@ -29,13 +29,22 @@ pid; logs carry ids/app names, never titles. Conventional Commits, NO Co-Authore
 Push to origin feat/gio-niri-rewrite after verified batches; no PR. Quote trailing-space path.
 
 ## Tasks
-- [ ] FI-01 — Failure visibility: every reconcile failure logs id, app, kind, requested and
+- [x] FI-01 (`22e7c6d`) — Failure visibility: every reconcile failure logs id, app, kind, requested and
   actual frame (warn once per window+kind, debug afterwards).
-- [ ] FI-02 — Learned minimum sizes: a size clamp (actual > requested, same position) records
+- [x] FI-02 (`bd7447f`) — Learned minimum sizes: a size clamp (actual > requested, same position) records
   a per-window minimum; layout uses it (column width >= widest member's min width, stacked
   heights respect min heights); no retry storm; forgotten when the window is re-registered.
-- [ ] FI-03 — Overlap-free motion: animate position only; apply size changes once (shrinking
+- [x] FI-03 (`75c59a9`) — Overlap-free motion: animate position only; apply size changes once (shrinking
   windows at the start, growing windows at the end) so neighbours never overlap mid-motion.
+
+Evidence (route: one delegated writer): `reconcile failure id= app= kind= requested= actual=`
+(warn once per window+kind); learning rule = >1pt larger with one edge anchored (both edges
+moved = position clamp, not learned), minimums only grow, column width capped to viewport,
+stacked heights pin mins; motionFrame = origin eased, shrink at first frame, grow on final pass.
+Prepositions keep full frame (window fully below display; accepted by parent: cannot overlap).
+Overlap geometry tests are regression guards only (pure model can't reproduce app repaint lag).
+Bundles 20/7/19/23/647 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
+Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.
@@ -52,3 +61,4 @@ Push to origin feat/gio-niri-rewrite after verified batches; no PR. Quote traili
 
 ## Progress
 - 2026-09-29: document created. Next: FI-01..FI-03.
+- 2026-09-29: FI-01..FI-03 done, pushed. Next: user live check.
