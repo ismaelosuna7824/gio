@@ -33,4 +33,18 @@ final class WindowServerSnapshotTests: XCTestCase {
         )
         XCTAssertEqual(windows, [])
     }
+
+    func testCandidatesCarryWindowNumberAndFilterByPid() {
+        var kept = entry(pid: 5, layer: 0, x: 10, y: 100, w: 600, h: 400)
+        kept[kCGWindowNumber as String] = 42
+        var other = entry(pid: 6, layer: 0, x: 0, y: 0, w: 100, h: 100)
+        other[kCGWindowNumber as String] = 43
+        let noNumber = entry(pid: 5, layer: 0, x: 0, y: 0, w: 100, h: 100)
+        let candidates = parseSnapshotCandidates(
+            [kept, other, noNumber], pids: [5], displayHeight: 1000
+        )
+        XCTAssertEqual(
+            candidates, [SnapshotCandidate(windowID: 42, pid: 5, frame: CGRect(x: 10, y: 500, width: 600, height: 400))]
+        )
+    }
 }

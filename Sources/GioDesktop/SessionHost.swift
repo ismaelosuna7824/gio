@@ -91,6 +91,8 @@ final class SessionHost: @unchecked Sendable {
     private var ringGate = FocusRingPublishGate()
     /// SM-01: logs the effective renderer only when it changes (session queue).
     private var rendererLog = RendererLogGate()
+    /// SM-02: caches ScreenCaptureKit content between debug captures.
+    private let snapshotCapturer = SnapshotCapturer()
     /// PA-04: pids with windows in the running motion; their moved/resized
     /// events are our own writes and are dropped before any lookup.
     private var animatingPids: Set<pid_t> = []
@@ -257,6 +259,54 @@ final class SessionHost: @unchecked Sendable {
             publishSnapshot()
             DispatchQueue.main.async {
                 completion(moved)
+            }
+        }
+    }
+
+    /// SM-02 debug action (Diagnostics): captures the visible managed windows
+    /// and a backdrop once, logs the summary and hands it back on the main
+    /// queue. Never runs from a motion; images are released on return. The
+    /// session queue only reads bookkeeping, the capture runs in a task.
+    func testSnapshotCapture(completion: @escaping @Sendable (String) -> Void) {
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            guard hasScreenRecordingPermission() else {
+                DispatchQueue.main.async { completion("Screen Recording is missing: grant it first.") }
+                return
+            }
+            let displayFrames = displays.allDisplays().map(\.frame)
+            var frames: [WindowID: CGRect] = [:]
+            for window in session.registry.managedWindows() where !window.isMinimized {
+                if let frame = physicalFrames[window.id], displayFrames.contains(where: { $0.intersects(frame) }) {
+                    frames[window.id] = frame
+                }
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else {
+                    return
+                }
+                let screens = NSScreen.screens.compactMap { screen -> SnapshotDisplay? in
+                    guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+                    else {
+                        return nil
+                    }
+                    return SnapshotDisplay(id: number.uint32Value, frame: screen.frame, scale: screen.backingScaleFactor)
+                }
+                let request = SnapshotCaptureRequest(
+                    windows: frames, displays: screens,
+                    primaryDisplayHeight: NSScreen.screens.first?.frame.height ?? 1169
+                )
+                Task.detached { [snapshotCapturer] in
+                    let result = await snapshotCapturer.capture(request)
+                    let summary = result.summary
+                    let detail = summary.misses.isEmpty
+                        ? ""
+                        : " (" + Dictionary(grouping: summary.misses.values, by: \.rawValue)
+                            .map { "\($0.key)=\($0.value.count)" }.sorted().joined(separator: ", ") + ")"
+                    DispatchQueue.main.async { completion(summary.logLine + detail) }
+                }
             }
         }
     }

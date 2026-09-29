@@ -35,11 +35,19 @@ public struct DesktopActions: Sendable {
     /// windows were moved.
     public var restoreAllWindows: @Sendable (@escaping @Sendable (Int) -> Void) -> Void
 
+    /// SM-02 debug: capture the visible managed windows once and report the
+    /// summary line (counts and timings) through the completion, on main.
+    public var testSnapshotCapture: @Sendable (@escaping @Sendable (String) -> Void) -> Void
+
     public init(
         applyEdits: @escaping @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
         reloadConfig: @escaping @Sendable () -> Void = {},
-        restoreAllWindows: @escaping @Sendable (@escaping @Sendable (Int) -> Void) -> Void = { $0(0) }
+        restoreAllWindows: @escaping @Sendable (@escaping @Sendable (Int) -> Void) -> Void = { $0(0) },
+        testSnapshotCapture: @escaping @Sendable (@escaping @Sendable (String) -> Void) -> Void = {
+            $0("snapshot capture is unavailable")
+        }
     ) {
+        self.testSnapshotCapture = testSnapshotCapture
         self.applyEdits = applyEdits
         self.reloadConfig = reloadConfig
         self.restoreAllWindows = restoreAllWindows
@@ -120,6 +128,15 @@ public final class DesktopModel: ObservableObject {
         actions.reloadConfig()
         refresh()
         refreshSoon()
+    }
+
+    /// Runs one snapshot capture off the hot path and hands back its summary.
+    public func testSnapshotCapture(completion: @escaping @MainActor (String) -> Void) {
+        actions.testSnapshotCapture { line in
+            Task { @MainActor in
+                completion(line)
+            }
+        }
     }
 
     /// Windows moved back on screen. Tiling keeps running: the next reflow

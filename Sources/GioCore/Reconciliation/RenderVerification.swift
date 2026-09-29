@@ -39,12 +39,12 @@ public enum ServerMatch: Equatable, Sendable {
 
 public let renderTolerance: CGFloat = 2
 
-private func near(_ a: CGRect, _ b: CGRect) -> Bool {
+func near(_ a: CGRect, _ b: CGRect) -> Bool {
     abs(a.origin.x - b.origin.x) <= renderTolerance && abs(a.origin.y - b.origin.y) <= renderTolerance
         && abs(a.width - b.width) <= renderTolerance && abs(a.height - b.height) <= renderTolerance
 }
 
-private func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
+func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
     abs(a.width - b.width) <= renderTolerance && abs(a.height - b.height) <= renderTolerance
 }
 

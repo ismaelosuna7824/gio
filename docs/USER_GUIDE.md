@@ -210,7 +210,7 @@ Behavior:
 | **Animations** | Enable toggle, curve, spring or duration controls and the Resize mode (Never, Adaptive, Always) and the Renderer (Snapshot, Accessibility). Apply and Revert as above. |
 | **Rules** | List of window rules with Add, Edit and Delete. Same validation as the file. |
 | **Logs** | Live tail (last 500 rows, current file only) of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll, **Copy visible** and **Clear view** (hides what is already in the file; it does not delete it). |
-| **Diagnostics** | Facts: version and build, session, Accessibility, Screen Recording, config path and validity, IPC socket, display count, log file path. Buttons: **Reload Config**, **Restore All Windows** (brings parked windows on screen without quitting; tiling stays on, so the next layout change parks them again), **Open Config File**, **Quit Gio**. |
+| **Diagnostics** | Facts: version and build, session, Accessibility, Screen Recording, config path and validity, IPC socket, display count, log file path. Buttons: **Reload Config**, **Restore All Windows** (brings parked windows on screen without quitting; tiling stays on, so the next layout change parks them again), **Test snapshot capture** (debug: captures the visible windows once and shows the summary, latency included; needs Screen Recording), **Open Config File**, **Quit Gio**. |
 
 Settings edits are text-level: unrelated lines, comments and ordering survive, the result must re-parse before it is written, and the write is atomic (temp file plus rename). If the existing file has parse errors, edits are refused until it is fixed. Known gap: editing a rule from the app drops comments inside that rule block.
 

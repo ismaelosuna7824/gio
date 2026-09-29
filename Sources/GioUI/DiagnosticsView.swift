@@ -53,6 +53,10 @@ struct DiagnosticsView: View {
                             + "Tiling is still on: the next layout change parks off-screen columns again."
                     }
                 }
+                Button("Test snapshot capture") {
+                    actionNote = "Capturing…"
+                    model.testSnapshotCapture { actionNote = $0 }
+                }
                 Button("Open Config File") { openConfigFileInEditor() }
                 Spacer()
                 Button("Quit Gio", role: .destructive) { NSApplication.shared.terminate(nil) }
