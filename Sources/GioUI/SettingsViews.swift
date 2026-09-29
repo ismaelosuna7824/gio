@@ -61,11 +61,21 @@ struct LayoutSettingsView: View {
                 TextField("Preset widths", text: $form.presetsText)
                 Text("Comma-separated; values up to 1 are fractions, larger ones points. Alt+R cycles them.")
                     .font(.caption).foregroundStyle(.secondary)
-                Toggle("Center the focused column", isOn: $form.centerFocusedColumn)
             }
             Section("Focus") {
+                Picker("Center the focused column", selection: $form.centerFocusedColumn) {
+                    Text("Never (scroll minimally)").tag(CenterFocusedColumnMode.never)
+                    Text("Always").tag(CenterFocusedColumnMode.always)
+                    Text("On overflow").tag(CenterFocusedColumnMode.onOverflow)
+                }
+                Text("Applies to keyboard focus changes. On overflow centers only when the column does not fit next to the previous one.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Focus follows mouse", isOn: $focusFollowsMouse)
+                Text("Focuses the window the pointer rests on for about 100 ms. Never scrolls the strip.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Toggle("Mouse follows focus", isOn: $mouseFollowsFocus)
+                Text("Moves the cursor to the focused window after a keyboard focus change.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 HStack {

@@ -5,9 +5,8 @@ import Foundation
 public let gioVersion = "0.1.0-alpha"
 
 /// Plan §20 configuration model. Mirrors `~/.config/gio/config.toml`.
-/// Flags the engine does not consume yet (`centerFocusedColumn`,
-/// behaviors, animations) are parsed, validated and stored — never silently
-/// dropped — with their consumer named in comments.
+/// Every flag is parsed, validated and stored — never silently dropped — with
+/// its consumer named in comments.
 public struct LayoutSectionConfig: Equatable, Sendable {
     public var gaps: CGFloat
     public var padding: CGFloat
@@ -15,8 +14,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     public var defaultColumnWidthFraction: CGFloat?
     /// Absolute points when > 1. At most one of the two is set.
     public var defaultColumnWidthPoints: CGFloat?
-    /// Parsed and validated; consumed by future engine centering work.
-    public var centerFocusedColumn: Bool
+    /// Niri `center-focused-column`; consumed by the reveal step (HD-04).
+    public var centerFocusedColumn: CenterFocusedColumnMode
     /// Widths `switch-preset-column-width` cycles through (Niri
     /// `preset-column-widths`): fractions when ≤ 1, points otherwise.
     public var presetColumnWidths: [ColumnWidthSpec]
@@ -26,7 +25,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         padding: CGFloat = 8,
         defaultColumnWidthFraction: CGFloat? = 0.5,
         defaultColumnWidthPoints: CGFloat? = nil,
-        centerFocusedColumn: Bool = true,
+        centerFocusedColumn: CenterFocusedColumnMode = .never,
         presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths
     ) {
         self.gaps = gaps
@@ -39,7 +38,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
 }
 
 public struct BehaviorSectionConfig: Equatable, Sendable {
-    /// Consumed by the future event/daemon layer, not by layout.
+    /// Consumed by the session host (HD-04): hover focus and cursor warp.
     public var focusFollowsMouse: Bool
     public var mouseFollowsFocus: Bool
 

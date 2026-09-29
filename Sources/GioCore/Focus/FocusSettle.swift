@@ -21,6 +21,8 @@ public enum FocusSource: String, Sendable {
     case activation
     case focusChanged
     case rescan
+    /// `focus-follows-mouse`: the pointer rested over the window.
+    case hover
 }
 
 /// A mouse-down: where (Cocoa global coordinates, the frames' space) and

@@ -173,7 +173,7 @@ Documented, not bugs to chase blindly:
 - **Multi-display:** the AX vertical flip uses a single display height (`NSScreen.main`), and the workspace-switch animation is carried by the first display. Not validated live on multiple displays.
 - **Window rules match the app name only** (exact string), and only when a window first appears. Editing a rule from the app drops comments inside that rule block.
 - **Config bindings are additive and limited to the tap's key table.** See [USER_GUIDE](USER_GUIDE.md#custom-key-bindings).
-- **Parsed but not yet consumed:** `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus`, `layout.center-focused-column`, and themes. They are validated and stored, and they have no effect on the running session today.
+- **Parsed but not yet consumed:** themes. They are validated and stored, and they have no effect on the running session today.
 - **`gio restart`** parses but returns "restart requires the running Gio session (daemon)"; it does not restart anything.
 - **Session-driven focus:** keyboard and IPC focus/move/workspace actions carry a `FocusIntent` that the final reflow pass hands to the reconciler (pure logic is tested in `FocusIntentTests`); the AX focus and raise itself is verified live only. Check that `Alt+H/L/J/K` moves typing focus on your setup.
 - **App-level UI is compile-checked only** and several live behaviors are marked LIVE PENDING in `odd/tasks/`.

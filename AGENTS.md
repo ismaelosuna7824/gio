@@ -63,7 +63,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **`SessionHost` and the views have no unit tests.** Extract the decision into Core so it can be tested.
 - **Exhaustive switches are guardrails:** adding a `HotkeyAction` case breaks `actionInfo` (ShortcutCatalog) and `SessionHost.apply`; adding a `CLICommand` case breaks `dispatch` and the launcher's `describeAction`; adding a `MainSection` case breaks `title`, `symbol` and `detail(for:)`. Follow the recipes in `docs/CONTRIBUTING.md`.
 - **Key names are one shared vocabulary** (`supportedKeyNames` in `GioCore/Hotkeys/KeyNames.swift`) with a keycode per name in `tapKeyCodes` (`HotkeyTap.swift`); `HotkeyKeyTableTests` fails if they diverge. Unknown key names in config are validation errors.
-- **Parsed-but-unused config:** `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus`, `layout.center-focused-column` and themes are stored, not consumed. Do not assume they have effect.
+- **Parsed-but-unused config:** themes are stored, not consumed. `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus` and `layout.center-focused-column` are live (HD-04).
 - **Only keyboard/IPC actions focus OS windows** (`FocusIntent`, HD-01). Passive reflows (AX events, click adoption, reload, rescan) pass `focused: nil`; never add a focus call to those paths or you will steal focus. Add new focus-moving actions to `HotkeyAction.carriesFocusIntent`.
 - macOS refuses fully off-screen windows: parked windows keep a 1 pt sliver. Do not "fix" that by moving frames further out.
 - Legacy code (`GioMac`, `GioApp`, `TileLayout`, `NativeTilingCoordinator`, ...) still builds and has tests. Do not reuse it for new features.

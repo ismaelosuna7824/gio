@@ -79,14 +79,14 @@ An invalid config never stops the window manager.
 | `padding` | number (points) | `8` | Non-negative. Outer margin around the strip inside the usable display area. |
 | `default-column-width` | number | `0.5` | Positive. `<= 1` is a **proportion** of the strip (Niri semantics, `p * (viewport - 2*padding + gap) - gap`, so two `0.5` columns fill the screen exactly). `> 1` is an absolute width in points. Columns are never narrower than 200 pt. |
 | `preset-column-widths` | list of numbers | `[0.33333, 0.5, 0.66667]` | Non-empty list of positive numbers, same `<= 1` proportion vs points rule. `Alt+R` cycles through them. |
-| `center-focused-column` | bool | `true` | Parsed and stored, **not consumed** by the running session yet. |
+| `center-focused-column` | `"never"`, `"always"`, `"on-overflow"` | `"never"` | Niri semantics, applied on keyboard/IPC focus changes only. `never` scrolls minimally; `always` centers the focused column; `on-overflow` centers only when it does not fit on screen together with the previously focused column. The old boolean still parses (`true` = `always`, `false` = `never`). Any other value is an error and the default applies. |
 
 ### `[behavior]`
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `focus-follows-mouse` | bool | `false` | Parsed and stored, **not consumed** yet. |
-| `mouse-follows-focus` | bool | `true` | Parsed and stored, **not consumed** yet. |
+| `focus-follows-mouse` | bool | `false` | When the pointer rests about 100 ms over a visible tiled window, that window takes focus (activated and raised). It never scrolls the strip beyond the usual reveal of a partly hidden column, and is ignored while a mouse button is down, over Gio's own windows, popups, or windows Gio does not manage. |
+| `mouse-follows-focus` | bool | `true` | After a keyboard or IPC focus change, the cursor jumps to the center of the focused window (unless it is already inside). Never after a click or hover focus. |
 
 ### `[animations]`
 
@@ -162,7 +162,7 @@ Behavior:
 | --- | --- |
 | **Overview** | Session status, Accessibility permission (with a **Request Access** button), config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 2 s. |
 | **Shortcuts** | Searchable reference of every action grouped by category (Focus, Move, Columns, Windows, Workspaces, App) with its current bindings, description and source (`default` or `config`). View-only: shortcuts are changed in `config.toml`. |
-| **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), center-focused-column, and the two Focus toggles (focus follows mouse, mouse follows focus). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
+| **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, and the two Focus toggles (focus follows mouse, mouse follows focus). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
 | **Animations** | Enable toggle and duration slider (0 to 1000 ms). Apply and Revert as above. |
 | **Rules** | List of window rules with Add, Edit and Delete. Same validation as the file. |
 | **Logs** | Live tail of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll and **Clear view** (hides what is already in the file; it does not delete it). |

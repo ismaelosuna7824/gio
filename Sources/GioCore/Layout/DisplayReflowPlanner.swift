@@ -21,7 +21,8 @@ public func planDisplayLayout(
     engine: ScrollableLayoutEngine,
     viewport: CGRect,
     display: CGRect,
-    otherDisplays: [CGRect]
+    otherDisplays: [CGRect],
+    centering: CenterRequest = .none
 ) throws -> DisplayLayoutPlan {
     var workspace = workspace
     var layout = try engine.calculate(
@@ -42,7 +43,7 @@ public func planDisplayLayout(
         workspace.viewportOffset = layout.viewportOffset
         return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)
     }
-    if let revealed = revealOffset(workspace: workspace, layout: layout, viewport: viewport),
+    if let revealed = revealOffset(workspace: workspace, layout: layout, viewport: viewport, centering: centering),
        revealed != workspace.viewportOffset
     {
         var scrolled = workspace
@@ -71,25 +72,63 @@ func fullscreenWindow(in workspace: Workspace, modes: [WindowID: WindowMode]) ->
 }
 
 /// Focused column's content range revealed into the viewport. Nil when
-/// nothing needs scrolling (or no focused window to reveal).
+/// nothing needs scrolling (or no focused window to reveal). `centering`
+/// (keyboard focus changes only) swaps the minimal scroll for a centered one
+/// when the mode asks for it (Niri `center-focused-column`).
 public func revealOffset(
-    workspace: Workspace, layout: LayoutResult, viewport: CGRect
+    workspace: Workspace, layout: LayoutResult, viewport: CGRect,
+    centering: CenterRequest = .none
 ) -> CGFloat? {
     guard let focused = workspace.focusedWindow,
           let column = workspace.columns.first(where: { $0.windows.contains(focused) })
     else {
         return nil
     }
-    let frames = column.windows.compactMap { layout.frames[$0] }
-    guard !frames.isEmpty else {
-        return nil
-    }
     // Layout frames are screen rects (`viewport.minX + contentX - offset`);
     // the viewport scrolls in content space, so convert back before comparing.
     let toContent = layout.viewportOffset - viewport.minX
-    let lower = frames.map(\.origin.x).min()! + toContent
-    let upper = frames.map(\.maxX).max()! + toContent
-    let revealed = Viewport(offset: layout.viewportOffset, width: viewport.width)
-        .ensureVisible(range: lower..<upper, contentWidth: layout.contentWidth)
-    return revealed.offset == layout.viewportOffset ? nil : revealed.offset
+    guard let range = contentRange(of: column, in: layout, toContent: toContent) else {
+        return nil
+    }
+    let target: CGFloat
+    if shouldCenter(centering, focused: column, range: range, workspace: workspace, layout: layout,
+                    viewportWidth: viewport.width, toContent: toContent)
+    {
+        let maxOffset = max(0, layout.contentWidth - viewport.width)
+        target = min(max((range.lowerBound + range.upperBound) / 2 - viewport.width / 2, 0), maxOffset)
+    } else {
+        target = Viewport(offset: layout.viewportOffset, width: viewport.width)
+            .ensureVisible(range: range, contentWidth: layout.contentWidth).offset
+    }
+    return target == layout.viewportOffset ? nil : target
+}
+
+private func contentRange(of column: Column, in layout: LayoutResult, toContent: CGFloat) -> Range<CGFloat>? {
+    let frames = column.windows.compactMap { layout.frames[$0] }
+    guard let lower = frames.map(\.origin.x).min(), let upper = frames.map(\.maxX).max() else {
+        return nil
+    }
+    return (lower + toContent)..<(upper + toContent)
+}
+
+private func shouldCenter(
+    _ request: CenterRequest, focused: Column, range: Range<CGFloat>, workspace: Workspace,
+    layout: LayoutResult, viewportWidth: CGFloat, toContent: CGFloat
+) -> Bool {
+    switch request.mode {
+    case .never:
+        return false
+    case .always:
+        return true
+    case .onOverflow:
+        guard let previous = request.previouslyFocused,
+              let previousColumn = workspace.columns.first(where: { $0.windows.contains(previous) }),
+              previousColumn.id != focused.id,
+              let previousRange = contentRange(of: previousColumn, in: layout, toContent: toContent)
+        else {
+            return false
+        }
+        let span = max(range.upperBound, previousRange.upperBound) - min(range.lowerBound, previousRange.lowerBound)
+        return span > viewportWidth
+    }
 }

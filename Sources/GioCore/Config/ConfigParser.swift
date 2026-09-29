@@ -245,11 +245,16 @@ func applyLayoutKey(
         }
         config.layout.presetColumnWidths = specs
     case "center-focused-column":
-        guard case .bool(let enabled) = value else {
-            errors.append("line \(line): layout.center-focused-column expects true or false")
-            return
+        // Strings since HD-04; the old boolean keeps working (true = always).
+        if case .bool(let enabled) = value {
+            config.layout.centerFocusedColumn = CenterFocusedColumnMode(legacy: enabled)
+        } else if case .string(let text) = value, let mode = CenterFocusedColumnMode(rawValue: text) {
+            config.layout.centerFocusedColumn = mode
+        } else {
+            errors.append(
+                "line \(line): layout.center-focused-column expects \"never\", \"always\" or \"on-overflow\""
+            )
         }
-        config.layout.centerFocusedColumn = enabled
     default:
         warnings.append("line \(line): unknown layout key '\(key)', ignored")
     }

@@ -58,6 +58,18 @@ final class SessionHost: @unchecked Sendable {
     private var focusIntent = FocusIntent()
     private let clickLock = NSLock()
     private var tappedClick: MouseClick?
+    /// HD-04: centering asked by the last keyboard/IPC focus change (consumed
+    /// by the next reflow), and whether the cursor should follow that focus.
+    private var centerRequest: CenterRequest?
+    private var warpAfterFocus = false
+    /// HD-04 focus-follows-mouse. `hoverLock` guards the flag and the latest
+    /// pointer location the main-thread tap hands over; the rest is on `queue`.
+    private var hoverFocus = HoverFocus()
+    private var hoverFrames: [WindowID: CGRect] = [:]
+    private let hoverLock = NSLock()
+    private var hoverEnabled = false
+    private var hoverLocation: CGPoint?
+    private var hoverScheduled = false
 
     /// One focus signal awaiting adoption. `element` is the window the
     /// event itself carried (focused-window changes), if any.
@@ -178,6 +190,9 @@ final class SessionHost: @unchecked Sendable {
         dispatcherLock.lock()
         dispatcherTable = table
         dispatcherLock.unlock()
+        hoverLock.lock()
+        hoverEnabled = session.config.behavior.focusFollowsMouse
+        hoverLock.unlock()
     }
 
     private func currentDispatcher() -> HotkeyDispatcher {
@@ -260,13 +275,14 @@ final class SessionHost: @unchecked Sendable {
 
     private func handleIPC(_ argv: [String]) -> IPCResponse {
         let parsed = parseCLICommand(argv)
+        let previousFocus = session.manager.currentWorkspace().focusedWindow
         let response = dispatchIPC(argv, session: &session)
         if case .success(let command) = parsed {
             switch command {
             case .reload:
                 applyReloadedConfig()
             case .focus, .move, .workspace:
-                requestFocusIntent(if: command.carriesFocusIntent)
+                requestFocusIntent(if: command.carriesFocusIntent, previous: previousFocus)
                 reflowAll()
             default:
                 break
@@ -671,6 +687,9 @@ final class SessionHost: @unchecked Sendable {
         var plans: [ParkingPlan] = []
         var animations: [WindowAnimation] = []
         var prepositions: [WindowID: CGRect] = [:]
+        let centering = centerRequest ?? .none
+        centerRequest = nil
+        var hovered: [WindowID: CGRect] = [:]
         let inactive = planInactiveWorkspaces()
         for (index, display) in displays.allDisplays().enumerated() {
             guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
@@ -680,11 +699,13 @@ final class SessionHost: @unchecked Sendable {
             guard let planned = try? planDisplayLayout(
                 workspace: workspace, modes: modes, engine: engine(),
                 viewport: visible, display: display.frame,
-                otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame)
+                otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame),
+                centering: Int(display.workspace.rawValue) == session.manager.current ? centering : .none
             ) else {
                 continue
             }
             plans.append(planned.plan)
+            hovered.merge(planned.plan.visible) { first, _ in first }
             if animating {
                 // NC-07: the first display also carries the workspace switch:
                 // hidden windows drop below its bottom edge, revealed ones rise.
@@ -708,6 +729,7 @@ final class SessionHost: @unchecked Sendable {
             )
         }
         plans.append(inactive)
+        hoverFrames = hovered
         if !animations.isEmpty {
             applyPrepositions(prepositions, reconciler: reconciler)
             startMotion(animations, reconciler: reconciler)
@@ -722,6 +744,13 @@ final class SessionHost: @unchecked Sendable {
             parked: Set(plans.flatMap { $0.parked.keys }),
             now: ProcessInfo.processInfo.systemUptime
         )
+        let warp = warpAfterFocus
+        warpAfterFocus = false
+        defer {
+            if warp, let focusTarget {
+                warpCursorToFocus(focusTarget, plans: plans)
+            }
+        }
         for (planIndex, plan) in plans.enumerated() {
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
@@ -1275,6 +1304,90 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// `mouse-follows-focus`: after a keyboard focus change landed, put the
+    /// cursor in the middle of the focused window (unless already inside).
+    private func warpCursorToFocus(_ id: WindowID, plans: [ParkingPlan]) {
+        guard let frame = plans.lazy.compactMap({ $0.visible[id] }).first,
+              let target = mouseFollowsFocusTarget(
+                  enabled: session.config.behavior.mouseFollowsFocus, frame: frame,
+                  pointer: NSEvent.mouseLocation
+              )
+        else {
+            return
+        }
+        hoverFocus.noteWarp(now: ProcessInfo.processInfo.systemUptime)
+        warpCursor(toCocoa: target)
+        GioLog.record(.debug, "cursor warped to focus id=\(id.pid):\(id.elementID)")
+    }
+
+    // MARK: - Focus follows mouse (HD-04)
+
+    /// Main thread (tap). Hands the latest pointer location to the session
+    /// queue, coalesced to one look per 30 ms.
+    private func handlePointerMoved(_ location: CGPoint) {
+        hoverLock.lock()
+        guard hoverEnabled else {
+            hoverLock.unlock()
+            return
+        }
+        hoverLocation = location
+        let schedule = !hoverScheduled
+        hoverScheduled = true
+        hoverLock.unlock()
+        guard schedule else {
+            return
+        }
+        queue.asyncAfter(deadline: .now() + 0.03) { [weak self] in
+            self?.processPointer()
+        }
+    }
+
+    private func processPointer() {
+        hoverLock.lock()
+        let location = hoverLocation
+        hoverScheduled = false
+        hoverLock.unlock()
+        guard let location, !isShuttingDown else {
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        let target = hoveredWindow(at: location)
+        if let delay = hoverFocus.pointerMoved(over: target, now: now) {
+            queue.asyncAfter(deadline: .now() + delay + 0.01) { [weak self] in
+                self?.fireHoverFocus()
+            }
+        }
+    }
+
+    private func hoveredWindow(at location: CGPoint) -> WindowID? {
+        // Cheap geometry first; the window-server lookup only near a managed window.
+        guard hoverFrames.values.contains(where: { $0.contains(location) }) else {
+            return nil
+        }
+        return hoverTarget(
+            at: location, frames: hoverFrames, topWindowPID: topWindowOwnerPID(atCocoa: location),
+            ownPID: ProcessInfo.processInfo.processIdentifier
+        )
+    }
+
+    private func fireHoverFocus() {
+        guard !isShuttingDown else {
+            return
+        }
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let logical = session.manager.currentWorkspace().focusedWindow
+        let focused = logical.flatMap { $0.pid == frontPID ? $0 : nil }
+        guard let id = hoverFocus.due(
+            now: ProcessInfo.processInfo.systemUptime,
+            buttonDown: NSEvent.pressedMouseButtons != 0, focused: focused
+        ), hoveredWindow(at: NSEvent.mouseLocation) == id else {
+            return
+        }
+        adoptFocus(id, source: .hover)
+        focusIntent.request(id, now: ProcessInfo.processInfo.systemUptime)
+        reflowAll()
+    }
+
     private func recordClick(at location: CGPoint) {
         clickLock.lock()
         tappedClick = MouseClick(location: location, time: ProcessInfo.processInfo.systemUptime)
@@ -1289,6 +1402,9 @@ final class SessionHost: @unchecked Sendable {
         let tap = HotkeyTap(
             onMouseDown: { [weak self] location in
                 self?.recordClick(at: location)
+            },
+            onMouseMoved: { [weak self] location in
+                self?.handlePointerMoved(location)
             },
             onCombo: { [weak self] combo in
                 self?.handleCombo(combo) ?? false
@@ -1323,6 +1439,7 @@ final class SessionHost: @unchecked Sendable {
     private func apply(_ action: HotkeyAction) {
         GioLog.record(.debug, "hotkey \(action)")
         var workspace = session.manager.currentWorkspace()
+        let previousFocus = workspace.focusedWindow
         switch action {
         case .focusLeft:
             let next = moveFocus(in: workspace, direction: .left)
@@ -1396,16 +1513,20 @@ final class SessionHost: @unchecked Sendable {
                 over: workspace
             )
         }
-        requestFocusIntent(if: action.carriesFocusIntent)
+        requestFocusIntent(if: action.carriesFocusIntent, previous: previousFocus)
         reflowAll()
     }
 
     /// Ask the next reflow to focus and raise the current workspace's focused
     /// window (after its frame lands; at the end of an animation).
-    private func requestFocusIntent(if carries: Bool) {
+    private func requestFocusIntent(if carries: Bool, previous: WindowID?) {
         guard carries else {
             return
         }
+        // Keyboard/IPC focus changes may center the column and warp the
+        // cursor (HD-04); passive and hover focus never do.
+        centerRequest = CenterRequest(mode: session.config.layout.centerFocusedColumn, previouslyFocused: previous)
+        warpAfterFocus = true
         focusIntent.request(
             session.manager.currentWorkspace().focusedWindow,
             now: ProcessInfo.processInfo.systemUptime

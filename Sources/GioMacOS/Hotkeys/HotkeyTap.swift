@@ -59,6 +59,10 @@ private func tapCallback(
         box.onMouseDown?(NSEvent.mouseLocation)
         return Unmanaged.passUnretained(event)
     }
+    if type == .mouseMoved {
+        box.onMouseMoved?(NSEvent.mouseLocation)
+        return Unmanaged.passUnretained(event)
+    }
     guard type == .keyDown else {
         return Unmanaged.passUnretained(event)
     }
@@ -74,13 +78,16 @@ private func tapCallback(
 final class TapBox {
     let onCombo: @Sendable (HotkeyCombo) -> Bool
     let onMouseDown: (@Sendable (CGPoint) -> Void)?
+    let onMouseMoved: (@Sendable (CGPoint) -> Void)?
 
     init(
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
-        onMouseDown: (@Sendable (CGPoint) -> Void)?
+        onMouseDown: (@Sendable (CGPoint) -> Void)?,
+        onMouseMoved: (@Sendable (CGPoint) -> Void)?
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
+        self.onMouseMoved = onMouseMoved
     }
 }
 
@@ -95,29 +102,35 @@ public final class HotkeyTap {
     private var boxRefcon: UnsafeMutableRawPointer?
     private let onCombo: @Sendable (HotkeyCombo) -> Bool
     private let onMouseDown: (@Sendable (CGPoint) -> Void)?
+    private let onMouseMoved: (@Sendable (CGPoint) -> Void)?
 
-    /// `onMouseDown` observes clicks (Cocoa global location) without
-    /// swallowing them.
+    /// `onMouseDown` observes clicks and `onMouseMoved` pointer moves (Cocoa
+    /// global location) without swallowing either.
     public init(
         onMouseDown: (@Sendable (CGPoint) -> Void)? = nil,
+        onMouseMoved: (@Sendable (CGPoint) -> Void)? = nil,
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
+        self.onMouseMoved = onMouseMoved
     }
 
     @discardableResult
     public func start() -> Bool {
+        var eventTypes: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+        if onMouseMoved != nil {
+            eventTypes.append(.mouseMoved)
+        }
         guard port == nil else {
             return true
         }
-        let boxRefcon = Unmanaged.passRetained(TapBox(onCombo: onCombo, onMouseDown: onMouseDown)).toOpaque()
+        let boxRefcon = Unmanaged.passRetained(TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved)).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: [CGEventType.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
-                .reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) },
+            eventsOfInterest: eventTypes.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) },
             callback: tapCallback,
             userInfo: boxRefcon
         ) else {

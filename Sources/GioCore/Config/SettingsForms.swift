@@ -28,7 +28,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var widthKind: WidthKind
     public var widthValue: Double
     public var presetsText: String
-    public var centerFocusedColumn: Bool
+    public var centerFocusedColumn: CenterFocusedColumnMode
 
     public init(config: LayoutSectionConfig) {
         gaps = Double(config.gaps)
@@ -80,7 +80,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             .set(table: "layout", key: "gaps", value: .number(gaps)),
             .set(table: "layout", key: "padding", value: .number(padding)),
             .set(table: "layout", key: "default-column-width", value: .number(widthValue)),
-            .set(table: "layout", key: "center-focused-column", value: .bool(centerFocusedColumn)),
+            .set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue)),
             .set(
                 table: "layout", key: "preset-column-widths",
                 value: .numbers(parsePresetList(presetsText) ?? [])

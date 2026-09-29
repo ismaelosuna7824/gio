@@ -11,12 +11,17 @@ public func defaultConfigTemplate() -> String {
     gaps = 8
     padding = 8
     default-column-width = 0.5
-    center-focused-column = true
+    # Niri semantics: "never" scrolls minimally, "always" centers the focused
+    # column on every keyboard focus change, "on-overflow" centers only when it
+    # does not fit next to the previously focused column.
+    center-focused-column = "never"
     # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
     preset-column-widths = [0.33333, 0.5, 0.66667]
 
     [behavior]
+    # Focus the window the pointer rests on (~100 ms); never scrolls.
     focus-follows-mouse = false
+    # Warp the cursor to the focused window after a keyboard focus change.
     mouse-follows-focus = true
 
     [animations]
