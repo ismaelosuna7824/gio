@@ -81,3 +81,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: document created (after MO-04 live pass: 25 frames/200ms, dropped ~0). Next: NC-01..NC-05.
 - 2026-09-29: NC-01..NC-05 done. Next: NC-06..NC-07 (route: delegated writer).
 - 2026-09-29: NC-06 + NC-07 done. All tasks code-complete. Next: user live test.
+- 2026-09-29: user live feedback "si parece mejor". Feature closed; next work in odd/tasks/desktop-app.md.
