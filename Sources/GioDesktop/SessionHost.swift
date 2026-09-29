@@ -182,6 +182,33 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// Launcher / window-id focus (HD-06): switch to the window's workspace if
+    /// needed, adopt it as the focus, and let the reflow reveal it and apply
+    /// the keyboard focus intent. False when the window is gone or minimized.
+    func focusWindow(_ text: String) -> Bool {
+        queue.sync {
+            guard !isShuttingDown, let id = WindowID(text: text),
+                  let plan = planFocusWindow(id, in: session.manager),
+                  session.registry.find(id)?.isMinimized != true
+            else {
+                return false
+            }
+            let previous = session.manager.currentWorkspace().focusedWindow
+            if plan.switchesWorkspace {
+                _ = session.manager.switchTo(plan.index)
+                syncShownWorkspace()
+            }
+            session.manager.update(plan.workspace)
+            requestFocusIntent(if: true, previous: previous)
+            GioLog.record(
+                .info,
+                "focus window requested id=\(id.pid):\(id.elementID) workspace=\(plan.index) switched=\(plan.switchesWorkspace)"
+            )
+            reflowAll()
+            return true
+        }
+    }
+
     /// Same effect as the IPC `reload` verb, driven by the app.
     func reloadConfig() {
         queue.sync {

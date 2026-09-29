@@ -176,15 +176,14 @@ Title `Gio` (updated from the status query every 3 s). Menu: **Open Gio**, **Wor
 
 ## Launcher
 
-`Alt+Space` opens a small panel. Type to filter installed apps (top-level `.app` bundles in `/Applications`, `~/Applications`, `/System/Applications`), then press Enter.
+`Alt+Space` opens a small panel. Type to filter installed apps (top-level `.app` bundles in `/Applications`, `~/Applications`, `/System/Applications`) and Gio's managed windows, then press Enter. Windows are listed as `App — Title` with a window icon and their workspace; minimized windows are left out.
 
 | Input | Effect |
 | --- | --- |
-| text | Fuzzy match over app names (prefix, then substring, then ordered subsequence). Enter opens the best match. |
+| text | Fuzzy match over app names and windows (prefix, then substring, then ordered subsequence; a window matches by app name, by title, or both, and a title-only match ranks one step below an app-name match). On an equal rank windows come before apps. Enter runs the best match, or click a row. |
+| a window | Switches to its workspace if needed, scrolls it into view and gives it keyboard focus, like a focus hotkey (including `center-focused-column` and `mouse-follows-focus`). |
 | `> <verb>` | Run a Gio command over IPC, for example `> workspace 2` or `> reload`. |
 | `! <command>` | Run a shell command with `/bin/zsh -c`. |
-
-The shortcut catalog describes the launcher as searching "apps and windows"; the implementation searches apps only.
 
 ## Command line (`gio`)
 

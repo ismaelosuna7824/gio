@@ -1,12 +1,15 @@
 import Foundation
 import GioCore
 
-/// Plan §26 launcher model. Three entry kinds: installed apps, Gio commands
-/// (executed over IPC — never direct Core access), and `!` shell commands.
+/// Plan §26 launcher model. Entry kinds: installed apps, managed windows
+/// (HD-06, focused through the session), Gio commands (executed over IPC —
+/// never direct Core access), and `!` shell commands.
 /// Matching is a deterministic fuzzy rank; execution lives in the thin
 /// AppKit shell (live-only), this file stays pure and tested.
 public enum LauncherEntry: Equatable, Sendable {
     case app(name: String, bundleID: String?, path: String)
+    /// `id` is the window's `pid:elementID` status text.
+    case window(id: String, application: String, windowTitle: String, workspace: Int?)
     case gioCommand(argv: [String], label: String)
     case shellCommand(String)
 
@@ -14,12 +17,86 @@ public enum LauncherEntry: Equatable, Sendable {
         switch self {
         case .app(let name, _, _):
             return name
+        case .window(_, let application, let windowTitle, _):
+            return windowTitle.isEmpty ? application : "\(application) — \(windowTitle)"
         case .gioCommand(_, let label):
             return label
         case .shellCommand(let command):
             return "!\(command)"
         }
     }
+
+    /// Stable list identity (titles can repeat across windows).
+    public var listID: String {
+        switch self {
+        case .window(let id, _, _, _):
+            return "window:\(id)"
+        default:
+            return title
+        }
+    }
+
+    /// Short secondary label telling the kinds apart in the list.
+    public var kindLabel: String {
+        switch self {
+        case .app:
+            return "App"
+        case .window(_, _, _, let workspace):
+            return workspace.map { "Window · workspace \($0)" } ?? "Window"
+        case .gioCommand:
+            return "Gio command"
+        case .shellCommand:
+            return "Shell"
+        }
+    }
+
+    /// SF Symbol name, distinct per kind.
+    public var symbol: String {
+        switch self {
+        case .app: return "app"
+        case .window: return "macwindow"
+        case .gioCommand: return "command"
+        case .shellCommand: return "terminal"
+        }
+    }
+
+    /// Windows first on an equal rank: an app that is already running is
+    /// better reached through its window than launched again.
+    fileprivate var kindOrder: Int {
+        switch self {
+        case .window: return 0
+        case .app: return 1
+        case .gioCommand: return 2
+        case .shellCommand: return 3
+        }
+    }
+
+    /// Nil means no match. A window matches by its app name, or by its title
+    /// (one step worse, so a title never outranks a real app-name match), or
+    /// by both together ("code main").
+    fileprivate func rank(for query: String) -> Int? {
+        switch self {
+        case .window(_, let application, let windowTitle, _):
+            let candidates = [
+                rankMatch(query: query, candidate: application),
+                rankMatch(query: query, candidate: windowTitle).map { $0 + 1 },
+                rankMatch(query: query, candidate: "\(application) \(windowTitle)"),
+            ]
+            return candidates.compactMap { $0 }.min()
+        default:
+            return rankMatch(query: query, candidate: title)
+        }
+    }
+}
+
+/// Launcher rows for the session's windows. Minimized windows are left out
+/// (nothing to focus); order is by app then title so results are stable.
+public func launcherWindowEntries(from facts: [WindowFact]) -> [LauncherEntry] {
+    facts.filter { !$0.isMinimized }
+        .sorted { ($0.application, $0.title, $0.id) < ($1.application, $1.title, $1.id) }
+        .map {
+            .window(id: $0.id, application: $0.application, windowTitle: $0.title, workspace: $0.workspace)
+        }
 }
 
 /// Rank a query against a candidate name (both lowered by caller contract —
@@ -47,12 +124,20 @@ public func rankMatch(query: String, candidate: String) -> Int? {
     return 2
 }
 
+/// Rank apps and windows together: best match first, then windows before
+/// apps, then by title (and id) so the order never depends on input order.
 public func searchLauncherEntries(_ query: String, in apps: [LauncherEntry]) -> [LauncherEntry] {
     apps.compactMap { entry in
-        rankMatch(query: query, candidate: entry.title).map { ($0, entry) }
+        entry.rank(for: query).map { ($0, entry) }
     }
     .sorted { lhs, rhs in
-        lhs.0 != rhs.0 ? lhs.0 < rhs.0 : lhs.1.title < rhs.1.title
+        if lhs.0 != rhs.0 {
+            return lhs.0 < rhs.0
+        }
+        if lhs.1.kindOrder != rhs.1.kindOrder {
+            return lhs.1.kindOrder < rhs.1.kindOrder
+        }
+        return (lhs.1.title, lhs.1.listID) < (rhs.1.title, rhs.1.listID)
     }
     .map(\.1)
 }
@@ -65,7 +150,7 @@ public enum LauncherRoute: Equatable, Sendable {
 }
 
 /// Route raw input: `> …` forces a Gio command, `! …` a shell command,
-/// anything else fuzzy-searches apps. Unknown Gio verbs become `.invalid`
+/// anything else fuzzy-searches apps and windows (`apps` holds both). Unknown Gio verbs become `.invalid`
 /// with the parser's reason instead of failing silently.
 public func routeLauncherInput(_ text: String, apps: [LauncherEntry]) -> LauncherRoute {
     let trimmed = text.trimmingCharacters(in: .whitespaces)

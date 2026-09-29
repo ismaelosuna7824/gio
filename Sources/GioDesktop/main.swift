@@ -24,6 +24,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
     private var launcherWindow: NSWindow?
+    private lazy var launcherApps = scanApplications(directories: defaultApplicationDirectories())
     private lazy var mainWindow = MainWindowController(
         model: DesktopModel(
             fetch: { [host] in host.snapshot() },
@@ -92,10 +93,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showLauncher() {
+        // A fresh view per summon: the window list is current and the query empty.
+        let view = GioLauncherView(
+            windows: host.snapshot().facts?.windows ?? [],
+            focusWindow: { [host] in host.focusWindow($0) },
+            apps: launcherApps,
+            dismiss: { [weak self] in self?.launcherWindow?.close() }
+        )
         if launcherWindow == nil {
-            let view = GioLauncherView(dismiss: { [weak self] in
-                self?.launcherWindow?.close()
-            })
             let window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
                 styleMask: [.titled, .closable],
@@ -103,10 +108,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 defer: false
             )
             window.title = "Gio Launcher"
-            window.contentView = NSHostingView(rootView: view)
             window.center()
             launcherWindow = window
         }
+        launcherWindow?.contentView = NSHostingView(rootView: view)
         activateGio()
         launcherWindow?.makeKeyAndOrderFront(nil)
     }

@@ -10,9 +10,9 @@ All tests use **XCTest** (`import XCTest`); there is no Swift Testing suite. Cou
 
 | Bundle (target) | Tests | Covers |
 | --- | --- | --- |
-| `GioCoreTests` (`Tests/GioCoreTests`) | 540 | Everything in `GioCore`, using mock actuators and temp files. See the breakdown below. |
-| `GioMacOSTests` (`Tests/GioMacOSTests`) | 19 | Pure parts of the adapters: AX vertical flip, keycode to combo mapping, `SystemWindow` description, own-pid guards (`isManageableProcess`, actuator refuses Gio's windows), tile assembly. |
-| `GioUITests` (`Tests/GioUITests`) | 12 | View models only: bar status parsing, launcher ranking/routing/app scan, main window sections and activation policy. SwiftUI views themselves are compile-checked, not tested. |
+| `GioCoreTests` (`Tests/GioCoreTests`) | 602 | Everything in `GioCore`, using mock actuators and temp files. See the breakdown below. |
+| `GioMacOSTests` (`Tests/GioMacOSTests`) | 23 | Pure parts of the adapters: AX vertical flip, keycode to combo mapping, `SystemWindow` description, own-pid guards (`isManageableProcess`, actuator refuses Gio's windows), tile assembly. |
+| `GioUITests` (`Tests/GioUITests`) | 20 | View models only: bar status parsing, launcher ranking/routing/app scan, main window sections and activation policy. SwiftUI views themselves are compile-checked, not tested. |
 | `GioPOCTests` (`Tests/GioPOCTests`) | 7 | `gio-poc` verb parsing (`parseCLICommand` in `Sources/GioPOC/CLICommand.swift`). |
 | `GioMacTests` (`Tests/GioMacTests`) | 19 | **Legacy** prototype only (`GioMac`: AX geometry validation, space window snapshot). Not related to the running app. |
 
@@ -60,11 +60,11 @@ Baseline at the time of writing, all with 0 failures:
 
 | Bundle | Executed |
 | --- | --- |
-| `GioUITests` | 12 |
+| `GioUITests` | 20 |
 | `GioPOCTests` | 7 |
 | `GioMacTests` | 19 |
-| `GioMacOSTests` | 19 |
-| `GioCoreTests` | 540 |
+| `GioMacOSTests` | 23 |
+| `GioCoreTests` | 602 |
 
 Two environment notes:
 
