@@ -166,7 +166,7 @@ final class MotionPlayerTests: XCTestCase {
         XCTAssertEqual(sink.idleWaits, 1)
         XCTAssertEqual(
             summary?.logLine,
-            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=app20 42ms curve=ease-out sizeAnimated=0"
+            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=app20 42ms curve=ease-out sizeAnimated=0 renderer=ax"
         )
     }
 
@@ -186,14 +186,14 @@ final class MotionPlayerTests: XCTestCase {
         XCTAssertEqual(mid.sampled[id(1, pid: 20)]?.width, 100)
         clock.now = 1
         let summary = player.tick().summary
-        XCTAssertTrue(summary?.logLine.hasSuffix("sizeAnimated=1") ?? false)
+        XCTAssertTrue(summary?.logLine.hasSuffix("sizeAnimated=1 renderer=ax") ?? false)
         XCTAssertEqual(summary?.appStats[20]?.count, 4)
     }
 
     func testSummaryLineWithoutTimingsSaysNone() {
         let summary = MotionSummary(windows: 3, frames: 12, dropped: 2, duration: 0.2, slowest: nil)
         XCTAssertEqual(
-            summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none curve=ease-out sizeAnimated=0"
+            summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none curve=ease-out sizeAnimated=0 renderer=ax"
         )
     }
 

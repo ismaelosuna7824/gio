@@ -82,6 +82,14 @@ final class OverlayGeometryTests: XCTestCase {
         XCTAssertNil(overlayDisplayIndex(from: CGRect(x: -3000, y: 0, width: 10, height: 10), to: CGRect(x: -4000, y: 0, width: 10, height: 10), displays: [left, right]))
     }
 
+    func testAParkedSliverIsNotDrawable() {
+        let left = CGRect(x: 0, y: 0, width: 1000, height: 800)
+        let sliver = CGRect(x: -599, y: 0, width: 600, height: 400)   // 1 pt inside
+        XCTAssertNil(overlayDisplayIndex(from: sliver, to: sliver, displays: [left]))
+        let eight = CGRect(x: -592, y: 0, width: 600, height: 400)    // 8 pt inside
+        XCTAssertEqual(overlayDisplayIndex(from: eight, to: eight, displays: [left]), 0)
+    }
+
     // MARK: watchdog
 
     func testWatchdogExpiresAfterTheLimitAndRearmingSupersedes() {

@@ -43,12 +43,15 @@ public struct MotionSummary: Equatable, Sendable {
     public let sizeAnimated: Int
     /// Per-pid write stats of this run (feeds `ResizeCapability`); not part of equality.
     public let appStats: [pid_t: MotionWriteStats]
+    /// SM-04: `ax` (frames written through Accessibility) or `snapshot` (GPU overlay).
+    public let renderer: String
 
     public init(
         windows: Int, frames: Int, dropped: Int, duration: TimeInterval,
         slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out",
-        sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:]
+        sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:], renderer: String = "ax"
     ) {
+        self.renderer = renderer
         self.curve = curve
         self.sizeAnimated = sizeAnimated
         self.appStats = appStats
@@ -65,13 +68,13 @@ public struct MotionSummary: Equatable, Sendable {
             && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds
     }
 
-    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S`
+    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|snapshot`
     /// `frames` counts sampled display ticks, `dropped` counts per-app frames
     /// skipped because that app was still writing. IDs and app names only.
     public var logLine: String {
         let slowestText = slowest.map { "\($0.app) \(Int($0.milliseconds.rounded()))ms" } ?? "none"
         return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) "
-            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated)"
+            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated) renderer=\(renderer)"
     }
 }
 

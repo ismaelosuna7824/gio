@@ -46,6 +46,8 @@ public struct SnapshotCaptureRequest: Sendable {
     /// Debug measurement: a generous cap instead of the budget, and the
     /// result carries a latency breakdown (Diagnostics "Test snapshot capture").
     public var measure: Bool
+    /// Level of the `snapshot capture` summary: background cache refreshes log at debug.
+    public var logLevel: LogLevel
 
     /// Cap used in measure mode so slow captures still report their latency.
     public static let measureCapMilliseconds = 2000
@@ -53,8 +55,9 @@ public struct SnapshotCaptureRequest: Sendable {
     public init(
         windows: [WindowID: CGRect], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
         includeBackdrop: Bool = true, budgetMilliseconds: Int = SnapshotBudget.defaultMilliseconds,
-        measure: Bool = false
+        measure: Bool = false, logLevel: LogLevel = .info
     ) {
+        self.logLevel = logLevel
         self.windows = windows
         self.displays = displays
         self.primaryDisplayHeight = primaryDisplayHeight
@@ -108,7 +111,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 measurement: nil
             )
         }
-        GioLog.record(.info, result.summary.logLine)
+        GioLog.record(request.logLevel, result.summary.logLine)
         if let measurement = result.measurement {
             GioLog.record(.info, measurement.logLine)
         }

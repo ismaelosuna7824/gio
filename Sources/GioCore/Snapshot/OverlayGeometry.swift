@@ -75,13 +75,20 @@ public func diffOverlayItems(existing: Set<WindowID>, next: Set<WindowID>) -> Ov
 
 /// Index of the display whose overlay carries a layer: the one holding most
 /// of the target frame, else most of the start frame, nil when neither
-/// touches a display (parked to parked: nothing to draw).
-public func overlayDisplayIndex(from: CGRect, to: CGRect, displays: [CGRect]) -> Int? {
+/// touches a display (parked to parked: nothing to draw). A parked window's
+/// 1 pt sliver does not count: at least `minimumVisible` points must be
+/// inside the display on both axes.
+public func overlayDisplayIndex(
+    from: CGRect, to: CGRect, displays: [CGRect], minimumVisible: CGFloat = 8
+) -> Int? {
     func best(_ frame: CGRect) -> Int? {
         var result: (index: Int, area: CGFloat)?
         for (index, display) in displays.enumerated() {
             let overlap = display.intersection(frame)
-            let area = overlap.isNull ? 0 : overlap.width * overlap.height
+            guard !overlap.isNull, overlap.width >= minimumVisible, overlap.height >= minimumVisible else {
+                continue
+            }
+            let area = overlap.width * overlap.height
             if area > (result?.area ?? 0) {
                 result = (index, area)
             }

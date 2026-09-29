@@ -378,10 +378,6 @@ public final class SnapshotOverlayController {
         pending = []
     }
 
-    public func setSpring(_ spring: SpringParameters) {
-        self.spring = spring
-    }
-
     /// Load the desktop image of every screen once (aspect-fill downsampled to
     /// the screen's pixel size) on a background queue.
     public func refreshWallpapers() {
@@ -409,7 +405,8 @@ public final class SnapshotOverlayController {
     /// Start flight `token`. Returns false (nothing shown) when a display has
     /// no wallpaper yet: the caller falls back to the AX motion.
     @discardableResult
-    public func begin(token: Int, flights: [SnapshotDisplayFlight]) -> Bool {
+    public func begin(token: Int, spring: SpringParameters, flights: [SnapshotDisplayFlight]) -> Bool {
+        self.spring = spring
         guard flights.allSatisfy({ wallpapers.hasImage(for: $0.displayFrame) }) else {
             return false
         }

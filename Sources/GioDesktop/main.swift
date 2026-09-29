@@ -37,11 +37,13 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         )
     )
     private let focusRing = FocusRingController()
+    private let snapshotOverlay = SnapshotOverlayController()
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         focusRing.start()
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
+        wireSnapshotOverlay()
         if let error = host.start() {
             print("[gio] cannot start: \(error)")
             NSApplication.shared.terminate(nil)
@@ -75,13 +77,44 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         host.shutdown()
+        snapshotOverlay.stop()
         focusRing.stop()
+    }
+
+    /// SM-04: the session queue drives the overlay through hooks that hop to
+    /// the main thread; the overlay reports landed springs back to the host.
+    private func wireSnapshotOverlay() {
+        let overlay = snapshotOverlay
+        overlay.start()
+        overlay.onFlightFinished = { [host] token in host.snapshotLayersFinished(token) }
+        host.overlayWallpapers = overlay.wallpapers
+        host.overlayBegin = { [host] token, spring, flights in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    // No wallpaper yet: nothing shown, settle right away.
+                    if !overlay.begin(token: token, spring: spring, flights: flights) {
+                        host.snapshotLayersFinished(token)
+                    }
+                }
+            }
+        }
+        host.overlayRetarget = { token, targets, flights in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.retarget(token: token, targets: targets, adding: flights) }
+            }
+        }
+        host.overlayEnd = { fadeOut in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.end(fadeOut: fadeOut) }
+            }
+        }
     }
 
     /// `gio restart`: restore windows and release the socket and lock, start a
     /// fresh instance (it waits for the lock if needed), then exit.
     private func restartSession() {
         host.shutdown()
+        snapshotOverlay.stop()
         focusRing.stop()
         relaunchGio { NSApplication.shared.terminate(nil) }
     }
