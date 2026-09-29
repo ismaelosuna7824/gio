@@ -48,8 +48,10 @@ empty non-current removed on leave; Alt+U/I, Alt+Shift+U/I (follow window), Alt+
 would be pruned); status adds `stacks`; 3000-op seeded property test. Bundles 22/7/19/30/697
 all 0 failures (parent re-ran); signed build OK. Gaps: move-workspace up/down, CLI up/down verbs.
 LIVE PENDING. Review: UNAVAILABLE.
-- [ ] NF-03 — Focus ring color picker in the desktop app (user request 2026-09-29, "haz que se
-  pueda cambiar el color desde la desktop app"). Route: delegated writer.
+- [x] NF-03 (`eccbc67`) — Focus ring color picker in the desktop app (user request 2026-09-29, "haz que se
+  pueda cambiar el color desde la desktop app"). Route: delegated writer. DONE: ColorPicker (sRGB, no
+  opacity) + presets + hex field + preview; normalizedHexColor; 8 tests RED -> GREEN; bundles
+  22/7/19/30/705 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
@@ -68,3 +70,4 @@ LIVE PENDING. Review: UNAVAILABLE.
 - 2026-09-29: document created; live verification of FI-04 and earlier pending on the user. Next: NF-01.
 - 2026-09-29: NF-01 done, pushed. Next: NF-02.
 - 2026-09-29: user live: likes focus ring; asked color picker (NF-03); reported right-side empty area until Alt+J — under diagnosis (center-focused-column=always vs Chromium occlusion repaint). NF-02 done, pushed.
+- 2026-09-29: NF-03 done, pushed. Open question to user: was the empty right area the last column (center=always) or a missing window (Chromium occlusion repaint)?
