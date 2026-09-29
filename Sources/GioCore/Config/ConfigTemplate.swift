@@ -30,7 +30,10 @@ public func defaultConfigTemplate() -> String {
     "Alt+K" = "focus-up"
     # Also available: "switch-preset-column-width" (Alt+R),
     # "set-column-width-minus" (Alt+Minus), "set-column-width-plus" (Alt+Equal),
-    # "maximize-column" (Alt+F, toggles back to the previous width).
+    # "maximize-column" (Alt+F, toggles back to the previous width),
+    # "fullscreen" (Alt+Shift+F; alias "fullscreen-window"; fills the display
+    # under the menu bar, focusing another window restores the layout),
+    # "toggle-floating" (Alt+Shift+Space; alias "toggle-window-floating").
 
     [[window-rules]]
     app = "Calculator"

@@ -58,6 +58,23 @@ public func planParking(
     return plan
 }
 
+/// Park every frame (a fullscreen window covers the display, so nothing
+/// else may stay visible). Side preference follows each frame's position
+/// against the viewport, exactly like `planParking`.
+public func parkAll(
+    frames: [WindowID: CGRect],
+    viewport: CGRect,
+    display: CGRect,
+    otherDisplays: [CGRect]
+) -> [WindowID: ParkedTarget] {
+    frames.mapValues {
+        parkedTarget(
+            for: $0, preferLeft: $0.midX < viewport.midX,
+            display: display, otherDisplays: otherDisplays
+        )
+    }
+}
+
 private func parkedTarget(
     for frame: CGRect, preferLeft: Bool, display: CGRect, otherDisplays: [CGRect]
 ) -> ParkedTarget {

@@ -371,7 +371,7 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-right": return .moveRight
     case "move-up": return .moveUp
     case "move-down": return .moveDown
-    case "toggle-floating": return .toggleFloating
+    case "toggle-floating", "toggle-window-floating": return .toggleFloating
     case "fullscreen", "fullscreen-window": return .fullscreen
     case "switch-preset-column-width": return .switchPresetColumnWidth
     case "set-column-width-minus": return .shrinkColumnWidth

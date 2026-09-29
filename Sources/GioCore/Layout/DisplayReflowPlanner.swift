@@ -27,6 +27,21 @@ public func planDisplayLayout(
     var layout = try engine.calculate(
         workspace: tilingWorkspace(from: workspace, modes: modes), viewport: viewport
     )
+    if let covering = fullscreenWindow(in: workspace, modes: modes) {
+        // Real fullscreen: the window fills the display and every tiled
+        // window parks where its column already is, so leaving fullscreen
+        // finds the strip exactly as it was.
+        var plan = ParkingPlan(
+            visible: [covering: fullscreenFrame(display: display, usable: viewport)],
+            parked: parkAll(
+                frames: layout.frames, viewport: viewport, display: display,
+                otherDisplays: otherDisplays
+            )
+        )
+        plan.parked.removeValue(forKey: covering)
+        workspace.viewportOffset = layout.viewportOffset
+        return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)
+    }
     if let revealed = revealOffset(workspace: workspace, layout: layout, viewport: viewport),
        revealed != workspace.viewportOffset
     {
@@ -44,6 +59,15 @@ public func planDisplayLayout(
     )
     workspace.viewportOffset = layout.viewportOffset
     return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)
+}
+
+/// The window covering the display, when any workspace member is fullscreen:
+/// the focused one if it is, else the first in column order.
+func fullscreenWindow(in workspace: Workspace, modes: [WindowID: WindowMode]) -> WindowID? {
+    if let focused = workspace.focusedWindow, modes[focused] == .fullscreen {
+        return focused
+    }
+    return workspace.columns.flatMap(\.windows).first { modes[$0] == .fullscreen }
 }
 
 /// Focused column's content range revealed into the viewport. Nil when

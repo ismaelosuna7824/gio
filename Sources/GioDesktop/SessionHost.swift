@@ -32,7 +32,7 @@ final class SessionHost: @unchecked Sendable {
     private var echoGate = WriteEchoGate()
     private var pendingFull = false
     private var tileability = TileabilityCache()
-    private var fullscreenRecords: [WindowID: FullscreenRecord] = [:]
+    private var fullscreen = FullscreenBook()
     private var visibleFrames: [DisplayID: CGRect] = [:]
     private let dispatcher = HotkeyDispatcher()
     private var isShuttingDown = false
@@ -360,7 +360,7 @@ final class SessionHost: @unchecked Sendable {
             tileability.invalidate(id)
             echoGate.forget(id)
             physicalFrames.removeValue(forKey: id)
-            fullscreenRecords.removeValue(forKey: id)
+            fullscreen.forget(id)
             actuator?.forget(elementID: id.elementID)
         }
         for index in WorkspaceManager.range {
@@ -537,6 +537,13 @@ final class SessionHost: @unchecked Sendable {
         let skip = skipAnimationOnce
         skipAnimationOnce = false
         let animating = animate && !skip && settings.isActive
+        // Focusing away from a fullscreen window brings its column back.
+        fullscreen.release(
+            keeping: Set(displays.allDisplays().compactMap {
+                session.manager.workspace(Int($0.workspace.rawValue))?.focusedWindow
+            }),
+            registry: session.registry
+        )
         let modes = tileableModes()
         var plans: [ParkingPlan] = []
         var animations: [WindowAnimation] = []
@@ -1174,22 +1181,21 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// Fullscreen is a layout mode: flip it in the registry and let the
+    /// reflow place the window (see `planDisplayLayout`). Never native Spaces.
     private func toggleFullscreen() {
         let workspace = session.manager.currentWorkspace()
         guard let id = workspace.focusedWindow else {
             return
         }
-        if let record = fullscreenRecords[id] {
-            try? session.registry.endFullscreen(record)
-            fullscreenRecords.removeValue(forKey: id)
+        let current = session.manager.current
+        guard let display = displays.allDisplays().first(where: { Int($0.workspace.rawValue) == current })
+            ?? displays.allDisplays().first
+        else {
             return
         }
-        guard let display = displays.allDisplays().first else {
-            return
-        }
-        if let record = try? session.registry.beginFullscreen(id: id, frame: display.frame) {
-            fullscreenRecords[id] = record
-        }
+        let frame = fullscreenFrame(display: display.frame, usable: visibleFrames[display.id] ?? display.frame)
+        try? fullscreen.toggle(id, registry: session.registry, frame: frame)
     }
 }
 
