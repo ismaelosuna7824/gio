@@ -43,6 +43,10 @@ final class SessionHost: @unchecked Sendable {
     private var player: MotionPlayer?
     private var motionTimer: DispatchSourceTimer?
     private var skipAnimationOnce = false
+    /// NC-06: the workspace the last reflow showed (so a switch knows which
+    /// display to repoint) and the pre-hide frames of floating windows.
+    private var shownWorkspace: WorkspaceID?
+    private var hiddenBook = HiddenWindowBook()
     private static let motionFrameInterval: DispatchTimeInterval = .microseconds(8333)
     private var focusSettle = FocusSettle<FocusEvent>()
     private let clickLock = NSLock()
@@ -544,6 +548,7 @@ final class SessionHost: @unchecked Sendable {
             }),
             registry: session.registry
         )
+        syncShownWorkspace()
         let modes = tileableModes()
         var plans: [ParkingPlan] = []
         var animations: [WindowAnimation] = []
@@ -573,6 +578,7 @@ final class SessionHost: @unchecked Sendable {
                 Viewport(offset: planned.layout.viewportOffset, width: visible.width), for: display.id
             )
         }
+        plans.append(planInactiveWorkspaces())
         if !animations.isEmpty {
             startMotion(animations, reconciler: reconciler)
             return
@@ -597,6 +603,54 @@ final class SessionHost: @unchecked Sendable {
                 physicalFrames.removeValue(forKey: id)
             }
         }
+    }
+
+    // MARK: - Workspace visibility (NC-06)
+
+    /// Point a display at the current workspace when none shows it yet: the
+    /// display that showed the previous one switches over.
+    private func syncShownWorkspace() {
+        let current = WorkspaceID(UInt64(session.manager.current))
+        displays.show(current, replacing: shownWorkspace)
+        shownWorkspace = current
+    }
+
+    /// Windows of workspaces no display shows hang off a corner of the first
+    /// display (size kept); floating windows of shown workspaces that were
+    /// hidden return to the frame they had. Minimized windows are untouched.
+    private func planInactiveWorkspaces() -> ParkingPlan {
+        let all = displays.allDisplays()
+        var plan = ParkingPlan(visible: [:], parked: [:])
+        guard let hiddenDisplay = all.first else {
+            return plan
+        }
+        let shown = Set(all.map { Int($0.workspace.rawValue) })
+        let windows = Dictionary(
+            uniqueKeysWithValues: session.registry.managedWindows().map { ($0.id, $0) }
+        )
+        let hidden = session.manager.windows(outside: shown).filter {
+            windows[$0].map { !$0.isMinimized } ?? false
+        }
+        learnPhysicalFrames(of: hidden)
+        var frames: [WindowID: CGRect] = [:]
+        for id in hidden {
+            guard let frame = physicalFrames[id] else {
+                continue
+            }
+            frames[id] = frame
+            if windows[id]?.mode == .floating {
+                hiddenBook.hide(id, from: frame)
+            }
+        }
+        plan.parked = planHiddenWindows(
+            frames: frames, display: hiddenDisplay.frame,
+            otherDisplays: all.filter { $0.id != hiddenDisplay.id }.map(\.frame)
+        )
+        let active = shown.flatMap { index in
+            (session.manager.workspace(index)?.columns ?? []).flatMap(\.windows)
+        }
+        plan.visible = hiddenBook.reveal(active.filter { windows[$0]?.mode == .floating })
+        return plan
     }
 
     // MARK: - Motion (MO-04)
@@ -1125,6 +1179,7 @@ final class SessionHost: @unchecked Sendable {
             narrowMove(in: &workspace, direction: .down)
         case .workspace(let number):
             session.manager.switchTo(number)
+            syncShownWorkspace()
         case .moveToWorkspace(let number):
             if let id = workspace.focusedWindow {
                 session.manager.moveWindow(id, to: number)

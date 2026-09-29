@@ -26,6 +26,11 @@ public struct ParkedTarget: Equatable, Sendable {
 public struct ParkingPlan: Equatable, Sendable {
     public var visible: [WindowID: CGRect]
     public var parked: [WindowID: ParkedTarget]
+
+    public init(visible: [WindowID: CGRect] = [:], parked: [WindowID: ParkedTarget] = [:]) {
+        self.visible = visible
+        self.parked = parked
+    }
 }
 
 /// macOS refuses fully off-screen frames, so a parked window keeps this
