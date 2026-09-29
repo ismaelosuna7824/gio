@@ -33,19 +33,28 @@ Not in scope: editing shortcuts by recording keys (view-only per user request).
 - Conventional Commits, NO Co-Authored-By. Push/PR not authorized. Quote trailing-space path.
 
 ## Tasks
-- [ ] DA-01 — App shell: single main window with sidebar sections; opens on launch and
+- [x] DA-01 (`d9744bd`) — App shell: single main window with sidebar sections; opens on launch and
   from the menu bar ("Open Gio"); closing hides it and the app keeps running in the menu
   bar (activation policy regular while the window is open, accessory when closed);
   Debug window and its auto-open removed; `runTileReflow` button removed from the UI.
-- [ ] DA-02 — Shortcuts section: every action with its current binding(s) (defaults +
+- [x] DA-02 (`49d1e27`) — Shortcuts section: every action with its current binding(s) (defaults +
   config overrides), description, category, source (default/config); searchable.
-- [ ] DA-03 — Overview section: session status, Accessibility permission (with request
+- [x] DA-03 (`5c87689`) — Overview section: session status, Accessibility permission (with request
   button), workspaces, and windows with mode/reason (tiled/floating/minimized/hidden).
 - [ ] DA-04 — Settings sections: layout (gaps, padding, default width, presets), animations
   (enabled, duration), focus options, window rules; edits patch config.toml in place and
   trigger reload; validation messages shown inline.
 - [ ] DA-05 — Logs & diagnostics section: live log viewer with level filter, doctor facts,
   actions (reload config, restore all windows, open config file, quit).
+
+Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
+policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
+Debug window + Tile Main Display removed, ShortcutCatalog exhaustive switch over HotkeyAction,
+OverviewModel. Fixed latent bug: SessionHost used defaults-only HotkeyDispatcher, so
+`[keybindings]` overrides never applied; now config.makeDispatcher() at start + reload.
+RED (compile) -> GREEN each task; 502 executed 0 failures (parent spot-check); signed build
+OK; pbxproj unchanged. Gaps: 2-3s polling refresh; launcher shadowing not shown. LIVE PENDING.
+Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Only one Gio window ever opens (plus the summoned launcher); closing it leaves the menu
@@ -67,3 +76,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 
 ## Progress
 - 2026-09-29: document created (niri-controls user-accepted live: "si parece mejor"). Next: DA-01..DA-03.
+- 2026-09-29: DA-01..DA-03 done. Next: DA-04..DA-05 (route: delegated writer).
