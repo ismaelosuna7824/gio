@@ -39,7 +39,7 @@ exists); signing team stays a documented per-collaborator step.
   (never/always/on-overflow, Niri semantics).
 - [x] HD-05 (`954b94d`) — `gio restart` restarts the session (restore, relaunch, exit) over IPC.
 - [x] HD-06 (`c1671dc`) — Launcher searches managed windows too; choosing one focuses and reveals it.
-- [ ] HD-07 — Guardian process: launched by Gio, watches Gio's pid, restores off-screen
+- [x] HD-07 (`14369e3`) — Guardian process: launched by Gio, watches Gio's pid, restores off-screen
   windows if Gio exits without a clean shutdown (crash, SIGKILL, Force Quit).
 
 Evidence HD-01..03 (route: one delegated writer): FocusIntent table (focus/move/workspace/
@@ -56,6 +56,13 @@ relaunches with --after-restart lock wait; launcher mixes apps + windows, focusW
 RED -> GREEN; bundles 20/7/19/23/602 all 0 failures (parent re-ran); signed build + GioCLI OK.
 User-visible: user's config has center-focused-column = true and mouse-follows-focus = true,
 which now take effect. LIVE PENDING. Review: UNAVAILABLE.
+
+Evidence HD-07 (route: one delegated writer): guardian = same executable with `--guardian <pid>`
+detected before NSApplication setup, stdin pipe protocol (`clean` -> exit; EOF without clean ->
+confirm parent dead -> no-daemon restore), closes inherited fds 3..255; 15 tests RED -> GREEN;
+bundles 20/7/19/23/616 all 0 failures (parent re-ran); signed build OK; smoke test clean path
+exit 0 in 0.33s. Parent fixed TESTING.md kill command (`pgrep -x Gio` also matches the guardian).
+TCC inheritance assumption LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Alt+H/L changes keyboard focus live; config binding on e.g. Alt+Y fires.
@@ -74,3 +81,4 @@ which now take effect. LIVE PENDING. Review: UNAVAILABLE.
 - 2026-09-29: document created. Next: HD-01..HD-03.
 - 2026-09-29: HD-01..HD-03 done, pushed. Next: HD-04..HD-06.
 - 2026-09-29: HD-04..HD-06 done, pushed. Next: HD-07 guardian.
+- 2026-09-29: HD-07 done, pushed. All hardening tasks code-complete. Next: user live test.
