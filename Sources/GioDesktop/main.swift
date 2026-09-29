@@ -24,7 +24,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private var bar: MenuBarController?
     private var launcherWindow: NSWindow?
     private lazy var mainWindow = MainWindowController(
-        model: DesktopModel(fetch: { [host] in host.snapshot() })
+        model: DesktopModel(
+            fetch: { [host] in host.snapshot() },
+            actions: DesktopActions(applyEdits: { [host] in host.applyConfigEdits($0) })
+        )
     )
     private var signalSources: [DispatchSourceSignal] = []
 

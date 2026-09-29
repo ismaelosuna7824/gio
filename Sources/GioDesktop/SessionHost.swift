@@ -162,7 +162,9 @@ final class SessionHost: @unchecked Sendable {
     /// on the session queue.
     func snapshot() -> SessionSnapshot {
         queue.sync {
-            SessionSnapshot(keybindings: session.config.keybindings, facts: sessionFacts())
+            SessionSnapshot(
+                keybindings: session.config.keybindings, facts: sessionFacts(), config: session.config
+            )
         }
     }
 
@@ -203,6 +205,29 @@ final class SessionHost: @unchecked Sendable {
         )
     }
 
+    /// Patch config.toml from the app, then reload it exactly like the IPC
+    /// `reload` verb. Nothing is reloaded when the edit is rejected.
+    func applyConfigEdits(_ edits: [ConfigEdit]) -> Result<PatchedConfig, ConfigErrors> {
+        queue.sync {
+            let result = GioCore.applyConfigEdits(edits)
+            if case .success = result {
+                dispatch(.reload, session: &session)
+                applyReloadedConfig()
+                GioLog.record(.info, "config edited from the app and reloaded")
+            }
+            return result
+        }
+    }
+
+    /// After `session.config` changed: rebuild bindings and messages,
+    /// re-evaluate rules, relayout. Must run on `queue`.
+    private func applyReloadedConfig() {
+        refreshDispatcher()
+        configMessages = loadGioConfig().messages
+        reapplyRules()
+        reflowAll()
+    }
+
     // MARK: - IPC
 
     private func handleIPC(_ argv: [String]) -> IPCResponse {
@@ -211,10 +236,7 @@ final class SessionHost: @unchecked Sendable {
         if case .success(let command) = parsed {
             switch command {
             case .reload:
-                refreshDispatcher()
-                configMessages = loadGioConfig().messages
-                reapplyRules()
-                reflowAll()
+                applyReloadedConfig()
             case .focus, .move, .workspace:
                 reflowAll()
             default:

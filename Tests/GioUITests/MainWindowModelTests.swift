@@ -18,12 +18,6 @@ final class MainWindowModelTests: XCTestCase {
         }
     }
 
-    func testImplementedFlagMatchesPlaceholders() {
-        XCTAssertTrue(MainSection.overview.isImplemented)
-        XCTAssertTrue(MainSection.shortcuts.isImplemented)
-        XCTAssertFalse(MainSection.layout.isImplemented)
-    }
-
     func testPolicyIsRegularOnlyWhileWindowVisible() {
         XCTAssertEqual(desiredActivationPolicy(windowVisible: true), .regular)
         XCTAssertEqual(desiredActivationPolicy(windowVisible: false), .accessory)

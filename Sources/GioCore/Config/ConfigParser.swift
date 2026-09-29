@@ -4,6 +4,10 @@ import Foundation
 /// Parse errors, collected — every message names its line.
 public struct ConfigErrors: Error, Equatable {
     public var messages: [String]
+
+    public init(messages: [String]) {
+        self.messages = messages
+    }
 }
 
 enum ConfigValue: Equatable {

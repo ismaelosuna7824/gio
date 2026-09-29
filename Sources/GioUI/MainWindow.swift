@@ -3,8 +3,7 @@ import GioCore
 import GioMacOS
 import SwiftUI
 
-/// Sidebar sections of the unified Gio window. Sections without a
-/// dedicated view yet render a short placeholder.
+/// Sidebar sections of the unified Gio window.
 public enum MainSection: String, CaseIterable, Identifiable, Sendable {
     case overview, shortcuts, layout, animations, rules, logs
 
@@ -29,14 +28,6 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
         case .animations: return "wand.and.stars"
         case .rules: return "list.bullet.rectangle"
         case .logs: return "text.alignleft"
-        }
-    }
-
-    /// False while the section only shows a placeholder.
-    public var isImplemented: Bool {
-        switch self {
-        case .overview, .shortcuts, .logs: return true
-        case .layout, .animations, .rules: return false
         }
     }
 }
@@ -73,23 +64,11 @@ public struct GioMainView: View {
         switch section {
         case .overview: OverviewView(model: model)
         case .shortcuts: ShortcutsView(model: model)
+        case .layout: LayoutSettingsView(model: model)
+        case .animations: AnimationsSettingsView(model: model)
+        case .rules: RulesSettingsView(model: model)
         case .logs: LogsView()
-        default: PlaceholderView(section: section)
         }
-    }
-}
-
-struct PlaceholderView: View {
-    let section: MainSection
-
-    var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: section.symbol).font(.largeTitle).foregroundStyle(.secondary)
-            Text(section.title).font(.title2)
-            Text("Coming soon. Until then, edit ~/.config/gio/config.toml.")
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
