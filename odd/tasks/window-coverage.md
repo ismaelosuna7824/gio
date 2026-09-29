@@ -122,3 +122,4 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: live retest: test 5 (quit restore) PASS; test 2 (click) intermittent FAIL with many windows. Added WC-09. Route: delegated writer.
 - 2026-09-29: WC-09 done `9d25405`. Next: user live retest of click (look for `focus dropped` / `focus adopt ... parked`).
 - 2026-09-29: WC-09 hypothesis (stale focus) REFUTED by logs; real cause reveal geometry. WC-10 done. Next: live retest click.
+- 2026-09-29: LIVE PASS (user + log since last start: 53 focus adoptions, all `scroll=no scroll`, 0 `focus dropped`). PHASE 1 CLOSED. Next: phase 2 perf + animation in odd/tasks/motion.md.
