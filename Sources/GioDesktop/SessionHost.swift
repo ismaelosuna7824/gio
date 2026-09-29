@@ -34,7 +34,10 @@ final class SessionHost: @unchecked Sendable {
     private var tileability = TileabilityCache()
     private var fullscreen = FullscreenBook()
     private var visibleFrames: [DisplayID: CGRect] = [:]
-    private let dispatcher = HotkeyDispatcher()
+    /// Effective hotkey table (defaults + config). Read on the main thread
+    /// by the tap, rebuilt on the session queue at start and on reload.
+    private let dispatcherLock = NSLock()
+    private var dispatcherTable = HotkeyDispatcher()
     private var isShuttingDown = false
     private var reflowDeferral = ReflowDeferral()
     /// MO-04: where each window physically is (last applied or sampled
@@ -78,6 +81,7 @@ final class SessionHost: @unchecked Sendable {
         }
         let (config, configMessages) = loadGioConfig()
         session.config = config
+        refreshDispatcher()
         for message in configMessages {
             print("[gio] config: \(message)")
         }
@@ -138,6 +142,27 @@ final class SessionHost: @unchecked Sendable {
             .restoreOffscreen(ids: ids, displays: restoreDisplays())
     }
 
+    private func refreshDispatcher() {
+        let table = session.config.makeDispatcher()
+        dispatcherLock.lock()
+        dispatcherTable = table
+        dispatcherLock.unlock()
+    }
+
+    private func currentDispatcher() -> HotkeyDispatcher {
+        dispatcherLock.lock()
+        defer { dispatcherLock.unlock() }
+        return dispatcherTable
+    }
+
+    /// Read-only state for the main window. Safe from any thread: it runs
+    /// on the session queue.
+    func snapshot() -> SessionSnapshot {
+        queue.sync {
+            SessionSnapshot(keybindings: session.config.keybindings)
+        }
+    }
+
     // MARK: - IPC
 
     private func handleIPC(_ argv: [String]) -> IPCResponse {
@@ -146,6 +171,7 @@ final class SessionHost: @unchecked Sendable {
         if case .success(let command) = parsed {
             switch command {
             case .reload:
+                refreshDispatcher()
                 reapplyRules()
                 reflowAll()
             case .focus, .move, .workspace:
@@ -1167,7 +1193,7 @@ final class SessionHost: @unchecked Sendable {
             }
             return true
         }
-        guard let action = dispatcher.action(for: combo) else {
+        guard let action = currentDispatcher().action(for: combo) else {
             return false
         }
         queue.async { [weak self] in

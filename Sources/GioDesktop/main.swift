@@ -23,7 +23,9 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
     private var launcherWindow: NSWindow?
-    private let mainWindow = MainWindowController()
+    private lazy var mainWindow = MainWindowController(
+        model: DesktopModel(fetch: { [host] in host.snapshot() })
+    )
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {

@@ -49,8 +49,11 @@ public func desiredActivationPolicy(windowVisible: Bool) -> NSApplication.Activa
 
 public struct GioMainView: View {
     @State private var selection: MainSection? = .overview
+    private let model: DesktopModel
 
-    public init() {}
+    public init(model: DesktopModel) {
+        self.model = model
+    }
 
     public var body: some View {
         NavigationSplitView {
@@ -69,6 +72,7 @@ public struct GioMainView: View {
     private func detail(for section: MainSection) -> some View {
         switch section {
         case .overview: OverviewPlaceholderView()
+        case .shortcuts: ShortcutsView(model: model)
         case .logs: LogsView()
         default: PlaceholderView(section: section)
         }
@@ -149,8 +153,10 @@ struct LogsView: View {
 @MainActor
 public final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
+    private let model: DesktopModel
 
-    public override init() {
+    public init(model: DesktopModel) {
+        self.model = model
         super.init()
     }
 
@@ -165,7 +171,7 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
                 defer: false
             )
             window.title = "Gio"
-            window.contentView = NSHostingView(rootView: GioMainView())
+            window.contentView = NSHostingView(rootView: GioMainView(model: model))
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.center()
