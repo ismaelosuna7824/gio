@@ -5,7 +5,6 @@ import SwiftUI
 struct ShortcutsView: View {
     @ObservedObject var model: DesktopModel
     @State private var query = ""
-    private let ticker = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     var body: some View {
         let entries = filterShortcuts(
@@ -31,7 +30,7 @@ struct ShortcutsView: View {
         }
         .padding()
         .onAppear { model.refresh() }
-        .onReceive(ticker) { _ in model.refresh() }
+        .pollWhileVisible(model, every: 3) { model.refresh() }
     }
 }
 

@@ -2,16 +2,21 @@ import AppKit
 import Foundation
 import GioCore
 
-/// Plan §25 menu bar, first cut: workspace switcher, counts, reload,
-/// preferences, quit — all through IPC, so the bar never touches windows
-/// directly. Polls `status` every few seconds until the daemon pushes
-/// events; shows an honest `Gio` with everything disabled when no session
-/// answers. Runs accessory (no Dock icon) straight from the SPM executable;
-/// the signed .app bundle is 1.0 packaging work.
+/// Plan §25 menu bar: workspace switcher, counts, reload, preferences, quit.
+/// Actions go through IPC, so the bar never touches windows directly. State is
+/// event-driven (PA-02): the session pushes a `BarSessionState` whenever a
+/// reflow or command changed it (`apply`), the title follows, and the menu
+/// items are rebuilt from the latest state only when the menu opens
+/// (`menuNeedsUpdate`). No timer, no polling, no IPC round trip for reads.
+/// Runs accessory (no Dock icon) straight from the SPM executable; the signed
+/// .app bundle is 1.0 packaging work.
 @MainActor
-public final class MenuBarController: NSObject {
+public final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
-    private var timer: Timer?
+    private let menu = NSMenu()
+    private var latest: BarSessionState?
+    /// Host-provided: the last published state; must never wait on the session queue.
+    public var stateProvider: (() -> BarSessionState?)?
     /// Host-provided: summon the launcher window / the main Gio window.
     public var onOpenLauncher: (() -> Void)?
     public var onOpenMain: (() -> Void)?
@@ -20,53 +25,30 @@ public final class MenuBarController: NSObject {
         super.init()
     }
 
-    /// Build the status item and start polling. Call once from the host
-    /// (this controller is no longer an app delegate — nothing calls it
-    /// back automatically).
+    /// Build the status item. Call once from the host (this controller is no
+    /// longer an app delegate — nothing calls it back automatically).
     public func start() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.title = "Gio"
-        statusItem.menu = buildMenu(state: nil)
-        timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
-            // Fires on the main run loop thread by construction.
-            MainActor.assumeIsolated {
-                self?.refresh()
-            }
-        }
-        timer?.tolerance = 1
-        refresh()
+        menu.delegate = self
+        statusItem.menu = menu
+        apply(stateProvider?())
     }
 
-    private nonisolated func query() -> BarSessionState? {
-        guard let response = try? sendIPCRequest(["status"], socketPath: defaultSocketPath()),
-              response.ok,
-              let output = response.output
-        else {
-            return nil
-        }
-        return parseBarStatus(output)
+    /// Pushed by the session when its state changed. Cheap: title only.
+    public func apply(_ state: BarSessionState?) {
+        latest = state
+        statusItem?.button?.title = barTitle(state)
     }
 
-    /// The IPC round trip runs off the main thread: the server answers on the
-    /// session queue, and main must never wait on it (the hotkey tap lives on
-    /// the main run loop).
-    private func refresh() {
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let state = self?.query()
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    guard let self else {
-                        return
-                    }
-                    self.statusItem.button?.title = barTitle(state)
-                    self.statusItem.menu = self.buildMenu(state: state)
-                }
-            }
+    public func menuNeedsUpdate(_ menu: NSMenu) {
+        if let fresh = stateProvider?() {
+            latest = fresh
         }
+        menu.removeAllItems()
+        populate(menu, state: latest)
     }
 
-    private func buildMenu(state: BarSessionState?) -> NSMenu {
-        let menu = NSMenu()
+    private func populate(_ menu: NSMenu, state: BarSessionState?) {
         let open = NSMenuItem(title: "Open Gio", action: #selector(openMain), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
@@ -127,7 +109,6 @@ public final class MenuBarController: NSObject {
         menu.addItem(NSMenuItem(
             title: "Quit Gio", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""
         ))
-        return menu
     }
 
     @objc private func switchWorkspace(_ sender: NSMenuItem) {
@@ -138,15 +119,10 @@ public final class MenuBarController: NSObject {
         sendAsync(["reload"])
     }
 
-    /// Fire an IPC verb off-main, then refresh the bar.
+    /// Fire an IPC verb off-main. The session pushes the resulting state.
     private func sendAsync(_ argv: [String]) {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+        DispatchQueue.global(qos: .userInitiated).async {
             _ = try? sendIPCRequest(argv, socketPath: defaultSocketPath())
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated {
-                    self?.refresh()
-                }
-            }
         }
     }
 

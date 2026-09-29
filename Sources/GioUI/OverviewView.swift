@@ -6,7 +6,6 @@ import SwiftUI
 /// Refreshes from the host snapshot while visible.
 struct OverviewView: View {
     @ObservedObject var model: DesktopModel
-    private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -21,7 +20,7 @@ struct OverviewView: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { model.refresh() }
-        .onReceive(ticker) { _ in model.refresh() }
+        .pollWhileVisible(model, every: 3) { model.refresh() }
     }
 
     @ViewBuilder

@@ -62,6 +62,8 @@ public enum ApplyFeedback: Equatable, Sendable {
 @MainActor
 public final class DesktopModel: ObservableObject {
     @Published public private(set) var snapshot = SessionSnapshot()
+    /// True while the main window is on screen. Tickers run only then.
+    @Published public private(set) var windowVisible = true
     private let fetch: @Sendable () -> SessionSnapshot
     private let actions: DesktopActions
 
@@ -76,6 +78,18 @@ public final class DesktopModel: ObservableObject {
 
     public func refresh() {
         snapshot = fetch()
+    }
+
+    /// Called by the window controller. Becoming visible refreshes once so
+    /// the sections are current; hiding stops every ticker.
+    public func setWindowVisible(_ visible: Bool) {
+        guard visible != windowVisible else {
+            return
+        }
+        windowVisible = visible
+        if visible {
+            refresh()
+        }
     }
 
     /// Session-side changes land asynchronously; look again shortly so the

@@ -190,11 +190,13 @@ public final class HotkeyTap {
         return true
     }
 
-    /// Every 2 s on main: a tap macOS disabled without telling us is switched
-    /// back on. Cheap (one flag read).
+    /// Every 30 s on main (generous leeway so the system can coalesce the
+    /// wakeup): a tap macOS disabled without telling us is switched back on.
+    /// The callback already re-enables on timeout/user-input disable, so this
+    /// is only a safety net. Cheap (one flag read).
     private func startWatchdog(_ box: TapBox) {
         let timer = DispatchSource.makeTimerSource(queue: .main)
-        timer.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(500))
+        timer.schedule(deadline: .now() + 30, repeating: 30, leeway: .seconds(10))
         timer.setEventHandler { [weak box] in
             box?.checkEnabled()
         }

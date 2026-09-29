@@ -44,6 +44,12 @@ final class SessionHost: @unchecked Sendable {
     /// (start, config changes, every `snapshot()` request); main only reads,
     /// so it never waits behind a slow reflow (tap timeouts, dead hotkeys).
     private let snapshotCell = PublishedValue(SessionSnapshot())
+    /// PA-02: menu bar state, pushed (deduplicated) after reflows and IPC
+    /// commands instead of being polled over IPC.
+    private let barStateCell = PublishedValue<BarSessionState?>(nil)
+    private var barGate = BarStateGate()
+    /// Menu bar hook, always invoked on the main thread.
+    var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
     private var pendingReflow: DispatchWorkItem?
     private var nextElementID: UInt64 = 0
@@ -328,6 +334,33 @@ final class SessionHost: @unchecked Sendable {
         return snapshotCell.read()
     }
 
+    /// Last published menu bar state; never waits on the session queue.
+    func barState() -> BarSessionState? {
+        barStateCell.read()
+    }
+
+    /// Ask the session for one initial publication (after the hook is set).
+    func requestBarState() {
+        queue.async { [weak self] in
+            self?.publishBarState()
+        }
+    }
+
+    /// Must run on `queue`. Cheap no-op when nothing the bar shows changed.
+    private func publishBarState() {
+        guard onBarState != nil else {
+            return
+        }
+        let state = parseBarStatus(queryStatus(session: session))
+        guard barGate.accept(state) else {
+            return
+        }
+        barStateCell.publish(state)
+        DispatchQueue.main.async { [weak self] in
+            self?.onBarState?(state)
+        }
+    }
+
     /// Must run on `queue`.
     private func publishSnapshot() {
         snapshotCell.publish(
@@ -471,6 +504,7 @@ final class SessionHost: @unchecked Sendable {
                 break
             }
         }
+        publishBarState()
         return response
     }
 
@@ -879,7 +913,10 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         // Every exit (animation started or instant pass) refreshes the ring.
-        defer { publishFocusRing() }
+        defer {
+            publishFocusRing()
+            publishBarState()
+        }
         // A new pass invalidates any pending render check (FI-05).
         renderChecks.cancel()
         // One reconciler for the session: it remembers apps whose write lane

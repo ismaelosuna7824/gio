@@ -50,7 +50,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         let bar = MenuBarController()
         bar.onOpenLauncher = { [weak self] in self?.showLauncher() }
         bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
+        bar.stateProvider = { [host] in host.barState() }
+        host.onBarState = { [weak bar] state in bar?.apply(state) }
         bar.start()
+        host.requestBarState()
         self.bar = bar
         host.onSummonLauncher = { [weak self] in self?.showLauncher() }
         host.onRestart = { [weak self] in self?.restartSession() }

@@ -125,9 +125,18 @@ Run the signed **Gio** scheme from Xcode with several windows open (a browser, a
 | 14 | Displays | Connect or disconnect a second display. | Layout refits; unplugging one display does not corrupt the other. (Multi-display is not validated live yet.) |
 | 15 | Focus ring | With several windows, press `Alt+H/L/J/K`, click windows, run `Alt+Shift+F` on one, minimize one, switch workspaces (`Alt+2`, `Alt+1`), open Gio's main window and then click another app. Set `[focus-ring] width = 8` and `active-color = "#ff5555"`, then `enabled = false`, using `gio reload` or **Layout**. | A colored rounded outline hugs the focused window and slides with it during scroll animations without lag or blocked hotkeys. It hides for fullscreen, minimized and parked focus, while Gio's own window is active, and returns when another app is focused. It never steals focus, is not clickable, and is absent from Cmd+Tab. Config changes apply live. Log (debug) shows `focus ring shown/hidden` only on transitions. |
 
+## Checking idle behavior
+
+Gio at rest should cost ~0%. With the main window closed to the menu bar and no window activity for a minute:
+
+1. Activity Monitor, **Energy** tab: Gio's Energy Impact should be ~0 and "Idle Wake Ups" near zero (only the 30 s tap watchdog).
+2. `tail -f ~/.config/gio/gio.log` (or `level = "debug"` for more detail): no lines should appear while idle. A steady stream means something is polling.
+3. Open the main window: the visible section refreshes every 1-3 s; close it again and confirm the wakeups stop.
+4. Click the menu bar item: workspace rows are current without any background polling.
+
 ## Log recipes
 
-Logs are written to `~/.config/gio/gio.log` (minimum level from `[logging] level`, default `info`; batched writes, rotated at about 1 MB to `gio.log.1`). Set `level = "debug"` and `gio reload` to see `reflow timing`, `focus adopt`, `hotkey` and `reconcile` lines and shown in the **Logs** section and by `GioCLI logs [--level ...]`. Lines look like `[timestamp] [LEVEL] message`. Messages contain IDs, counts, timings and app names, never window titles.
+Logs are written to `~/.config/gio/gio.log` (minimum level from `[logging] level`, default `info`; batched writes, rotated at about 1 MB to `gio.log.1`) and shown in the **Logs** section and by `GioCLI logs [--level ...]`. Set `level = "debug"` and `gio reload` to see per-event `reflow timing`, `focus adopt`, `hotkey` and `reconcile` lines. Lines look like `[timestamp] [LEVEL] message`. Messages contain IDs, counts, timings and app names, never window titles.
 
 Start with:
 

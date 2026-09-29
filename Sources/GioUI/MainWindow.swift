@@ -69,7 +69,7 @@ public struct GioMainView: View {
         case .layout: LayoutSettingsView(model: model)
         case .animations: AnimationsSettingsView(model: model)
         case .rules: RulesSettingsView(model: model)
-        case .logs: LogsView()
+        case .logs: LogsView(model: model)
         case .diagnostics: DiagnosticsView(model: model)
         }
     }
@@ -112,11 +112,21 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
         window?.makeKeyAndOrderFront(nil)
+        model.setWindowVisible(true)
     }
 
     public func hide() {
         window?.orderOut(nil)
+        model.setWindowVisible(false)
         NSApplication.shared.setActivationPolicy(desiredActivationPolicy(windowVisible: false))
+    }
+
+    /// Minimized or fully covered windows need no live updates either.
+    public func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window else {
+            return
+        }
+        model.setWindowVisible(window.isVisible && window.occlusionState.contains(.visible))
     }
 
     public func windowShouldClose(_ sender: NSWindow) -> Bool {

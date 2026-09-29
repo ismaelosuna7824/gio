@@ -1,15 +1,19 @@
+import AppKit
 import GioCore
 import SwiftUI
 
 /// Live tail of `~/.config/gio/gio.log` with a severity filter and text
-/// search. "Clear view" only hides what is already in the file.
+/// search. "Clear view" only hides what is already in the file. The file is
+/// read incrementally (only new bytes) and only while this section is on
+/// screen in a visible window; rows are capped and not selectable (use
+/// "Copy visible").
 struct LogsView: View {
+    @ObservedObject var model: DesktopModel
     @State private var filter = LogFilter()
+    @State private var tail = LogTail()
     @State private var entries: [LogEntry] = []
     @State private var autoScroll = true
-    @State private var clearedOffset: UInt64 = 0
-    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-    private let displayLimit = 1000
+    private let displayLimit = 500
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -23,8 +27,13 @@ struct LogsView: View {
                 .frame(maxWidth: 180)
                 TextField("Search", text: $filter.search).textFieldStyle(.roundedBorder)
                 Toggle("Auto-scroll", isOn: $autoScroll)
+                Button("Copy visible") {
+                    let text = filter.apply(to: entries).suffix(displayLimit).map { $0.line() }.joined(separator: "\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
                 Button("Clear view") {
-                    clearedOffset = logFileSize()
+                    tail.clear()
                     entries = []
                 }
             }
@@ -36,7 +45,6 @@ struct LogsView: View {
                             Text(entry.line())
                                 .font(.system(.callout, design: .monospaced))
                                 .foregroundStyle(color(entry.level))
-                                .textSelection(.enabled)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .id(index)
                         }
@@ -55,11 +63,13 @@ struct LogsView: View {
         }
         .padding()
         .onAppear { reload() }
-        .onReceive(ticker) { _ in reload() }
+        .pollWhileVisible(model, every: 1) { reload() }
     }
 
     private func reload() {
-        entries = readLogEntries(fromOffset: clearedOffset)
+        if tail.poll() {
+            entries = tail.entries
+        }
     }
 
     private func color(_ level: LogLevel) -> Color {

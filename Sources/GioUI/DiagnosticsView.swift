@@ -6,7 +6,6 @@ import SwiftUI
 struct DiagnosticsView: View {
     @ObservedObject var model: DesktopModel
     @State private var actionNote: String?
-    private let ticker = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -55,7 +54,7 @@ struct DiagnosticsView: View {
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear { model.refresh() }
-        .onReceive(ticker) { _ in model.refresh() }
+        .pollWhileVisible(model, every: 3) { model.refresh() }
     }
 
     private func rows(for facts: SessionFacts) -> [DiagnosticRow] {

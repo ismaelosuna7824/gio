@@ -200,19 +200,19 @@ Behavior:
 
 | Section | What it shows or does |
 | --- | --- |
-| **Overview** | Session status, Accessibility permission (with a **Request Access** button), config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 2 s. |
+| **Overview** | Session status, Accessibility permission (with a **Request Access** button), config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 3 s while the window is visible (nothing runs when it is closed to the menu bar). |
 | **Shortcuts** | Searchable reference of every action grouped by category (Focus, Move, Columns, Windows, Workspaces, App) with its current bindings, description and source (`default` or `config`). View-only: shortcuts are changed in `config.toml`. |
 | **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, the two Focus toggles (focus follows mouse, mouse follows focus), and the **Focus ring** (enable, width, and color: a native color picker, preset swatches, a hex field kept in sync and a live preview; the ring is always opaque, so there is no opacity control; Apply writes `active-color = "#rrggbb"` and the ring updates immediately). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
 | **Animations** | Enable toggle and duration slider (0 to 1000 ms). Apply and Revert as above. |
 | **Rules** | List of window rules with Add, Edit and Delete. Same validation as the file. |
-| **Logs** | Live tail of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll and **Clear view** (hides what is already in the file; it does not delete it). |
+| **Logs** | Live tail (last 500 rows, current file only) of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll, **Copy visible** and **Clear view** (hides what is already in the file; it does not delete it). |
 | **Diagnostics** | Facts: version and build, session, Accessibility, config path and validity, IPC socket, display count, log file path. Buttons: **Reload Config**, **Restore All Windows** (brings parked windows on screen without quitting; tiling stays on, so the next layout change parks them again), **Open Config File**, **Quit Gio**. |
 
 Settings edits are text-level: unrelated lines, comments and ordering survive, the result must re-parse before it is written, and the write is atomic (temp file plus rename). If the existing file has parse errors, edits are refused until it is fixed. Known gap: editing a rule from the app drops comments inside that rule block.
 
 ### Menu bar item
 
-Title `Gio` (updated from the status query every 3 s). Menu: **Open Gio**, the workspace stack of each display (**Workspace N · windows**, check mark on the active one, only the focused display's rows switch), window and column counts, **Reload Config**, **Preferences...** (opens the main window), **Launcher...**, **Quit Gio**. With no session it shows `no session` and disables session actions. **Quit Gio** runs the normal shutdown, which restores parked windows.
+Title `Gio` (or `workspace · windows`), pushed by the session when it changes; no polling. Menu: **Open Gio**, the workspace stack of each display (**Workspace N · windows**, check mark on the active one, only the focused display's rows switch), window and column counts, **Reload Config**, **Preferences...** (opens the main window), **Launcher...**, **Quit Gio**. With no session it shows `no session` and disables session actions. **Quit Gio** runs the normal shutdown, which restores parked windows.
 
 ## Launcher
 
