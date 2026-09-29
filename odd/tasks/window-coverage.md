@@ -52,6 +52,14 @@ Window admission, observation and registration only. Out of scope: animation/per
   full rescans also purge registered windows of a scanned pid that no longer appear
   (fallback when destroyed-element CFEqual matching fails).
   DONE `b7fb956`: isMinimized flag, pure minimize/restore, reevaluateRules, vanishedWindowIDs gated by completePIDs (29 tests RED compile-fail -> GREEN), 284 executed 0 failures (parent spot-check), signed build OK. Gaps: no workspace reassignment on reload; manual tile vs float rule not tracked; deminimize doesn't switch workspace; a registered window newly classified `ignore` gets purged. Review: UNAVAILABLE.
+- [x] WC-06 — Park off-viewport columns (added 2026-09-29 from live run, user approved):
+  live log showed each reflow moved only the 2-3 visible windows; `splitVisibleFrames`
+  drops off-viewport frames, so those windows keep stale frames and stack behind the
+  visible columns. Park them nearly fully off-screen (1px visible) on the side they
+  belong to (left columns -> left edge, right columns -> right edge), AeroSpace-style,
+  avoiding edges shared with another display (fallback bottom-right corner); parked
+  frames verified with tolerance, never raised/focused.
+  DONE `3a30bbe`: pure planParking (full display frame, Cocoa coords), reconciler accepts clamped parked landing (<=40pt strip) then `already`; 18 tests RED -> GREEN, 302 executed 0 failures (parent spot-check), signed build OK. LIVE PENDING: does macOS accept the 1pt strip. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -81,3 +89,5 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: WC-02 done `d763b75` (route: delegated writer). Next: WC-03.
 - 2026-09-29: WC-03 `e9c8066` + WC-04 `695ac17` done (route: one delegated writer, shared files). Next: WC-05.
 - 2026-09-29: WC-05 done `b7fb956` (route: delegated writer). PHASE 1 CODE-COMPLETE; LIVE PENDING: user run of signed Gio scheme (open app after start, close window, minimize/restore, Electron app tiles). Delivery: ~1.2k authored lines over 5 commits exceeds ~400 budget; chain strategy deferred because push/PR are not authorized. Next: live validation, then phase 2 (perf).
+- 2026-09-29: live run (user screenshots + ~/.config/gio/gio.log): tiling works but off-viewport windows stay stacked behind (`reconcile applied=2..3` per focus move). Added WC-06. Route: delegated writer.
+- 2026-09-29: WC-06 done `3a30bbe`. Next: user live retest.
