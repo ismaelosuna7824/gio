@@ -25,13 +25,25 @@ Reflow performance and scroll/focus animation. Out of scope: unified desktop app
 - Conventional Commits, NO Co-Authored-By. Push/PR not authorized. Quote trailing-space path.
 
 ## Tasks
-- [ ] MO-01 — Reflow timing instrumentation: per-reflow total ms, per-window write ms and
+- [x] MO-01 — Reflow timing instrumentation: per-reflow total ms, per-window write ms and
   AX call count, slowest app; debug logs (ids/app names only) + a summary line.
-- [ ] MO-02 — Lean writes: drop the pre-write read and settable checks (use TileabilityCache),
+- [x] MO-02 — Lean writes: drop the pre-write read and settable checks (use TileabilityCache),
   write position-only when size is unchanged, verify without blocking the next window.
-- [ ] MO-03 — Concurrent per-app writes: one serial lane per pid, lanes run in parallel,
+- [x] MO-03 — Concurrent per-app writes: one serial lane per pid, lanes run in parallel,
   reflow completes when all lanes finish; a hung app cannot stall the others (timeout).
-- [ ] MO-04 — Animation approach (pending user decision: AX-driven vs snapshot overlay).
+- [ ] MO-04 — AX-driven animation spike (user decision 2026-09-29: "Probar AX primero"):
+  animate only windows entering/leaving/moving on screen (typically 2-4) frame-by-frame via
+  the reconciler using `GioCore/Animation` easing, cancellable/retargetable on new input,
+  parked targets applied at the end; measure achieved fps per app with MO-01 timing.
+  Fallback if too choppy: ScreenCaptureKit snapshot overlay (needs Screen Recording).
+
+Evidence MO-01..03 (route: one delegated writer): `0faf687` timing (`reflow timing total=`,
+`reflow slow window=`), `7991966` lean writes (AX calls per moved window ~10 -> 6 both /
+4 position-or-size / 3 parked, from asserted op sequences), `07a871a` per-pid concurrent
+lanes, progress timeout 0.25s + AXUIElementSetMessagingTimeout 0.25s. 380 executed 0 failures
+(parent ran twice, no flakes); signed build OK. No live baseline was captured before these
+commits (gap). Risk: 0.25s messaging timeout also applies to discovery reads on slow apps.
+Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - MO-01 numbers recorded before/after MO-02/MO-03 on the user's machine.
@@ -52,3 +64,5 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 
 ## Progress
 - 2026-09-29: document created. Next: MO-01..MO-03; ask user about MO-04 approach.
+- 2026-09-29: user chose AX-driven animation first (snapshot overlay as fallback). MO-04 starts after MO-01..MO-03 (depends on lanes + timing).
+- 2026-09-29: MO-01..MO-03 done. Next: user live timing sample, then MO-04.
