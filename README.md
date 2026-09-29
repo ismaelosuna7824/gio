@@ -1,21 +1,112 @@
-# Gio native Spaces tiling (prototype)
+# Gio
 
-Gio is an experimental macOS menu-bar app using public Accessibility APIs to tile eligible windows on the **current macOS Space**. Automatic tiling is off by default, independently for each display. Change Spaces yourself through Mission Control or macOS keyboard shortcuts: Gio cannot select numbered Spaces or move another app's windows to a named Space. Legacy virtual workspaces and offscreen parking are disabled in the app.
+Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It works through public macOS APIs only (Accessibility, `NSWorkspace`, `CGEvent`), so **System Integrity Protection stays on** and no private compositor API is used.
 
-## Run
+> Status: pre-release (`0.1.0-alpha`, see `gioVersion` in `Sources/GioCore/Config/GioConfig.swift`). Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read [Known limitations](docs/TESTING.md#known-limitations) before relying on it.
 
-This Apple Silicon prototype builds Gio.app for arm64 only (Debug and Release); it does not claim a universal macOS binary.
+## What it does
 
-1. Open `Gio.xcodeproj` in Xcode, select the shared **Gio** scheme, choose your own development team for Apple Development signing, and build/run. Keep the same team and bundle identifier across builds. The project stores no personal team ID or certificate.
-2. Do **not** use `swift run GioApp` or the Swift package's GioApp executable scheme for Accessibility validation: that legacy executable is not the signed Gio.app and its identity may change between builds. Existing Accessibility consent for GioApp does not transfer automatically. Grant Gio access under System Settings → Privacy & Security → Accessibility yourself; no TCC reset is required.
-3. Open the Gio menu and choose **Request Accessibility Access…**; reopen the app if macOS requires it.
-4. Choose **Enable Automatic Tiling** under a display to attempt tiling eligible windows on its current Space. The menu shows approximate **Candidates not tiled** AX handle counts for on-screen compatible PID/frame matches centered on that display, including straddling windows rejected by eligibility. Offscreen handles and candidates without exact metadata matches are not counted; a failed display reflow shows an unknown count and keeps its warning until that display succeeds or is disabled. A count does not imply every window was tiled. Switch Spaces manually; Gio responds to Space-change, app launch, activation and termination notifications. **Refresh Windows** retries discovery (including new windows in an already-running app) when tiling is enabled. If initial Enable fails, retry **Enable Automatic Tiling**; Refresh alone does not reflow a disabled display. There is no polling.
-5. Set **Tiling gaps (outer / inner)** to 0, 8 or 16 pt to reflow enabled displays. A failed change retains the old preset; failed rollback keeps a divergence warning and blocks tiling/gap changes until safe Quit. **Disable Automatic Tiling** restores only that display's owned tiled windows and remains enabled if restoration fails. **Quit Gio** restores owned windows using a fresh connected-display map, and cancels exit if restoration fails; retry after checking Accessibility.
+- **Scrollable column layout.** Windows live in columns; the focused column is always revealed by scrolling the strip minimally (Niri rule). Windows inside a column share its height.
+- **Keyboard control** (global `Alt`-based shortcuts, all rebindable in `config.toml`): focus and move windows, cycle or step column widths, maximize a column, center a column, consume/expel windows between columns, toggle floating and fullscreen.
+- **Nine workspaces.** Windows of inactive workspaces are hidden by parking them off the bottom corner of the display, and the switch is animated.
+- **Automatic window admission.** Every window is classified as tile, float (with a reason), ignore or suspend. Dialogs, fixed-size windows and panels float; minimized windows stay registered and rejoin their column when restored.
+- **Window rules.** `[[window-rules]]` in the config can force an app to float, tile or start on a given workspace.
+- **Parking of off-viewport columns.** macOS will not place a window fully off-screen, so hidden columns keep a 1 pt sliver inside the display edge.
+- **Animation.** Scroll, focus and workspace moves are animated by writing interpolated frames through Accessibility, with a configurable duration.
+- **Multi-display aware** layout state (one workspace and viewport per display).
+- **Desktop app.** One main window (Overview, Shortcuts, Layout, Animations, Rules, Logs, Diagnostics), a menu bar item, and an `Alt+Space` launcher panel. Closing the window keeps Gio running from the menu bar.
+- **Config with live reload.** `~/.config/gio/config.toml` is a strict subset of TOML. Invalid config never breaks the window manager; it falls back to defaults and reports the problems.
+- **Command line.** A `gio` client controls the running app over a Unix socket. A separate `gio-poc` tool exercises Accessibility directly and can restore windows after a crash.
+- **Recovery.** Quitting Gio (menu, Cmd+Q, SIGTERM/SIGINT/SIGHUP) brings every parked window back on screen.
 
-## Limits
+See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 
-Gio only tiles windows when complete AX enumeration and stable on-screen CG metadata yield a unique exact PID/frame match across all AX windows (including other Spaces) and on-screen CG windows; nonempty titles must agree when both are available in the same Space generation. This correlation is a heuristic, not a documented AX-to-CG window identity. Missing, ambiguous, stale or unsupported windows are skipped; incomplete metadata fails closed with a warning. A window that rejects a requested tile by expanding its size may be left untouched after verified rollback while Gio tiles the remaining selected windows. As with other skipped windows, that untouched window may overlap the resulting tiles; its presence never counts as successfully tiled. Previously tiled selected windows prevent this fallback, preserving the old layout instead. A successful reflow on another display does not clear that warning or establish a count for the failed display. Window ownership is retained across Space changes and uncertain enumeration: absence does not prove closure. A topology change pauses tiling; Quit attempts safe restoration within currently connected displays and refuses to exit if that is impossible. Fullscreen, non-resizable and other unsupported AX windows may not tile. Layout uses the display's validated visible work area to avoid the menu bar and Dock. AX failures or revoked permission may prevent restoration. CG window titles are optional; missing or empty titles do not require Screen Recording. Gio uses no screen capture, private compositor APIs or permission bypass.
+## Requirements
 
-## Manual validation (pending)
+| Requirement | Detail |
+| --- | --- |
+| macOS | 13 or later (`platforms: [.macOS(.v13)]` in `Package.swift`, deployment target 13.0 in the Xcode project). |
+| Toolchain | Xcode with Swift 6 (`swift-tools-version: 6.0`). The `Gio` target builds in Swift 6 mode. |
+| Architecture | The Xcode `Gio` target is `arm64` only. |
+| Permission | **Accessibility** for the process that runs Gio (System Settings > Privacy & Security > Accessibility). Without it Gio cannot move windows or hear shortcuts. |
+| SIP | Stays enabled. |
 
-Signed Gio.app live AX/UI behavior, matching/skipped rates, native Space transitions, disable/Quit restoration, two-display performance and idle resource cost have **not yet been observed**. Automated tests and signed builds do not establish live behavior. With user permission, test switching via Mission Control/shortcuts on one and two displays; inspect skipped counts, gaps and original frames after disable/Quit, failure recovery after disconnect, and CPU/memory after five minutes idle. Record hardware and macOS version alongside observations.
+## Build and run
+
+Live Accessibility validation must use the **signed `Gio.app`**. macOS ties the Accessibility grant to the app's code-signing identity, and an unsigned or re-signed executable loses the grant on every rebuild.
+
+1. Open `Gio.xcworkspace` (or `Gio.xcodeproj`) in Xcode.
+2. Select the shared **Gio** scheme.
+3. In the **Gio** target > Signing & Capabilities, choose **your own development team**. The checked-in project references the original author's team ID (`DEVELOPMENT_TEAM` in `Gio.xcodeproj/project.pbxproj`); change it locally and do not commit that change. Keep the same team and bundle identifier (`dev.gio.windowmanager`) across builds so the Accessibility grant survives.
+4. Build and run. Grant Accessibility when prompted (or use **Overview > Request Access** in the app).
+
+Command-line build of the signed app (replace the team ID with yours):
+
+```sh
+xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
+  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' \
+  DEVELOPMENT_TEAM=<YOUR_TEAM_ID> build
+```
+
+Swift Package Manager (libraries, tests and the helper executables):
+
+```sh
+swift build
+swift test
+```
+
+Do **not** use `swift run GioDesktop` or `swift run GioApp` to validate Accessibility behavior: they are not the signed app. `GioApp` is the legacy prototype (see [Legacy code](#legacy-code)).
+
+The repository directory on the original author's disk is named `gio ` (with a **trailing space**). If your checkout has that name, quote every path in shell commands.
+
+## Recovery
+
+Gio parks off-viewport windows at the edge of a display. If Gio is killed with SIGKILL (for example Xcode's Stop button) or crashes, parked windows stay where they are. Bring them back with either:
+
+- the shared Xcode scheme **`gio-poc-restore`** in `Gio.xcworkspace`, or
+- `swift run gio-poc restore` (needs Accessibility permission for the terminal or tool that runs it).
+
+Starting Gio again also recovers leftover parked windows that will not be tiled, and the first layout re-places tiled ones. The app's **Diagnostics > Restore All Windows** button does the same restore without quitting.
+
+## Files Gio uses
+
+| Path | Purpose |
+| --- | --- |
+| `~/.config/gio/config.toml` | User configuration. Created from a commented template by `gio setup` or **Diagnostics > Open Config File**; the app also creates it on the first edit from Settings. |
+| `~/.config/gio/gio.log` | Append-only log (no window titles). `gio logs` and the Logs section read it. |
+| `~/.config/gio/gio.sock` | Unix socket the `gio` CLI talks to while the app runs. |
+| `~/.config/gio/gio.lock` | Single-instance lock (`flock`). |
+| `~/.config/gio/themes/` | Optional theme directory. Themes are implemented in Core but not yet consumed by the UI. |
+
+## Documentation
+
+| Document | Audience |
+| --- | --- |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | Shortcuts, config reference, window rules, desktop app, CLI. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modules, invariants, event pipeline, lifecycle, coordinate spaces (with diagrams). |
+| [docs/TESTING.md](docs/TESTING.md) | Test bundles, commands, strict TDD workflow, live checklist, log recipes, limitations. |
+| [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) | Workflow and step-by-step recipes to add actions, config keys, UI sections and admission rules. |
+| [AGENTS.md](AGENTS.md) | Rules and pitfalls for AI coding agents. |
+| `odd/tasks/*.md` | Feature documents: decisions, task IDs, commits and evidence. |
+
+## Repository layout
+
+```
+Sources/GioCore     pure logic: state, layout, hotkeys, config, reconciler, IPC (no macOS UI/AX imports)
+Sources/GioMacOS    macOS adapters: Accessibility, events, hotkey tap, displays
+Sources/GioUI       SwiftUI/AppKit views and view models for the desktop app
+Sources/GioDesktop  app entry point (main.swift) and SessionHost (the session)
+Sources/GioCLI      `gio` command line client (target name GioCLI)
+Sources/GioPOC      `gio-poc` Accessibility proof-of-concept and recovery tool
+Sources/GioMac, Sources/GioApp   legacy prototype (kept for reference)
+Tests/              one XCTest bundle per module
+odd/tasks/          feature documents and history
+```
+
+## Legacy code
+
+Before the Niri rewrite (branch `feat/gio-niri-rewrite`), Gio was a binary-split tiler tied to native macOS Spaces. That code still builds and has tests, but it is not part of the running app: `Sources/GioMac` and `Sources/GioApp` (targets `GioMac`, `GioApp`, tests `GioMacTests`) plus these files in `Sources/GioCore`: `TileLayout.swift`, `NativeTilingCoordinator.swift`, `SpaceWindowEligibility.swift`, `WindowFrameBridge.swift`, `WindowIdentifiers.swift`, `GapChangeTransaction.swift`, `WorkspacePreferences.swift`, `VisibleAreaDiagnostic.swift`, `DisplayUsableBounds.swift`. The pre-rewrite state is frozen at the branch `archive/pre-rewrite-niri-plan`. New work should not build on it.
+
+## License
+
+No license file is present in the repository.
