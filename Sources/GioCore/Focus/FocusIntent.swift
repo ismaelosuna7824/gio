@@ -8,6 +8,7 @@ extension HotkeyAction {
         switch self {
         case .focusLeft, .focusRight, .focusUp, .focusDown,
              .moveLeft, .moveRight, .moveUp, .moveDown,
+             .moveColumnLeft, .moveColumnRight,
              .workspace, .moveToWorkspace, .fullscreen,
              .focusWorkspaceDown, .focusWorkspaceUp,
              .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
@@ -49,12 +50,16 @@ public struct FocusIntent: Equatable, Sendable {
     private var pending: WindowID?
     private var expected: WindowID?
     private var expectedUntil: TimeInterval = 0
+    /// FI-06: the target already focused at motion start, kept so the final
+    /// exact pass can re-assert it if focus drifted.
+    private var delivered: WindowID?
 
     public init() {}
 
     /// Record the window to focus (nil: nothing to focus, drop any stale one).
     public mutating func request(_ id: WindowID?, now: TimeInterval) {
         pending = id
+        delivered = nil
         expected = id
         expectedUntil = now + Self.requestWindow
     }
@@ -62,6 +67,7 @@ public struct FocusIntent: Equatable, Sendable {
     /// A user click overrides whatever was pending.
     public mutating func cancel() {
         pending = nil
+        delivered = nil
         expected = nil
     }
 
@@ -78,6 +84,28 @@ public struct FocusIntent: Equatable, Sendable {
         }
         expected = target
         expectedUntil = now + Self.settleWindow
+        return target
+    }
+
+    /// FI-06: the target for an immediate focus call at motion start (the
+    /// keyboard follows the logical focus without waiting for the animation).
+    /// Never handed out when parked; remembered for `takeReassert`.
+    public mutating func takeImmediate(parked: Set<WindowID>, now: TimeInterval) -> WindowID? {
+        guard let target = take(motionStarting: false, parked: parked, now: now) else {
+            return nil
+        }
+        delivered = target
+        return target
+    }
+
+    /// FI-06: on the final exact pass, the target to focus again, only when
+    /// it is still the logical focus but another app is now frontmost.
+    /// Consumed once; a click or a new request clears it.
+    public mutating func takeReassert(logicalFocus: WindowID?, frontmostPID: pid_t?) -> WindowID? {
+        defer { delivered = nil }
+        guard let target = delivered, target == logicalFocus, frontmostPID != target.pid else {
+            return nil
+        }
         return target
     }
 

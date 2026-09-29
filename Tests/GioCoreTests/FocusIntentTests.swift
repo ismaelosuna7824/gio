@@ -13,6 +13,7 @@ final class FocusIntentTests: XCTestCase {
         let carrying: [HotkeyAction] = [
             .focusLeft, .focusRight, .focusUp, .focusDown,
             .moveLeft, .moveRight, .moveUp, .moveDown,
+            .moveColumnLeft, .moveColumnRight,
             .workspace(3), .moveToWorkspace(2), .fullscreen,
             .consumeOrExpelLeft, .consumeOrExpelRight,
             .focusWorkspaceDown, .focusWorkspaceUp,
@@ -136,5 +137,67 @@ final class FocusIntentTests: XCTestCase {
             currentlyFocused: nil
         )
         XCTAssertEqual(actuator.log, ["set 1", "set 2", "focus 2"])
+    }
+
+    // MARK: - FI-06 focus now
+
+    func testImmediateTakeHandsTheTargetAtMotionStartOnce() {
+        var intent = FocusIntent()
+        intent.request(id(2), now: 0)
+        XCTAssertEqual(intent.takeImmediate(parked: [], now: 0.01), id(2))
+        XCTAssertNil(intent.takeImmediate(parked: [], now: 0.02))
+        XCTAssertNil(intent.take(motionStarting: false, parked: [], now: 0.3))
+    }
+
+    func testImmediateTakeNeverFocusesAParkedOrAbsentTarget() {
+        var intent = FocusIntent()
+        XCTAssertNil(intent.takeImmediate(parked: [], now: 0))
+        intent.request(id(2), now: 0)
+        XCTAssertNil(intent.takeImmediate(parked: [id(2)], now: 0.01))
+        XCTAssertNil(intent.takeReassert(logicalFocus: id(2), frontmostPID: 99))
+    }
+
+    func testImmediateTakeKeepsTheEchoGuardForTheIntendedWindow() {
+        var intent = FocusIntent()
+        intent.request(id(2), now: 0)
+        _ = intent.takeImmediate(parked: [], now: 0.01)
+        XCTAssertTrue(intent.shouldIgnoreAdoption(of: id(1), now: 0.2))
+        XCTAssertFalse(intent.shouldIgnoreAdoption(of: id(2), now: 0.2))
+    }
+
+    func testFinalPassReassertsOnlyWhenFocusDrifted() {
+        var intent = FocusIntent()
+        intent.request(id(2), now: 0)
+        _ = intent.takeImmediate(parked: [], now: 0.01)
+        // Still the logical focus and another app is frontmost: drifted.
+        XCTAssertEqual(intent.takeReassert(logicalFocus: id(2), frontmostPID: 77), id(2))
+        XCTAssertNil(intent.takeReassert(logicalFocus: id(2), frontmostPID: 77))
+    }
+
+    func testFinalPassDoesNotReassertWhenFocusHeldOrUserMovedOn() {
+        var held = FocusIntent()
+        held.request(id(2), now: 0)
+        _ = held.takeImmediate(parked: [], now: 0.01)
+        XCTAssertNil(held.takeReassert(logicalFocus: id(2), frontmostPID: 10))
+
+        var moved = FocusIntent()
+        moved.request(id(2), now: 0)
+        _ = moved.takeImmediate(parked: [], now: 0.01)
+        XCTAssertNil(moved.takeReassert(logicalFocus: id(3), frontmostPID: 77))
+
+        var clicked = FocusIntent()
+        clicked.request(id(2), now: 0)
+        _ = clicked.takeImmediate(parked: [], now: 0.01)
+        clicked.cancel()
+        XCTAssertNil(clicked.takeReassert(logicalFocus: id(2), frontmostPID: 77))
+    }
+
+    func testNewRequestReplacesTheDeliveredTarget() {
+        var intent = FocusIntent()
+        intent.request(id(2), now: 0)
+        _ = intent.takeImmediate(parked: [], now: 0.01)
+        intent.request(id(3), now: 0.02)
+        XCTAssertNil(intent.takeReassert(logicalFocus: id(2), frontmostPID: 77))
+        XCTAssertEqual(intent.takeImmediate(parked: [], now: 0.03), id(3))
     }
 }

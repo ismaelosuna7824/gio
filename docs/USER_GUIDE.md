@@ -21,8 +21,8 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+L` | `focus-right` | Focus the column to the right. |
 | `Alt+K` | `focus-up` | Focus the window above in the current column. |
 | `Alt+J` | `focus-down` | Focus the window below in the current column. |
-| `Alt+Shift+H` | `move-left` | Move the focused window's column one place to the left. |
-| `Alt+Shift+L` | `move-right` | Move the focused window's column one place to the right. |
+| `Alt+Shift+H` | `move-column-left` | Swap the focused window's column with the one on its left. The column keeps its windows and sizes; focus stays on the same window. |
+| `Alt+Shift+L` | `move-column-right` | Swap the focused window's column with the one on its right. |
 | `Alt+Shift+K` | `move-up` | Move the focused window up within its column. |
 | `Alt+Shift+J` | `move-down` | Move the focused window down within its column. |
 | `Alt+R` | `switch-preset-column-width` | Cycle the focused column through the preset widths (first preset wider than the current width, wrapping). |
@@ -46,10 +46,10 @@ That is 39 default action bindings plus the launcher. The **Shortcuts** section 
 
 Notes:
 
-- Vertical direction naming: `move-left`/`move-right` move a whole column, `move-up`/`move-down` reorder inside a column. Moving past the strip edge creates a new column.
+- `move-column-left`/`move-column-right` swap whole columns (a no-op at the strip edge); `move-up`/`move-down` reorder inside a column. To stack a window into a neighbour or unstack it, use `consume-or-expel-window-left/right` (`Alt+[` / `Alt+]`). The older `move-window-left`/`move-window-right` (alias `move-left`/`move-right`, append the window to the neighbouring column) are still valid config names but are unbound by default. `gio move left|right` swaps columns like the hotkeys.
 - Shrink/grow always end as a proportion of the display, so the column adapts across displays.
 - Fullscreen parks every tiled window where its column already is, so leaving fullscreen finds the strip unchanged.
-- Focus, move, workspace, consume/expel and fullscreen actions also move macOS keyboard focus to the target window (after it lands, at the end of the animation). Sizing, centering and floating actions leave focus alone, and so do clicks and window events.
+- Focus, move, workspace, consume/expel and fullscreen actions also move macOS keyboard focus to the target window (right away, at the start of the animation; the end of the animation only re-asserts it if focus drifted). Rapid key presses during an animation merge into one retarget per display frame. Sizing, centering and floating actions leave focus alone, and so do clicks and window events.
 
 ## Configuration reference
 
@@ -116,7 +116,7 @@ The ring is hidden when nothing is focused, the focused window is minimized, ful
 The `[keybindings]` table maps a combo to an action name: `"Alt+H" = "focus-left"`.
 
 - **Combo syntax:** one or more modifiers plus one key, joined by `+`. Modifiers (case-insensitive): `ctrl`/`control`, `alt`/`option`, `shift`, `cmd`/`command`. At least one modifier is required. Keys are case-insensitive and come from one list: `A`-`Z`, `0`-`9`, `F1`-`F12`, `Left`, `Right`, `Up`, `Down`, `Tab`, `Return` (`Enter`), `Escape` (`Esc`), `Space`, `Delete` (`Backspace`), `Home`, `End`, `PageUp` (`PgUp`), `PageDown` (`PgDn`), and punctuation `Grave` (`` ` ``), `Comma` (`,`), `Period` (`.`), `Slash` (`/`), `Semicolon` (`;`), `Quote` (`'`), `Backslash` (`\`), `Minus` (`-`), `Equal` (`=`), `BracketLeft` (`[`), `BracketRight` (`]`).
-- **Action names:** `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-left`, `move-right`, `move-up`, `move-down`, `workspace N`, `move-to-workspace N` (write them as `"workspace 3"`; use N from 1 to 9, other values do nothing), `focus-workspace-down`, `focus-workspace-up`, `move-window-to-workspace-down`, `move-window-to-workspace-up`, `toggle-floating` (alias `toggle-window-floating`), `fullscreen` (alias `fullscreen-window`), `switch-preset-column-width`, `set-column-width-minus`, `set-column-width-plus`, `maximize-column`, `center-column`, `consume-or-expel-window-left`, `consume-or-expel-window-right`.
+- **Action names:** `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-column-left`, `move-column-right`, `move-window-left`, `move-window-right` (aliases `move-left`, `move-right`), `move-up`, `move-down`, `workspace N`, `move-to-workspace N` (write them as `"workspace 3"`; use N from 1 to 9, other values do nothing), `focus-workspace-down`, `focus-workspace-up`, `move-window-to-workspace-down`, `move-window-to-workspace-up`, `toggle-floating` (alias `toggle-window-floating`), `fullscreen` (alias `fullscreen-window`), `switch-preset-column-width`, `set-column-width-minus`, `set-column-width-plus`, `maximize-column`, `center-column`, `consume-or-expel-window-left`, `consume-or-expel-window-right`.
 - **Bindings are additive.** Config entries are layered over the defaults: a config entry binds a combo (replacing the default action of that exact combo). Default bindings stay active unless you reuse their combo for another action; there is no unbind syntax.
 - **Unknown keys are rejected.** A binding on a key outside the list above (for example `Alt+F13`) is a config validation error (`unknown key 'F13' in hotkey ...`), never a binding that silently does nothing. Keys are matched on the ANSI virtual keycode, so the physical position wins on non-US layouts.
 - `Alt+Space` (launcher) cannot be rebound or removed.
@@ -223,7 +223,7 @@ swift run GioCLI status
 | `gio list-windows` | One line per managed window: pid, app, title, frame, mode, reason, minimized. |
 | `gio list-workspaces` | The workspace stack with column and window counts; the current one is marked `*` (with several displays each stack is headed `display=<id>`, other displays' active workspace is marked `+`). |
 | `gio focus left\|right\|up\|down` | Move focus like `Alt+H/L/K/J`. |
-| `gio move left\|right\|up\|down` | Move the focused window like `Alt+Shift+H/L/K/J`. (The built-in usage text prints `up/down`; the parser wants `up` or `down`.) |
+| `gio move left\|right\|up\|down` | Move the focused column (left/right) or window (up/down) like `Alt+Shift+H/L/K/J`. (The built-in usage text prints `up/down`; the parser wants `up` or `down`.) |
 | `gio workspace 1...9` | Focus the workspace at this position of the focused display's stack (past the end: the empty one at the bottom). |
 | `gio layout info` | Current workspace columns, viewport offset, focused column and column widths. |
 | `gio status` | JSON snapshot: `workspace` (index of the current workspace in its stack), `stacks` (per display: `display`, `focused`, `active`, and `workspaces` with `index`, `windows`, `columns`, `active`), `focusedWindow`, `columns`, `windows`, `modes`, `floatingWindows`, `minimizedWindows`. Used by scripts and the menu bar. |

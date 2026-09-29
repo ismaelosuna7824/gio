@@ -79,7 +79,13 @@ final class CommandDispatcherTests: XCTestCase {
         first.focusedWindow = window.id
         session.manager.update(first)
         XCTAssertTrue(dispatch(.focus(.right), session: &session).contains("unchanged"))
-        XCTAssertTrue(dispatch(.move(.left), session: &session).contains("moved column=0"))
+        XCTAssertTrue(dispatch(.move(.left), session: &session).contains("unchanged"))
+        let other = WindowID(pid: 1, elementID: 2)
+        var two = session.manager.currentWorkspace()
+        two.columns.append(Column(id: ColumnID(2), width: 300, windows: [other]))
+        session.manager.update(two)
+        XCTAssertTrue(dispatch(.move(.right), session: &session).contains("moved column=1"))
+        XCTAssertEqual(session.manager.currentWorkspace().columns.map(\.id), [ColumnID(2), ColumnID(1)])
         XCTAssertTrue(dispatch(.help, session: &session).contains("gio focus"))
         XCTAssertTrue(dispatch(.restart, session: &session).contains("daemon"))
     }

@@ -48,6 +48,22 @@ final class ReconcilerTests: XCTestCase {
         case unfocusable
     }
 
+    func testFocusNowFocusesWithoutWritingAnyFrame() {
+        let actuator = MockActuator()
+        let reconciler = WindowReconciler(actuator: actuator)
+        XCTAssertEqual(reconciler.focusNow(id(3)), .focused)
+        XCTAssertEqual(actuator.focuses, [id(3)])
+        XCTAssertTrue(actuator.sets.isEmpty)
+    }
+
+    func testFocusNowReportsAFailedFocus() {
+        let actuator = MockActuator()
+        actuator.failingFocus = [id(3)]
+        let reconciler = WindowReconciler(actuator: actuator)
+        XCTAssertEqual(reconciler.focusNow(id(3)), .failed)
+        XCTAssertTrue(actuator.focuses.isEmpty)
+    }
+
     func testSkipsAlreadyCorrectFrames() {
         let actuator = MockActuator()
         actuator.frames = [id(1): CGRect(x: 8, y: 8, width: 300, height: 784)]

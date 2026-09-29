@@ -292,6 +292,24 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return report
     }
 
+    /// FI-06: outcome of an immediate focus call.
+    public enum FocusNowResult: Equatable, Sendable {
+        case focused
+        case failed
+    }
+
+    /// FI-06: focus one window right now, without waiting for the motion
+    /// lanes and without writing any frame. Keyboard focus follows the
+    /// logical focus at the start of an animation.
+    public func focusNow(_ id: WindowID) -> FocusNowResult {
+        do {
+            try actuator.focus(id: id)
+            return .focused
+        } catch {
+            return .failed
+        }
+    }
+
     /// FI-01: one line per failed window, warn the first time a (window,
     /// kind) pair fails and debug on repeats.
     private func logFailures(_ report: ReconcileReport) {

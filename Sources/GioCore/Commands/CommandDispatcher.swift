@@ -96,7 +96,10 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return "focused column=\(after.focusedColumn) window=\(focused)"
     case .move(let direction):
         let before = session.manager.currentWorkspace()
-        let after = moveWindow(in: before, direction: direction)
+        // Same mapping as the hotkeys: left/right move the column (FI-06).
+        let after = direction == .left || direction == .right
+            ? moveColumn(in: before, direction: direction)
+            : moveWindow(in: before, direction: direction)
         guard after != before else {
             return "move unchanged (no target)"
         }

@@ -419,8 +419,12 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "focus-right": return .focusRight
     case "focus-up": return .focusUp
     case "focus-down": return .focusDown
-    case "move-left": return .moveLeft
-    case "move-right": return .moveRight
+    case "move-column-left": return .moveColumnLeft
+    case "move-column-right": return .moveColumnRight
+    // `move-left`/`move-right` keep their pre-FI-06 meaning (stack into the
+    // neighbouring column); `move-window-*` is the honest name for it.
+    case "move-window-left", "move-left": return .moveLeft
+    case "move-window-right", "move-right": return .moveRight
     case "move-up": return .moveUp
     case "move-down": return .moveDown
     case "toggle-floating", "toggle-window-floating": return .toggleFloating
@@ -455,7 +459,8 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
 public func validActionNames() -> [String] {
     [
         "focus-left", "focus-right", "focus-up", "focus-down",
-        "move-left", "move-right", "move-up", "move-down",
+        "move-column-left", "move-column-right", "move-window-left", "move-window-right",
+        "move-up", "move-down",
         "workspace N", "move-to-workspace N",
         "focus-workspace-down", "focus-workspace-up",
         "move-window-to-workspace-down", "move-window-to-workspace-up",

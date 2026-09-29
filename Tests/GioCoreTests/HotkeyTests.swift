@@ -43,8 +43,23 @@ final class HotkeyTests: XCTestCase {
         )
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "L")),
-            .moveRight
+            .moveColumnRight
         )
+        XCTAssertEqual(
+            dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "H")),
+            .moveColumnLeft
+        )
+        XCTAssertEqual(
+            dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "J")),
+            .moveDown
+        )
+        XCTAssertEqual(parseActionName("move-column-left"), .moveColumnLeft)
+        XCTAssertEqual(parseActionName("move-column-right"), .moveColumnRight)
+        XCTAssertEqual(parseActionName("move-window-left"), .moveLeft)
+        XCTAssertEqual(parseActionName("move-window-right"), .moveRight)
+        XCTAssertEqual(parseActionName("move-left"), .moveLeft)
+        XCTAssertEqual(parseActionName("move-right"), .moveRight)
+        XCTAssertTrue(validActionNames().contains("move-column-left"))
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "3")),
             .workspace(3)

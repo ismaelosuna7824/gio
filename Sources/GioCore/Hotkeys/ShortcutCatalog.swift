@@ -57,10 +57,14 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "focus-up", name: "Focus up", summary: "Focus the window above in the current column.", category: .focus)
     case .focusDown:
         return ActionInfo(id: "focus-down", name: "Focus down", summary: "Focus the window below in the current column.", category: .focus)
+    case .moveColumnLeft:
+        return ActionInfo(id: "move-column-left", name: "Move column left", summary: "Swap the focused window's column with the one on its left; the column keeps its windows and sizes.", category: .move)
+    case .moveColumnRight:
+        return ActionInfo(id: "move-column-right", name: "Move column right", summary: "Swap the focused window's column with the one on its right; the column keeps its windows and sizes.", category: .move)
     case .moveLeft:
-        return ActionInfo(id: "move-left", name: "Move column left", summary: "Move the focused window's column one place to the left.", category: .move)
+        return ActionInfo(id: "move-window-left", name: "Move window into left column", summary: "Append the focused window to the left column (unbound by default; use consume-or-expel instead).", category: .move)
     case .moveRight:
-        return ActionInfo(id: "move-right", name: "Move column right", summary: "Move the focused window's column one place to the right.", category: .move)
+        return ActionInfo(id: "move-window-right", name: "Move window into right column", summary: "Append the focused window to the right column (unbound by default; use consume-or-expel instead).", category: .move)
     case .moveUp:
         return ActionInfo(id: "move-up", name: "Move window up", summary: "Move the focused window up within its column.", category: .move)
     case .moveDown:
@@ -107,7 +111,7 @@ public func shortcutFamily(of action: HotkeyAction) -> String {
 /// One representative per family, in display order within each category.
 private let catalogActions: [HotkeyAction] = [
     .focusLeft, .focusRight, .focusUp, .focusDown,
-    .moveLeft, .moveRight, .moveUp, .moveDown,
+    .moveColumnLeft, .moveColumnRight, .moveLeft, .moveRight, .moveUp, .moveDown,
     .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
     .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight,
     .toggleFloating, .fullscreen,

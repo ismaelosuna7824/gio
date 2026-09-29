@@ -50,6 +50,9 @@ public func defaultConfigTemplate() -> String {
     # "fullscreen" (Alt+Shift+F; alias "fullscreen-window"; fills the display
     # under the menu bar, focusing another window restores the layout),
     # "toggle-floating" (Alt+Shift+Space; alias "toggle-window-floating").
+    # "move-column-left" / "move-column-right" (Alt+Shift+H / L) swap whole
+    # columns; "move-window-left" / "move-window-right" (unbound) append the
+    # window to the neighbouring column instead.
 
     [[window-rules]]
     app = "Calculator"

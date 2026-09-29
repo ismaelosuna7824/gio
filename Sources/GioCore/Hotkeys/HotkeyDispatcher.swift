@@ -9,8 +9,15 @@ public enum HotkeyAction: Equatable, Sendable {
     case focusRight
     case focusUp
     case focusDown
+    /// Legacy `move-window-left` (config `move-left` still parses): appends the
+    /// window to the neighbouring column. Unbound by default since FI-06.
     case moveLeft
+    /// Legacy `move-window-right`; see `moveLeft`.
     case moveRight
+    /// Niri `move-column-left` (Alt+Shift+H): swap the column with its neighbour.
+    case moveColumnLeft
+    /// Niri `move-column-right` (Alt+Shift+L).
+    case moveColumnRight
     case moveUp
     case moveDown
     case workspace(Int)
@@ -71,7 +78,7 @@ public struct HotkeyDispatcher: Equatable, Sendable {
     }
 }
 
-/// Plan defaults: Alt+HJKL focus, Alt+Shift+HJKL move, Alt+N workspace,
+/// Plan defaults: Alt+HJKL focus, Alt+Shift+H/L move the column, Alt+Shift+J/K move the window down / up in its column, Alt+N workspace,
 /// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
 /// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
@@ -85,8 +92,8 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt], "L"), .focusRight),
         (combo([.alt], "K"), .focusUp),
         (combo([.alt], "J"), .focusDown),
-        (combo([.alt, .shift], "H"), .moveLeft),
-        (combo([.alt, .shift], "L"), .moveRight),
+        (combo([.alt, .shift], "H"), .moveColumnLeft),
+        (combo([.alt, .shift], "L"), .moveColumnRight),
         (combo([.alt, .shift], "K"), .moveUp),
         (combo([.alt, .shift], "J"), .moveDown),
         (combo([.alt], "R"), .switchPresetColumnWidth),

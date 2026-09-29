@@ -78,6 +78,8 @@ final class SessionHost: @unchecked Sendable {
     private var focusSettle = FocusSettle<FocusEvent>()
     /// HD-01: the window keyboard/IPC actions want focused (session queue only).
     private var focusIntent = FocusIntent()
+    /// FI-06: rapid actions during a motion merge into one reflow per tick.
+    private var reflowCoalescer = ReflowCoalescer()
     private let clickLock = NSLock()
     private var tappedClick: MouseClick?
     /// HD-04: centering asked by the last keyboard/IPC focus change (consumed
@@ -840,7 +842,11 @@ final class SessionHost: @unchecked Sendable {
         }
         switch reflowDeferral.request(mouseDown: NSEvent.pressedMouseButtons != 0) {
         case .apply:
-            performReflow()
+            // FI-06: during a motion the retargeting reflow waits for the next
+            // tick, so a burst of keys costs one reflow, not one per key.
+            if reflowCoalescer.request(motionActive: player?.isActive == true) == .runNow {
+                performReflow()
+            }
         case .poll(let delay):
             scheduleDeferredReflow(after: delay)
         case .alreadyPolling:
@@ -941,6 +947,22 @@ final class SessionHost: @unchecked Sendable {
         if !animations.isEmpty {
             applyPrepositions(prepositions, reconciler: reconciler)
             startMotion(animations, reconciler: reconciler)
+            // FI-06: the keyboard follows the logical focus right away instead
+            // of after the animation; the final pass only re-asserts a drift.
+            let now = ProcessInfo.processInfo.systemUptime
+            if let target = focusIntent.takeImmediate(
+                parked: Set(plans.flatMap { $0.parked.keys }), now: now
+            ) {
+                let result = reconciler.focusNow(target)
+                GioLog.record(
+                    .debug,
+                    "focus now id=\(target.pid):\(target.elementID) failed=\(result == .failed)"
+                )
+                if warpAfterFocus {
+                    warpCursorToFocus(target, plans: plans)
+                }
+            }
+            warpAfterFocus = false
             return
         }
         stopMotion()
@@ -951,6 +973,9 @@ final class SessionHost: @unchecked Sendable {
             motionStarting: false,
             parked: Set(plans.flatMap { $0.parked.keys }),
             now: ProcessInfo.processInfo.systemUptime
+        ) ?? focusIntent.takeReassert(
+            logicalFocus: session.manager.currentWorkspace().focusedWindow,
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
         )
         let warp = warpAfterFocus
         warpAfterFocus = false
@@ -1190,6 +1215,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func stopMotion() {
+        reflowCoalescer.reset()
         motionTimer?.cancel()
         motionTimer = nil
         player?.cancel()
@@ -1206,6 +1232,11 @@ final class SessionHost: @unchecked Sendable {
             stopMotion()
             skipAnimationOnce = true
             reflowAll()
+            return
+        }
+        if reflowCoalescer.takeAtTick() {
+            // One merged retarget for every action since the last tick.
+            performReflow()
             return
         }
         let tick = player.tick()
@@ -1787,6 +1818,10 @@ final class SessionHost: @unchecked Sendable {
             narrowMove(in: &workspace, direction: .left)
         case .moveRight:
             narrowMove(in: &workspace, direction: .right)
+        case .moveColumnLeft:
+            commit(moveColumn(in: workspace, direction: .left), over: workspace)
+        case .moveColumnRight:
+            commit(moveColumn(in: workspace, direction: .right), over: workspace)
         case .moveUp:
             narrowMove(in: &workspace, direction: .up)
         case .moveDown:

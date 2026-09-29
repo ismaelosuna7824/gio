@@ -64,6 +64,19 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(entries.first { $0.configName == "focus-workspace-down" }?.category, .workspaces)
     }
 
+    func testAltShiftHLMoveColumnsAndOldStackingMovesAreUnbound() {
+        let entries = shortcutCatalog(configKeybindings: [])
+        func keys(_ name: String) -> [String] {
+            entries.first { $0.configName == name }?.bindings.map { $0.combo.describe() } ?? ["missing"]
+        }
+        XCTAssertEqual(keys("move-column-left"), ["Alt+Shift+H"])
+        XCTAssertEqual(keys("move-column-right"), ["Alt+Shift+L"])
+        XCTAssertEqual(keys("move-window-left"), [])
+        XCTAssertEqual(keys("move-window-right"), [])
+        XCTAssertEqual(keys("move-up"), ["Alt+Shift+K"])
+        XCTAssertEqual(keys("move-down"), ["Alt+Shift+J"])
+    }
+
     func testConfigOverrideReplacesDefaultOnSameCombo() {
         let entries = shortcutCatalog(configKeybindings: [(combo("Alt+H"), .focusRight)])
         let left = entries.first { $0.configName == "focus-left" }!
@@ -78,7 +91,7 @@ final class ShortcutCatalogTests: XCTestCase {
             configKeybindings: [(combo("Ctrl+H"), .focusLeft), (combo("Ctrl+H"), .moveLeft)]
         )
         let focus = entries.first { $0.configName == "focus-left" }!
-        let move = entries.first { $0.configName == "move-left" }!
+        let move = entries.first { $0.configName == "move-window-left" }!
         XCTAssertFalse(focus.bindings.contains { $0.combo == combo("Ctrl+H") })
         XCTAssertTrue(move.bindings.contains { $0.combo == combo("Ctrl+H") && $0.source == .config })
     }
@@ -102,7 +115,7 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(filterShortcuts(entries, query: "").count, entries.count)
         XCTAssertTrue(filterShortcuts(entries, query: "center").contains { $0.configName == "center-column" })
         XCTAssertTrue(filterShortcuts(entries, query: "FOCUS-LEFT").contains { $0.configName == "focus-left" })
-        XCTAssertTrue(filterShortcuts(entries, query: "alt+shift+h").contains { $0.configName == "move-left" })
+        XCTAssertTrue(filterShortcuts(entries, query: "alt+shift+h").contains { $0.configName == "move-column-left" })
         XCTAssertTrue(filterShortcuts(entries, query: "zzzzqq").isEmpty)
     }
 }
