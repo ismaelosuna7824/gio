@@ -120,17 +120,22 @@ final class MotionConfigTests: XCTestCase {
         )
     }
 
-    func testResizeModeDefaultsToAdaptiveAndParses() throws {
-        XCTAssertEqual(defaultGioConfig().animations.resize, .adaptive)
+    func testResizeModeDefaultsToNeverAndParses() throws {
+        XCTAssertEqual(defaultGioConfig().animations.resize, .never)
         for mode in ["adaptive", "always", "never"] {
             let (config, warnings) = try parseGioConfig("[animations]\nresize = \"\(mode)\"\n").get()
             XCTAssertTrue(warnings.isEmpty)
             XCTAssertEqual(config.animations.resize.rawValue, mode)
         }
         let (fallback, warnings) = try parseGioConfig("[animations]\nresize = \"sometimes\"\n").get()
-        XCTAssertEqual(fallback.animations.resize, .adaptive)
+        XCTAssertEqual(fallback.animations.resize, .never)
         XCTAssertEqual(warnings.count, 1)
         XCTAssertTrue(warnings[0].contains("animations.resize"))
+    }
+
+    func testTemplateDeclaresTheNeverResizeDefault() throws {
+        let (config, _) = try parseGioConfig(defaultConfigTemplate()).get()
+        XCTAssertEqual(config.animations.resize, .never)
     }
 
     func testAnimationEditsCarryResizeWhenGiven() {

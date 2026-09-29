@@ -200,13 +200,13 @@ struct AnimationsSettingsView: View {
                     Text("0 ms or off makes every move instant.").font(.caption).foregroundStyle(.secondary)
                 }
                 Picker("Resize", selection: $resize) {
+                    Text("Never").tag(ResizeMode.never)
                     Text("Adaptive").tag(ResizeMode.adaptive)
                     Text("Always").tag(ResizeMode.always)
-                    Text("Never").tag(ResizeMode.never)
                 }
                 .pickerStyle(.segmented)
                 .disabled(!enabled)
-                Text("Adaptive grows windows during the motion when their app keeps up and nothing is in the way; Never grows them once at the end. Always ignores how well the app keeps up.")
+                Text("Never (default) grows windows once at the end. Adaptive grows them during the motion when their app keeps up and nothing is in the way; Always ignores how well the app keeps up.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

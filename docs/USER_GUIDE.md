@@ -102,7 +102,7 @@ An invalid config never stops the window manager.
 | `duration-ms` | number | `200` | Length of one `ease-out` animation. Rounded and clamped to `0...1000` with a warning. `0` is instant for both curves. |
 | `spring-damping-ratio` | number | `1.0` | `0.2...3`. `1` settles without overshoot; lower values bounce. Clamped with a warning. |
 | `spring-stiffness` | number | `800` | `100...3000`. Higher is faster. Clamped with a warning. A spring never runs longer than 1 s. |
-| `resize` | string | `"adaptive"` | How windows that grow (maximize, widen) behave during a move. `"adaptive"`: the window grows along with the motion when its app has proven it keeps up (cheap writes, few dropped frames, no recent size clamp) and no neighbour is in the way; other apps grow once at the end. `"always"`: skip the app check, still never overlap a neighbour. `"never"`: every grow happens once at the end. Shrinks always happen first. An unknown value warns and keeps the default. Gio learns each app over the first two motions, so a new app grows at the end at first. `gio logs` shows `sizeAnimated=N` in `anim done`. |
+| `resize` | string | `"never"` | How windows that grow (maximize, widen) behave during a move. `"adaptive"`: the window grows along with the motion when its app has proven it keeps up (cheap writes, few dropped frames, no recent size clamp) and no neighbour is in the way; other apps grow once at the end. `"always"`: skip the app check, still never overlap a neighbour. `"never"`: every grow happens once at the end. Shrinks always happen first. An unknown value warns and keeps the default. Gio learns each app over the first two motions, so a new app grows at the end at first. `gio logs` shows `sizeAnimated=N` in `anim done`. |
 
 ### `[logging]`
 
@@ -154,7 +154,7 @@ curve = "spring"
 duration-ms = 200
 spring-damping-ratio = 1.0
 spring-stiffness = 800
-resize = "adaptive"
+resize = "never"
 
 [focus-ring]
 enabled = true

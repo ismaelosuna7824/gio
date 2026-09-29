@@ -39,11 +39,11 @@ public func defaultConfigTemplate() -> String {
     # stiffness 100-3000 (higher is faster).
     spring-damping-ratio = 1.0
     spring-stiffness = 800
-    # Windows that grow (maximize, widen): "adaptive" (default) grows them
-    # during the motion when the app keeps up and nothing is in the way,
-    # "always" ignores how well the app keeps up (still never overlaps a
-    # neighbour), "never" grows them once at the end.
-    resize = "adaptive"
+    # Windows that grow (maximize, widen): "never" (default) grows them once
+    # at the end, "adaptive" grows them during the motion when the app keeps
+    # up and nothing is in the way, "always" ignores how well the app keeps
+    # up (still never overlaps a neighbour).
+    resize = "never"
 
     [focus-ring]
     # A rounded outline drawn around the focused window (click-through overlay).

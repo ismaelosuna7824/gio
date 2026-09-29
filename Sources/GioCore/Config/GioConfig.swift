@@ -85,7 +85,7 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         curve: MotionCurveKind = .spring,
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
-        resize: ResizeMode = .adaptive
+        resize: ResizeMode = .never
     ) {
         self.resize = resize
         self.enabled = enabled
