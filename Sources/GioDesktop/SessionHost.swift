@@ -20,6 +20,7 @@ final class SessionHost: @unchecked Sendable {
     private var session = CommandSession()
     private var displays = DisplayManager()
     private var actuator: AXWindowActuator?
+    private var reconciler: WindowReconciler<AXWindowActuator>?
     private var server: IPCServer?
     private let instanceLock = SingleInstanceLock()
     private var eventObserver: SystemWindowObserver?
@@ -515,10 +516,13 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator else {
             return
         }
-        let reconciler = WindowReconciler(
+        // One reconciler for the session: it remembers apps whose write lane
+        // is still stuck so a hung app is never written twice at once.
+        let reconciler = self.reconciler ?? WindowReconciler(
             actuator: actuator,
             appName: { NSRunningApplication(processIdentifier: $0)?.localizedName }
         )
+        self.reconciler = reconciler
         let modes = tileableModes()
         for display in displays.allDisplays() {
             guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {

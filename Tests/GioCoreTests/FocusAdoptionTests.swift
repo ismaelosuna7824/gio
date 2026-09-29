@@ -76,13 +76,25 @@ final class FocusAdoptionTests: XCTestCase {
 
     // MARK: Rescan of unchanged windows writes nothing
 
-    private final class GridActuator: WindowActuator {
-        var frames: [WindowID: CGRect] = [:]
-        var writes = 0
-        func frame(of id: WindowID) throws -> CGRect? { frames[id] }
+    /// Lanes run concurrently (one per pid), so the fake guards its state.
+    private final class GridActuator: WindowActuator, @unchecked Sendable {
+        private let lock = NSLock()
+        private var storedFrames: [WindowID: CGRect] = [:]
+        private var storedWrites = 0
+        var frames: [WindowID: CGRect] {
+            get { lock.withLock { storedFrames } }
+            set { lock.withLock { storedFrames = newValue } }
+        }
+        var writes: Int {
+            get { lock.withLock { storedWrites } }
+            set { lock.withLock { storedWrites = newValue } }
+        }
+        func frame(of id: WindowID) throws -> CGRect? { lock.withLock { storedFrames[id] } }
         func setFrame(_ frame: CGRect, for id: WindowID) throws {
-            writes += 1
-            frames[id] = frame
+            lock.withLock {
+                storedWrites += 1
+                storedFrames[id] = frame
+            }
         }
         func focus(id: WindowID) throws {}
     }

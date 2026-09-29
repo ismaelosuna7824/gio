@@ -3,7 +3,8 @@ import XCTest
 
 /// MO-01: every reflow reports total/per-window write time and AX call
 /// counts, and names the slowest app. The clock is injected so the numbers
-/// are deterministic.
+/// are deterministic; they run serially because one shared fake clock cannot
+/// attribute time to overlapping lanes.
 final class ReflowTimingTests: XCTestCase {
     private func id(_ element: UInt64, pid: pid_t) -> WindowID {
         WindowID(pid: pid, elementID: element)
@@ -67,7 +68,7 @@ final class ReflowTimingTests: XCTestCase {
             actuator.frames[window] = stale
         }
         let reconciler = WindowReconciler(
-            actuator: actuator, clock: { clock.now() },
+            actuator: actuator, concurrency: .serial, clock: { clock.now() },
             appName: { $0 == 10 ? "Code" : ($0 == 20 ? "Safari" : nil) }
         )
         let report = reconciler.reconcile(
@@ -144,7 +145,7 @@ final class ReflowTimingTests: XCTestCase {
     func testEmptyReflowReportsNoSlowestApp() throws {
         let clock = FakeClock()
         let reconciler = WindowReconciler(
-            actuator: TimedActuator(clock: clock), clock: { clock.now() }
+            actuator: TimedActuator(clock: clock), concurrency: .serial, clock: { clock.now() }
         )
         reconciler.reconcile(frames: [:], focused: nil, currentlyFocused: nil)
         let timing = try XCTUnwrap(reconciler.lastTiming)

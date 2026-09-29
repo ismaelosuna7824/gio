@@ -23,21 +23,34 @@ public final class AXWindowActuator: WindowActuator {
         let pid: pid_t
     }
 
-    private var handles: [UInt64: Handle] = [:]
-    private var flip: AXVerticalFlip
-    private let callLock = NSLock()
+    /// Reflow lanes read handles and the flip from several threads while the
+    /// session queue may still register/forget (an abandoned lane can outlive
+    /// its reflow), so all mutable state sits behind one lock.
+    private let stateLock = NSLock()
+    private var storedHandles: [UInt64: Handle] = [:]
+    private var storedFlip: AXVerticalFlip
     private var callCounts: [pid_t: Int] = [:]
+
+    /// Per-element AX messaging timeout. The system default is ~6s, which
+    /// lets one hung app stall a whole reflow; a healthy app answers window
+    /// attribute calls in a few ms. Set per element (the API does not share
+    /// it between equal elements), so `register` applies it to both handles.
+    public static let messagingTimeoutSeconds: Float = 0.25
+
+    private var flip: AXVerticalFlip {
+        stateLock.withLock { storedFlip }
+    }
 
     /// - Parameter displayHeight: FULL display height for the AX flip
     ///   (RW-09: main display). Frames cross this boundary in Cocoa coords.
     public init(displayHeight: CGFloat) {
-        self.flip = AXVerticalFlip(displayHeight: displayHeight)
+        self.storedFlip = AXVerticalFlip(displayHeight: displayHeight)
     }
 
     /// Refresh the flip height (display topology changed). Handles stay
     /// registered — only the coordinate frame updates.
     public func updateDisplayHeight(_ height: CGFloat) {
-        flip = AXVerticalFlip(displayHeight: height)
+        stateLock.withLock { storedFlip = AXVerticalFlip(displayHeight: height) }
     }
 
     /// Raw element for live probes (tileability checks at reflow time).
@@ -50,8 +63,10 @@ public final class AXWindowActuator: WindowActuator {
     /// so a retained handle matched with `CFEqual` is the identity. Nil
     /// means genuinely new (register it); never invent an ID per scan.
     public func id(matching element: AXUIElement, pid: pid_t) -> WindowID? {
-        handles.first { $0.value.pid == pid && CFEqual($0.value.element, element) }
-            .map { WindowID(pid: pid, elementID: $0.key) }
+        stateLock.withLock {
+            storedHandles.first { $0.value.pid == pid && CFEqual($0.value.element, element) }
+                .map { WindowID(pid: pid, elementID: $0.key) }
+        }
     }
 
     public func register(
@@ -60,26 +75,32 @@ public final class AXWindowActuator: WindowActuator {
         element: AXUIElement,
         appElement: AXUIElement
     ) {
-        handles[elementID] = Handle(element: element, appElement: appElement, pid: pid)
+        _ = AXUIElementSetMessagingTimeout(element, Self.messagingTimeoutSeconds)
+        _ = AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
+        stateLock.withLock {
+            storedHandles[elementID] = Handle(element: element, appElement: appElement, pid: pid)
+        }
     }
 
     public func forget(elementID: UInt64) {
-        handles.removeValue(forKey: elementID)
+        _ = stateLock.withLock { storedHandles.removeValue(forKey: elementID) }
     }
 
     public func axCallCount(forPid pid: pid_t) -> Int {
-        callLock.withLock { callCounts[pid, default: 0] }
+        stateLock.withLock { callCounts[pid, default: 0] }
     }
 
     private func countCalls(_ n: Int, pid: pid_t) {
-        callLock.withLock { callCounts[pid, default: 0] += n }
+        stateLock.withLock { callCounts[pid, default: 0] += n }
     }
 
     private func handle(for id: WindowID) -> Handle? {
-        guard let handle = handles[id.elementID], handle.pid == id.pid else {
-            return nil
+        stateLock.withLock {
+            guard let handle = storedHandles[id.elementID], handle.pid == id.pid else {
+                return nil
+            }
+            return handle
         }
-        return handle
     }
 
     public func frame(of id: WindowID) throws -> CGRect? {

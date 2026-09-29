@@ -81,25 +81,104 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let tolerance: CGFloat
     private let clock: ReflowClock
     private let appName: @Sendable (pid_t) -> String?
+    private let concurrency: LaneConcurrency
+    private let executor = LaneExecutor()
 
     /// Timing of the most recent `reconcile` pass (MO-01).
     public private(set) var lastTiming: ReflowTiming?
 
+    /// Keep one reconciler alive across reflows: it remembers which apps are
+    /// still stuck in an abandoned lane (MO-03).
     public init(
         actuator: Actuator, tolerance: CGFloat = 1,
+        concurrency: LaneConcurrency = .concurrent(stallTimeout: 0.25),
         clock: @escaping ReflowClock = systemReflowClock,
         appName: @escaping @Sendable (pid_t) -> String? = { _ in nil }
     ) {
         self.actuator = actuator
         self.tolerance = tolerance
+        self.concurrency = concurrency
         self.clock = clock
         self.appName = appName
     }
 
-    /// Parked windows are written first (outgoing before incoming, less
-    /// flashing) and are never focused. A parked write counts as done when
-    /// the window keeps its size and only a small strip stays on the
-    /// intended side, because macOS may clamp the position.
+    /// What happened to one window; folded into the report in serial order.
+    private enum WindowOutcome: Sendable {
+        case alreadyCorrect
+        case vanished
+        case failed(String)
+        case applied
+        case parkedApplied(clamped: Bool)
+    }
+
+    private struct ItemResult: Sendable {
+        let outcome: WindowOutcome
+        let timing: WindowWriteTiming
+    }
+
+    /// Everything a lane thread needs, detached from the reconciler.
+    private struct LaneWorker: @unchecked Sendable {
+        let actuator: Actuator
+        let tolerance: CGFloat
+        let clock: ReflowClock
+        let appName: @Sendable (pid_t) -> String?
+
+        func process(_ item: WriteItem) -> ItemResult {
+            let callsBefore = actuator.axCallCount(forPid: item.id.pid)
+            let started = clock()
+            let outcome = reconcileOne(item)
+            return ItemResult(
+                outcome: outcome,
+                timing: WindowWriteTiming(
+                    id: item.id, app: appName(item.id.pid) ?? "pid\(item.id.pid)",
+                    milliseconds: (clock() - started) * 1000,
+                    axCalls: actuator.axCallCount(forPid: item.id.pid) - callsBefore
+                )
+            )
+        }
+
+        private func reconcileOne(_ item: WriteItem) -> WindowOutcome {
+            let id = item.id
+            let actual: CGRect?
+            do {
+                actual = try actuator.frame(of: id)
+            } catch {
+                return .failed(String(describing: error))
+            }
+            guard let actual else {
+                return .vanished
+            }
+            if matches(item.desired, actual) || item.parked.map({ isParked(actual, $0, tolerance) }) == true {
+                return .alreadyCorrect
+            }
+            do {
+                try actuator.setFrame(item.desired, from: actual, for: id, verify: item.parked == nil)
+                return item.parked == nil ? .applied : .parkedApplied(clamped: false)
+            } catch {
+                // macOS may clamp a parked position; accept a landing that is
+                // still parked (size kept, small strip on the intended side).
+                if let parked = item.parked, let landed = try? actuator.frame(of: id),
+                   isParked(landed, parked, tolerance)
+                {
+                    return .parkedApplied(clamped: true)
+                }
+                return .failed(String(describing: error))
+            }
+        }
+
+        private func matches(_ requested: CGRect, _ actual: CGRect) -> Bool {
+            abs(requested.origin.x - actual.origin.x) <= tolerance
+                && abs(requested.origin.y - actual.origin.y) <= tolerance
+                && abs(requested.size.width - actual.size.width) <= tolerance
+                && abs(requested.size.height - actual.size.height) <= tolerance
+        }
+    }
+
+    /// Windows are grouped by app; each app's writes run serially on their
+    /// own lane (parked before visible, never focused) and lanes run
+    /// concurrently. A parked write counts as done when the window keeps its
+    /// size and only a small strip stays on the intended side, because macOS
+    /// may clamp the position. Focus is applied last, after every lane.
     @discardableResult
     public func reconcile(
         frames: [WindowID: CGRect],
@@ -109,22 +188,48 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     ) -> ReconcileReport {
         var report = ReconcileReport()
         let started = clock()
+        let lanes = planWriteLanes(frames: frames, parked: parked)
+        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, appName: appName)
+        let results = executor.run(lanes: lanes, mode: concurrency) { worker.process($0) }
         var windowTimings: [WindowWriteTiming] = []
-        func timed(_ id: WindowID, _ work: () -> Void) {
-            let callsBefore = actuator.axCallCount(forPid: id.pid)
-            let windowStart = clock()
-            work()
-            windowTimings.append(WindowWriteTiming(
-                id: id, app: appName(id.pid) ?? "pid\(id.pid)",
-                milliseconds: (clock() - windowStart) * 1000,
-                axCalls: actuator.axCallCount(forPid: id.pid) - callsBefore
-            ))
+        let stallMilliseconds: Double
+        if case .concurrent(let stall) = concurrency {
+            stallMilliseconds = stall * 1000
+        } else {
+            stallMilliseconds = 0
         }
-        for id in parked.keys.sorted() {
-            timed(id) { reconcileOne(id, desired: parked[id]!.frame, parkedTarget: parked[id], into: &report) }
-        }
-        for id in frames.keys.sorted() where parked[id] == nil {
-            timed(id) { reconcileOne(id, desired: frames[id]!, parkedTarget: nil, into: &report) }
+        for item in lanes.flatMap(\.items).sorted(by: { $0.index < $1.index }) {
+            let id = item.id
+            switch results[item.index] {
+            case .completed(let result):
+                windowTimings.append(result.timing)
+                switch result.outcome {
+                case .alreadyCorrect:
+                    report.alreadyCorrect.append(id)
+                case .vanished:
+                    report.vanished.append(id)
+                case .failed(let note):
+                    report.failed.append(id)
+                    report.failureNotes[id] = note
+                case .applied:
+                    report.applied.append(id)
+                case .parkedApplied(let clamped):
+                    if clamped {
+                        GioLog.record(.debug, "parked clamped id=\(id.pid):\(id.elementID)")
+                    }
+                    report.parked.append(id)
+                }
+            case .skippedBusy:
+                report.failed.append(id)
+                report.failureNotes[id] = "timeout (previous write to this app still pending)"
+            case .timedOut, nil:
+                report.failed.append(id)
+                report.failureNotes[id] = "timeout"
+                windowTimings.append(WindowWriteTiming(
+                    id: id, app: appName(id.pid) ?? "pid\(id.pid)",
+                    milliseconds: stallMilliseconds, axCalls: 0
+                ))
+            }
         }
         var focusMilliseconds = 0.0
         var focusCalls = 0
@@ -202,76 +307,28 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return report
     }
 
-    private func reconcileOne(
-        _ id: WindowID, desired: CGRect, parkedTarget: ParkedTarget?, into report: inout ReconcileReport
-    ) {
-        let actual: CGRect?
-        do {
-            actual = try actuator.frame(of: id)
-        } catch {
-            report.failed.append(id)
-            report.failureNotes[id] = String(describing: error)
-            return
-        }
-        guard let actual else {
-            report.vanished.append(id)
-            return
-        }
-        if matches(desired, actual) || parkedTarget.map({ isParked(actual, $0) }) == true {
-            report.alreadyCorrect.append(id)
-            return
-        }
-        do {
-            try actuator.setFrame(desired, from: actual, for: id, verify: parkedTarget == nil)
-            record(id, parkedTarget != nil, into: &report)
-        } catch {
-            // macOS may clamp a parked position; accept a landing that is
-            // still parked (size kept, small strip on the intended side).
-            if let parkedTarget, let landed = try? actuator.frame(of: id), isParked(landed, parkedTarget) {
-                GioLog.record(.debug, "parked clamped id=\(id.pid):\(id.elementID)")
-                record(id, true, into: &report)
-                return
-            }
-            report.failed.append(id)
-            report.failureNotes[id] = String(describing: error)
-        }
-    }
-
-    private func record(_ id: WindowID, _ isParkedWrite: Bool, into report: inout ReconcileReport) {
-        if isParkedWrite {
-            report.parked.append(id)
-        } else {
-            report.applied.append(id)
-        }
-    }
-
     /// Largest strip of a parked window allowed inside its display.
-    public static var maxParkedStrip: CGFloat { 40 }
+    public static var maxParkedStrip: CGFloat { parkedStripLimit }
+}
 
-    private func isParked(_ actual: CGRect, _ target: ParkedTarget) -> Bool {
-        guard abs(actual.width - target.frame.width) <= tolerance,
-              abs(actual.height - target.frame.height) <= tolerance
-        else {
-            return false
-        }
-        let inside = actual.intersection(target.display)
-        let strip = Self.maxParkedStrip
-        let visibleWidth = inside.isNull ? 0 : inside.width
-        let visibleHeight = inside.isNull ? 0 : inside.height
-        switch target.edge {
-        case .left:
-            return actual.minX < target.display.minX && visibleWidth <= strip
-        case .right:
-            return actual.maxX > target.display.maxX && visibleWidth <= strip
-        case .corner:
-            return visibleWidth <= strip && visibleHeight <= strip
-        }
+let parkedStripLimit: CGFloat = 40
+
+func isParked(_ actual: CGRect, _ target: ParkedTarget, _ tolerance: CGFloat) -> Bool {
+    guard abs(actual.width - target.frame.width) <= tolerance,
+          abs(actual.height - target.frame.height) <= tolerance
+    else {
+        return false
     }
-
-    private func matches(_ requested: CGRect, _ actual: CGRect) -> Bool {
-        abs(requested.origin.x - actual.origin.x) <= tolerance
-            && abs(requested.origin.y - actual.origin.y) <= tolerance
-            && abs(requested.size.width - actual.size.width) <= tolerance
-            && abs(requested.size.height - actual.size.height) <= tolerance
+    let inside = actual.intersection(target.display)
+    let strip = parkedStripLimit
+    let visibleWidth = inside.isNull ? 0 : inside.width
+    let visibleHeight = inside.isNull ? 0 : inside.height
+    switch target.edge {
+    case .left:
+        return actual.minX < target.display.minX && visibleWidth <= strip
+    case .right:
+        return actual.maxX > target.display.maxX && visibleWidth <= strip
+    case .corner:
+        return visibleWidth <= strip && visibleHeight <= strip
     }
 }
