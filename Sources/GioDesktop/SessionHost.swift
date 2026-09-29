@@ -1697,6 +1697,22 @@ final class SessionHost: @unchecked Sendable {
             if let id = workspace.focusedWindow {
                 session.manager.moveWindow(id, to: number)
             }
+        case .focusWorkspaceDown:
+            session.manager.focusDown()
+            syncShownWorkspace()
+        case .focusWorkspaceUp:
+            session.manager.focusUp()
+            syncShownWorkspace()
+        case .moveWindowToWorkspaceDown:
+            if let id = workspace.focusedWindow {
+                session.manager.moveWindowDown(id)
+                syncShownWorkspace()
+            }
+        case .moveWindowToWorkspaceUp:
+            if let id = workspace.focusedWindow {
+                session.manager.moveWindowUp(id)
+                syncShownWorkspace()
+            }
         case .toggleFloating:
             if let id = workspace.focusedWindow {
                 _ = try? session.registry.toggleFloating(for: id)

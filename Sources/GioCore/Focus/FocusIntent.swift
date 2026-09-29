@@ -9,6 +9,8 @@ extension HotkeyAction {
         case .focusLeft, .focusRight, .focusUp, .focusDown,
              .moveLeft, .moveRight, .moveUp, .moveDown,
              .workspace, .moveToWorkspace, .fullscreen,
+             .focusWorkspaceDown, .focusWorkspaceUp,
+             .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
              .consumeOrExpelLeft, .consumeOrExpelRight:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,

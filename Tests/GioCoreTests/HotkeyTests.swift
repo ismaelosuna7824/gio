@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 35)
+        XCTAssertEqual(dispatcher.bindingCount, 39)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -54,6 +54,30 @@ final class HotkeyTests: XCTestCase {
             .moveToWorkspace(2)
         )
         XCTAssertNil(dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "T")))
+    }
+
+    func testNiriWorkspaceNavigationDefaults() {
+        let dispatcher = HotkeyDispatcher()
+        func action(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyAction? {
+            dispatcher.action(for: HotkeyCombo(modifiers: modifiers, key: key))
+        }
+        XCTAssertEqual(action([.alt], "U"), .focusWorkspaceDown)
+        XCTAssertEqual(action([.alt], "I"), .focusWorkspaceUp)
+        XCTAssertEqual(action([.alt, .shift], "U"), .moveWindowToWorkspaceDown)
+        XCTAssertEqual(action([.alt, .shift], "I"), .moveWindowToWorkspaceUp)
+    }
+
+    func testNiriWorkspaceActionNamesParse() {
+        XCTAssertEqual(parseActionName("focus-workspace-down"), .focusWorkspaceDown)
+        XCTAssertEqual(parseActionName("focus-workspace-up"), .focusWorkspaceUp)
+        XCTAssertEqual(parseActionName("move-window-to-workspace-down"), .moveWindowToWorkspaceDown)
+        XCTAssertEqual(parseActionName("move-window-to-workspace-up"), .moveWindowToWorkspaceUp)
+        for name in [
+            "focus-workspace-down", "focus-workspace-up",
+            "move-window-to-workspace-down", "move-window-to-workspace-up",
+        ] {
+            XCTAssertTrue(validActionNames().contains(name), name)
+        }
     }
 
     func testBindUnbindAndOverride() {

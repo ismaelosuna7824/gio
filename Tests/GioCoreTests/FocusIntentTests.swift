@@ -15,6 +15,8 @@ final class FocusIntentTests: XCTestCase {
             .moveLeft, .moveRight, .moveUp, .moveDown,
             .workspace(3), .moveToWorkspace(2), .fullscreen,
             .consumeOrExpelLeft, .consumeOrExpelRight,
+            .focusWorkspaceDown, .focusWorkspaceUp,
+            .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
         ]
         let passive: [HotkeyAction] = [
             .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,

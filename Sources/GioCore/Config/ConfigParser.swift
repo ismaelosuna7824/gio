@@ -432,6 +432,10 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "center-column": return .centerColumn
     case "consume-or-expel-window-left": return .consumeOrExpelLeft
     case "consume-or-expel-window-right": return .consumeOrExpelRight
+    case "focus-workspace-down": return .focusWorkspaceDown
+    case "focus-workspace-up": return .focusWorkspaceUp
+    case "move-window-to-workspace-down": return .moveWindowToWorkspaceDown
+    case "move-window-to-workspace-up": return .moveWindowToWorkspaceUp
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -453,6 +457,8 @@ public func validActionNames() -> [String] {
         "focus-left", "focus-right", "focus-up", "focus-down",
         "move-left", "move-right", "move-up", "move-down",
         "workspace N", "move-to-workspace N",
+        "focus-workspace-down", "focus-workspace-up",
+        "move-window-to-workspace-down", "move-window-to-workspace-up",
         "toggle-floating", "fullscreen",
         "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
         "maximize-column", "center-column",

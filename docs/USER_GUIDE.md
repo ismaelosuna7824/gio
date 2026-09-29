@@ -34,11 +34,15 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+]` (`Alt+BracketRight`) | `consume-or-expel-window-right` | Same, to the right. |
 | `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. |
 | `Alt+Shift+F` | `fullscreen` | Toggle fullscreen for the focused window; focusing another window restores the layout. |
-| `Alt+1` ... `Alt+9` | `workspace N` | Go to workspace N. |
-| `Alt+Shift+1` ... `Alt+Shift+9` | `move-to-workspace N` | Send the focused window to workspace N. |
+| `Alt+U` | `focus-workspace-down` | Focus the workspace below in this display's stack (stops at the empty one at the bottom). |
+| `Alt+I` | `focus-workspace-up` | Focus the workspace above. |
+| `Alt+Shift+U` | `move-window-to-workspace-down` | Send the focused window one workspace down and follow it. From the last workspace with windows it lands in the empty one at the bottom, which opens a new empty workspace below. |
+| `Alt+Shift+I` | `move-window-to-workspace-up` | Send the focused window one workspace up and follow it. |
+| `Alt+1` ... `Alt+9` | `workspace N` | Focus the workspace at position N of this display's stack; past the end goes to the empty one at the bottom. |
+| `Alt+Shift+1` ... `Alt+Shift+9` | `move-to-workspace N` | Send the focused window to position N (past the end: the empty one at the bottom). Focus stays where it was. |
 | `Alt+Space` | (launcher, fixed) | Summon the launcher panel. Handled by the app before the action table; not configurable. |
 
-That is 35 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`).
+That is 39 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`).
 
 Notes:
 
@@ -112,7 +116,7 @@ The ring is hidden when nothing is focused, the focused window is minimized, ful
 The `[keybindings]` table maps a combo to an action name: `"Alt+H" = "focus-left"`.
 
 - **Combo syntax:** one or more modifiers plus one key, joined by `+`. Modifiers (case-insensitive): `ctrl`/`control`, `alt`/`option`, `shift`, `cmd`/`command`. At least one modifier is required. Keys are case-insensitive and come from one list: `A`-`Z`, `0`-`9`, `F1`-`F12`, `Left`, `Right`, `Up`, `Down`, `Tab`, `Return` (`Enter`), `Escape` (`Esc`), `Space`, `Delete` (`Backspace`), `Home`, `End`, `PageUp` (`PgUp`), `PageDown` (`PgDn`), and punctuation `Grave` (`` ` ``), `Comma` (`,`), `Period` (`.`), `Slash` (`/`), `Semicolon` (`;`), `Quote` (`'`), `Backslash` (`\`), `Minus` (`-`), `Equal` (`=`), `BracketLeft` (`[`), `BracketRight` (`]`).
-- **Action names:** `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-left`, `move-right`, `move-up`, `move-down`, `workspace N`, `move-to-workspace N` (write them as `"workspace 3"`; use N from 1 to 9, other values do nothing), `toggle-floating` (alias `toggle-window-floating`), `fullscreen` (alias `fullscreen-window`), `switch-preset-column-width`, `set-column-width-minus`, `set-column-width-plus`, `maximize-column`, `center-column`, `consume-or-expel-window-left`, `consume-or-expel-window-right`.
+- **Action names:** `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-left`, `move-right`, `move-up`, `move-down`, `workspace N`, `move-to-workspace N` (write them as `"workspace 3"`; use N from 1 to 9, other values do nothing), `focus-workspace-down`, `focus-workspace-up`, `move-window-to-workspace-down`, `move-window-to-workspace-up`, `toggle-floating` (alias `toggle-window-floating`), `fullscreen` (alias `fullscreen-window`), `switch-preset-column-width`, `set-column-width-minus`, `set-column-width-plus`, `maximize-column`, `center-column`, `consume-or-expel-window-left`, `consume-or-expel-window-right`.
 - **Bindings are additive.** Config entries are layered over the defaults: a config entry binds a combo (replacing the default action of that exact combo). Default bindings stay active unless you reuse their combo for another action; there is no unbind syntax.
 - **Unknown keys are rejected.** A binding on a key outside the list above (for example `Alt+F13`) is a config validation error (`unknown key 'F13' in hotkey ...`), never a binding that silently does nothing. Keys are matched on the ANSI virtual keycode, so the physical position wins on non-US layouts.
 - `Alt+Space` (launcher) cannot be rebound or removed.

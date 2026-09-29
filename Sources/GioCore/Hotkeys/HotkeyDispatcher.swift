@@ -15,6 +15,14 @@ public enum HotkeyAction: Equatable, Sendable {
     case moveDown
     case workspace(Int)
     case moveToWorkspace(Int)
+    /// Niri `focus-workspace-down` (Alt+U): the workspace below in the stack.
+    case focusWorkspaceDown
+    /// Niri `focus-workspace-up` (Alt+I).
+    case focusWorkspaceUp
+    /// Niri `move-window-to-workspace-down` (Alt+Shift+U): the window follows.
+    case moveWindowToWorkspaceDown
+    /// Niri `move-window-to-workspace-up` (Alt+Shift+I).
+    case moveWindowToWorkspaceUp
     case toggleFloating
     case fullscreen
     /// Niri `switch-preset-column-width` (Alt+R).
@@ -64,7 +72,8 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 }
 
 /// Plan defaults: Alt+HJKL focus, Alt+Shift+HJKL move, Alt+N workspace,
-/// Alt+Shift+N move-to-workspace, Alt+R cycle width presets,
+/// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
+/// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
 /// floating (Alt+Space stays the launcher; exact-match combos never collide).
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
@@ -89,6 +98,10 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt], "BracketLeft"), .consumeOrExpelLeft),
         (combo([.alt], "BracketRight"), .consumeOrExpelRight),
         (combo([.alt, .shift], "Space"), .toggleFloating),
+        (combo([.alt], "U"), .focusWorkspaceDown),
+        (combo([.alt], "I"), .focusWorkspaceUp),
+        (combo([.alt, .shift], "U"), .moveWindowToWorkspaceDown),
+        (combo([.alt, .shift], "I"), .moveWindowToWorkspaceUp),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))

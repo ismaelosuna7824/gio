@@ -52,6 +52,18 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(goto?.category, .workspaces)
     }
 
+    func testNiriWorkspaceNavigationEntries() {
+        let entries = shortcutCatalog(configKeybindings: [])
+        func keys(_ name: String) -> [String] {
+            entries.first { $0.configName == name }?.bindings.map { $0.combo.describe() } ?? []
+        }
+        XCTAssertEqual(keys("focus-workspace-down"), ["Alt+U"])
+        XCTAssertEqual(keys("focus-workspace-up"), ["Alt+I"])
+        XCTAssertEqual(keys("move-window-to-workspace-down"), ["Alt+Shift+U"])
+        XCTAssertEqual(keys("move-window-to-workspace-up"), ["Alt+Shift+I"])
+        XCTAssertEqual(entries.first { $0.configName == "focus-workspace-down" }?.category, .workspaces)
+    }
+
     func testConfigOverrideReplacesDefaultOnSameCombo() {
         let entries = shortcutCatalog(configKeybindings: [(combo("Alt+H"), .focusRight)])
         let left = entries.first { $0.configName == "focus-left" }!

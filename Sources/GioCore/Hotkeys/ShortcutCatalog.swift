@@ -69,6 +69,14 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "workspace N", name: "Go to workspace N", summary: "Switch to workspace 1 to 9.", category: .workspaces)
     case .moveToWorkspace:
         return ActionInfo(id: "move-to-workspace N", name: "Move window to workspace N", summary: "Send the focused window to workspace 1 to 9.", category: .workspaces)
+    case .focusWorkspaceDown:
+        return ActionInfo(id: "focus-workspace-down", name: "Workspace down", summary: "Focus the workspace below in this display's stack.", category: .workspaces)
+    case .focusWorkspaceUp:
+        return ActionInfo(id: "focus-workspace-up", name: "Workspace up", summary: "Focus the workspace above in this display's stack.", category: .workspaces)
+    case .moveWindowToWorkspaceDown:
+        return ActionInfo(id: "move-window-to-workspace-down", name: "Move window down a workspace", summary: "Send the focused window to the workspace below (the empty one at the bottom opens a new workspace) and follow it.", category: .workspaces)
+    case .moveWindowToWorkspaceUp:
+        return ActionInfo(id: "move-window-to-workspace-up", name: "Move window up a workspace", summary: "Send the focused window to the workspace above and follow it.", category: .workspaces)
     case .toggleFloating:
         return ActionInfo(id: "toggle-floating", name: "Toggle floating", summary: "Switch the focused window between tiled and floating.", category: .windows)
     case .fullscreen:
@@ -104,6 +112,8 @@ private let catalogActions: [HotkeyAction] = [
     .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight,
     .toggleFloating, .fullscreen,
     .workspace(1), .moveToWorkspace(1),
+    .focusWorkspaceDown, .focusWorkspaceUp,
+    .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
 ]
 
 /// Alt+Space is handled by the app before the action table.
