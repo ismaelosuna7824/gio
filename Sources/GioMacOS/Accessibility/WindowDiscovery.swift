@@ -47,13 +47,17 @@ public func requireAXPermission() throws {
     }
 }
 
-public func discoverSystemWindows() throws -> SystemWindowDiscoveryResult {
+/// - Parameter onlyPID: restrict the scan to one process (incremental
+///   registration of a launched app); nil scans every regular app.
+public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowDiscoveryResult {
     try requireAXPermission()
     var found: [DiscoveredSystemWindow] = []
     var floating: [DiscoveredSystemWindow] = []
     var ignored: [ExcludedSystemWindow] = []
     var skipped = 0
-    let apps = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+    let apps = NSWorkspace.shared.runningApplications.filter {
+        $0.activationPolicy == .regular && (onlyPID == nil || $0.processIdentifier == onlyPID)
+    }
     for app in apps {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
         var rawWindows: CFTypeRef?

@@ -26,7 +26,7 @@ final class SessionHost: @unchecked Sendable {
     private var displayObserver: NSObjectProtocol?
     private var pendingReflow: DispatchWorkItem?
     private var nextElementID: UInt64 = 0
-    private var lastPIDs: Set<pid_t> = []
+    private var observationBook = ObservationBook()
     private var tileability = TileabilityCache()
     private var fullscreenRecords: [WindowID: FullscreenRecord] = [:]
     private var visibleFrames: [DisplayID: CGRect] = [:]
@@ -71,7 +71,9 @@ final class SessionHost: @unchecked Sendable {
             self.initialSync()
         }
         watchDisplays()
-        refreshEventObservation()
+        queue.sync {
+            self.rebuildEventObservation()
+        }
         startTap()
         return nil
     }
@@ -113,8 +115,12 @@ final class SessionHost: @unchecked Sendable {
     /// only genuinely new windows get fresh IDs and placed columns.
     /// Add-only: disappearance is handled by reaping dead pids below,
     /// never by absence alone.
-    private func enumerateAndPlace() {
-        guard let found = try? discoverSystemWindows() else {
+    ///
+    /// `onlyPID` restricts the scan to one process (a freshly launched app):
+    /// the dead-pid reap is skipped then, since absence from a partial
+    /// scan proves nothing.
+    private func enumerateAndPlace(onlyPID: pid_t? = nil) {
+        guard let found = try? discoverSystemWindows(onlyPID: onlyPID) else {
             return
         }
         let flip = AXVerticalFlip(displayHeight: mainHeight())
@@ -203,8 +209,9 @@ final class SessionHost: @unchecked Sendable {
                 session.manager.update(current)
             }
         }
-        reapDeadPids(live: liveIDs)
-        lastPIDs = Set(candidates.map(\.window.pid))
+        if onlyPID == nil {
+            reapDeadPids(live: liveIDs)
+        }
     }
 
     /// Remove records whose process is gone (proof, not absence) from the
@@ -218,18 +225,28 @@ final class SessionHost: @unchecked Sendable {
         guard !dead.isEmpty else {
             return
         }
-        let deadSet = Set(dead)
-        for id in dead.sorted() {
+        purge(dead)
+    }
+
+    /// Forget windows everywhere: registry, every workspace, tileability
+    /// cache, fullscreen records and the actuator's AX handles.
+    private func purge(_ ids: [WindowID]) {
+        guard !ids.isEmpty else {
+            return
+        }
+        let idSet = Set(ids)
+        for id in ids.sorted() {
             session.registry.remove(id)
             tileability.invalidate(id)
             fullscreenRecords.removeValue(forKey: id)
+            actuator?.forget(elementID: id.elementID)
         }
         for index in WorkspaceManager.range {
             guard var workspace = session.manager.workspace(index) else {
                 continue
             }
             let before = workspace
-            workspace.stripWindows(deadSet)
+            workspace.stripWindows(idSet)
             if workspace != before {
                 session.manager.update(workspace)
             }
@@ -346,7 +363,7 @@ final class SessionHost: @unchecked Sendable {
         return revealed.offset == workspace.viewportOffset ? nil : revealed.offset
     }
 
-    func scheduleReflow() {
+    private func scheduleReflow() {
         pendingReflow?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.resyncAndReflow()
@@ -368,28 +385,117 @@ final class SessionHost: @unchecked Sendable {
         // Events may mean a resize or attribute change: re-probe everyone.
         tileability.invalidateAll()
         enumerateAndPlace()
-        if Set(lastPIDs) != Set(snapshotPIDs()) {
-            refreshEventObservation()
-        }
+        syncObservers()
         reflowAll()
     }
 
-    private func snapshotPIDs() -> Set<pid_t> {
-        Set(NSWorkspace.shared.runningApplications.map(\.processIdentifier))
+    private func runningRegularPIDs() -> Set<pid_t> {
+        Set(
+            NSWorkspace.shared.runningApplications
+                .filter { $0.activationPolicy == .regular }
+                .map(\.processIdentifier)
+        )
     }
 
     // MARK: - Observers
 
-    private func refreshEventObservation() {
+    /// Full rebuild: only for startup and permission regain. Everyday app
+    /// churn goes through the incremental attach/detach below.
+    private func rebuildEventObservation() {
         eventObserver?.stop()
-        eventObserver = SystemWindowObserver { [weak self] _ in
-            self?.scheduleReflow()
+        observationBook = ObservationBook()
+        eventObserver = SystemWindowObserver { [weak self] event in
+            // Delivered on the main thread; session state lives on `queue`.
+            guard let self else {
+                return
+            }
+            self.queue.async {
+                self.handle(event)
+            }
         }
-        if let refused = eventObserver?.refused, !refused.isEmpty {
-            print("[gio] observation refused: \(refused.joined(separator: ", "))")
+        syncObservers()
+    }
+
+    /// Reconcile observers with the running set: attach new apps, detach
+    /// vanished ones, leave everything else alone. Safety net for missed
+    /// launch/terminate notifications; refused apps wait for activation.
+    private func syncObservers() {
+        guard let observer = eventObserver else {
+            return
+        }
+        let plan = observationBook.reconcile(running: runningRegularPIDs())
+        for pid in plan.detach {
+            observer.detach(pid: pid)
+            observationBook.didDetach(pid)
+        }
+        var refused: [pid_t] = []
+        for pid in plan.attach {
+            if observer.attach(pid: pid) {
+                observationBook.didAttach(pid)
+            } else {
+                observationBook.didRefuse(pid)
+                refused.append(pid)
+            }
+        }
+        if !refused.isEmpty {
+            print("[gio] observation refused: pid \(refused.map(String.init).joined(separator: ", "))")
             GioLog.record(.warn, "observation refused for \(refused.count) app(s)")
         }
-        lastPIDs = snapshotPIDs()
+    }
+
+    private func handle(_ event: SystemWindowEvent) {
+        switch event.kind {
+        case .appLaunched:
+            attachLaunchedApp(event.pid, attempt: 0)
+        case .appTerminated:
+            handleTerminated(event.pid)
+        case .appActivated:
+            // A previously refused (or missed) app gets another chance now.
+            if observationBook.needsAttach(event.pid), let observer = eventObserver,
+               observer.attach(pid: event.pid)
+            {
+                observationBook.didAttach(event.pid)
+            }
+            scheduleReflow()
+        case .accessibility:
+            scheduleReflow()
+        }
+    }
+
+    /// Attach one launched app's observer, retrying with backoff while AX
+    /// is not ready, then register its windows and reflow. Windows that
+    /// appear later arrive through the app-level window-created event.
+    private func attachLaunchedApp(_ pid: pid_t, attempt: Int) {
+        guard let observer = eventObserver,
+              let app = NSRunningApplication(processIdentifier: pid),
+              app.activationPolicy == .regular,
+              observationBook.needsAttach(pid)
+        else {
+            return
+        }
+        if observer.attach(pid: pid) {
+            observationBook.didAttach(pid)
+            enumerateAndPlace(onlyPID: pid)
+            reflowAll()
+        } else if let delay = ObservationRetry.delay(afterFailedAttempt: attempt) {
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.attachLaunchedApp(pid, attempt: attempt + 1)
+            }
+        } else {
+            observationBook.didRefuse(pid)
+            print("[gio] observation refused: pid \(pid)")
+            GioLog.record(.warn, "observation refused for launched pid \(pid)")
+        }
+    }
+
+    /// Terminate is proof of death: drop the observer, reap the windows,
+    /// reflow now.
+    private func handleTerminated(_ pid: pid_t) {
+        eventObserver?.detach(pid: pid)
+        observationBook.didDetach(pid)
+        let ids = session.registry.managedWindows().map(\.id).filter { $0.pid == pid }
+        purge(ids)
+        reflowAll()
     }
 
     private func watchDisplays() {
