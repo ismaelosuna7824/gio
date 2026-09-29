@@ -37,10 +37,10 @@ main only, never blocking main or the session queue; never capture/log window ti
 pure parts; Conventional Commits, NO Co-Authored-By; push after verified batches, no PR.
 
 ## Tasks
-- [ ] SM-00 — `[animations] resize` default -> "never" (stop the laggy first adaptive attempt).
-- [ ] SM-01 — Screen Recording permission: preflight/request, Overview/Diagnostics status + button,
+- [x] SM-00 (`db4a213`) — `[animations] resize` default -> "never" (stop the laggy first adaptive attempt).
+- [x] SM-01 (`d6b4160`) — Screen Recording permission: preflight/request, Overview/Diagnostics status + button,
   `[animations] renderer = "snapshot" | "ax"` (default snapshot, auto-fallback to ax when missing).
-- [ ] SM-02 — Capture module: SCShareableContent window matching (pid + frame, like FI-05),
+- [x] SM-02 (`a49fcad`) — Capture module: SCShareableContent window matching (pid + frame, like FI-05),
   per-window + backdrop capture in parallel, time budget, `snapshot capture ms=` log, pure matching
   and budget decisions tested.
 - [ ] SM-03 — Overlay renderer: per-display overlay window, backdrop + window layers, CA spring
@@ -49,6 +49,14 @@ pure parts; Conventional Commits, NO Co-Authored-By; push after verified batches
   remove overlay; rapid retargets reuse layers, newly involved windows captured on demand; focus ring
   and focus intent timing preserved; workspace switch + maximize + scroll paths.
 - [ ] SM-05 — Safety + docs: watchdog, fallback matrix, memory limits (release images), docs.
+
+Evidence SM-00..02 (route: one delegated writer): resize default never; renderer setting +
+effectiveRenderer (snapshot only when configured + granted) + permission UI (button-only
+request); SnapshotPlanning (pure: SCK->Cocoa flip, matching via CGWindowList bounds joined by
+CGWindowID, exclusions, budget 45ms) + SnapshotCapturer (macOS 14+, else fallback) + Diagnostics
+"Test snapshot capture". RED -> GREEN (GioMacOS parser test not run red first — noted). Bundles
+25/7/19/33/914 all 0 failures (parent re-ran); signed build OK. Snapshot renderer not wired yet.
+LIVE PENDING: capture latency measurement by user.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
@@ -65,3 +73,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 
 ## Progress
 - 2026-09-29: document created after live evidence. Next: SM-00..SM-02.
+- 2026-09-29: SM-00..SM-02 done, pushed. Next: user measures capture latency; then SM-03/SM-04.
