@@ -154,6 +154,16 @@ width = p * (viewportWidth - 2 * padding + gap) - gap
 
 So `1/p` such columns plus their gaps fill the viewport exactly. Example: viewport 1800, padding 8, gap 8, `p = 0.5` gives `0.5 * 1792 - 8 = 888`; two columns take `888 * 2 + 8 + 16 = 1800`. Widths are floored at `minimumColumnWidth` (200). `default-column-width` values up to 1 are proportions, larger values are points (`GioCore/Resize/ColumnWidth.swift`, `GioCore/Layout/LayoutEngine.swift`). The same function is used by the engine and by the width actions so what you see is what actions compare against.
 
+### Learned minimum sizes
+
+Apps clamp to an unpublished minimum size (asked 440 wide, got 500) and Accessibility exposes no minimum attribute. When a visible write lands with `frameMismatch` and a dimension came out larger than requested by more than 1 pt, and that growth is anchored to one edge (`learnedMinimum`), `MinimumSizeBook` records the window's minimum (maximum of everything learned). If both edges moved it was position clamping and nothing is learned. The book lives in `SessionHost`, is forgotten on purge and registration, and feeds `ScrollableLayoutEngine.minimumSizes`:
+
+- a column is at least as wide as its widest member's learned minimum (capped to the usable viewport), so neighbours move instead of being overlapped;
+- stacked heights come from `distributeHeights`: weights as before, but windows below their minimum are pinned to it and the rest re-share what is left; when the minimums cannot all fit, the plain proportional split is used;
+- fullscreen windows are outside the strip and unaffected.
+
+The first pass may fail once (`min size learned` is logged and one relayout is scheduled); the next pass lays the window out at its real size, so the write counts as already correct and `failed` returns to 0. Learning only ever raises a minimum, which bounds retries.
+
 ### Reveal and scroll
 
 The focused column is always revealed by the smallest possible scroll (`revealOffset` with `Viewport.ensureVisible`). A column wider than the viewport pins to its start. Offsets are clamped to `[0, contentWidth - viewportWidth]`. Center-column (`Alt+C`) sets the offset so the focused column is centered, clamped at the strip edges.

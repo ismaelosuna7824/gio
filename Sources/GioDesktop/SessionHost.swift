@@ -32,6 +32,8 @@ final class SessionHost: @unchecked Sendable {
     private var echoGate = WriteEchoGate()
     private var pendingFull = false
     private var tileability = TileabilityCache()
+    /// FI-02: minimum sizes learned from clamped writes (session queue only).
+    private var minimumSizes = MinimumSizeBook()
     private var fullscreen = FullscreenBook()
     private var visibleFrames: [DisplayID: CGRect] = [:]
     /// Effective hotkey table (defaults + config). Read on the main thread
@@ -482,6 +484,7 @@ final class SessionHost: @unchecked Sendable {
             window.floatReason = admitted
         }
         tileability.invalidate(id)
+        minimumSizes.forget(id)
         try? session.registry.register(window)
         if let wanted = outcome.workspace,
            WorkspaceManager.range.contains(wanted),
@@ -541,6 +544,7 @@ final class SessionHost: @unchecked Sendable {
         for id in ids.sorted() {
             session.registry.remove(id)
             tileability.invalidate(id)
+            minimumSizes.forget(id)
             echoGate.forget(id)
             physicalFrames.removeValue(forKey: id)
             fullscreen.forget(id)
@@ -582,9 +586,32 @@ final class SessionHost: @unchecked Sendable {
 
     private func engine() -> ScrollableLayoutEngine {
         // Rebuilt per pass so config reloads apply instantly.
-        ScrollableLayoutEngine(config: session.config.makeLayoutConfig(
-            viewportWidth: NSScreen.main?.visibleFrame.width ?? 1800
-        ))
+        ScrollableLayoutEngine(
+            config: session.config.makeLayoutConfig(
+                viewportWidth: NSScreen.main?.visibleFrame.width ?? 1800
+            ),
+            minimumSizes: minimumSizes.sizes
+        )
+    }
+
+    /// FI-02: a write that landed larger than asked teaches the layout that
+    /// window's minimum; relayout once so neighbours make room instead of
+    /// being overlapped. Bounded: only a strictly larger minimum triggers it.
+    private func learnMinimumSizes(from report: ReconcileReport) {
+        let changed = minimumSizes.learn(from: report)
+        guard !changed.isEmpty else {
+            return
+        }
+        for id in changed.keys.sorted() {
+            let size = changed[id]!
+            GioLog.record(
+                .info,
+                "min size learned id=\(id.pid):\(id.elementID) "
+                    + "app=\(session.registry.find(id)?.application ?? "pid\(id.pid)") "
+                    + "w=\(Int(size.width.rounded())) h=\(Int(size.height.rounded()))"
+            )
+        }
+        scheduleReflow(full: false)
     }
 
     private func tileableModes() -> [WindowID: WindowMode] {
@@ -807,6 +834,7 @@ final class SessionHost: @unchecked Sendable {
                     "focus intent id=\(focusTarget.pid):\(focusTarget.elementID) changed=\(report.focusChanged) failed=\(report.focusFailed)"
                 )
             }
+            learnMinimumSizes(from: report)
             GioLog.record(
                 .info,
                 "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"

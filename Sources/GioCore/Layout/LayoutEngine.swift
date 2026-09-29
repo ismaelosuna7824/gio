@@ -96,9 +96,15 @@ public func tilingWorkspace(
 /// may refuse writes outside the visible area.
 public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
     public let config: LayoutConfig
+    /// FI-02 learned per-window minimum sizes (0 in a dimension = unknown).
+    /// A column is at least as wide as its widest member's minimum (capped
+    /// to the usable viewport), and stacked heights honour minimum heights
+    /// where the column can afford them.
+    public let minimumSizes: [WindowID: CGSize]
 
-    public init(config: LayoutConfig = LayoutConfig()) {
+    public init(config: LayoutConfig = LayoutConfig(), minimumSizes: [WindowID: CGSize] = [:]) {
         self.config = config
+        self.minimumSizes = minimumSizes
     }
 
     public func calculate(workspace: Workspace, viewport: CGRect) throws -> LayoutResult {
@@ -122,7 +128,10 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         var widths: [CGFloat] = []
         var framedColumns: [Column] = []
         for column in workspace.columns where !column.windows.isEmpty {
-            widths.append(config.resolvedWidth(of: column.widthSpec, viewportWidth: viewport.width))
+            let spec = config.resolvedWidth(of: column.widthSpec, viewportWidth: viewport.width)
+            let learned = column.windows.map { minimumSizes[$0]?.width ?? 0 }.max() ?? 0
+            let usableWidth = max(viewport.width - config.padding * 2, config.minimumColumnWidth)
+            widths.append(max(spec, min(learned, usableWidth)))
             framedColumns.append(column)
         }
 
@@ -140,14 +149,15 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         for (index, column) in framedColumns.enumerated() {
             let width = widths[index]
             let count = column.windows.count
-            let totalWeight = column.windows.reduce(CGFloat(0)) {
-                $0 + (column.heightWeights[$1] ?? 1)
-            }
             let distributable = usableHeight - gap * CGFloat(count - 1)
+            let heights = distributeHeights(
+                available: distributable,
+                weights: column.windows.map { column.heightWeights[$0] ?? 1 },
+                minimums: column.windows.map { minimumSizes[$0]?.height ?? 0 }
+            )
             var y = viewport.minY + pad
-            for winID in column.windows {
-                let share = (column.heightWeights[winID] ?? 1) / totalWeight
-                let height = max(distributable * share, 1)
+            for (winID, rawHeight) in zip(column.windows, heights) {
+                let height = max(rawHeight, 1)
                 frames[winID] = CGRect(
                     x: viewport.minX + cursor - offset,
                     y: y,
