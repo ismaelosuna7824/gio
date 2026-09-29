@@ -48,7 +48,7 @@ final class RenderVerificationTests: XCTestCase {
     }
 
     func testADifferentSizeIsNotAMatch() {
-        let other = CGRect(x: 100, y: 200, width: 500, height: 400)
+        let other = CGRect(x: 100, y: 200, width: 300, height: 400)
         let matches = matchServerWindows(axFrames: [id(1): frame], server: [ServerWindow(pid: 1, bounds: other)])
         XCTAssertEqual(matches[id(1)], .missing)
     }
@@ -84,6 +84,65 @@ final class RenderVerificationTests: XCTestCase {
         )
         XCTAssertEqual(matches[id(1, 2)], .matched(sibling))
         XCTAssertEqual(matches[id(1, 1)], .matched(stale))
+    }
+
+    // MARK: Tolerant matching (SM-02c)
+
+    func testALearnedMinimumSizeStillMatchesTheUniqueNearFrame() {
+        // AX says 888 wide, the app drew 900 after min-size learning.
+        let ax = CGRect(x: 100, y: 200, width: 888, height: 400)
+        let drawn = CGRect(x: 100, y: 200, width: 900, height: 400)
+        let matches = matchServerWindows(axFrames: [id(1): ax], server: [ServerWindow(pid: 1, bounds: drawn)])
+        XCTAssertEqual(matches[id(1)], .matched(drawn))
+    }
+
+    func testSeveralNearFramesAreStillAmbiguous() {
+        let ax = CGRect(x: 100, y: 200, width: 888, height: 400)
+        let matches = matchServerWindows(
+            axFrames: [id(1): ax],
+            server: [
+                ServerWindow(pid: 1, bounds: CGRect(x: 100, y: 200, width: 900, height: 400)),
+                ServerWindow(pid: 1, bounds: CGRect(x: 102, y: 200, width: 910, height: 400)),
+            ]
+        )
+        XCTAssertEqual(matches[id(1)], .ambiguous)
+    }
+
+    func testAFarSmallOrOtherPidFrameIsNotNear() {
+        let ax = CGRect(x: 100, y: 200, width: 888, height: 400)
+        let far = CGRect(x: 1500, y: 200, width: 900, height: 400)
+        XCTAssertEqual(
+            matchServerWindows(axFrames: [id(1): ax], server: [ServerWindow(pid: 1, bounds: far)])[id(1)], .missing
+        )
+    }
+
+    func testALearnedMinimumSizeIsNotARenderMismatch() {
+        let viewport = CGRect(x: 0, y: 0, width: 2000, height: 800)
+        let ax = CGRect(x: 100, y: 200, width: 888, height: 400)
+        let drawn = CGRect(x: 100, y: 200, width: 900, height: 400)
+        let mismatches = findRenderMismatches(
+            axFrames: [id(1): ax], server: [ServerWindow(pid: 1, bounds: drawn)],
+            targets: [id(1): ax], viewports: [viewport]
+        )
+        XCTAssertEqual(mismatches, [])
+    }
+
+    // MARK: Missing windows (SM-02c)
+
+    func testAVisibleTargetAbsentFromTheOnScreenListIsAMismatchWithNoServerFrame() {
+        let viewport = CGRect(x: 0, y: 0, width: 2000, height: 800)
+        let mismatches = findRenderMismatches(
+            axFrames: [id(1): frame], server: [ServerWindow(pid: 2, bounds: frame)],
+            targets: [id(1): frame], viewports: [viewport]
+        )
+        XCTAssertEqual(mismatches, [RenderMismatch(id: id(1), ax: frame, ws: nil)])
+    }
+
+    func testMissingWindowLogsWsMissing() {
+        XCTAssertEqual(
+            renderMismatchLine(id: id(7, 3), app: "WhatsApp", ax: frame, ws: nil),
+            "render mismatch id=7:3 app=WhatsApp ax=(100,200,600,400) ws=missing"
+        )
     }
 
     // MARK: Mismatch decision

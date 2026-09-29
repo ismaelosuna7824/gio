@@ -74,6 +74,24 @@ final class SnapshotPlanningTests: XCTestCase {
         XCTAssertEqual(result[id(1)], .ambiguous)
     }
 
+    func testLearnedMinimumSizeMatchesTheUniqueNearFrame() {
+        let ax = CGRect(x: 0, y: 0, width: 888, height: 600)
+        let result = matchSnapshotCandidates(managed: [id(1): ax], candidates: [candidate(11, CGRect(x: 0, y: 0, width: 900, height: 600))])
+        XCTAssertEqual(result[id(1)], .matched(11))
+    }
+
+    func testSeveralNearFramesStayAmbiguous() {
+        let ax = CGRect(x: 0, y: 0, width: 888, height: 600)
+        let result = matchSnapshotCandidates(
+            managed: [id(1): ax],
+            candidates: [
+                candidate(11, CGRect(x: 0, y: 0, width: 900, height: 600)),
+                candidate(12, CGRect(x: 2, y: 0, width: 910, height: 600)),
+            ]
+        )
+        XCTAssertEqual(result[id(1)], .ambiguous)
+    }
+
     func testOtherPidsAndOtherSizesAreMissing() {
         let result = matchSnapshotCandidates(
             managed: [id(1): a],

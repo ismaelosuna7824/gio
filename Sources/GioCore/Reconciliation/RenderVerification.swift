@@ -48,10 +48,27 @@ func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
     abs(a.width - b.width) <= renderTolerance && abs(a.height - b.height) <= renderTolerance
 }
 
+/// SM-02c: share of the larger frame's area the two frames must overlap.
+public let nearOverlapRatio: CGFloat = 0.8
+
+/// Same window after a size the app changed on its own (minimum-size
+/// learning): the frames overlap by at least 80% of the larger area. (An
+/// origin-only rule would also accept much smaller windows at the same corner.)
+func plausiblySame(_ a: CGRect, _ b: CGRect) -> Bool {
+    let overlap = a.intersection(b)
+    guard !overlap.isNull else {
+        return false
+    }
+    let larger = max(a.width * a.height, b.width * b.height)
+    return larger > 0 && overlap.width * overlap.height / larger >= nearOverlapRatio
+}
+
 /// Maps each managed window to a WindowServer entry without private APIs.
 /// Candidates share the pid. Pass 1: an entry whose bounds equal the AX
 /// frame is that window's (each entry is claimed once). Pass 2, for the rest:
 /// unclaimed entries of the same size; exactly one matches, several are
+/// ambiguous. Pass 3 (SM-02c), when no same-size entry exists: the unclaimed
+/// entries of the pid that are `plausiblySame`; one matches, several are
 /// ambiguous, none is missing.
 public func matchServerWindows(
     axFrames: [WindowID: CGRect], server: [ServerWindow]
@@ -73,7 +90,14 @@ public func matchServerWindows(
         }
         switch candidates.count {
         case 0:
-            result[id] = .missing
+            let nearby = server.indices.filter {
+                !claimed.contains($0) && server[$0].pid == id.pid && plausiblySame(server[$0].bounds, ax)
+            }
+            switch nearby.count {
+            case 0: result[id] = .missing
+            case 1: result[id] = .matched(server[nearby[0]].bounds)
+            default: result[id] = .ambiguous
+            }
         case 1:
             result[id] = .matched(server[candidates[0]].bounds)
         default:
@@ -92,9 +116,10 @@ public func isRenderMismatch(reference: CGRect, server: CGRect) -> Bool {
 public struct RenderMismatch: Equatable, Sendable {
     public let id: WindowID
     public let ax: CGRect
-    public let ws: CGRect
+    /// `nil`: the on-screen list has no entry for the window at all.
+    public let ws: CGRect?
 
-    public init(id: WindowID, ax: CGRect, ws: CGRect) {
+    public init(id: WindowID, ax: CGRect, ws: CGRect?) {
         self.id = id
         self.ax = ax
         self.ws = ws
@@ -102,7 +127,10 @@ public struct RenderMismatch: Equatable, Sendable {
 }
 
 /// Windows whose target intersects a viewport and whose WindowServer bounds
-/// differ from their AX frame. Ambiguous and missing windows are skipped.
+/// differ from their AX frame. A visible target with no on-screen entry is a
+/// mismatch with `ws == nil` (SM-02c: the list only holds on-screen windows).
+/// Ambiguous windows are skipped; a match whose size differs (minimum-size
+/// learning) is not a mismatch.
 public func findRenderMismatches(
     axFrames: [WindowID: CGRect], server: [ServerWindow],
     targets: [WindowID: CGRect], viewports: [CGRect]
@@ -112,10 +140,17 @@ public func findRenderMismatches(
     }
     let matches = matchServerWindows(axFrames: checked, server: server)
     return checked.keys.sorted().compactMap { id in
-        guard case .matched(let ws)? = matches[id], isRenderMismatch(reference: checked[id]!, server: ws) else {
+        switch matches[id] {
+        case .matched(let ws)?:
+            guard sameSize(ws, checked[id]!), isRenderMismatch(reference: checked[id]!, server: ws) else {
+                return nil
+            }
+            return RenderMismatch(id: id, ax: checked[id]!, ws: ws)
+        case .missing?, nil:
+            return RenderMismatch(id: id, ax: checked[id]!, ws: nil)
+        case .ambiguous?:
             return nil
         }
-        return RenderMismatch(id: id, ax: checked[id]!, ws: ws)
     }
 }
 
@@ -164,8 +199,8 @@ public struct RenderCheckBook: Sendable {
     }
 }
 
-public func renderMismatchLine(id: WindowID, app: String, ax: CGRect, ws: CGRect) -> String {
-    "render mismatch id=\(id.pid):\(id.elementID) app=\(app) ax=\(formatFrame(ax)) ws=\(formatFrame(ws))"
+public func renderMismatchLine(id: WindowID, app: String, ax: CGRect, ws: CGRect?) -> String {
+    "render mismatch id=\(id.pid):\(id.elementID) app=\(app) ax=\(formatFrame(ax)) ws=\(ws.map(formatFrame) ?? "missing")"
 }
 
 public func renderNudgeLine(id: WindowID, app: String, fixed: Bool) -> String {

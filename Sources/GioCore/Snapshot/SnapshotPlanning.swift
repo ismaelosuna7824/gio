@@ -83,7 +83,8 @@ public func backingScale(for frame: CGRect, displays: [SnapshotDisplay]) -> CGFl
 /// `matchServerWindows` (FI-05): pass 1 takes the candidate of the same pid
 /// whose frame equals the window's (each candidate is claimed once); pass 2
 /// takes the unclaimed same-size candidates of the pid: exactly one matches,
-/// several are ambiguous, none is missing.
+/// several are ambiguous. With none, pass 3 (SM-02c) takes the unique
+/// same-pid candidate that is `plausiblySame` (learned minimum sizes).
 public func matchSnapshotCandidates(
     managed: [WindowID: CGRect], candidates: [SnapshotCandidate]
 ) -> [WindowID: SnapshotMatch] {
@@ -105,7 +106,17 @@ public func matchSnapshotCandidates(
             !claimed.contains($0) && candidates[$0].pid == id.pid && sameSize(candidates[$0].frame, frame)
         }
         switch options.count {
-        case 0: result[id] = .missing
+        case 0:
+            let nearby = candidates.indices.filter {
+                !claimed.contains($0) && candidates[$0].pid == id.pid && plausiblySame(candidates[$0].frame, frame)
+            }
+            switch nearby.count {
+            case 0: result[id] = .missing
+            case 1:
+                claimed.insert(nearby[0])
+                result[id] = .matched(candidates[nearby[0]].windowID)
+            default: result[id] = .ambiguous
+            }
         case 1:
             claimed.insert(options[0])
             result[id] = .matched(candidates[options[0]].windowID)
