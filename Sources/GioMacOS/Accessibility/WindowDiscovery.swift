@@ -14,6 +14,8 @@ public struct DiscoveredSystemWindow {
     public let window: SystemWindow
     public let element: AXUIElement
     public let appElement: AXUIElement
+    /// Set when admission floated the window (`.float(reason)`).
+    public var floatReason: FloatReason? = nil
 }
 
 /// A window discovery saw but did not hand out as a tile candidate.
@@ -111,10 +113,11 @@ public func discoverSystemWindows() throws -> SystemWindowDiscoveryResult {
                 isMinimized: minimized,
                 isFullscreen: fullscreen
             )
-            let discovered = DiscoveredSystemWindow(
+            var discovered = DiscoveredSystemWindow(
                 window: window, element: element, appElement: appElement
             )
-            if case .float = admission {
+            if case .float(let reason) = admission {
+                discovered.floatReason = reason
                 floating.append(discovered)
                 GioLog.record(
                     .info, "discovery exclude pid=\(window.pid) app=\(appName) \(admission.label)"

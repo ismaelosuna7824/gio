@@ -27,6 +27,7 @@ final class SessionHost: @unchecked Sendable {
     private var pendingReflow: DispatchWorkItem?
     private var nextElementID: UInt64 = 0
     private var lastPIDs: Set<pid_t> = []
+    private var tileability = TileabilityCache()
     private var fullscreenRecords: [WindowID: FullscreenRecord] = [:]
     private var visibleFrames: [DisplayID: CGRect] = [:]
     private let dispatcher = HotkeyDispatcher()
@@ -119,7 +120,9 @@ final class SessionHost: @unchecked Sendable {
         let flip = AXVerticalFlip(displayHeight: mainHeight())
         var liveIDs = Set<WindowID>()
         var focusedID: WindowID?
-        for candidate in found.windows where !candidate.window.isMinimized {
+        let candidates = found.windows.filter { !$0.window.isMinimized }
+            + found.floating.filter { !$0.window.isMinimized }
+        for candidate in candidates {
             if let known = actuator?.id(
                 matching: candidate.element, pid: candidate.window.pid
             ) {
@@ -152,6 +155,15 @@ final class SessionHost: @unchecked Sendable {
             )
             let outcome = evaluateRules(session.config.rules, app: window.application)
             window.mode = outcome.mode ?? .tiled
+            if outcome.mode == .floating {
+                window.floatReason = .rule
+            } else if let admitted = candidate.floatReason {
+                // Discovery floated it (dialog, panel, fixed size): managed
+                // and visible, never moved by the layout.
+                window.mode = .floating
+                window.floatReason = admitted
+            }
+            tileability.invalidate(id)
             try? session.registry.register(window)
             if let wanted = outcome.workspace,
                WorkspaceManager.range.contains(wanted),
@@ -192,7 +204,7 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         reapDeadPids(live: liveIDs)
-        lastPIDs = Set(found.windows.map(\.window.pid))
+        lastPIDs = Set(candidates.map(\.window.pid))
     }
 
     /// Remove records whose process is gone (proof, not absence) from the
@@ -209,6 +221,7 @@ final class SessionHost: @unchecked Sendable {
         let deadSet = Set(dead)
         for id in dead.sorted() {
             session.registry.remove(id)
+            tileability.invalidate(id)
             fullscreenRecords.removeValue(forKey: id)
         }
         for index in WorkspaceManager.range {
@@ -253,17 +266,14 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func tileableModes() -> [WindowID: WindowMode] {
-        var modes: [WindowID: WindowMode] = [:]
-        for window in session.registry.managedWindows() {
-            guard window.mode == .tiled,
-                  let element = actuator?.element(for: window.id),
-                  axIsTileable(element)
-            else {
-                continue
+        // Verdicts are cached per window; a failed probe makes the window
+        // floating(notResizable) in the registry instead of dropping it.
+        reconcileTileability(registry: session.registry, cache: &tileability) { [actuator] id in
+            guard let element = actuator?.element(for: id) else {
+                return false
             }
-            modes[window.id] = .tiled
+            return axIsTileable(element)
         }
-        return modes
     }
 
     private func reflowAll() {
@@ -355,6 +365,8 @@ final class SessionHost: @unchecked Sendable {
         if hotkeyTap == nil {
             startTap()
         }
+        // Events may mean a resize or attribute change: re-probe everyone.
+        tileability.invalidateAll()
         enumerateAndPlace()
         if Set(lastPIDs) != Set(snapshotPIDs()) {
             refreshEventObservation()

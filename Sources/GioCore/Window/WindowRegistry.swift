@@ -112,6 +112,19 @@ public final class WindowRegistry {
             throw WindowRegistryError.unknown(id)
         }
         window.mode = mode
+        if mode != .floating {
+            window.floatReason = nil
+        }
+        windows[id] = window
+    }
+
+    /// Float a window and record why. Unknown IDs throw.
+    public func setFloating(_ reason: FloatReason, for id: WindowID) throws {
+        guard var window = windows[id] else {
+            throw WindowRegistryError.unknown(id)
+        }
+        window.mode = .floating
+        window.floatReason = reason
         windows[id] = window
     }
 
@@ -126,8 +139,10 @@ public final class WindowRegistry {
         switch window.mode {
         case .tiled:
             window.mode = .floating
+            window.floatReason = .manual
         case .floating, .fullscreen:
             window.mode = .tiled
+            window.floatReason = nil
         }
         windows[id] = window
         return window.mode

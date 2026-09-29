@@ -5,6 +5,10 @@ public enum FloatReason: String, Equatable, Sendable {
     case dialog
     case floatingSubrole
     case notResizable
+    /// Floated by a config window rule.
+    case rule
+    /// Floated by the user (toggle-floating).
+    case manual
 }
 
 /// Why a window is not managed at all.

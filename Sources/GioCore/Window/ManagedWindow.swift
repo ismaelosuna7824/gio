@@ -35,6 +35,8 @@ public struct ManagedWindow: Equatable, Sendable {
     public var title: String
     public var frame: CGRect
     public var mode: WindowMode
+    /// Why the window floats; nil unless `mode == .floating`.
+    public var floatReason: FloatReason?
 
     public init(
         id: WindowID,
@@ -42,7 +44,8 @@ public struct ManagedWindow: Equatable, Sendable {
         application: String,
         title: String,
         frame: CGRect,
-        mode: WindowMode
+        mode: WindowMode,
+        floatReason: FloatReason? = nil
     ) {
         self.id = id
         self.pid = pid
@@ -50,5 +53,6 @@ public struct ManagedWindow: Equatable, Sendable {
         self.title = title
         self.frame = frame
         self.mode = mode
+        self.floatReason = floatReason
     }
 }
