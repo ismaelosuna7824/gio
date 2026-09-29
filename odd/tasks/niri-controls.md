@@ -41,9 +41,9 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
 - [x] NC-04 (`77f9ca1`) — Center column (Alt+C): viewport centers the focused column.
 - [x] NC-05 (`f5c874d`) — Consume/expel (Alt+BracketLeft / Alt+BracketRight): pull the focused window
   into the neighbouring column / push it out into its own new column.
-- [ ] NC-06 — Hide inactive workspaces: windows of non-active workspaces park off-screen
+- [x] NC-06 (`021c6bc`) — Hide inactive workspaces: windows of non-active workspaces park off-screen
   (corner/edge, display-aware), restore on switch back and on Gio exit.
-- [ ] NC-07 — Animated workspace switch using the MO-04 player.
+- [x] NC-07 (`fba8058`) — Animated workspace switch using the MO-04 player.
 
 Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
 resolved per display; savedWidthSpec for maximize; FullscreenBook + full-display frame below
@@ -51,6 +51,14 @@ menu bar, others parked in place; center survives reveal; consume keeps height w
 Bindings: Alt+R, Alt+Minus/Equal, Alt+F, Alt+Shift+F, Alt+Shift+Space (floating), Alt+C,
 Alt+BracketLeft/Right. RED (compile) -> GREEN each task; 455 executed 0 failures (parent
 spot-check); signed build OK. Gaps: no CLI/IPC equivalents; LIVE PENDING. Review: UNAVAILABLE.
+
+Evidence NC-06/07 (route: one delegated writer): found and fixed latent bug — display never
+repointed after `switchTo` (added DisplayManager.show + syncShownWorkspace). Hidden position:
+bottom-right corner below the display (fallback bottom-left), floating frames remembered in
+HiddenWindowBook. Switch animates vertically through the bottom edge both directions.
+RED (compile) -> GREEN; 482 executed 0 failures (parent spot-check); signed build + GioPOC OK.
+Gaps: multi-display floating reveal relative to first display; crash loses hidden floating
+frame. LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Each binding works live and animates; toggles are reversible without drift.
@@ -72,3 +80,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 ## Progress
 - 2026-09-29: document created (after MO-04 live pass: 25 frames/200ms, dropped ~0). Next: NC-01..NC-05.
 - 2026-09-29: NC-01..NC-05 done. Next: NC-06..NC-07 (route: delegated writer).
+- 2026-09-29: NC-06 + NC-07 done. All tasks code-complete. Next: user live test.
