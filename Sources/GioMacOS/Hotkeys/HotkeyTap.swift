@@ -5,12 +5,14 @@ import GioCore
 
 /// USB HID keycodes for the keys Gio binds (ANSI layout). Hardcoded
 /// deliberately: stable for decades, and avoids a Carbon dependency for
-/// eleven integers.
+/// a few integers.
 private let tapKeyNames: [Int64: String] = [
     4: "H", 38: "J", 40: "K", 37: "L",
     18: "1", 19: "2", 20: "3", 21: "4", 23: "5",
     22: "6", 26: "7", 28: "8", 25: "9",
     49: "Space",
+    15: "R", 3: "F", 8: "C",
+    27: "Minus", 24: "Equal", 33: "BracketLeft", 30: "BracketRight",
 ]
 
 func tapCombo(from event: CGEvent) -> HotkeyCombo? {

@@ -17,11 +17,16 @@ public enum HotkeyAction: Equatable, Sendable {
     case moveToWorkspace(Int)
     case toggleFloating
     case fullscreen
+    /// Niri `switch-preset-column-width` (Alt+R).
+    case switchPresetColumnWidth
+    /// Niri `set-column-width "-10%"` (Alt+Minus).
+    case shrinkColumnWidth
+    /// Niri `set-column-width "+10%"` (Alt+Equal).
+    case growColumnWidth
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
-/// user config layers cleanly over defaults. `toggleFloating` and
-/// `fullscreen` ship unbound — the plan assigns them no default keys.
+/// user config layers cleanly over defaults.
 public struct HotkeyDispatcher: Equatable, Sendable {
     private var bindings: [HotkeyCombo: HotkeyAction]
 
@@ -51,7 +56,8 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 }
 
 /// Plan defaults: Alt+HJKL focus, Alt+Shift+HJKL move, Alt+N workspace,
-/// Alt+Shift+N move-to-workspace.
+/// Alt+Shift+N move-to-workspace, Alt+R cycle width presets,
+/// Alt+Minus / Alt+Equal step the width by 10%.
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -65,6 +71,9 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt, .shift], "L"), .moveRight),
         (combo([.alt, .shift], "K"), .moveUp),
         (combo([.alt, .shift], "J"), .moveDown),
+        (combo([.alt], "R"), .switchPresetColumnWidth),
+        (combo([.alt], "Minus"), .shrinkColumnWidth),
+        (combo([.alt], "Equal"), .growColumnWidth),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))

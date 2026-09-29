@@ -17,19 +17,24 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     public var defaultColumnWidthPoints: CGFloat?
     /// Parsed and validated; consumed by future engine centering work.
     public var centerFocusedColumn: Bool
+    /// Widths `switch-preset-column-width` cycles through (Niri
+    /// `preset-column-widths`): fractions when ≤ 1, points otherwise.
+    public var presetColumnWidths: [ColumnWidthSpec]
 
     public init(
         gaps: CGFloat = 8,
         padding: CGFloat = 8,
         defaultColumnWidthFraction: CGFloat? = 0.5,
         defaultColumnWidthPoints: CGFloat? = nil,
-        centerFocusedColumn: Bool = true
+        centerFocusedColumn: Bool = true,
+        presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths
     ) {
         self.gaps = gaps
         self.padding = padding
         self.defaultColumnWidthFraction = defaultColumnWidthFraction
         self.defaultColumnWidthPoints = defaultColumnWidthPoints
         self.centerFocusedColumn = centerFocusedColumn
+        self.presetColumnWidths = presetColumnWidths
     }
 }
 

@@ -34,6 +34,14 @@ public struct CommandSession {
     }
 }
 
+func describeWidthSpec(_ spec: ColumnWidthSpec) -> String {
+    switch spec {
+    case .standard: return "0"
+    case .proportion(let value): return "\(value)x"
+    case .points(let value): return "\(value)"
+    }
+}
+
 func describeManagedWindow(_ window: ManagedWindow) -> String {
     let frame = window.frame
     let coords = "(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.size.width)),\(Int(frame.size.height)))"
@@ -102,7 +110,7 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             "columns=\(workspace.columns.count) viewportOffset=\(workspace.viewportOffset) focusedColumn=\(workspace.focusedColumn)",
         ]
         for (index, column) in workspace.columns.enumerated() {
-            lines.append("column\(index) windows=\(column.windows.count) width=\(column.width)")
+            lines.append("column\(index) windows=\(column.windows.count) width=\(describeWidthSpec(column.widthSpec))")
         }
         return lines.joined(separator: "\n")
     case .status:

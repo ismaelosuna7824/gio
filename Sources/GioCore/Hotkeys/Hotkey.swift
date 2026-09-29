@@ -34,6 +34,15 @@ private let modifierNames: [String: HotkeyModifier] = [
     "cmd": .cmd, "command": .cmd,
 ]
 
+/// Punctuation spellings folded into the canonical key names the OS tap
+/// reports, so `"Alt+-"` and `"Alt+Minus"` bind the same key.
+private let keyAliases: [String: String] = [
+    "-": "Minus", "minus": "Minus",
+    "=": "Equal", "equal": "Equal",
+    "[": "BracketLeft", "bracketleft": "BracketLeft",
+    "]": "BracketRight", "bracketright": "BracketRight",
+]
+
 /// Parse `"Alt+Shift+H"` (case-insensitive modifiers, single letters
 /// uppercased). Nil for empty text, empty key, or unknown modifiers.
 /// Multi-character keys (`"Space"`, `"F1"`) pass through untouched.
@@ -49,6 +58,6 @@ public func parseHotkey(_ text: String) -> HotkeyCombo? {
         }
         modifiers.insert(modifier)
     }
-    let key = rawKey.count == 1 ? rawKey.uppercased() : rawKey
+    let key = keyAliases[rawKey.lowercased()] ?? (rawKey.count == 1 ? rawKey.uppercased() : rawKey)
     return HotkeyCombo(modifiers: modifiers, key: key)
 }

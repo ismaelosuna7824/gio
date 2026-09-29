@@ -22,6 +22,26 @@ public struct LayoutConfig: Equatable, Sendable {
     }
 }
 
+extension LayoutConfig {
+    /// The width a spec takes on a viewport of `viewportWidth`, floored at
+    /// `minimumColumnWidth`. The engine and the width actions share this so
+    /// what the user sees is what the actions compare against.
+    public func resolvedWidth(of spec: ColumnWidthSpec, viewportWidth: CGFloat) -> CGFloat {
+        let raw: CGFloat
+        switch spec {
+        case .standard:
+            raw = defaultColumnWidth ?? proportionalColumnWidth(
+                0.5, viewportWidth: viewportWidth, padding: padding, gap: gap
+            )
+        case .proportion(let value):
+            raw = proportionalColumnWidth(value, viewportWidth: viewportWidth, padding: padding, gap: gap)
+        case .points(let value):
+            raw = value
+        }
+        return max(raw, minimumColumnWidth)
+    }
+}
+
 public enum LayoutError: Error, Equatable, Sendable {
     case invalidViewport
     case invalidConfiguration
@@ -99,14 +119,10 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
             throw LayoutError.invalidViewport
         }
 
-        let defaultWidth = config.defaultColumnWidth ?? proportionalColumnWidth(
-            0.5, viewportWidth: viewport.width, padding: config.padding, gap: config.gap
-        )
         var widths: [CGFloat] = []
         var framedColumns: [Column] = []
         for column in workspace.columns where !column.windows.isEmpty {
-            let raw = column.width > 0 ? column.width : defaultWidth
-            widths.append(max(raw, config.minimumColumnWidth))
+            widths.append(config.resolvedWidth(of: column.widthSpec, viewportWidth: viewport.width))
             framedColumns.append(column)
         }
 

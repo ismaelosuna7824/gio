@@ -11,12 +11,13 @@ enum ConfigValue: Equatable {
     case int(Int)
     case double(Double)
     case bool(Bool)
+    case array([ConfigValue])
 
     var number: Double? {
         switch self {
         case .int(let value): return Double(value)
         case .double(let value): return value
-        case .string, .bool: return nil
+        case .string, .bool, .array: return nil
         }
     }
 }
@@ -155,6 +156,31 @@ func parseConfigValue(_ raw: String) -> ConfigValue? {
         }
         return .string(String(raw.dropFirst().dropLast()))
     }
+    if raw.hasPrefix("[") {
+        // Flat list of numbers, e.g. `[0.33, 0.5, 800]`; a trailing comma is
+        // tolerated, nested lists are not.
+        guard raw.hasSuffix("]") else {
+            return nil
+        }
+        let inner = String(raw.dropFirst().dropLast()).trimmingCharacters(in: .whitespaces)
+        if inner.isEmpty {
+            return .array([])
+        }
+        var items: [ConfigValue] = []
+        var parts = inner.split(separator: ",", omittingEmptySubsequences: false).map {
+            $0.trimmingCharacters(in: .whitespaces)
+        }
+        if parts.last == "" {
+            parts.removeLast()
+        }
+        for part in parts {
+            guard !part.hasPrefix("["), let item = parseConfigValue(part) else {
+                return nil
+            }
+            items.append(item)
+        }
+        return .array(items)
+    }
     switch raw {
     case "true": return .bool(true)
     case "false": return .bool(false)
@@ -196,6 +222,24 @@ func applyLayoutKey(
             config.layout.defaultColumnWidthPoints = CGFloat(number)
             config.layout.defaultColumnWidthFraction = nil
         }
+    case "preset-column-widths":
+        guard case .array(let items) = value, !items.isEmpty else {
+            errors.append(
+                "line \(line): layout.preset-column-widths expects a non-empty list of positive numbers"
+            )
+            return
+        }
+        var specs: [ColumnWidthSpec] = []
+        for item in items {
+            guard let number = item.number, number > 0, number.isFinite else {
+                errors.append(
+                    "line \(line): layout.preset-column-widths expects a non-empty list of positive numbers"
+                )
+                return
+            }
+            specs.append(number <= 1 ? .proportion(CGFloat(number)) : .points(CGFloat(number)))
+        }
+        config.layout.presetColumnWidths = specs
     case "center-focused-column":
         guard case .bool(let enabled) = value else {
             errors.append("line \(line): layout.center-focused-column expects true or false")
@@ -328,7 +372,10 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-up": return .moveUp
     case "move-down": return .moveDown
     case "toggle-floating": return .toggleFloating
-    case "fullscreen": return .fullscreen
+    case "fullscreen", "fullscreen-window": return .fullscreen
+    case "switch-preset-column-width": return .switchPresetColumnWidth
+    case "set-column-width-minus": return .shrinkColumnWidth
+    case "set-column-width-plus": return .growColumnWidth
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -351,6 +398,7 @@ public func validActionNames() -> [String] {
         "move-left", "move-right", "move-up", "move-down",
         "workspace N", "move-to-workspace N",
         "toggle-floating", "fullscreen",
+        "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
     ]
 }
 

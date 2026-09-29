@@ -12,6 +12,8 @@ public func defaultConfigTemplate() -> String {
     padding = 8
     default-column-width = 0.5
     center-focused-column = true
+    # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
+    preset-column-widths = [0.33333, 0.5, 0.66667]
 
     [behavior]
     focus-follows-mouse = false
@@ -26,6 +28,8 @@ public func defaultConfigTemplate() -> String {
     "Alt+L" = "focus-right"
     "Alt+J" = "focus-down"
     "Alt+K" = "focus-up"
+    # Also available: "switch-preset-column-width" (Alt+R),
+    # "set-column-width-minus" (Alt+Minus), "set-column-width-plus" (Alt+Equal).
 
     [[window-rules]]
     app = "Calculator"

@@ -1128,8 +1128,40 @@ final class SessionHost: @unchecked Sendable {
             }
         case .fullscreen:
             toggleFullscreen()
+        case .switchPresetColumnWidth:
+            let sizing = focusedSizing()
+            let next = switchPresetColumnWidth(
+                in: workspace, presets: session.config.layout.presetColumnWidths,
+                config: sizing.config, viewportWidth: sizing.viewportWidth
+            )
+            commit(next, over: workspace)
+        case .shrinkColumnWidth, .growColumnWidth:
+            let sizing = focusedSizing()
+            let next = stepFocusedColumnWidth(
+                in: workspace, by: action == .growColumnWidth ? 0.1 : -0.1,
+                config: sizing.config, viewportWidth: sizing.viewportWidth
+            )
+            commit(next, over: workspace)
         }
         reflowAll()
+    }
+
+    /// Store `next` when an action changed anything.
+    private func commit(_ next: Workspace, over current: Workspace) {
+        if next != current {
+            session.manager.update(next)
+        }
+    }
+
+    /// Layout config plus the viewport width of the display showing the
+    /// current workspace: what width actions resolve proportions against.
+    private func focusedSizing() -> (config: LayoutConfig, viewportWidth: CGFloat) {
+        let current = session.manager.current
+        let display = displays.allDisplays().first { Int($0.workspace.rawValue) == current }
+            ?? displays.allDisplays().first
+        let width = display.map { (visibleFrames[$0.id] ?? $0.frame).width }
+            ?? NSScreen.main?.visibleFrame.width ?? 1800
+        return (engine().config, width)
     }
 
     private func narrowMove(in workspace: inout Workspace, direction: FocusDirection) {
