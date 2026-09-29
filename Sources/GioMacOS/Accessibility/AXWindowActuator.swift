@@ -28,6 +28,10 @@ public final class AXWindowActuator: WindowActuator {
     /// its reflow), so all mutable state sits behind one lock.
     private let stateLock = NSLock()
     private var storedHandles: [UInt64: Handle] = [:]
+    /// PA-04: element hash -> candidate ids; `CFEqual` verifies inside the bucket.
+    private var handleIndex = HandleIndex<AXUIElement>(
+        hash: { Int(truncatingIfNeeded: CFHash($0)) }, equal: { CFEqual($0, $1) }
+    )
     private var storedFlip: AXVerticalFlip
     private var callCounts: [pid_t: Int] = [:]
     /// PA-03: call counting takes `stateLock` per AX call, so it only runs
@@ -70,8 +74,7 @@ public final class AXWindowActuator: WindowActuator {
     /// means genuinely new (register it); never invent an ID per scan.
     public func id(matching element: AXUIElement, pid: pid_t) -> WindowID? {
         stateLock.withLock {
-            storedHandles.first { $0.value.pid == pid && CFEqual($0.value.element, element) }
-                .map { WindowID(pid: pid, elementID: $0.key) }
+            handleIndex.find(element, pid: pid).map { WindowID(pid: pid, elementID: $0) }
         }
     }
 
@@ -92,11 +95,15 @@ public final class AXWindowActuator: WindowActuator {
         _ = AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
         stateLock.withLock {
             storedHandles[elementID] = Handle(element: element, appElement: appElement, pid: pid)
+            handleIndex.insert(elementID: elementID, pid: pid, element: element)
         }
     }
 
     public func forget(elementID: UInt64) {
-        _ = stateLock.withLock { storedHandles.removeValue(forKey: elementID) }
+        stateLock.withLock {
+            storedHandles.removeValue(forKey: elementID)
+            handleIndex.remove(elementID: elementID)
+        }
     }
 
     public func axCallCount(forPid pid: pid_t) -> Int {

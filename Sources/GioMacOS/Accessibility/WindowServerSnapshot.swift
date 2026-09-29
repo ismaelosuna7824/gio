@@ -2,11 +2,12 @@ import CoreGraphics
 import Foundation
 import GioCore
 
-/// FI-05: what the WindowServer actually draws. `CGWindowListCopyWindowInfo`
+/// FI-05: what the WindowServer actually draws. PA-04: on-screen windows
+/// only (never every window of every Space), since only visible targets are checked. `CGWindowListCopyWindowInfo`
 /// is public and returns owner pid, layer and bounds without Screen
 /// Recording; window names are a separate key that Gio never reads.
 public func windowServerWindows(displayHeight: CGFloat) -> [ServerWindow] {
-    let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
         return []
     }

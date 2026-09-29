@@ -75,6 +75,16 @@ public func windowEventAction(for kind: WindowEventKind, isKnownWindow: Bool) ->
     }
 }
 
+/// PA-04: while a motion writes frames for an app, that app's moved/resized
+/// events are our own echoes. Dropping them before the handle lookup and the
+/// echo gate keeps a burst of AX events from costing anything per event.
+public func dropsAsMotionEcho(_ kind: WindowEventKind, pid: pid_t, animating: Set<pid_t>) -> Bool {
+    guard !animating.isEmpty, animating.contains(pid) else {
+        return false
+    }
+    return kind == .moved || kind == .resized
+}
+
 /// Breaks the write -> event -> reflow -> write loop. The reconciler's own
 /// frame writes raise moved/resized events; an event is an echo when the
 /// window now sits at the frame we last applied (within tolerance), or when
@@ -98,6 +108,11 @@ public struct WriteEchoGate: Sendable {
         for (id, frame) in frames {
             entries[id] = Entry(frame: frame, at: time)
         }
+    }
+
+    /// Single-window form for the per-tick path: no dictionary is built.
+    public mutating func recordApplied(_ id: WindowID, frame: CGRect, at time: TimeInterval) {
+        entries[id] = Entry(frame: frame, at: time)
     }
 
     public mutating func forget(_ id: WindowID) {

@@ -219,18 +219,33 @@ PA-05. Animation frames do not go through the reflow lanes. `WindowReconciler` o
 - Keyboard bursts (FI-06): while a motion is in flight `ReflowCoalescer` defers the retargeting reflow to the next timer tick, so N rapid actions cost one reflow per tick. Focus for keyboard/IPC actions is applied right after the motion starts (`FocusIntent.takeImmediate` and `WindowReconciler.focusNow`); the final exact pass re-asserts it only if focus drifted (`takeReassert`): another app frontmost, or the frontmost app's `AXFocusedWindow` resolves to a different window or cannot be read (once per intent).
 - Workspace switches move vertically through the bottom edge (macOS cannot place windows above the menu bar): outgoing windows drop below the display, incoming hidden windows rise from directly below their target after an invisible pre-position write.
 
+### Trusted frames and the lean settle (PA-04)
+
+The final exact pass used to read AX frames (two calls) for every window, parked ones Gio itself placed included. `TrustedFrames` (`GioCore/Reconciliation/TrustedFrames.swift`) remembers the frame Gio wrote and verified, or found correct, for each window. `WindowReconciler.reconcile(..., trusted:)` skips the read and the write of a window whose desired frame equals its trusted frame within 1 pt (parked to parked, hidden, and unchanged visible windows) and counts it `already`; `ReconcileReport.skippedReads` and the debug lines `reconcile ... skippedReads=N` / `settle skippedReads=N` report how many. Trust is recorded after each settle (`recordSettle`: applied, parked and already-correct windows are trusted at their desired frame) and dropped by:
+
+- a non-echo moved/resized event for the window (user drag, app-initiated resize), minimize/restore, purge and re-registration;
+- a failed, vanished or timed-out report (so learned minimum sizes and failure reporting are unchanged: a clamped visible write fails, is not trusted, and is read again);
+- the start of a motion or a pre-position that moves it (motion frames are unverified, so animated windows are still read in the final pass);
+- any display topology change (all trust cleared; macOS may relocate windows and every parking target changes).
+
+Known limit: a window moved by something that raises no AX event, or moved by the user inside the 0.35 s echo suppression window, stays trusted until the next event or motion for it.
+
+Per-tick bookkeeping is in place: a motion tick updates `physicalFrames` and the echo gate only for the windows sampled that tick (no dictionary merges), and publishes the focus ring only when the focused window was sampled. `FocusRingPublishGate` further drops a publication unless visibility, style or the frame (by at least 1 pt on any edge, measured against the last published frame) changed. While a motion runs, moved/resized events from pids that are being animated are our own writes and are dropped first thing (`dropsAsMotionEcho`), before the handle lookup and the echo gate.
+
+Retained AX handles are indexed by `CFHash(element)` (`HandleIndex`): `AXWindowActuator.id(matching:pid:)` looks up the bucket and verifies with `CFEqual` and the pid inside it, instead of scanning every handle under the lock. The hidden-window parking plan (`planInactiveWorkspaces`) is memoized (`PlanMemo`) on its inputs (hidden frames, display frames); a change of membership, frames or displays recomputes it, and config reload and display changes invalidate it explicitly.
+
 ### Echo gate
 
 Gio's own writes raise moved and resized events. `WriteEchoGate` records every applied frame with the system uptime. An event for that window is ignored if it arrives within **0.35 s** of the write (the AX read is skipped entirely) or if the window's observed frame is within **2 pt** of the last applied frame. Without this, write, event, reflow, write would loop.
 
 ### Render verification (FI-05)
 
-Accessibility can report a window at its target while the WindowServer still draws it elsewhere (seen with Chromium/Electron windows coming back from parking). About 150 ms after a settle that moved windows (a motion's final exact pass, or an instant reflow with `applied` or `parked` above 0), `SessionHost.runRenderCheck` runs on the session queue:
+Accessibility can report a window at its target while the WindowServer still draws it elsewhere (seen with Chromium/Electron windows coming back from parking). About 150 ms after a settle that wrote or animated visible windows (a motion's final exact pass, or an instant reflow with visible `applied` windows), `SessionHost.runRenderCheck` runs on the session queue. Scope (PA-04): only visible targets that were written or animated since the last check (`renderCheckFrames`); a settle that only wrote parked or hidden windows skips the check, including the WindowServer snapshot. Steps:
 
-1. Read AX frames through `WindowReconciler.currentFrames` and the WindowServer list through `windowServerWindows` (`CGWindowListCopyWindowInfo`: pid, layer 0, bounds only; no titles, no Screen Recording). Bounds are converted to Cocoa with `cocoaFrame(fromWindowServer:)`.
+1. Take the AX frames the settle already read or verified (`ReconcileReport.settledFrames`; no new AX read) and the WindowServer list through `windowServerWindows` (`CGWindowListCopyWindowInfo` with `.optionOnScreenOnly`: pid, layer 0, bounds only; no titles, no Screen Recording). Bounds are converted to Cocoa with `cocoaFrame(fromWindowServer:)`.
 2. `matchServerWindows` maps windows to entries by pid: an entry equal to the AX frame wins; otherwise the unclaimed same-size entry; several same-size entries with no exact one are ambiguous and skipped (never guessed).
 3. `findRenderMismatches` keeps windows whose target intersects a viewport and whose WindowServer bounds differ from the AX frame by more than 2 pt in position or size. Logged as `render mismatch` (warn once per window, then debug).
-4. Nudge, through `WindowReconciler.nudge`: write the target shifted 1 pt on x (inward at the right viewport edge), then the target. A plain rewrite of an unchanged frame is skipped by AX, so the offset step is the minimal sequence that makes the app commit a new position twice. Writes are recorded in `WriteEchoGate`. After 100 ms the window is re-checked once and `render nudge ... fixed=` is logged.
+4. Nudge, through `WindowReconciler.nudge`: write the target shifted 1 pt on x (inward at the right viewport edge), then the target. A plain rewrite of an unchanged frame is skipped by AX, so the offset step is the minimal sequence that makes the app commit a new position twice. Writes are recorded in `WriteEchoGate`. After 100 ms the window is re-checked once, again against a fresh on-screen snapshot and without an AX read, and `render nudge ... fixed=` is logged.
 
 Bounds (`RenderCheckBook`): at most one nudge per window per settle, never a loop; any new reflow or motion cancels a pending check; the check also skips while a motion is in flight or a mouse button is down. It never blocks main or hotkeys.
 

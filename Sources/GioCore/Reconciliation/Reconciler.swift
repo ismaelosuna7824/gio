@@ -52,6 +52,19 @@ public struct ReconcileReport: Equatable, Sendable {
     public var failures: [WindowID: ReconcileFailure]
     public var focusChanged: Bool
     public var focusFailed: Bool
+    /// PA-04 diagnostics, not part of equality: windows whose AX read was
+    /// skipped because their frame was trusted, and the frame each visible
+    /// or read window is known to sit at after the pass (read, verified by
+    /// the write, or trusted). Failed and vanished windows have none.
+    public var skippedReads: Int = 0
+    public var settledFrames: [WindowID: CGRect] = [:]
+
+    public static func == (lhs: ReconcileReport, rhs: ReconcileReport) -> Bool {
+        lhs.applied == rhs.applied && lhs.alreadyCorrect == rhs.alreadyCorrect && lhs.parked == rhs.parked
+            && lhs.vanished == rhs.vanished && lhs.failed == rhs.failed
+            && lhs.failureNotes == rhs.failureNotes && lhs.failures == rhs.failures
+            && lhs.focusChanged == rhs.focusChanged && lhs.focusFailed == rhs.focusFailed
+    }
 
     public init(
         applied: [WindowID] = [],
@@ -122,7 +135,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
 
     /// What happened to one window; folded into the report in serial order.
     private enum WindowOutcome: Sendable {
-        case alreadyCorrect
+        case alreadyCorrect(CGRect)
         case vanished
         case failed(String, ReconcileFailure)
         case applied
@@ -169,7 +182,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 return .vanished
             }
             if matches(item.desired, actual) || item.parked.map({ isParked(actual, $0, tolerance) }) == true {
-                return .alreadyCorrect
+                return .alreadyCorrect(actual)
             }
             do {
                 try actuator.setFrame(item.desired, from: actual, for: id, verify: item.parked == nil)
@@ -220,14 +233,36 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         frames: [WindowID: CGRect],
         parked: [WindowID: ParkedTarget] = [:],
         focused: WindowID?,
-        currentlyFocused: WindowID?
+        currentlyFocused: WindowID?,
+        trusted: TrustedFrames = TrustedFrames()
     ) -> ReconcileReport {
         var report = ReconcileReport()
         // An animation frame still being written would make its app look
         // busy and fail; let it land first (bounded by the stall timeout).
         waitForMotionIdle(timeout: 0.3)
         let started = clock()
-        let lanes = planWriteLanes(frames: frames, parked: parked)
+        // PA-04: a window sitting at a frame Gio placed and verified needs
+        // neither the two AX reads nor a write. Windows that moved in this
+        // motion are not trusted by the caller, so they are still verified.
+        var skipped: [WindowID] = []
+        var toWrite = frames
+        var toPark = parked
+        if trusted.count > 0 {
+            for (id, target) in parked where trusted.canSkipRead(id, desired: target.frame) {
+                skipped.append(id)
+                toPark.removeValue(forKey: id)
+                report.settledFrames[id] = target.frame
+            }
+            for (id, frame) in frames where parked[id] == nil && trusted.canSkipRead(id, desired: frame) {
+                skipped.append(id)
+                toWrite.removeValue(forKey: id)
+                report.settledFrames[id] = frame
+            }
+            skipped.sort()
+            report.alreadyCorrect.append(contentsOf: skipped)
+            report.skippedReads = skipped.count
+        }
+        let lanes = planWriteLanes(frames: toWrite, parked: toPark)
         let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock)
         let results = executor.run(lanes: lanes, mode: concurrency) { worker.process($0) }
         var windowTimings: [WindowWriteTiming] = []
@@ -243,8 +278,9 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             case .completed(let result):
                 windowTimings.append(result.timing.named(names.display(id.pid)))
                 switch result.outcome {
-                case .alreadyCorrect:
+                case .alreadyCorrect(let actual):
                     report.alreadyCorrect.append(id)
+                    report.settledFrames[id] = actual
                 case .vanished:
                     report.vanished.append(id)
                 case .failed(let note, let failure):
@@ -253,6 +289,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                     report.failures[id] = failure
                 case .applied:
                     report.applied.append(id)
+                    report.settledFrames[id] = item.desired
                 case .parkedApplied(let clamped):
                     if clamped {
                         GioLog.record(.debug, "parked clamped id=\(id.pid):\(id.elementID)")
@@ -302,7 +339,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         GioLog.record(timing.totalMilliseconds < 16 ? .debug : .info, timing.summaryLine)
         GioLog.record(
             .debug,
-            "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"
+            "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) skippedReads=\(report.skippedReads) vanished=\(report.vanished.count) failed=\(report.failed.count)"
         )
         logFailures(report)
         return report

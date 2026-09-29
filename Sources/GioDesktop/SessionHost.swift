@@ -77,7 +77,26 @@ final class SessionHost: @unchecked Sendable {
     private var skipAnimationOnce = false
     /// FI-05: render verification bookkeeping (session queue only).
     private var renderChecks = RenderCheckBook()
-    private var renderCheckWanted = false
+    /// PA-04: windows written or animated since the last render check, and
+    /// the frames the settle already read or verified for them.
+    private var renderCandidates: Set<WindowID> = []
+    private var renderSettled: [WindowID: CGRect] = [:]
+    /// PA-04: frames Gio placed and verified; the final pass skips their AX
+    /// read. Invalidated by non-echo frame events, minimize/restore, purge,
+    /// failures, motions and display changes (session queue only).
+    private var trustedFrames = TrustedFrames()
+    /// PA-04: publishes the focus ring only when its drawing changed.
+    private var ringGate = FocusRingPublishGate()
+    /// PA-04: pids with windows in the running motion; their moved/resized
+    /// events are our own writes and are dropped before any lookup.
+    private var animatingPids: Set<pid_t> = []
+    /// PA-04: parking plan of hidden windows, recomputed only when its inputs change.
+    private struct InactiveParkKey: Equatable {
+        var frames: [WindowID: CGRect]
+        var display: CGRect
+        var others: [CGRect]
+    }
+    private var inactiveParking = PlanMemo<InactiveParkKey, [WindowID: ParkedTarget]>()
     /// NC-06: the pre-hide frames of floating windows.
     private var hiddenBook = HiddenWindowBook()
     /// PA-03: screen frames + refresh rates, read on main (AppKit) at start
@@ -444,7 +463,7 @@ final class SessionHost: @unchecked Sendable {
     /// frames): no AX call, cheap enough for every motion frame. Session queue.
     private func publishFocusRing() {
         let state = focusRingSnapshot()
-        guard focusRingMailbox.post(state) else {
+        guard ringGate.shouldPublish(state), focusRingMailbox.post(state) else {
             return
         }
         DispatchQueue.main.async { [weak self] in
@@ -478,6 +497,8 @@ final class SessionHost: @unchecked Sendable {
     private func applyReloadedConfig() {
         GioLog.minimumLevel = session.config.logging.level
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
+        inactiveParking.invalidate()
+        ringGate.reset()
         refreshDispatcher()
         configMessages = loadGioConfig().messages
         reapplyRules()
@@ -610,6 +631,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func applyMinimized(_ minimized: Bool, to id: WindowID) {
+        trustedFrames.invalidate(id)
         if minimized {
             minimizeWindow(id, registry: session.registry, manager: &session.manager)
         } else {
@@ -662,6 +684,7 @@ final class SessionHost: @unchecked Sendable {
         }
         tileability.invalidate(id)
         minimumSizes.forget(id)
+        trustedFrames.invalidate(id)
         try? session.registry.register(window)
         if let wanted = outcome.workspace,
            let destID = session.manager.ruleTarget(wanted),
@@ -723,6 +746,7 @@ final class SessionHost: @unchecked Sendable {
             tileability.invalidate(id)
             minimumSizes.forget(id)
             echoGate.forget(id)
+            trustedFrames.invalidate(id)
             physicalFrames.removeValue(forKey: id)
             fullscreen.forget(id)
             actuator?.forget(elementID: id.elementID)
@@ -758,6 +782,11 @@ final class SessionHost: @unchecked Sendable {
         if let main = NSScreen.main {
             actuator?.updateDisplayHeight(main.frame.height)
         }
+        // A topology change can move windows behind our back and changes
+        // every parking target: nothing placed before it is trusted.
+        trustedFrames.removeAll()
+        inactiveParking.invalidate()
+        ringGate.reset()
     }
 
     // MARK: - Reflow
@@ -1055,7 +1084,8 @@ final class SessionHost: @unchecked Sendable {
         for (planIndex, plan) in plans.enumerated() {
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
-                focused: planIndex == plans.count - 1 ? focusTarget : nil, currentlyFocused: nil
+                focused: planIndex == plans.count - 1 ? focusTarget : nil, currentlyFocused: nil,
+                trusted: trustedFrames
             )
             if let focusTarget, report.focusChanged || report.focusFailed {
                 GioLog.record(
@@ -1070,18 +1100,33 @@ final class SessionHost: @unchecked Sendable {
             )
             // Our writes echo back as moved/resized events: remember them
             // (parked ones too, so they never retrigger a reflow).
-            let applied = plan.visible.merging(plan.parked.mapValues(\.frame)) { first, _ in first }
-            echoGate.recordApplied(applied, at: ProcessInfo.processInfo.systemUptime)
-            physicalFrames.merge(applied) { _, new in new }
+            // In place, once per settle: no merged copies of the dictionaries.
+            let now = ProcessInfo.processInfo.systemUptime
+            for (id, frame) in plan.visible where plan.parked[id] == nil {
+                echoGate.recordApplied(id, frame: frame, at: now)
+                physicalFrames[id] = frame
+            }
+            for (id, target) in plan.parked {
+                echoGate.recordApplied(id, frame: target.frame, at: now)
+                physicalFrames[id] = target.frame
+            }
             for id in report.failed + report.vanished {
                 physicalFrames.removeValue(forKey: id)
             }
-            if !report.applied.isEmpty || !report.parked.isEmpty {
-                renderCheckWanted = true
+            trustedFrames.recordSettle(report: report, visible: plan.visible, parked: plan.parked)
+            // Only visible windows written here are worth a render check;
+            // a settle that wrote parked/hidden windows alone checks nothing.
+            for id in report.applied where plan.visible[id] != nil && plan.parked[id] == nil {
+                renderCandidates.insert(id)
             }
+            for id in renderCandidates {
+                if let settled = report.settledFrames[id] {
+                    renderSettled[id] = settled
+                }
+            }
+            GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
         }
-        if renderCheckWanted {
-            renderCheckWanted = false
+        if !renderCandidates.isEmpty {
             scheduleRenderCheck()
         }
     }
@@ -1108,11 +1153,11 @@ final class SessionHost: @unchecked Sendable {
         displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame }
     }
 
-    private func renderMismatches(
-        _ reconciler: WindowReconciler<AXWindowActuator>, targets: [WindowID: CGRect]
-    ) -> [RenderMismatch] {
-        let axFrames = reconciler.currentFrames(of: targets.keys.sorted())
-        return findRenderMismatches(
+    /// PA-04: no AX read and no all-Spaces snapshot; `axFrames` are the
+    /// frames the settle already read or verified, the server list only has
+    /// on-screen windows.
+    private func renderMismatches(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> [RenderMismatch] {
+        findRenderMismatches(
             axFrames: axFrames, server: windowServerWindows(displayHeight: mainHeight()),
             targets: targets, viewports: renderViewports()
         )
@@ -1122,8 +1167,17 @@ final class SessionHost: @unchecked Sendable {
         guard renderCheckMayRun(token), let reconciler else {
             return
         }
-        let targets = hoverFrames
-        let mismatches = renderMismatches(reconciler, targets: targets)
+        let visible = hoverFrames
+        let axFrames = renderCheckFrames(candidates: renderCandidates, visible: visible, settled: renderSettled)
+        renderCandidates = []
+        renderSettled = [:]
+        // Nothing visible was written in this settle: skip the WindowServer
+        // snapshot entirely.
+        guard !axFrames.isEmpty else {
+            return
+        }
+        let targets = visible.filter { axFrames[$0.key] != nil }
+        let mismatches = renderMismatches(axFrames: axFrames, targets: targets)
         guard !mismatches.isEmpty else {
             return
         }
@@ -1149,16 +1203,19 @@ final class SessionHost: @unchecked Sendable {
         guard !written.isEmpty else {
             return
         }
-        echoGate.recordApplied(
-            Dictionary(uniqueKeysWithValues: written.compactMap { id in targets[id].map { (id, $0) } }),
-            at: ProcessInfo.processInfo.systemUptime
-        )
+        let nudgeTime = ProcessInfo.processInfo.systemUptime
+        for id in written {
+            if let target = targets[id] {
+                echoGate.recordApplied(id, frame: target, at: nudgeTime)
+            }
+        }
         queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self, self.renderCheckMayRun(token), let reconciler = self.reconciler else {
+            guard let self, self.renderCheckMayRun(token) else {
                 return
             }
+            let subset = targets.filter { written.contains($0.key) }
             let still = Set(
-                self.renderMismatches(reconciler, targets: targets.filter { written.contains($0.key) }).map(\.id)
+                self.renderMismatches(axFrames: axFrames.filter { written.contains($0.key) }, targets: subset).map(\.id)
             )
             for id in written {
                 let fixed = !still.contains(id)
@@ -1213,10 +1270,12 @@ final class SessionHost: @unchecked Sendable {
                 hiddenBook.hide(id, from: frame)
             }
         }
-        plan.parked = planHiddenWindows(
-            frames: frames, display: hiddenDisplay.frame,
-            otherDisplays: all.filter { $0.id != hiddenDisplay.id }.map(\.frame)
-        )
+        let others = all.filter { $0.id != hiddenDisplay.id }.map(\.frame)
+        plan.parked = inactiveParking.value(
+            for: InactiveParkKey(frames: frames, display: hiddenDisplay.frame, others: others)
+        ) {
+            planHiddenWindows(frames: frames, display: hiddenDisplay.frame, otherDisplays: others)
+        }
         let active = shown.flatMap { id in
             (session.manager.workspace(id: id)?.columns ?? []).flatMap(\.windows)
         }
@@ -1255,7 +1314,8 @@ final class SessionHost: @unchecked Sendable {
                 continue
             }
             physicalFrames[id] = frame
-            echoGate.recordApplied([id: frame], at: ProcessInfo.processInfo.systemUptime)
+            trustedFrames.invalidate(id)
+            echoGate.recordApplied(id, frame: frame, at: ProcessInfo.processInfo.systemUptime)
         }
     }
 
@@ -1266,7 +1326,13 @@ final class SessionHost: @unchecked Sendable {
         )
         self.player = player
         player.start(animations)
-        renderCheckWanted = true
+        // Motion frames are unverified: the final pass must read these windows,
+        // and the render check looks at them afterwards.
+        for animation in animations {
+            trustedFrames.invalidate(animation.id)
+            renderCandidates.insert(animation.id)
+            animatingPids.insert(animation.id.pid)
+        }
         guard motionTimer == nil else {
             return
         }
@@ -1290,6 +1356,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func stopMotion() {
+        animatingPids = []
         reflowCoalescer.reset()
         motionTimer?.cancel()
         motionTimer = nil
@@ -1315,11 +1382,18 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         let tick = player.tick()
-        physicalFrames.merge(tick.sampled) { _, new in new }
-        // The ring follows the focused window's sampled frame every tick.
-        publishFocusRing()
-        // Frame writes raise moved events like any other write of ours.
-        echoGate.recordApplied(tick.sampled, at: ProcessInfo.processInfo.systemUptime)
+        // In place, only the windows written this tick; frame writes raise
+        // moved events like any other write of ours.
+        let now = ProcessInfo.processInfo.systemUptime
+        for (id, frame) in tick.sampled {
+            physicalFrames[id] = frame
+            echoGate.recordApplied(id, frame: frame, at: now)
+        }
+        // The ring follows the focused window's sampled frame, and only
+        // when that window moved this tick.
+        if let focused = session.manager.currentWorkspace().focusedWindow, tick.sampled[focused] != nil {
+            publishFocusRing()
+        }
         if let summary = tick.summary {
             stopMotion()
             GioLog.record(.info, summary.logLine)
@@ -1451,6 +1525,10 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func handleWindowEvent(_ kind: WindowEventKind, pid: pid_t, element: AXUIElement?) {
+        // Our own animation writes: dropped before the handle lookup.
+        if dropsAsMotionEcho(kind, pid: pid, animating: animatingPids) {
+            return
+        }
         let known = element.flatMap { actuator?.id(matching: $0, pid: pid) }
         switch windowEventAction(for: kind, isKnownWindow: known != nil) {
         case .register:
@@ -1476,6 +1554,8 @@ final class SessionHost: @unchecked Sendable {
             {
                 return
             }
+            // Not our echo: the window moved on its own (drag, app resize).
+            trustedFrames.invalidate(known)
             if invalidate {
                 tileability.invalidate(known)
             }
@@ -1484,11 +1564,13 @@ final class SessionHost: @unchecked Sendable {
             scheduleReflow(full: false)
         case .minimize:
             if let known {
+                trustedFrames.invalidate(known)
                 minimizeWindow(known, registry: session.registry, manager: &session.manager)
                 reflowAll()
             }
         case .restore:
             if let known {
+                trustedFrames.invalidate(known)
                 restoreWindow(known, registry: session.registry, manager: &session.manager)
                 reflowAll()
             }
