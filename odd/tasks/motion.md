@@ -31,11 +31,12 @@ Reflow performance and scroll/focus animation. Out of scope: unified desktop app
   write position-only when size is unchanged, verify without blocking the next window.
 - [x] MO-03 — Concurrent per-app writes: one serial lane per pid, lanes run in parallel,
   reflow completes when all lanes finish; a hung app cannot stall the others (timeout).
-- [ ] MO-04 — AX-driven animation spike (user decision 2026-09-29: "Probar AX primero"):
+- [x] MO-04 — AX-driven animation spike (user decision 2026-09-29: "Probar AX primero"):
   animate only windows entering/leaving/moving on screen (typically 2-4) frame-by-frame via
   the reconciler using `GioCore/Animation` easing, cancellable/retargetable on new input,
   parked targets applied at the end; measure achieved fps per app with MO-01 timing.
   Fallback if too choppy: ScreenCaptureKit snapshot overlay (needs Screen Recording).
+  DONE `55c48b8` (planMotion + [animations] config, default enabled, 200ms) + `f4acd90` (MotionPlayer, 120Hz DispatchSourceTimer on session queue, per-pid frame drop, retarget from physicalFrames, final exact reflow, `anim done` log). RED -> GREEN, 410 executed 0 failures (parent spot-check). LIVE PENDING: fps per app. Review: UNAVAILABLE.
 
 Evidence MO-01..03 (route: one delegated writer): `0faf687` timing (`reflow timing total=`,
 `reflow slow window=`), `7991966` lean writes (AX calls per moved window ~10 -> 6 both /
@@ -66,3 +67,5 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: document created. Next: MO-01..MO-03; ask user about MO-04 approach.
 - 2026-09-29: user chose AX-driven animation first (snapshot overlay as fallback). MO-04 starts after MO-01..MO-03 (depends on lanes + timing).
 - 2026-09-29: MO-01..MO-03 done. Next: user live timing sample, then MO-04.
+- 2026-09-29: live timing (25 reflows, 9 windows): total 2-12ms, axCalls 19-26, 0 lane timeouts; one Slack write hit 250ms, Xcode 42ms once. User still sees 2-by-2 jumps: expected, no animation yet. Perceived lag likely app repaint, unmeasured. AX animation budget confirmed feasible. Starting MO-04 (route: delegated writer).
+- 2026-09-29: MO-04 done. Next: user live evaluation via `anim done` lines; decide keep AX vs snapshot fallback.
