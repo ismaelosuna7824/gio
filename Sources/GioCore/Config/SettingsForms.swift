@@ -128,8 +128,18 @@ public struct FocusRingSettingsForm: Equatable, Sendable {
     }
 
     public var edits: [ConfigEdit] {
-        let color = ThemeColor(hex: colorText)?.hex ?? colorText
+        let color = ThemeColor(hex: colorText)?.lowercaseHex ?? colorText
         return focusRingEdits(enabled: enabled, width: Int(width.rounded()), colorHex: color)
+    }
+
+    /// The parsed color, nil while the text is not a valid hex color.
+    public var color: ThemeColor? {
+        ThemeColor(hex: colorText)
+    }
+
+    /// Picker and swatch entry point: keeps the text field in sync.
+    public mutating func setColor(_ color: ThemeColor) {
+        colorText = color.lowercaseHex
     }
 }
 

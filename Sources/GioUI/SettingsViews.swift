@@ -82,7 +82,7 @@ struct LayoutSettingsView: View {
             Section("Focus ring") {
                 Toggle("Draw a ring around the focused window", isOn: $ring.enabled)
                 numberField("Width (0-20 points)", $ring.width)
-                TextField("Color (hex)", text: $ring.colorText)
+                FocusRingColorRow(form: $ring)
                 Text("A click-through outline that follows the focused window, including while it animates. Hidden for minimized, off-screen and fullscreen windows and while Gio itself is active.")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -265,5 +265,69 @@ private struct RuleEditor: View {
         .formStyle(.grouped)
         .frame(width: 420)
         .padding()
+    }
+}
+
+
+/// NF-03 color picker for the focus ring: native picker (no opacity, the ring
+/// is opaque), preset swatches, a hex field and a live preview, all bound to
+/// the form's color text.
+private struct FocusRingColorRow: View {
+    @Binding var form: FocusRingSettingsForm
+
+    private var pickerBinding: Binding<Color> {
+        Binding(
+            get: { Color(themeColor: form.color ?? FocusRingSectionConfig.defaultColor) },
+            set: { form.setColor($0.themeColor) }
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(Color(themeColor: form.color ?? FocusRingSectionConfig.defaultColor), lineWidth: 4)
+                    .frame(width: 56, height: 32)
+                    .opacity(form.color == nil ? 0.3 : 1)
+                    .accessibilityLabel("Focus ring color preview")
+                ColorPicker("Color", selection: pickerBinding, supportsOpacity: false)
+                TextField("Color (hex)", text: $form.colorText)
+                    .frame(width: 100)
+            }
+            HStack(spacing: 6) {
+                ForEach(focusRingColorPresets, id: \.self) { hex in
+                    if let color = ThemeColor(hex: hex) {
+                        Button {
+                            form.setColor(color)
+                        } label: {
+                            Circle()
+                                .fill(Color(themeColor: color))
+                                .overlay(Circle().stroke(Color.primary.opacity(0.3), lineWidth: 1))
+                                .overlay(
+                                    Circle().stroke(Color.accentColor, lineWidth: 2)
+                                        .padding(-3)
+                                        .opacity(form.color == color ? 1 : 0)
+                                )
+                                .frame(width: 20, height: 20)
+                        }
+                        .buttonStyle(.plain)
+                        .help(hex)
+                        .accessibilityLabel("Preset \(hex)")
+                    }
+                }
+            }
+        }
+    }
+}
+
+private extension Color {
+    /// sRGB, matching the ring renderer (`NSColor(srgbRed:...)`).
+    init(themeColor: ThemeColor) {
+        self.init(.sRGB, red: themeColor.red, green: themeColor.green, blue: themeColor.blue, opacity: 1)
+    }
+
+    var themeColor: ThemeColor {
+        let ns = NSColor(self).usingColorSpace(.sRGB) ?? NSColor(srgbRed: 0.5, green: 0.78, blue: 1, alpha: 1)
+        return ThemeColor(red: Double(ns.redComponent), green: Double(ns.greenComponent), blue: Double(ns.blueComponent))
     }
 }
