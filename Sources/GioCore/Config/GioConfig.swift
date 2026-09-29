@@ -8,8 +8,12 @@ public let gioVersion = "0.1.0-alpha"
 /// Every flag is parsed, validated and stored — never silently dropped — with
 /// its consumer named in comments.
 public struct LayoutSectionConfig: Equatable, Sendable {
+    public static let fullscreenGapRange = 0...64
+
     public var gaps: CGFloat
     public var padding: CGFloat
+    /// Inset around a fullscreen window; nil follows `gaps`.
+    public var fullscreenGap: CGFloat?
     /// Fraction of viewport width when 0 < v ≤ 1 (plan default 0.5 = half).
     public var defaultColumnWidthFraction: CGFloat?
     /// Absolute points when > 1. At most one of the two is set.
@@ -26,8 +30,10 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         defaultColumnWidthFraction: CGFloat? = 0.5,
         defaultColumnWidthPoints: CGFloat? = nil,
         centerFocusedColumn: CenterFocusedColumnMode = .never,
-        presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths
+        presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths,
+        fullscreenGap: CGFloat? = nil
     ) {
+        self.fullscreenGap = fullscreenGap
         self.gaps = gaps
         self.padding = padding
         self.defaultColumnWidthFraction = defaultColumnWidthFraction
@@ -35,6 +41,11 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.centerFocusedColumn = centerFocusedColumn
         self.presetColumnWidths = presetColumnWidths
     }
+}
+
+extension LayoutSectionConfig {
+    /// The gap fullscreen windows keep: the explicit key, else `gaps`.
+    public var resolvedFullscreenGap: CGFloat { fullscreenGap ?? gaps }
 }
 
 public struct BehaviorSectionConfig: Equatable, Sendable {
@@ -134,7 +145,8 @@ public struct GioConfig: Sendable {
         LayoutConfig(
             padding: layout.padding,
             gap: layout.gaps,
-            defaultColumnWidth: resolveDefaultColumnWidth(viewportWidth: viewportWidth)
+            defaultColumnWidth: resolveDefaultColumnWidth(viewportWidth: viewportWidth),
+            fullscreenGap: layout.resolvedFullscreenGap
         )
     }
 

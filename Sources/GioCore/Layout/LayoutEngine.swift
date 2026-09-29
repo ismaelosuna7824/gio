@@ -8,17 +8,21 @@ public struct LayoutConfig: Equatable, Sendable {
     public var gap: CGFloat
     public var defaultColumnWidth: CGFloat?
     public var minimumColumnWidth: CGFloat
+    /// Inset of a fullscreen window from the display edges and the menu bar.
+    public var fullscreenGap: CGFloat
 
     public init(
         padding: CGFloat = 8,
         gap: CGFloat = 8,
         defaultColumnWidth: CGFloat? = nil,
-        minimumColumnWidth: CGFloat = 200
+        minimumColumnWidth: CGFloat = 200,
+        fullscreenGap: CGFloat = 0
     ) {
         self.padding = padding
         self.gap = gap
         self.defaultColumnWidth = defaultColumnWidth
         self.minimumColumnWidth = minimumColumnWidth
+        self.fullscreenGap = fullscreenGap
     }
 }
 

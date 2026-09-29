@@ -7,11 +7,15 @@ import Foundation
 /// under the menu bar — macOS refuses window frames that overlap it, and Gio
 /// never uses native fullscreen Spaces. `usable` is the display's
 /// visible frame (Cocoa, y up), so its `maxY` is the menu bar's lower edge.
-public func fullscreenFrame(display: CGRect, usable: CGRect) -> CGRect {
+/// `gap` insets the frame on every side (`[layout] fullscreen-gap`), keeping
+/// it under the menu bar; it never collapses below zero size.
+public func fullscreenFrame(display: CGRect, usable: CGRect, gap: CGFloat = 0) -> CGRect {
     let top = min(max(usable.maxY, display.minY), display.maxY)
-    return CGRect(
+    let base = CGRect(
         x: display.minX, y: display.minY, width: display.width, height: top - display.minY
     )
+    let inset = min(max(gap, 0), base.width / 2, base.height / 2)
+    return base.insetBy(dx: inset, dy: inset)
 }
 
 /// Remembers which windows are fullscreen and what to restore. The registry

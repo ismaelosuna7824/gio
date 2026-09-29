@@ -10,6 +10,10 @@ public func defaultConfigTemplate() -> String {
     [layout]
     gaps = 8
     padding = 8
+    # Gap (points, 0-64) kept around a fullscreen window (Alt+Shift+F). Unset
+    # follows `gaps`; 0 is edge to edge. The focus ring shows in fullscreen
+    # when this gap is at least the ring width.
+    # fullscreen-gap = 8
     default-column-width = 0.5
     # Niri semantics: "never" scrolls minimally, "always" centers the focused
     # column on every keyboard focus change, "on-overflow" centers only when it

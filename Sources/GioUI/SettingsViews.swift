@@ -55,6 +55,16 @@ struct LayoutSettingsView: View {
             Section("Columns") {
                 numberField("Gaps (points)", $form.gaps)
                 numberField("Padding (points)", $form.padding)
+                Toggle("Fullscreen gap follows Gaps", isOn: $form.fullscreenGapFollowsGaps)
+                if !form.fullscreenGapFollowsGaps {
+                    HStack {
+                        Slider(value: $form.fullscreenGap, in: 0...64, step: 1)
+                        numberField("Fullscreen gap (0-64 points)", $form.fullscreenGap)
+                            .frame(width: 80)
+                    }
+                }
+                Text("Space kept around a fullscreen window (Alt+Shift+F); 0 is edge to edge. The focus ring shows in fullscreen when the gap is at least its width.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Default width", selection: $form.widthKind) {
                     Text("Fraction of screen").tag(LayoutSettingsForm.WidthKind.fraction)
                     Text("Points").tag(LayoutSettingsForm.WidthKind.points)

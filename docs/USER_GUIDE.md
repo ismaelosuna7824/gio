@@ -8,7 +8,7 @@ Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#
 
 - **Strip and viewport.** Each workspace is a horizontal strip of **columns**. A column stacks one or more windows vertically. The display is a viewport onto the strip and scrolls to keep the focused column visible.
 - **Workspaces.** Niri-style dynamic vertical stack, one per display. You start with one empty workspace. Putting a window in the last (empty) workspace opens a new empty one below it, so there is always exactly one empty workspace at the bottom. An empty workspace you are not on is removed: leave it and it disappears, and the indices below it shift up. Windows are never lost when a workspace disappears (it only ever disappears when it is empty), and a display that is unplugged hands its windows to a remaining display's stack. `Alt+1` to `Alt+9` address the workspace at that position in the focused display's stack; a number past the end of the stack goes to the empty workspace at the bottom. Windows of workspaces that no display shows are hidden off the bottom corner of the display. Every switch, up or down, animates vertically through the bottom edge because macOS cannot place windows above the menu bar.
-- **Modes.** A window is `tiled` (in the strip), `floating` (managed but outside the strip, keeps its own frame) or `fullscreen` (Gio's layout mode filling the display under the menu bar, not a native macOS fullscreen Space).
+- **Modes.** A window is `tiled` (in the strip), `floating` (managed but outside the strip, keeps its own frame) or `fullscreen` (Gio's layout mode filling the display under the menu bar with a small gap around it, see `fullscreen-gap`; not a native macOS fullscreen Space).
 - **Alt** means the **Option** key.
 
 ## Default shortcuts
@@ -81,6 +81,7 @@ An invalid config never stops the window manager.
 | --- | --- | --- | --- |
 | `gaps` | number (points) | `8` | Non-negative. Space between columns and between windows in a column. |
 | `padding` | number (points) | `8` | Non-negative. Outer margin around the strip inside the usable display area. |
+| `fullscreen-gap` | number (points) | value of `gaps` | `0` to `64`, otherwise an error. Inset kept around a fullscreen window (`Alt+Shift+F`) on every side, below the menu bar. `0` is edge to edge. Applies live on reload, also to a window that is already fullscreen. Settings > Layout has a matching control. |
 | `default-column-width` | number | `0.5` | Positive. `<= 1` is a **proportion** of the strip (Niri semantics, `p * (viewport - 2*padding + gap) - gap`, so two `0.5` columns fill the screen exactly). `> 1` is an absolute width in points. Columns are never narrower than 200 pt. |
 | `preset-column-widths` | list of numbers | `[0.33333, 0.5, 0.66667]` | Non-empty list of positive numbers, same `<= 1` proportion vs points rule. `Alt+R` cycles through them. |
 | `center-focused-column` | `"never"`, `"always"`, `"on-overflow"` | `"never"` | Niri semantics, applied on keyboard/IPC focus changes only. `never` scrolls minimally; `always` centers the focused column; `on-overflow` centers only when it does not fit on screen together with the previously focused column. The old boolean still parses (`true` = `always`, `false` = `never`). Any other value is an error and the default applies. |
@@ -112,7 +113,7 @@ A rounded outline around the focused window, drawn by a click-through overlay th
 | `width` | number | `4` | Thickness in points, rounded and clamped to `0...20` with a warning. `0` hides the ring. |
 | `active-color` | string | `"#7fc8ff"` | Hex color (`#RGB` or `#RRGGBB`); anything else is an error. When unset the active theme's active border color is used if it defines one, else the Niri blue. |
 
-The ring is hidden when nothing is focused, the focused window is minimized, fullscreen or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). Floating windows get the ring too. The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
+The ring is hidden when nothing is focused, the focused window is minimized, fullscreen without room for it (it shows when `layout.fullscreen-gap` is at least the ring `width`) or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). Floating windows get the ring too. The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
 
 ### Custom key bindings
 
@@ -134,6 +135,7 @@ See [Window rules](#window-rules).
 [layout]
 gaps = 8
 padding = 8
+# fullscreen-gap = 8   # unset follows gaps; 0 is edge to edge
 default-column-width = 0.5
 preset-column-widths = [0.33333, 0.5, 0.66667]
 

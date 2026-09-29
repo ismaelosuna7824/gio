@@ -25,6 +25,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
 
     public var gaps: Double
     public var padding: Double
+    /// True leaves `fullscreen-gap` unset so fullscreen follows `gaps`.
+    public var fullscreenGapFollowsGaps: Bool
+    public var fullscreenGap: Double
     public var widthKind: WidthKind
     public var widthValue: Double
     public var presetsText: String
@@ -33,6 +36,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public init(config: LayoutSectionConfig) {
         gaps = Double(config.gaps)
         padding = Double(config.padding)
+        fullscreenGapFollowsGaps = config.fullscreenGap == nil
+        fullscreenGap = Double(config.resolvedFullscreenGap)
         if let points = config.defaultColumnWidthPoints {
             widthKind = .points
             widthValue = Double(points)
@@ -59,6 +64,12 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         var found: [String] = []
         if !(gaps >= 0 && gaps.isFinite) { found.append("Gaps must be zero or more.") }
         if !(padding >= 0 && padding.isFinite) { found.append("Padding must be zero or more.") }
+        let gapRange = LayoutSectionConfig.fullscreenGapRange
+        if !fullscreenGapFollowsGaps,
+           !(fullscreenGap.isFinite && fullscreenGap >= Double(gapRange.lowerBound) && fullscreenGap <= Double(gapRange.upperBound))
+        {
+            found.append("Fullscreen gap must be \(gapRange.lowerBound) to \(gapRange.upperBound) points.")
+        }
         switch widthKind {
         case .fraction:
             if !(widthValue > 0 && widthValue <= 1) {
@@ -79,6 +90,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         [
             .set(table: "layout", key: "gaps", value: .number(gaps)),
             .set(table: "layout", key: "padding", value: .number(padding)),
+            fullscreenGapFollowsGaps
+                ? .remove(table: "layout", key: "fullscreen-gap")
+                : .set(table: "layout", key: "fullscreen-gap", value: .number(fullscreenGap)),
             .set(table: "layout", key: "default-column-width", value: .number(widthValue)),
             .set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue)),
             .set(

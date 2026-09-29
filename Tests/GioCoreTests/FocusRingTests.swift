@@ -45,6 +45,22 @@ final class FocusRingTests: XCTestCase {
         XCTAssertEqual(state(focused: FocusRingWindow(frame: window, isMinimized: true)), .hidden)
     }
 
+    func testFullscreenRingShownWhenTheGapFitsIt() {
+        let fullscreen = FocusRingWindow(frame: window, isFullscreen: true)
+        for gap in [CGFloat(4), 8] {
+            guard case .shown(let ring) = focusRingState(
+                config: FocusRingSectionConfig(), focused: fullscreen, displays: [display], fullscreenGap: gap
+            ) else {
+                return XCTFail("expected a ring with gap \(gap)")
+            }
+            XCTAssertEqual(ring.frame, window.insetBy(dx: -4, dy: -4))
+        }
+        XCTAssertEqual(
+            focusRingState(config: FocusRingSectionConfig(), focused: fullscreen, displays: [display], fullscreenGap: 3),
+            .hidden
+        )
+    }
+
     func testHiddenWhenFullscreen() {
         XCTAssertEqual(state(focused: FocusRingWindow(frame: window, isFullscreen: true)), .hidden)
     }

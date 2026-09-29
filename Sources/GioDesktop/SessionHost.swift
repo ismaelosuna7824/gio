@@ -428,7 +428,8 @@ final class SessionHost: @unchecked Sendable {
                 frame: physicalFrames[id], isMinimized: window.isMinimized,
                 isFullscreen: window.mode == .fullscreen || fullscreen.isFullscreen(id)
             ),
-            displays: displays.allDisplays().map(\.frame)
+            displays: displays.allDisplays().map(\.frame),
+            fullscreenGap: session.config.layout.resolvedFullscreenGap
         )
     }
 
@@ -1965,7 +1966,10 @@ final class SessionHost: @unchecked Sendable {
         else {
             return
         }
-        let frame = fullscreenFrame(display: display.frame, usable: visibleFrames[display.id] ?? display.frame)
+        let frame = fullscreenFrame(
+            display: display.frame, usable: visibleFrames[display.id] ?? display.frame,
+            gap: session.config.layout.resolvedFullscreenGap
+        )
         try? fullscreen.toggle(id, registry: session.registry, frame: frame)
     }
 }

@@ -218,6 +218,17 @@ func applyLayoutKey(
         } else {
             config.layout.padding = CGFloat(number)
         }
+    case "fullscreen-gap":
+        let range = LayoutSectionConfig.fullscreenGapRange
+        guard let number = value.number, number.isFinite,
+              number >= Double(range.lowerBound), number <= Double(range.upperBound)
+        else {
+            errors.append(
+                "line \(line): layout.fullscreen-gap expects a number of points from \(range.lowerBound) to \(range.upperBound)"
+            )
+            return
+        }
+        config.layout.fullscreenGap = CGFloat(number)
     case "default-column-width":
         guard let number = value.number, number > 0, number.isFinite else {
             errors.append("line \(line): layout.default-column-width expects a positive number")

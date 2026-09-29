@@ -85,15 +85,17 @@ public enum FocusRingState: Equatable, Sendable {
 private let minimumVisibleExtent: CGFloat = 24
 
 /// Pure decision: the ring for the focused window, or hidden when the feature
-/// is off, nothing is focused, or the window is minimized, fullscreen (the
-/// ring would be clipped by the display edge and menu bar) or off-viewport
+/// is off, nothing is focused, or the window is minimized, fullscreen without
+/// room for it (the ring would be clipped by the display edge and menu bar
+/// unless `fullscreenGap` is at least the ring width) or off-viewport
 /// (parked, or on a workspace no display shows).
 public func focusRingState(
     config: FocusRingSectionConfig, theme: GioTheme? = nil,
-    focused: FocusRingWindow?, displays: [CGRect]
+    focused: FocusRingWindow?, displays: [CGRect], fullscreenGap: CGFloat = 0
 ) -> FocusRingState {
     guard config.enabled, config.width > 0, let focused, let frame = focused.frame,
-          !focused.isMinimized, !focused.isFullscreen
+          !focused.isMinimized,
+          !focused.isFullscreen || fullscreenGap >= CGFloat(config.width)
     else {
         return .hidden
     }

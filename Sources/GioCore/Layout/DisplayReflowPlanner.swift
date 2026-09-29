@@ -33,7 +33,7 @@ public func planDisplayLayout(
         // window parks where its column already is, so leaving fullscreen
         // finds the strip exactly as it was.
         var plan = ParkingPlan(
-            visible: [covering: fullscreenFrame(display: display, usable: viewport)],
+            visible: [covering: fullscreenFrame(display: display, usable: viewport, gap: engine.config.fullscreenGap)],
             parked: parkAll(
                 frames: layout.frames, viewport: viewport, display: display,
                 otherDisplays: otherDisplays

@@ -43,6 +43,67 @@ final class FullscreenTests: XCTestCase {
         XCTAssertEqual(fullscreenFrame(display: display, usable: display), display)
     }
 
+    func testFullscreenFrameInsetsByTheGapAndStaysUnderTheMenuBar() {
+        let frame = fullscreenFrame(display: display, usable: usable, gap: 8)
+        XCTAssertEqual(frame, CGRect(x: 8, y: 8, width: 1784, height: 960))
+        XCTAssertEqual(frame.maxY, usable.maxY - 8)
+        XCTAssertEqual(fullscreenFrame(display: display, usable: usable, gap: 0), fullscreenFrame(display: display, usable: usable))
+    }
+
+    func testFullscreenFrameNeverCollapsesWhenTheGapIsHuge() {
+        let frame = fullscreenFrame(display: CGRect(x: 0, y: 0, width: 100, height: 100), usable: CGRect(x: 0, y: 0, width: 100, height: 90), gap: 64)
+        XCTAssertGreaterThanOrEqual(frame.width, 0)
+        XCTAssertGreaterThanOrEqual(frame.height, 0)
+    }
+
+    func testPlannerUsesTheLayoutFullscreenGap() throws {
+        let gapped = ScrollableLayoutEngine(config: LayoutConfig(defaultColumnWidth: 880, fullscreenGap: 12))
+        let planned = try planDisplayLayout(
+            workspace: workspace(), modes: [id(2): .fullscreen], engine: gapped,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(planned.plan.visible, [id(2): fullscreenFrame(display: display, usable: usable, gap: 12)])
+    }
+
+    func testConfigFullscreenGapDefaultsToGapsAndCanBeOverridden() throws {
+        var config = GioConfig()
+        XCTAssertEqual(config.makeLayoutConfig(viewportWidth: 1800).fullscreenGap, 8)
+        config = try parseGioConfig("[layout]\ngaps = 5\n").get().0
+        XCTAssertEqual(config.makeLayoutConfig(viewportWidth: 1800).fullscreenGap, 5)
+        config = try parseGioConfig("[layout]\ngaps = 5\nfullscreen-gap = 0\n").get().0
+        XCTAssertEqual(config.makeLayoutConfig(viewportWidth: 1800).fullscreenGap, 0)
+        config = try parseGioConfig("[layout]\nfullscreen-gap = 20\n").get().0
+        XCTAssertEqual(config.layout.fullscreenGap, 20)
+    }
+
+    func testConfigRejectsOutOfRangeFullscreenGap() {
+        for doc in ["[layout]\nfullscreen-gap = -1\n", "[layout]\nfullscreen-gap = 65\n", "[layout]\nfullscreen-gap = \"x\"\n"] {
+            switch parseGioConfig(doc) {
+            case .success: XCTFail("expected an error for \(doc)")
+            case .failure(let errors): XCTAssertTrue(errors.messages.joined().contains("layout.fullscreen-gap"), doc)
+            }
+        }
+    }
+
+    func testSettingsFormFullscreenGap() {
+        var form = LayoutSettingsForm(config: LayoutSectionConfig())
+        XCTAssertTrue(form.fullscreenGapFollowsGaps)
+        XCTAssertTrue(form.edits.contains(.remove(table: "layout", key: "fullscreen-gap")))
+        form.fullscreenGapFollowsGaps = false
+        form.fullscreenGap = 16
+        XCTAssertTrue(form.edits.contains(.set(table: "layout", key: "fullscreen-gap", value: .number(16))))
+        form.fullscreenGap = 65
+        XCTAssertFalse(form.problems.isEmpty)
+        let custom = LayoutSettingsForm(config: LayoutSectionConfig(fullscreenGap: 3))
+        XCTAssertFalse(custom.fullscreenGapFollowsGaps)
+        XCTAssertEqual(custom.fullscreenGap, 3)
+    }
+
+    func testTemplateMentionsFullscreenGapAndParsesClean() throws {
+        XCTAssertTrue(defaultConfigTemplate().contains("fullscreen-gap"))
+        XCTAssertTrue(try parseGioConfig(defaultConfigTemplate()).get().1.isEmpty)
+    }
+
     func testPlannerFillsFocusedWindowAndParksEveryoneElse() throws {
         let modes: [WindowID: WindowMode] = [id(1): .tiled, id(2): .fullscreen, id(3): .tiled, id(4): .tiled]
         let planned = try planDisplayLayout(
