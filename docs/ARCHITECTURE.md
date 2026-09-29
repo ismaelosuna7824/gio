@@ -63,7 +63,7 @@ These are hard rules. Break one and the design stops working.
 | 8 | **Absence is not death.** A window or app is removed only on proof: a destroyed event, a terminated pid, or a vanished window in a *complete* scan of that pid. | Enumeration gaps must never wipe state. |
 | 9 | **Physical writes never mutate logical state.** Animation only changes what the reconciler writes; workspace state already holds the final layout. | Animation can be cancelled or retargeted without corrupting state. |
 
-**Known exception to invariant 3.** `SessionHost.applyPrepositions` calls `actuator.setFrame` directly to place an incoming hidden window just below its target before a workspace-switch animation (the jump is off-screen). Everything else, including animation frames, goes through `WindowReconciler` (`submitMotion`, `reconcile`, `restoreOffscreen`). Do not add more direct writes.
+Invariant 3 has no exceptions. Every write, including the off-screen prepositioning of incoming windows before a workspace-switch animation (`preposition`), animation frames, and restore, goes through `WindowReconciler` (`preposition`, `submitMotion`, `reconcile`, `restoreOffscreen`). Do not add direct writes.
 
 ### Why Gio never touches its own windows (commit `bac43c6`)
 

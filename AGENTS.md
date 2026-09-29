@@ -36,7 +36,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 
 1. **State is the source of truth.** Windows on screen are a projection of registry, workspace and display state.
 2. **`LayoutEngine` and everything in `GioCore` know no macOS.** Do not import `AppKit`, `ApplicationServices`, SwiftUI or AX types into `GioCore`. Reach the OS through protocols Core owns (`WindowActuator`, `MotionFrameSink`).
-3. **Only `WindowReconciler` writes window frames.** Flow: State, Layout, Reconciler, macOS. Never call AX from a hotkey handler, the UI or a use case. (Sole existing exception: `SessionHost.applyPrepositions`; do not add more.)
+3. **Only `WindowReconciler` writes window frames.** Flow: State, Layout, Reconciler, macOS. Never call AX from a hotkey handler, the UI or a use case. No exceptions: workspace-switch prepositions use `WindowReconciler.preposition`.
 4. **Gio never manages, focuses or actuates its own pid.** Focus adoption, discovery and `AXWindowActuator.register` refuse it (commit `bac43c6`): AX calls on in-process elements run AppKit on the calling thread and crash. Every new enumeration or adoption path must keep these guards (`isManageableProcess`).
 5. **Logs never contain window titles.** Log numeric IDs (`pid:elementID`), counts, timings and app names only.
 6. **Business logic goes through pure Core use cases** with tests; hotkeys and IPC only map to actions. Return the input unchanged for a no-op.

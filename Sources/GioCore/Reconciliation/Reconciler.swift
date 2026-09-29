@@ -288,6 +288,34 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return true
     }
 
+    /// NC-07 / HD-02: put hidden incoming windows just below their target
+    /// before a workspace-switch animation. Same lanes and lean write as
+    /// motion frames (known origin, unverified), no reads, never focus.
+    /// Windows without a known origin in `from` are skipped. Returns the ids
+    /// actually written, sorted, so the caller can record them for echo
+    /// suppression and update its physical-frame memory.
+    @discardableResult
+    public func preposition(frames: [WindowID: CGRect], from: [WindowID: CGRect]) -> [WindowID] {
+        let known = frames.filter { from[$0.key] != nil }
+        guard !known.isEmpty else {
+            return []
+        }
+        waitForMotionIdle(timeout: 0.3)
+        let lanes = planWriteLanes(frames: known, parked: [:])
+        let actuator = actuator
+        let writer = PrepositionWriter(actuator: actuator)
+        let results = executor.run(lanes: lanes, mode: concurrency) { item in
+            writer.write(item.desired, from: from[item.id]!, for: item.id)
+        }
+        var written: [WindowID] = []
+        for item in lanes.flatMap(\.items).sorted(by: { $0.index < $1.index }) {
+            if case .completed(true)? = results[item.index] {
+                written.append(item.id)
+            }
+        }
+        return written.sorted()
+    }
+
     public func waitForMotionIdle(timeout: TimeInterval) {
         _ = motion.group.wait(timeout: .now() + timeout)
     }
@@ -355,6 +383,14 @@ final class MotionBook: @unchecked Sendable {
 
     func takeTimings() -> [WindowWriteTiming] {
         lock.withLock { defer { timings = [] }; return timings }
+    }
+}
+
+private struct PrepositionWriter<Actuator: WindowActuator>: @unchecked Sendable {
+    let actuator: Actuator
+
+    func write(_ frame: CGRect, from current: CGRect, for id: WindowID) -> Bool {
+        (try? actuator.setFrame(frame, from: current, for: id, verify: false)) != nil
     }
 }
 

@@ -709,7 +709,7 @@ final class SessionHost: @unchecked Sendable {
         }
         plans.append(inactive)
         if !animations.isEmpty {
-            applyPrepositions(prepositions)
+            applyPrepositions(prepositions, reconciler: reconciler)
             startMotion(animations, reconciler: reconciler)
             return
         }
@@ -820,12 +820,12 @@ final class SessionHost: @unchecked Sendable {
 
     /// Place hidden incoming windows directly below their target before the
     /// player starts (off-screen, so the jump is invisible).
-    private func applyPrepositions(_ frames: [WindowID: CGRect]) {
-        for id in frames.keys.sorted() {
-            guard let frame = frames[id], let from = physicalFrames[id] else {
+    private func applyPrepositions(_ frames: [WindowID: CGRect], reconciler: WindowReconciler<AXWindowActuator>) {
+        let written = reconciler.preposition(frames: frames, from: physicalFrames)
+        for id in written {
+            guard let frame = frames[id] else {
                 continue
             }
-            try? actuator?.setFrame(frame, from: from, for: id, verify: false)
             physicalFrames[id] = frame
             echoGate.recordApplied([id: frame], at: ProcessInfo.processInfo.systemUptime)
         }
