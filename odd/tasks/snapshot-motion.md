@@ -43,6 +43,10 @@ pure parts; Conventional Commits, NO Co-Authored-By; push after verified batches
 - [x] SM-02 (`a49fcad`) — Capture module: SCShareableContent window matching (pid + frame, like FI-05),
   per-window + backdrop capture in parallel, time budget, `snapshot capture ms=` log, pure matching
   and budget decisions tested.
+- [x] SM-02b (`02eb486`) — Live: permission granted but first capture `captured=0 ms=50
+  over-budget=8 unmatched=1` (cold, fetch inside budget). Added measure mode (2s cap, fetch/p50/p90/
+  max/backdrop/unmatched reasons) + SCShareableContent prefetch outside the budget. Bundles
+  25/7/19/33/920 all 0 failures (parent re-ran). LIVE PENDING: user measurement.
 - [ ] SM-03 — Overlay renderer: per-display overlay window, backdrop + window layers, CA spring
   animations (position + bounds), retarget from presentation values, teardown.
 - [ ] SM-04 — Orchestration: motion start -> capture -> overlay + single real write -> settle ->
