@@ -24,6 +24,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private var bar: MenuBarController?
     private var launcherWindow: NSWindow?
     private var labWindow: NSWindow?
+    private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         if let error = host.start() {
@@ -31,6 +32,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
             NSApplication.shared.terminate(nil)
             return
         }
+        installSignalHandlers()
         let bar = MenuBarController()
         bar.onOpenLauncher = { [weak self] in self?.showLauncher() }
         bar.onOpenDebug = { [weak self] in self?.toggleLab() }
@@ -41,6 +43,25 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         // debug console on its Request Access button instead of silence.
         if !hasAXPermission() {
             toggleLab()
+        }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        host.shutdown()
+    }
+
+    /// SIGTERM/SIGINT/SIGHUP: default handlers would kill the process with
+    /// windows still parked. Ignore them and route through the terminate path.
+    func installSignalHandlers() {
+        for number in [SIGTERM, SIGINT, SIGHUP] {
+            signal(number, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: number, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.host.shutdown()
+                NSApplication.shared.terminate(nil)
+            }
+            source.resume()
+            signalSources.append(source)
         }
     }
 

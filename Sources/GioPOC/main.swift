@@ -90,6 +90,15 @@ case .events:
         cliPermissionDenied()
     }
     listenForSystemWindowEvents()
+case .restore:
+    do {
+        let report = try runRestoreOffscreen()
+        print(report.describe())
+    } catch is AXPermissionError {
+        cliPermissionDenied()
+    } catch {
+        cliFail("restore failed: \(error)")
+    }
 case .tile:
     guard let screen = NSScreen.main,
           screen.visibleFrame.width > 0, screen.visibleFrame.height > 0

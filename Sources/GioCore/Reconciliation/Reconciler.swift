@@ -105,6 +105,49 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return report
     }
 
+    /// Gio is leaving: bring every listed window that is parked or off-screen
+    /// back inside its display (see `planRestore`). Windows already on
+    /// screen are not written. Never focuses; vanished windows are recorded.
+    @discardableResult
+    public func restoreOffscreen(ids: [WindowID], displays: [RestoreDisplay]) -> ReconcileReport {
+        var report = ReconcileReport()
+        var current: [WindowID: CGRect] = [:]
+        for id in ids.sorted() {
+            do {
+                if let frame = try actuator.frame(of: id) {
+                    current[id] = frame
+                } else {
+                    report.vanished.append(id)
+                }
+            } catch {
+                report.failed.append(id)
+                report.failureNotes[id] = String(describing: error)
+            }
+        }
+        let plan = planRestore(windows: current, displays: displays)
+        for id in plan.keys.sorted() {
+            do {
+                try actuator.setFrame(plan[id]!, for: id)
+                report.applied.append(id)
+            } catch {
+                // A clamped landing that is now on screen still counts.
+                if let landed = try? actuator.frame(of: id),
+                   planRestore(windows: [id: landed], displays: displays).isEmpty
+                {
+                    report.applied.append(id)
+                } else {
+                    report.failed.append(id)
+                    report.failureNotes[id] = String(describing: error)
+                }
+            }
+        }
+        GioLog.record(
+            .info,
+            "restore applied=\(report.applied.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"
+        )
+        return report
+    }
+
     private func reconcileOne(
         _ id: WindowID, desired: CGRect, parkedTarget: ParkedTarget?, into report: inout ReconcileReport
     ) {

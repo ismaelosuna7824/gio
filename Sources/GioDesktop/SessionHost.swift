@@ -34,6 +34,7 @@ final class SessionHost: @unchecked Sendable {
     private var fullscreenRecords: [WindowID: FullscreenRecord] = [:]
     private var visibleFrames: [DisplayID: CGRect] = [:]
     private let dispatcher = HotkeyDispatcher()
+    private var isShuttingDown = false
 
     /// UI hook, always invoked on the main thread.
     var onSummonLauncher: (() -> Void)?
@@ -81,6 +82,31 @@ final class SessionHost: @unchecked Sendable {
         return nil
     }
 
+    /// Gio is exiting (Quit, SIGTERM/SIGINT/SIGHUP): stop laying out, bring
+    /// every parked or off-screen window back on screen through the
+    /// reconciler, release the socket and lock. Idempotent and synchronous,
+    /// so it is safe to call from both the terminate hook and a signal.
+    func shutdown() {
+        queue.sync {
+            guard !isShuttingDown else {
+                return
+            }
+            isShuttingDown = true
+            pendingReflow?.cancel()
+            restoreOffscreenWindows(session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id))
+        }
+        server?.stop()
+        instanceLock.release()
+    }
+
+    private func restoreOffscreenWindows(_ ids: [WindowID]) {
+        guard let actuator, !ids.isEmpty else {
+            return
+        }
+        WindowReconciler(actuator: actuator)
+            .restoreOffscreen(ids: ids, displays: restoreDisplays())
+    }
+
     // MARK: - IPC
 
     private func handleIPC(_ argv: [String]) -> IPCResponse {
@@ -112,6 +138,15 @@ final class SessionHost: @unchecked Sendable {
         }
         enumerateAndPlace()
         syncDisplays()
+        // Leftovers of a crashed session: windows that will not be tiled
+        // (floating, excluded) may still sit parked off-screen. Tiled ones
+        // are re-placed by the first reflow.
+        _ = tileableModes()
+        restoreOffscreenWindows(
+            session.registry.managedWindows()
+                .filter { $0.mode != .tiled && !$0.isMinimized }
+                .map(\.id)
+        )
         reflowAll()
     }
 
@@ -350,7 +385,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func reflowAll() {
-        guard let actuator else {
+        guard let actuator, !isShuttingDown else {
             return
         }
         let reconciler = WindowReconciler(actuator: actuator)

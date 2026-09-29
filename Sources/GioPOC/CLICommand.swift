@@ -9,6 +9,7 @@ public enum CLICommand: Equatable, Sendable {
     case move(index: Int, x: CGFloat, y: CGFloat)
     case resize(index: Int, width: CGFloat, height: CGFloat)
     case tile
+    case restore
     case events
     case help
 }
@@ -71,6 +72,8 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
         return .success(.events)
     case "tile":
         return .success(.tile)
+    case "restore":
+        return .success(.restore)
     case "help", "--help", "-h":
         return .success(.help)
     default:
@@ -88,6 +91,7 @@ public func cliUsage() -> String {
       gio-poc move <index> <x> <y>
       gio-poc resize <index> <width> <height>
       gio-poc tile
+      gio-poc restore    (bring parked/off-screen windows back; recovery after a killed Gio)
       gio-poc events
       gio-poc help
 

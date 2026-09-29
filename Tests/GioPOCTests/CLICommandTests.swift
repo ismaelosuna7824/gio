@@ -36,6 +36,10 @@ final class CLICommandTests: XCTestCase {
         )
     }
 
+    func testParseRestore() throws {
+        XCTAssertEqual(try parseCLICommand(["restore"]).get(), .restore)
+    }
+
     func testParseEventsHelpAndUnknown() throws {
         XCTAssertEqual(try parseCLICommand(["events"]).get(), .events)
         XCTAssertEqual(try parseCLICommand(["tile"]).get(), .tile)
@@ -49,7 +53,7 @@ final class CLICommandTests: XCTestCase {
 
     func testUsageMentionsAllVerbs() {
         let usage = cliUsage()
-        for verb in ["list-windows", "focus", "move", "resize", "tile", "events"] {
+        for verb in ["list-windows", "focus", "move", "resize", "tile", "restore", "events"] {
             XCTAssertTrue(usage.contains(verb), "usage missing \(verb)")
         }
     }
