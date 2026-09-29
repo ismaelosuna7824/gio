@@ -30,10 +30,10 @@ exists); signing team stays a documented per-collaborator step.
   `feat/gio-niri-rewrite` only; no PR/merge.
 
 ## Tasks
-- [ ] HD-01 — Keyboard focus follows Gio focus: hotkey/IPC focus and move actions focus and
+- [x] HD-01 (`e0a2275`) — Keyboard focus follows Gio focus: hotkey/IPC focus and move actions focus and
   raise the target window through the reconciler (not for click adoption or passive events).
-- [ ] HD-02 — Workspace-switch prepositions go through the reconciler (no direct writes).
-- [ ] HD-03 — Full key table in HotkeyTap (letters, digits, F1-F12, arrows, punctuation,
+- [x] HD-02 (`3b81b60`) — Workspace-switch prepositions go through the reconciler (no direct writes).
+- [x] HD-03 (`953d6c6`) — Full key table in HotkeyTap (letters, digits, F1-F12, arrows, punctuation,
   Tab/Return/Escape/Space/Delete) so any valid config binding fires.
 - [ ] HD-04 — Wire `mouse-follows-focus`, `focus-follows-mouse`, `center-focused-column`
   (never/always/on-overflow, Niri semantics).
@@ -41,6 +41,13 @@ exists); signing team stays a documented per-collaborator step.
 - [ ] HD-06 — Launcher searches managed windows too; choosing one focuses and reveals it.
 - [ ] HD-07 — Guardian process: launched by Gio, watches Gio's pid, restores off-screen
   windows if Gio exits without a clean shutdown (crash, SIGKILL, Force Quit).
+
+Evidence HD-01..03 (route: one delegated writer): FocusIntent table (focus/move/workspace/
+fullscreen/consume-expel/IPC carry intent; width/maximize/center/floating don't), applied on
+final exact pass after writes, echo guard 2s/0.6s, mouse-down cancels; reconciler
+`preposition(frames:)`; shared KeyNames (72) + ANSI tapKeyCodes, unknown key -> config message.
+RED (compile) -> GREEN each; bundles 12/7/19/23/564 all 0 failures (parent re-ran); signed
+build OK. LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Alt+H/L changes keyboard focus live; config binding on e.g. Alt+Y fires.
@@ -57,3 +64,4 @@ exists); signing team stays a documented per-collaborator step.
 
 ## Progress
 - 2026-09-29: document created. Next: HD-01..HD-03.
+- 2026-09-29: HD-01..HD-03 done, pushed. Next: HD-04..HD-06.
