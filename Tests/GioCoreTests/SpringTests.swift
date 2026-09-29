@@ -155,7 +155,7 @@ final class SpringTests: XCTestCase {
     private final class FakeSink: MotionFrameSink {
         func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool { true }
         func waitForMotionIdle(timeout: TimeInterval) {}
-        func takeMotionTimings() -> [WindowWriteTiming] { [] }
+        func takeMotionStats() -> [pid_t: MotionWriteStats] { [:] }
     }
 
     func testRetargetKeepsPositionAndVelocityContinuous() {
@@ -202,5 +202,35 @@ final class SpringTests: XCTestCase {
         let summary = player.tick().summary
         XCTAssertEqual(summary?.curve, "spring")
         XCTAssertTrue(summary?.logLine.hasSuffix(" curve=spring") ?? false)
+    }
+
+
+    // MARK: - PA-03 completion threshold
+
+    func testSpringEndsUnderHalfAPointOfResidualAndSmallVelocity() {
+        XCTAssertEqual(SpringParameters.minimumThreshold, 0.5)
+        let spring = SpringParameters.niri
+        // A short flight: the point floor (not epsilon * travel) decides.
+        let settle = spring.settleTime(axes: [(displacement: 40, velocity: 0)])
+        let atSettle = spring.state(displacement: 40, velocity: 0, at: settle)
+        XCTAssertLessThan(abs(atSettle.displacement), 0.5)
+        XCTAssertLessThan(abs(atSettle.velocity), 30)
+        // No later than the first instant the residual and velocity are both small.
+        var t = 0.0
+        while t < 1 {
+            let s = spring.state(displacement: 40, velocity: 0, at: t)
+            if abs(s.displacement) < 0.5 && abs(s.velocity) < 30 {
+                var stays = true
+                var u = t
+                while u < 1 {
+                    let n = spring.state(displacement: 40, velocity: 0, at: u)
+                    if abs(n.displacement) >= 0.5 || abs(n.velocity) >= 30 { stays = false; break }
+                    u += 0.004
+                }
+                if stays { break }
+            }
+            t += 0.004
+        }
+        XCTAssertLessThanOrEqual(settle, t + 0.02)
     }
 }

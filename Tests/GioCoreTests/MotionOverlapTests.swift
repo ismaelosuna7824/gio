@@ -72,7 +72,7 @@ final class MotionOverlapTests: XCTestCase {
             return true
         }
         func waitForMotionIdle(timeout: TimeInterval) {}
-        func takeMotionTimings() -> [WindowWriteTiming] { [] }
+        func takeMotionStats() -> [pid_t: MotionWriteStats] { [:] }
     }
 
     func testAfterTheFirstFrameEveryWriteIsPositionOnly() {

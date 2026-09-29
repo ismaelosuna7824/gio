@@ -21,6 +21,36 @@ public struct WindowWriteTiming: Equatable, Sendable {
         self.milliseconds = milliseconds
         self.axCalls = axCalls
     }
+
+    func named(_ app: String) -> WindowWriteTiming {
+        WindowWriteTiming(id: id, app: app, milliseconds: milliseconds, axCalls: axCalls)
+    }
+}
+
+/// PA-03: per-app cost of motion frame writes, aggregated in place instead of
+/// one entry per write. `drops` counts frames rejected because the app was
+/// still writing the previous one.
+public struct MotionWriteStats: Equatable, Sendable {
+    public var count: Int
+    public var sumMilliseconds: Double
+    public var maxMilliseconds: Double
+    public var drops: Int
+    public var axCalls: Int
+
+    public init(count: Int = 0, sumMilliseconds: Double = 0, maxMilliseconds: Double = 0, drops: Int = 0, axCalls: Int = 0) {
+        self.count = count
+        self.sumMilliseconds = sumMilliseconds
+        self.maxMilliseconds = maxMilliseconds
+        self.drops = drops
+        self.axCalls = axCalls
+    }
+
+    mutating func add(milliseconds: Double, axCalls calls: Int) {
+        count += 1
+        sumMilliseconds += milliseconds
+        maxMilliseconds = max(maxMilliseconds, milliseconds)
+        axCalls += calls
+    }
 }
 
 /// Measurements of one `reconcile` pass. IDs and app names only — never

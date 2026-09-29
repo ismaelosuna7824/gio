@@ -17,10 +17,15 @@ public protocol WindowActuator: AnyObject {
     /// (parked windows, whose clamped landing is accepted anyway) skips the
     /// blocking read-back. The default forwards to the plain `setFrame`.
     func setFrame(_ frame: CGRect, from current: CGRect, for id: WindowID, verify: Bool) throws
+    /// Whether `axCallCount` is maintained. Counting costs a lock per AX
+    /// call, so an actuator may turn it off (debug logging only); timing then
+    /// reports 0 calls and the counter is not even read. Default: true.
+    var tracksCalls: Bool { get }
 }
 
 public extension WindowActuator {
     func axCallCount(forPid pid: pid_t) -> Int { 0 }
+    var tracksCalls: Bool { true }
 
     func setFrame(_ frame: CGRect, from current: CGRect, for id: WindowID, verify: Bool) throws {
         try setFrame(frame, for: id)
@@ -84,7 +89,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let actuator: Actuator
     private let tolerance: CGFloat
     private let clock: ReflowClock
-    private let appName: @Sendable (pid_t) -> String?
+    private let names: AppNameCache
     private let concurrency: LaneConcurrency
     private let executor = LaneExecutor()
     private let motion = MotionBook()
@@ -105,7 +110,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         self.tolerance = tolerance
         self.concurrency = concurrency
         self.clock = clock
-        self.appName = appName
+        self.names = AppNameCache(resolve: appName)
     }
 
     /// What happened to one window; folded into the report in serial order.
@@ -127,18 +132,20 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         let actuator: Actuator
         let tolerance: CGFloat
         let clock: ReflowClock
-        let appName: @Sendable (pid_t) -> String?
 
+        /// The timing carries no app name: names are resolved once per pid
+        /// when the report is folded, never per write.
         func process(_ item: WriteItem) -> ItemResult {
-            let callsBefore = actuator.axCallCount(forPid: item.id.pid)
+            let tracks = actuator.tracksCalls
+            let callsBefore = tracks ? actuator.axCallCount(forPid: item.id.pid) : 0
             let started = clock()
             let outcome = reconcileOne(item)
             return ItemResult(
                 outcome: outcome,
                 timing: WindowWriteTiming(
-                    id: item.id, app: appName(item.id.pid) ?? "pid\(item.id.pid)",
+                    id: item.id, app: "",
                     milliseconds: (clock() - started) * 1000,
-                    axCalls: actuator.axCallCount(forPid: item.id.pid) - callsBefore
+                    axCalls: tracks ? actuator.axCallCount(forPid: item.id.pid) - callsBefore : 0
                 )
             )
         }
@@ -214,7 +221,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         waitForMotionIdle(timeout: 0.3)
         let started = clock()
         let lanes = planWriteLanes(frames: frames, parked: parked)
-        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, appName: appName)
+        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock)
         let results = executor.run(lanes: lanes, mode: concurrency) { worker.process($0) }
         var windowTimings: [WindowWriteTiming] = []
         let stallMilliseconds: Double
@@ -227,7 +234,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             let id = item.id
             switch results[item.index] {
             case .completed(let result):
-                windowTimings.append(result.timing)
+                windowTimings.append(result.timing.named(names.display(id.pid)))
                 switch result.outcome {
                 case .alreadyCorrect:
                     report.alreadyCorrect.append(id)
@@ -256,7 +263,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 report.failureNotes[id] = "timeout"
                 report.failures[id] = ReconcileFailure(kind: "timeout", requested: frames[id] ?? parked[id]?.frame)
                 windowTimings.append(WindowWriteTiming(
-                    id: id, app: appName(id.pid) ?? "pid\(id.pid)",
+                    id: id, app: names.display(id.pid),
                     milliseconds: stallMilliseconds, axCalls: 0
                 ))
             }
@@ -264,7 +271,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         var focusMilliseconds = 0.0
         var focusCalls = 0
         if let focused, focused != currentlyFocused, parked[focused] == nil {
-            let callsBefore = actuator.axCallCount(forPid: focused.pid)
+            let tracks = actuator.tracksCalls
+            let callsBefore = tracks ? actuator.axCallCount(forPid: focused.pid) : 0
             let focusStart = clock()
             do {
                 try actuator.focus(id: focused)
@@ -273,7 +281,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 report.focusFailed = true
             }
             focusMilliseconds = (clock() - focusStart) * 1000
-            focusCalls = actuator.axCallCount(forPid: focused.pid) - callsBefore
+            focusCalls = tracks ? actuator.axCallCount(forPid: focused.pid) - callsBefore : 0
         }
         let timing = ReflowTiming(
             totalMilliseconds: (clock() - started) * 1000, focusMilliseconds: focusMilliseconds,
@@ -319,7 +327,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 continue
             }
             let line = reconcileFailureLine(
-                id: id, app: appName(id.pid) ?? "pid\(id.pid)", failure: failure
+                id: id, app: names.display(id.pid), failure: failure
             )
             GioLog.record(failureGate.level(for: id, kind: failure.kind), line)
         }
@@ -330,10 +338,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// never queues; false means the app is still busy and the frame is dropped.
     public func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool {
         guard executor.claim(pid) else {
+            motion.recordDrop(pid: pid)
             return false
         }
         motion.group.enter()
-        let worker = MotionWorker(actuator: actuator, clock: clock, appName: appName)
+        let worker = MotionWorker(actuator: actuator, clock: clock)
         let executor = executor, motion = motion
         DispatchQueue.global(qos: .userInteractive).async {
             for write in writes {
@@ -421,8 +430,14 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         _ = motion.group.wait(timeout: .now() + timeout)
     }
 
-    public func takeMotionTimings() -> [WindowWriteTiming] {
-        motion.takeTimings()
+    /// Per-app motion write stats accumulated since the last call.
+    public func takeMotionStats() -> [pid_t: MotionWriteStats] {
+        motion.takeStats()
+    }
+
+    /// The app is gone: drop what is cached for its pid.
+    public func forgetApp(pid: pid_t) {
+        names.forget(pid)
     }
 
     /// Gio is leaving: bring every listed window that is parked or off-screen
@@ -476,14 +491,18 @@ public final class WindowReconciler<Actuator: WindowActuator> {
 final class MotionBook: @unchecked Sendable {
     let group = DispatchGroup()
     private let lock = NSLock()
-    private var timings: [WindowWriteTiming] = []
+    private var stats: [pid_t: MotionWriteStats] = [:]
 
-    func record(_ timing: WindowWriteTiming) {
-        lock.withLock { timings.append(timing) }
+    func record(pid: pid_t, milliseconds: Double, axCalls: Int) {
+        lock.withLock { stats[pid, default: MotionWriteStats()].add(milliseconds: milliseconds, axCalls: axCalls) }
     }
 
-    func takeTimings() -> [WindowWriteTiming] {
-        lock.withLock { defer { timings = [] }; return timings }
+    func recordDrop(pid: pid_t) {
+        lock.withLock { stats[pid, default: MotionWriteStats()].drops += 1 }
+    }
+
+    func takeStats() -> [pid_t: MotionWriteStats] {
+        lock.withLock { defer { stats = [:] }; return stats }
     }
 }
 
@@ -523,18 +542,18 @@ private struct PrepositionWriter<Actuator: WindowActuator>: @unchecked Sendable 
 private struct MotionWorker<Actuator: WindowActuator>: @unchecked Sendable {
     let actuator: Actuator
     let clock: ReflowClock
-    let appName: @Sendable (pid_t) -> String?
 
     func write(_ write: MotionWrite, into book: MotionBook) {
-        let callsBefore = actuator.axCallCount(forPid: write.id.pid)
+        let pid = write.id.pid
+        let tracks = actuator.tracksCalls
+        let callsBefore = tracks ? actuator.axCallCount(forPid: pid) : 0
         let started = clock()
         // A failed frame is not retried: the final reconcile owns correctness.
         try? actuator.setFrame(write.to, from: write.from, for: write.id, verify: false)
-        book.record(WindowWriteTiming(
-            id: write.id, app: appName(write.id.pid) ?? "pid\(write.id.pid)",
-            milliseconds: (clock() - started) * 1000,
-            axCalls: actuator.axCallCount(forPid: write.id.pid) - callsBefore
-        ))
+        book.record(
+            pid: pid, milliseconds: (clock() - started) * 1000,
+            axCalls: tracks ? actuator.axCallCount(forPid: pid) - callsBefore : 0
+        )
     }
 }
 

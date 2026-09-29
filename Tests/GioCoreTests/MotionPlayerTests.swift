@@ -12,7 +12,7 @@ final class MotionPlayerTests: XCTestCase {
     private final class FakeSink: MotionFrameSink {
         var busy: Set<pid_t> = []
         var accepted: [(pid: pid_t, writes: [MotionWrite])] = []
-        var timings: [WindowWriteTiming] = []
+        var stats: [pid_t: MotionWriteStats] = [:]
         var idleWaits = 0
 
         func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool {
@@ -22,7 +22,7 @@ final class MotionPlayerTests: XCTestCase {
         }
 
         func waitForMotionIdle(timeout: TimeInterval) { idleWaits += 1 }
-        func takeMotionTimings() -> [WindowWriteTiming] { defer { timings = [] }; return timings }
+        func takeMotionStats() -> [pid_t: MotionWriteStats] { defer { stats = [:] }; return stats }
     }
 
     private func id(_ element: UInt64, pid: pid_t = 10) -> WindowID {
@@ -51,7 +51,7 @@ final class MotionPlayerTests: XCTestCase {
         XCTAssertNil(tick.summary)
         clock.now = 0.5
         tick = player.tick()
-        XCTAssertEqual(tick.sampled[id(1)]?.origin.x ?? 0, 87.5, accuracy: 1e-9)
+        XCTAssertEqual(tick.sampled[id(1)]?.origin.x ?? 0, 88, accuracy: 1e-9)  // 87.5 rounded to whole points
         clock.now = 1
         tick = player.tick()
         XCTAssertEqual(tick.sampled[id(1)]?.origin.x, 100)
@@ -157,17 +157,16 @@ final class MotionPlayerTests: XCTestCase {
         let clock = FakeClock(), sink = FakeSink()
         let player = makePlayer(clock, sink)
         player.start([slide(id(1, pid: 20)), slide(id(2, pid: 30))])
-        sink.timings = [
-            WindowWriteTiming(id: id(1, pid: 20), app: "Slack", milliseconds: 41.6, axCalls: 1),
-            WindowWriteTiming(id: id(1, pid: 20), app: "Slack", milliseconds: 3, axCalls: 1),
-            WindowWriteTiming(id: id(2, pid: 30), app: "Xcode", milliseconds: 9, axCalls: 1),
+        sink.stats = [
+            20: MotionWriteStats(count: 2, sumMilliseconds: 44.6, maxMilliseconds: 41.6, drops: 0, axCalls: 2),
+            30: MotionWriteStats(count: 1, sumMilliseconds: 9, maxMilliseconds: 9, drops: 0, axCalls: 1),
         ]
         clock.now = 1
         let summary = player.tick().summary
         XCTAssertEqual(sink.idleWaits, 1)
         XCTAssertEqual(
             summary?.logLine,
-            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=Slack 42ms curve=ease-out"
+            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=app20 42ms curve=ease-out"
         )
     }
 
@@ -176,5 +175,81 @@ final class MotionPlayerTests: XCTestCase {
         XCTAssertEqual(
             summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none curve=ease-out"
         )
+    }
+
+
+    // MARK: - PA-03 per-frame cost
+
+    private final class NameProbe: @unchecked Sendable {
+        private let lock = NSLock()
+        private var calls = 0
+        var count: Int { lock.withLock { calls } }
+        func hit() { lock.withLock { calls += 1 } }
+    }
+
+    func testSampledOriginsAreWholePoints() {
+        let clock = FakeClock(), sink = FakeSink()
+        let player = makePlayer(clock, sink)
+        player.start([slide(id(1), from: 0, to: 10)])
+        for step in 1...9 {
+            clock.now = Double(step) * 0.0937
+            let origin = player.tick().sampled[id(1)]!.origin
+            XCTAssertEqual(origin.x, origin.x.rounded())
+            XCTAssertEqual(origin.y, origin.y.rounded())
+        }
+        for accepted in sink.accepted {
+            for write in accepted.writes {
+                XCTAssertEqual(write.to.origin.x, write.to.origin.x.rounded())
+            }
+        }
+    }
+
+    func testSubPointDeltasAreNotWrittenUnderTheWriterTolerance() {
+        let clock = FakeClock(), sink = FakeSink()
+        let player = makePlayer(clock, sink)
+        player.start([slide(id(1), from: 0, to: 100)])
+        clock.now = 0.004   // x = 0.4 -> 0
+        _ = player.tick()
+        clock.now = 0.0125  // x = 1.25 -> 1: within the writer's 1pt tolerance
+        _ = player.tick()
+        XCTAssertTrue(sink.accepted.isEmpty)
+        clock.now = 0.02    // x = 2: past tolerance, written once
+        _ = player.tick()
+        XCTAssertEqual(sink.accepted.count, 1)
+        XCTAssertEqual(sink.accepted[0].writes[0].from.origin.x, 0)
+        XCTAssertEqual(sink.accepted[0].writes[0].to.origin.x, 2)
+    }
+
+    func testNoNameLookupHappensBeforeTheRunFinishesAndOneAfter() {
+        let clock = FakeClock(), sink = FakeSink()
+        let probe = NameProbe()
+        let player = MotionPlayer(sink: sink, clock: clock.reading, appName: { pid in probe.hit(); return "app\(pid)" })
+        player.start([slide(id(1, pid: 20)), slide(id(2, pid: 30))])
+        for step in 1..<10 {
+            clock.now = Double(step) / 10
+            _ = player.tick()
+        }
+        XCTAssertEqual(probe.count, 0)
+        sink.stats = [
+            20: MotionWriteStats(count: 9, sumMilliseconds: 90, maxMilliseconds: 12, drops: 0, axCalls: 0),
+            30: MotionWriteStats(count: 9, sumMilliseconds: 18, maxMilliseconds: 3, drops: 1, axCalls: 0),
+        ]
+        clock.now = 1
+        let summary = player.tick().summary
+        XCTAssertEqual(probe.count, 1)
+        XCTAssertEqual(summary?.slowest?.app, "app20")
+        XCTAssertEqual(summary?.slowest?.milliseconds, 12)
+    }
+
+    func testSlowestTiesResolveToTheLowestPid() {
+        let clock = FakeClock(), sink = FakeSink()
+        let player = makePlayer(clock, sink)
+        player.start([slide(id(1, pid: 20)), slide(id(2, pid: 30))])
+        sink.stats = [
+            30: MotionWriteStats(count: 1, sumMilliseconds: 5, maxMilliseconds: 5, drops: 0, axCalls: 0),
+            20: MotionWriteStats(count: 1, sumMilliseconds: 5, maxMilliseconds: 5, drops: 0, axCalls: 0),
+        ]
+        clock.now = 1
+        XCTAssertEqual(player.tick().summary?.slowest?.app, "app20")
     }
 }

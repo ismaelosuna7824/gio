@@ -15,7 +15,12 @@ public enum FrameWritePlan: Equatable, Sendable {
     case sizeThenPosition
 }
 
-public func planFrameWrite(current: CGRect, target: CGRect, tolerance: CGFloat = 1) -> FrameWritePlan {
+/// The one point tolerance of every frame comparison: the lean writer, the
+/// reconciler and the motion player agree, so a delta the writer would skip
+/// is never even submitted.
+public let frameWriteTolerance: CGFloat = 1
+
+public func planFrameWrite(current: CGRect, target: CGRect, tolerance: CGFloat = frameWriteTolerance) -> FrameWritePlan {
     let positionChanged = abs(current.origin.x - target.origin.x) > tolerance
         || abs(current.origin.y - target.origin.y) > tolerance
     let sizeChanged = abs(current.size.width - target.size.width) > tolerance
@@ -52,7 +57,7 @@ public enum FrameWriteError: Error, Equatable {
 /// read-back of just those attributes. Everything is in one coordinate
 /// space (the caller's); the IO speaks it too.
 public func writeFrame(
-    current: CGRect, target: CGRect, verify: Bool, tolerance: CGFloat = 1, io: some FrameAttributeIO
+    current: CGRect, target: CGRect, verify: Bool, tolerance: CGFloat = frameWriteTolerance, io: some FrameAttributeIO
 ) throws {
     let plan = planFrameWrite(current: current, target: target, tolerance: tolerance)
     switch plan {

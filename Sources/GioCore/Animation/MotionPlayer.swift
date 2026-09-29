@@ -22,8 +22,9 @@ public protocol MotionFrameSink: AnyObject {
     func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool
     /// Blocks (bounded) until every accepted frame has been written.
     func waitForMotionIdle(timeout: TimeInterval)
-    /// Write timings accumulated since the last call.
-    func takeMotionTimings() -> [WindowWriteTiming]
+    /// Per-app write stats accumulated since the last call (aggregated in
+    /// place; no per-write entries).
+    func takeMotionStats() -> [pid_t: MotionWriteStats]
 }
 
 /// What one finished animation cost, for the live fps judgement.
@@ -81,8 +82,8 @@ public struct MotionTick {
 public final class MotionPlayer {
     private let sink: MotionFrameSink
     private let clock: ReflowClock
-    private let appName: @Sendable (pid_t) -> String?
-    private let tolerance: CGFloat = 0.5
+    private let names: AppNameCache
+    private let tolerance = frameWriteTolerance
 
     private var animations: [WindowAnimation] = []
     private var segmentStart: TimeInterval = 0
@@ -104,7 +105,7 @@ public final class MotionPlayer {
     ) {
         self.sink = sink
         self.clock = clock
-        self.appName = appName
+        self.names = AppNameCache(resolve: appName)
     }
 
     public var isActive: Bool { !animations.isEmpty }
@@ -168,7 +169,7 @@ public final class MotionPlayer {
         var sampled: [WindowID: CGRect] = [:]
         var perPid: [pid_t: [MotionWrite]] = [:]
         for animation in animations {
-            let frame = animation.motionFrame(at: elapsed)
+            let frame = wholePoints(animation.motionFrame(at: elapsed))
             sampled[animation.id] = frame
             let last = submitted[animation.id] ?? animation.from
             if differs(frame, last) {
@@ -196,16 +197,15 @@ public final class MotionPlayer {
 
     private func finish() -> MotionSummary {
         sink.waitForMotionIdle(timeout: 0.3)
-        var worst: [pid_t: WindowWriteTiming] = [:]
-        for timing in sink.takeMotionTimings() where timing.milliseconds > (worst[timing.id.pid]?.milliseconds ?? -1) {
-            worst[timing.id.pid] = timing
-        }
-        let slowest = worst.keys.sorted().compactMap { worst[$0] }
-            .reduce(nil as WindowWriteTiming?) { best, next in
-                guard let best else { return next }
-                return next.milliseconds > best.milliseconds ? next : best
+        // The app name is resolved once, here, for the single slowest pid.
+        let stats = sink.takeMotionStats()
+        var slowestPid: pid_t?
+        for pid in stats.keys.sorted() {
+            if slowestPid == nil || stats[pid]!.maxMilliseconds > stats[slowestPid!]!.maxMilliseconds {
+                slowestPid = pid
             }
-            .map { (app: $0.app.isEmpty ? (appName($0.id.pid) ?? "pid\($0.id.pid)") : $0.app, milliseconds: $0.milliseconds) }
+        }
+        let slowest = slowestPid.map { (app: names.display($0), milliseconds: stats[$0]!.maxMilliseconds) }
         let summary = MotionSummary(
             windows: runWindows.count, frames: frames, dropped: dropped,
             duration: clock() - runStart, slowest: slowest,
@@ -214,6 +214,13 @@ public final class MotionPlayer {
         animations = []
         submitted = [:]
         return summary
+    }
+
+    /// Origins are written on whole points: sub-point steps are invisible and
+    /// the writer ignores them anyway. Sizes are never interpolated (FI-03),
+    /// so they stay exact for the final pass.
+    private func wholePoints(_ frame: CGRect) -> CGRect {
+        CGRect(origin: CGPoint(x: frame.origin.x.rounded(), y: frame.origin.y.rounded()), size: frame.size)
     }
 
     private func differs(_ a: CGRect, _ b: CGRect) -> Bool {

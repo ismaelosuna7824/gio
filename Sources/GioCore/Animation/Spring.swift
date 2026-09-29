@@ -14,9 +14,9 @@ public struct SpringParameters: Equatable, Sendable {
     public static let stiffnessRange = 100.0...3000.0
     /// Hard cap on one flight, however soft the spring.
     public static let maxDuration: TimeInterval = 1
-    /// Never chase a residual smaller than this many points: window writes
-    /// land on whole pixels, so anything below a quarter point is invisible.
-    public static let minimumThreshold = 0.25
+    /// Never chase a residual smaller than this many points: motion writes
+    /// are rounded to whole points, so a half point is invisible (PA-03).
+    public static let minimumThreshold = 0.5
     /// Niri's defaults for view movement.
     public static let niri = SpringParameters(dampingRatio: 1.0, stiffness: 800, epsilon: 0.0001)
 

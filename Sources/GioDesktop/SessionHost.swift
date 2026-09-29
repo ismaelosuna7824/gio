@@ -80,7 +80,11 @@ final class SessionHost: @unchecked Sendable {
     private var renderCheckWanted = false
     /// NC-06: the pre-hide frames of floating windows.
     private var hiddenBook = HiddenWindowBook()
-    private static let motionFrameInterval: DispatchTimeInterval = .microseconds(8333)
+    /// PA-03: screen frames + refresh rates, read on main (AppKit) at start
+    /// and on every screen-parameter change; the session queue only reads
+    /// this copy when a motion starts and never queries AppKit for it.
+    private let refreshLock = NSLock()
+    private var displayRefreshes: [DisplayRefresh] = []
     private var focusSettle = FocusSettle<FocusEvent>()
     /// HD-01: the window keyboard/IPC actions want focused (session queue only).
     private var focusIntent = FocusIntent()
@@ -142,6 +146,7 @@ final class SessionHost: @unchecked Sendable {
         let (config, configMessages) = loadGioConfig()
         session.config = config
         GioLog.minimumLevel = config.logging.level
+        publishDisplayRefreshes()
         refreshDispatcher()
         self.configMessages = configMessages
         for message in configMessages {
@@ -472,6 +477,7 @@ final class SessionHost: @unchecked Sendable {
     /// re-evaluate rules, relayout. Must run on `queue`.
     private func applyReloadedConfig() {
         GioLog.minimumLevel = session.config.logging.level
+        actuator?.countsCalls = GioLog.minimumLevel <= .debug
         refreshDispatcher()
         configMessages = loadGioConfig().messages
         reapplyRules()
@@ -518,6 +524,7 @@ final class SessionHost: @unchecked Sendable {
         if actuator == nil {
             actuator = AXWindowActuator(displayHeight: mainHeight())
         }
+        actuator?.countsCalls = GioLog.minimumLevel <= .debug
         enumerateAndPlace()
         syncDisplays()
         // Leftovers of a crashed session: windows that will not be tiled
@@ -1267,7 +1274,14 @@ final class SessionHost: @unchecked Sendable {
         // hands frames to per-app lanes (never an AX call here), so it costs
         // microseconds, and sampling by elapsed time keeps late ticks honest.
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
-        timer.schedule(deadline: .now(), repeating: Self.motionFrameInterval, leeway: .microseconds(500))
+        // PA-03: paced to the display holding the moving windows (60 Hz ->
+        // 16.7 ms, 120 Hz -> 8.3 ms), fixed for this motion.
+        let refreshes = refreshLock.withLock { displayRefreshes }
+        let fps = motionRefreshRate(animations: animations, displays: refreshes)
+        let interval = frameInterval(for: fps)
+        timer.schedule(
+            deadline: .now(), repeating: .nanoseconds(Int(interval * 1e9)), leeway: .microseconds(500)
+        )
         timer.setEventHandler { [weak self] in
             self?.motionTick()
         }
@@ -1689,6 +1703,22 @@ final class SessionHost: @unchecked Sendable {
         reflowAll()
     }
 
+    /// Read the screens' refresh rates on main and hand them to the session.
+    private func publishDisplayRefreshes() {
+        if Thread.isMainThread {
+            storeDisplayRefreshes()
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                self?.storeDisplayRefreshes()
+            }
+        }
+    }
+
+    private func storeDisplayRefreshes() {
+        let snapshot = snapshotDisplayRefreshes()
+        refreshLock.withLock { displayRefreshes = snapshot }
+    }
+
     private func watchDisplays() {
         displayObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
@@ -1698,6 +1728,7 @@ final class SessionHost: @unchecked Sendable {
             guard let self else {
                 return
             }
+            self.publishDisplayRefreshes()
             self.queue.async {
                 self.syncDisplays()
                 self.reflowAll()

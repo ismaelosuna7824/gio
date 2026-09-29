@@ -29,3 +29,11 @@ public func snapshotDisplayList() -> [DisplaySnapshot] {
     }
     return result.sorted { $0.id.rawValue < $1.id.rawValue }
 }
+
+/// PA-03: each screen's frame and refresh rate. AppKit state: call on the
+/// main thread and publish the result to the session.
+public func snapshotDisplayRefreshes() -> [DisplayRefresh] {
+    NSScreen.screens.map {
+        DisplayRefresh(frame: $0.frame, framesPerSecond: $0.maximumFramesPerSecond)
+    }
+}

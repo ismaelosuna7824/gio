@@ -30,6 +30,12 @@ public final class AXWindowActuator: WindowActuator {
     private var storedHandles: [UInt64: Handle] = [:]
     private var storedFlip: AXVerticalFlip
     private var callCounts: [pid_t: Int] = [:]
+    /// PA-03: call counting takes `stateLock` per AX call, so it only runs
+    /// while the log level is debug. Set at startup and on config reload
+    /// (session queue); lanes only read it, and a stale read merely counts
+    /// or skips one call, so it is deliberately not locked.
+    public nonisolated(unsafe) var countsCalls = false
+    public var tracksCalls: Bool { countsCalls }
 
     /// Per-element AX messaging timeout. The system default is ~6s, which
     /// lets one hung app stall a whole reflow; a healthy app answers window
@@ -98,6 +104,9 @@ public final class AXWindowActuator: WindowActuator {
     }
 
     private func countCalls(_ n: Int, pid: pid_t) {
+        guard countsCalls else {
+            return
+        }
         stateLock.withLock { callCounts[pid, default: 0] += n }
     }
 
