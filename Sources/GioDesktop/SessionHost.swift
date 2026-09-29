@@ -972,14 +972,31 @@ final class SessionHost: @unchecked Sendable {
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
         // pass nil so they never steal focus. The intent reaches the last
         // plan only, so focus lands after every frame of the pass.
-        let focusTarget = focusIntent.take(
+        var focusTarget = focusIntent.take(
             motionStarting: false,
             parked: Set(plans.flatMap { $0.parked.keys }),
             now: ProcessInfo.processInfo.systemUptime
-        ) ?? focusIntent.takeReassert(
-            logicalFocus: session.manager.currentWorkspace().focusedWindow,
-            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
         )
+        if focusTarget == nil,
+           let reassert = focusIntent.takeReassert(
+            logicalFocus: session.manager.currentWorkspace().focusedWindow,
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            frontmostFocusedWindow: { [actuator] in
+                // Never reads Gio's own pid: a target is never Gio's.
+                guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                      pid != ProcessInfo.processInfo.processIdentifier,
+                      let element = focusedWindowElement(pid: pid) else {
+                    return nil
+                }
+                return actuator.id(matching: element, pid: pid)
+            }
+           ) {
+            GioLog.record(
+                .debug,
+                "focus reassert id=\(reassert.id.pid):\(reassert.id.elementID) reason=\(reassert.reason.rawValue)"
+            )
+            focusTarget = reassert.id
+        }
         let warp = warpAfterFocus
         warpAfterFocus = false
         defer {

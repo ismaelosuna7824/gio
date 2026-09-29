@@ -33,6 +33,24 @@ extension CLICommand {
     }
 }
 
+/// FI-06: why the final pass focuses the delivered target again.
+public enum FocusReassertReason: String, Equatable, Sendable {
+    case otherApp
+    case sameAppDrift
+    case unreadable
+}
+
+/// FI-06: a decision to re-assert keyboard focus on `id`.
+public struct FocusReassert: Equatable, Sendable {
+    public let id: WindowID
+    public let reason: FocusReassertReason
+
+    public init(id: WindowID, reason: FocusReassertReason) {
+        self.id = id
+        self.reason = reason
+    }
+}
+
 /// HD-01: what the session wants the OS to focus, and the guard that keeps
 /// Gio's own focus change from echoing back as a user change.
 ///
@@ -98,15 +116,28 @@ public struct FocusIntent: Equatable, Sendable {
         return target
     }
 
-    /// FI-06: on the final exact pass, the target to focus again, only when
-    /// it is still the logical focus but another app is now frontmost.
-    /// Consumed once; a click or a new request clears it.
-    public mutating func takeReassert(logicalFocus: WindowID?, frontmostPID: pid_t?) -> WindowID? {
+    /// FI-06: on the final exact pass, the target to focus again, decided with
+    /// full information: another app is frontmost, or the frontmost app (the
+    /// target's own) keeps a different window focused, or that window cannot
+    /// be read (fail towards the user's intent). `frontmostFocusedWindow` is
+    /// only called for a same-app check; nil means unreadable/unresolvable.
+    /// Consumed once (no loops); a click or a new request clears it.
+    public mutating func takeReassert(
+        logicalFocus: WindowID?,
+        frontmostPID: pid_t?,
+        frontmostFocusedWindow: () -> WindowID?
+    ) -> FocusReassert? {
         defer { delivered = nil }
-        guard let target = delivered, target == logicalFocus, frontmostPID != target.pid else {
+        guard let target = delivered, target == logicalFocus else {
             return nil
         }
-        return target
+        guard frontmostPID == target.pid else {
+            return FocusReassert(id: target, reason: .otherApp)
+        }
+        guard let focused = frontmostFocusedWindow() else {
+            return FocusReassert(id: target, reason: .unreadable)
+        }
+        return focused == target ? nil : FocusReassert(id: target, reason: .sameAppDrift)
     }
 
     /// True for a non-click focus adoption that contradicts the window we are
