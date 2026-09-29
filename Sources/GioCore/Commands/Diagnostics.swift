@@ -44,6 +44,13 @@ public func makeDiagnostics(
             value: facts.accessibilityGranted ? "Granted" : "Missing",
             status: facts.accessibilityGranted ? .ok : .failure
         ),
+        DiagnosticRow(
+            title: "Screen Recording",
+            value: facts.screenRecordingGranted
+                ? "Granted"
+                : "Missing (motion uses Accessibility until it is granted; relaunch Gio after granting)",
+            status: facts.screenRecordingGranted ? .ok : .warning
+        ),
         config,
         DiagnosticRow(
             title: "IPC socket",

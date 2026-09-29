@@ -93,7 +93,7 @@ final class DiagnosticsTests: XCTestCase {
             configPath: "/tmp/config.toml", configExists: exists, configMessages: messages,
             accessibilityGranted: granted, currentWorkspace: 1,
             displays: (0..<displays).map { DisplayFact(id: UInt32($0 + 1), workspace: $0 + 1) },
-            windows: []
+            windows: [], screenRecordingGranted: true
         )
     }
 

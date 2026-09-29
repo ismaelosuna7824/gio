@@ -1,5 +1,6 @@
 import AppKit
 import GioCore
+import GioMacOS
 import SwiftUI
 
 /// Doctor facts and the maintenance actions.
@@ -18,6 +19,16 @@ struct DiagnosticsView: View {
                                 Image(systemName: symbol(row.status)).foregroundStyle(color(row.status))
                                 Text(row.title).font(.headline).frame(width: 110, alignment: .leading)
                                 Text(row.value).foregroundStyle(.secondary).textSelection(.enabled)
+                            }
+                        }
+                        if !facts.screenRecordingGranted {
+                            HStack {
+                                Button("Request Screen Recording access") {
+                                    _ = requestScreenRecordingPermission()
+                                    model.refresh()
+                                }
+                                Text("Relaunch Gio after granting; macOS usually applies it on the next launch.")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
                         }
                         ForEach(facts.configMessages, id: \.self) { message in

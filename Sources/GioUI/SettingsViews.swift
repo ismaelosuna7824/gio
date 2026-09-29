@@ -148,6 +148,7 @@ struct AnimationsSettingsView: View {
     @State private var dampingRatio: Double
     @State private var stiffness: Double
     @State private var resize: ResizeMode
+    @State private var renderer: RendererKind
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
@@ -159,6 +160,7 @@ struct AnimationsSettingsView: View {
         _dampingRatio = State(initialValue: animations.springDampingRatio)
         _stiffness = State(initialValue: animations.springStiffness)
         _resize = State(initialValue: animations.resize)
+        _renderer = State(initialValue: animations.renderer)
     }
 
     var body: some View {
@@ -208,6 +210,14 @@ struct AnimationsSettingsView: View {
                 .disabled(!enabled)
                 Text("Never (default) grows windows once at the end. Adaptive grows them during the motion when their app keeps up and nothing is in the way; Always ignores how well the app keeps up.")
                     .font(.caption).foregroundStyle(.secondary)
+                Picker("Renderer", selection: $renderer) {
+                    Text("Snapshot").tag(RendererKind.snapshot)
+                    Text("Accessibility").tag(RendererKind.ax)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!enabled)
+                Text("Snapshot animates window images and needs the Screen Recording permission (grant it from Overview or Diagnostics; Gio falls back to Accessibility while it is missing). Accessibility moves the real windows every frame.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 HStack {
@@ -225,7 +235,7 @@ struct AnimationsSettingsView: View {
         feedback = model.apply(animationEdits(
             enabled: enabled, durationMilliseconds: Int(duration),
             curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness,
-            resize: resize
+            resize: resize, renderer: renderer
         ))
     }
 
@@ -237,6 +247,7 @@ struct AnimationsSettingsView: View {
         dampingRatio = animations.springDampingRatio
         stiffness = animations.springStiffness
         resize = animations.resize
+        renderer = animations.renderer
         feedback = nil
     }
 }

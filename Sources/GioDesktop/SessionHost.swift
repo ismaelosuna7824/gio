@@ -89,6 +89,8 @@ final class SessionHost: @unchecked Sendable {
     private var trustedFrames = TrustedFrames()
     /// PA-04: publishes the focus ring only when its drawing changed.
     private var ringGate = FocusRingPublishGate()
+    /// SM-01: logs the effective renderer only when it changes (session queue).
+    private var rendererLog = RendererLogGate()
     /// PA-04: pids with windows in the running motion; their moved/resized
     /// events are our own writes and are dropped before any lookup.
     private var animatingPids: Set<pid_t> = []
@@ -425,6 +427,10 @@ final class SessionHost: @unchecked Sendable {
         }
         let path = session.configPath
             ?? (FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml")
+        let screenRecording = hasScreenRecordingPermission()
+        if let line = rendererLog.line(config: session.config.animations, permission: screenRecording) {
+            GioLog.record(.info, line)
+        }
         return SessionFacts(
             configPath: path, configExists: FileManager.default.fileExists(atPath: path),
             configMessages: configMessages, accessibilityGranted: hasAXPermission(),
@@ -436,7 +442,7 @@ final class SessionHost: @unchecked Sendable {
                     stack: summaries[$0.id]?.workspaces ?? []
                 )
             },
-            windows: windows
+            windows: windows, screenRecordingGranted: screenRecording
         )
     }
 

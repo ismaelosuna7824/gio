@@ -106,7 +106,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
 public func animationEdits(
     enabled: Bool, durationMilliseconds: Int,
     curve: MotionCurveKind? = nil, springDampingRatio: Double? = nil, springStiffness: Double? = nil,
-    resize: ResizeMode? = nil
+    resize: ResizeMode? = nil, renderer: RendererKind? = nil
 ) -> [ConfigEdit] {
     var edits: [ConfigEdit] = [
         .set(table: "animations", key: "enabled", value: .bool(enabled)),
@@ -123,6 +123,9 @@ public func animationEdits(
     }
     if let resize {
         edits.append(.set(table: "animations", key: "resize", value: .string(resize.rawValue)))
+    }
+    if let renderer {
+        edits.append(.set(table: "animations", key: "renderer", value: .string(renderer.rawValue)))
     }
     return edits
 }

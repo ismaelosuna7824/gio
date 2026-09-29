@@ -40,6 +40,18 @@ struct OverviewView: View {
                         }
                     }
                 }
+                HStack {
+                    statusRow(
+                        "Screen Recording", overview.screenRecordingGranted ? "Granted" : "Missing",
+                        ok: overview.screenRecordingGranted
+                    )
+                    if !overview.screenRecordingGranted {
+                        Button("Request access") {
+                            _ = requestScreenRecordingPermission()
+                            model.refresh()
+                        }
+                    }
+                }
                 statusRow("Config", overview.configSummary, ok: overview.configIssues.isEmpty)
                 ForEach(Array(overview.configIssues.enumerated()), id: \.offset) { _, issue in
                     Text(issue)
@@ -55,6 +67,10 @@ struct OverviewView: View {
         }
         if !overview.accessibilityGranted {
             Text("Without Accessibility access Gio cannot move windows or hear shortcuts.")
+                .font(.callout).foregroundStyle(.secondary)
+        }
+        if !overview.screenRecordingGranted {
+            Text("Screen Recording powers the smooth snapshot animations. Until it is granted Gio animates through Accessibility. macOS usually needs Gio to be relaunched after you grant it.")
                 .font(.callout).foregroundStyle(.secondary)
         }
         Text("Windows").font(.headline)

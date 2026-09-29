@@ -48,6 +48,8 @@ public struct SessionFacts: Equatable, Sendable {
     public let configExists: Bool
     public let configMessages: [String]
     public let accessibilityGranted: Bool
+    /// SM-01: `CGPreflightScreenCaptureAccess()`; needed by the snapshot renderer.
+    public let screenRecordingGranted: Bool
     public let currentWorkspace: Int
     public let displays: [DisplayFact]
     public let windows: [WindowFact]
@@ -55,12 +57,13 @@ public struct SessionFacts: Equatable, Sendable {
     public init(
         configPath: String, configExists: Bool, configMessages: [String],
         accessibilityGranted: Bool, currentWorkspace: Int,
-        displays: [DisplayFact], windows: [WindowFact]
+        displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false
     ) {
         self.configPath = configPath
         self.configExists = configExists
         self.configMessages = configMessages
         self.accessibilityGranted = accessibilityGranted
+        self.screenRecordingGranted = screenRecordingGranted
         self.currentWorkspace = currentWorkspace
         self.displays = displays
         self.windows = windows
@@ -107,6 +110,7 @@ public struct Overview: Equatable, Sendable {
     public let configSummary: String
     public let configIssues: [String]
     public let accessibilityGranted: Bool
+    public let screenRecordingGranted: Bool
     public let displayLines: [String]
     public let windows: [WindowRow]
     public let windowSummary: String
@@ -196,7 +200,8 @@ public func makeOverview(_ facts: SessionFacts) -> Overview {
     let rows = windowRows(facts.windows)
     return Overview(
         configSummary: configSummary, configIssues: facts.configMessages,
-        accessibilityGranted: facts.accessibilityGranted, displayLines: displayLines,
+        accessibilityGranted: facts.accessibilityGranted,
+        screenRecordingGranted: facts.screenRecordingGranted, displayLines: displayLines,
         windows: rows, windowSummary: windowSummary(rows)
     )
 }

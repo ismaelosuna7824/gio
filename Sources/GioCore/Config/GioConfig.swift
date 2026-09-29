@@ -79,15 +79,19 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var springStiffness: Double
     /// PA-06: whether growing windows interpolate their size during flight.
     public var resize: ResizeMode
+    /// SM-01: `snapshot` (default) needs Screen Recording; falls back to `ax`.
+    public var renderer: RendererKind
 
     public init(
         enabled: Bool = true, durationMilliseconds: Int = 200,
         curve: MotionCurveKind = .spring,
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
-        resize: ResizeMode = .never
+        resize: ResizeMode = .never,
+        renderer: RendererKind = .snapshot
     ) {
         self.resize = resize
+        self.renderer = renderer
         self.enabled = enabled
         self.durationMilliseconds = durationMilliseconds
         self.curve = curve

@@ -354,6 +354,18 @@ func applyAnimationsKey(
                 "line \(line): animations.resize '\(text)' is not \"adaptive\", \"always\" or \"never\", using the default"
             )
         }
+    } else if key == "renderer" {
+        guard case .string(let text) = value else {
+            errors.append("line \(line): animations.renderer expects \"snapshot\" or \"ax\"")
+            return
+        }
+        if let kind = RendererKind(rawValue: text) {
+            config.animations.renderer = kind
+        } else {
+            warnings.append(
+                "line \(line): animations.renderer '\(text)' is not \"snapshot\" or \"ax\", using the default"
+            )
+        }
     } else if key == "spring-damping-ratio" {
         applySpringNumber(
             key, value: value, line: line, range: SpringParameters.dampingRatioRange,
