@@ -35,10 +35,10 @@ exists); signing team stays a documented per-collaborator step.
 - [x] HD-02 (`3b81b60`) — Workspace-switch prepositions go through the reconciler (no direct writes).
 - [x] HD-03 (`953d6c6`) — Full key table in HotkeyTap (letters, digits, F1-F12, arrows, punctuation,
   Tab/Return/Escape/Space/Delete) so any valid config binding fires.
-- [ ] HD-04 — Wire `mouse-follows-focus`, `focus-follows-mouse`, `center-focused-column`
+- [x] HD-04 (`3451fd1`) — Wire `mouse-follows-focus`, `focus-follows-mouse`, `center-focused-column`
   (never/always/on-overflow, Niri semantics).
-- [ ] HD-05 — `gio restart` restarts the session (restore, relaunch, exit) over IPC.
-- [ ] HD-06 — Launcher searches managed windows too; choosing one focuses and reveals it.
+- [x] HD-05 (`954b94d`) — `gio restart` restarts the session (restore, relaunch, exit) over IPC.
+- [x] HD-06 (`c1671dc`) — Launcher searches managed windows too; choosing one focuses and reveals it.
 - [ ] HD-07 — Guardian process: launched by Gio, watches Gio's pid, restores off-screen
   windows if Gio exits without a clean shutdown (crash, SIGKILL, Force Quit).
 
@@ -48,6 +48,14 @@ final exact pass after writes, echo guard 2s/0.6s, mouse-down cancels; reconcile
 `preposition(frames:)`; shared KeyNames (72) + ANSI tapKeyCodes, unknown key -> config message.
 RED (compile) -> GREEN each; bundles 12/7/19/23/564 all 0 failures (parent re-ran); signed
 build OK. LIVE PENDING. Review: UNAVAILABLE.
+
+Evidence HD-04..06 (route: one delegated writer): center-focused-column enum (bool back-compat:
+true=always), warp + hover focus pure decisions (keyboard-only centering/warp, 100ms hover,
+layer-0 same-pid hit test, 0.4s post-warp suppression); restart replies then restores,
+relaunches with --after-restart lock wait; launcher mixes apps + windows, focusWindow path.
+RED -> GREEN; bundles 20/7/19/23/602 all 0 failures (parent re-ran); signed build + GioCLI OK.
+User-visible: user's config has center-focused-column = true and mouse-follows-focus = true,
+which now take effect. LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Alt+H/L changes keyboard focus live; config binding on e.g. Alt+Y fires.
@@ -65,3 +73,4 @@ build OK. LIVE PENDING. Review: UNAVAILABLE.
 ## Progress
 - 2026-09-29: document created. Next: HD-01..HD-03.
 - 2026-09-29: HD-01..HD-03 done, pushed. Next: HD-04..HD-06.
+- 2026-09-29: HD-04..HD-06 done, pushed. Next: HD-07 guardian.
