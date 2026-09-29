@@ -37,9 +37,11 @@ struct DiagnosticsView: View {
                     actionNote = "Config reloaded."
                 }
                 Button("Restore All Windows") {
-                    let moved = model.restoreAllWindows()
-                    actionNote = "Moved \(moved) window\(moved == 1 ? "" : "s") back on screen. "
-                        + "Tiling is still on: the next layout change parks off-screen columns again."
+                    actionNote = "Restoring windows…"
+                    model.restoreAllWindows { moved in
+                        actionNote = "Moved \(moved) window\(moved == 1 ? "" : "s") back on screen. "
+                            + "Tiling is still on: the next layout change parks off-screen columns again."
+                    }
                 }
                 Button("Open Config File") { openConfigFileInEditor() }
                 Spacer()

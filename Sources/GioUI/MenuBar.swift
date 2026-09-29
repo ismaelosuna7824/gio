@@ -37,7 +37,7 @@ public final class MenuBarController: NSObject {
         refresh()
     }
 
-    private func query() -> BarSessionState? {
+    private nonisolated func query() -> BarSessionState? {
         guard let response = try? sendIPCRequest(["status"], socketPath: defaultSocketPath()),
               response.ok,
               let output = response.output
@@ -47,10 +47,22 @@ public final class MenuBarController: NSObject {
         return parseBarStatus(output)
     }
 
+    /// The IPC round trip runs off the main thread: the server answers on the
+    /// session queue, and main must never wait on it (the hotkey tap lives on
+    /// the main run loop).
     private func refresh() {
-        let state = query()
-        statusItem.button?.title = barTitle(state)
-        statusItem.menu = buildMenu(state: state)
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let state = self?.query()
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else {
+                        return
+                    }
+                    self.statusItem.button?.title = barTitle(state)
+                    self.statusItem.menu = self.buildMenu(state: state)
+                }
+            }
+        }
     }
 
     private func buildMenu(state: BarSessionState?) -> NSMenu {
@@ -101,13 +113,23 @@ public final class MenuBarController: NSObject {
     }
 
     @objc private func switchWorkspace(_ sender: NSMenuItem) {
-        _ = try? sendIPCRequest(["workspace", "\(sender.tag)"], socketPath: defaultSocketPath())
-        refresh()
+        sendAsync(["workspace", "\(sender.tag)"])
     }
 
     @objc private func reloadConfig() {
-        _ = try? sendIPCRequest(["reload"], socketPath: defaultSocketPath())
-        refresh()
+        sendAsync(["reload"])
+    }
+
+    /// Fire an IPC verb off-main, then refresh the bar.
+    private func sendAsync(_ argv: [String]) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            _ = try? sendIPCRequest(argv, socketPath: defaultSocketPath())
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    self?.refresh()
+                }
+            }
+        }
     }
 
     @objc private func openLauncher() {

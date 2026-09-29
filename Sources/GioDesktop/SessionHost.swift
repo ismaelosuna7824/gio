@@ -24,7 +24,26 @@ final class SessionHost: @unchecked Sendable {
     private var server: IPCServer?
     private let instanceLock = SingleInstanceLock()
     private var eventObserver: SystemWindowObserver?
-    private var hotkeyTap: HotkeyTap?
+    /// The tap is created and restarted from the main thread but read from
+    /// the session queue (`hotkeyTap == nil` checks), so it has its own lock.
+    private var tapStorage: HotkeyTap?
+    private let tapLock = NSLock()
+    private var hotkeyTap: HotkeyTap? {
+        get {
+            tapLock.lock()
+            defer { tapLock.unlock() }
+            return tapStorage
+        }
+        set {
+            tapLock.lock()
+            tapStorage = newValue
+            tapLock.unlock()
+        }
+    }
+    /// Latest snapshot for the main thread. The session queue publishes it
+    /// (start, config changes, every `snapshot()` request); main only reads,
+    /// so it never waits behind a slow reflow (tap timeouts, dead hotkeys).
+    private let snapshotCell = PublishedValue(SessionSnapshot())
     private var displayObserver: NSObjectProtocol?
     private var pendingReflow: DispatchWorkItem?
     private var nextElementID: UInt64 = 0
@@ -138,6 +157,7 @@ final class SessionHost: @unchecked Sendable {
         watchDisplays()
         queue.sync {
             self.rebuildEventObservation()
+            self.publishSnapshot()
         }
         startTap()
         return nil
@@ -175,17 +195,24 @@ final class SessionHost: @unchecked Sendable {
 
     /// Diagnostics action: same restore the quit path runs, without
     /// quitting. Tiling stays active, so the next reflow re-parks
-    /// off-viewport columns; this is a rescue, not a pause. Returns how
-    /// many windows were moved.
-    func restoreAllWindows() -> Int {
-        queue.sync {
+    /// off-viewport columns; this is a rescue, not a pause. Asynchronous:
+    /// the main thread never waits on the session queue. `completion` gets
+    /// how many windows were moved, on the main queue.
+    func restoreAllWindows(completion: @escaping @Sendable (Int) -> Void = { _ in }) {
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
             pendingReflow?.cancel()
             stopMotion()
             reconciler?.waitForMotionIdle(timeout: 0.3)
             let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
             let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
             GioLog.record(.info, "restore-all requested from the app moved=\(moved)")
-            return moved
+            publishSnapshot()
+            DispatchQueue.main.async {
+                completion(moved)
+            }
         }
     }
 
@@ -193,12 +220,21 @@ final class SessionHost: @unchecked Sendable {
     /// needed, adopt it as the focus, and let the reflow reveal it and apply
     /// the keyboard focus intent. False when the window is gone or minimized.
     func focusWindow(_ text: String) -> Bool {
-        queue.sync {
-            guard !isShuttingDown, let id = WindowID(text: text),
+        // The verdict comes from the published snapshot so the main thread
+        // never waits on the session queue; the queue re-checks for real.
+        guard let id = WindowID(text: text),
+              snapshotCell.read().facts?.windows.contains(where: {
+                  $0.id == text && !$0.isMinimized
+              }) == true
+        else {
+            return false
+        }
+        queue.async { [weak self] in
+            guard let self, !isShuttingDown,
                   let plan = planFocusWindow(id, in: session.manager),
                   session.registry.find(id)?.isMinimized != true
             else {
-                return false
+                return
             }
             let previous = session.manager.currentWorkspace().focusedWindow
             if plan.switchesWorkspace {
@@ -212,13 +248,16 @@ final class SessionHost: @unchecked Sendable {
                 "focus window requested id=\(id.pid):\(id.elementID) workspace=\(plan.index) switched=\(plan.switchesWorkspace)"
             )
             reflowAll()
-            return true
         }
+        return true
     }
 
     /// Same effect as the IPC `reload` verb, driven by the app.
     func reloadConfig() {
-        queue.sync {
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
             dispatch(.reload, session: &session)
             applyReloadedConfig()
             GioLog.record(.info, "config reloaded from the app")
@@ -232,7 +271,34 @@ final class SessionHost: @unchecked Sendable {
         dispatcherLock.unlock()
         hoverLock.lock()
         hoverEnabled = session.config.behavior.focusFollowsMouse
+        let wanted = hoverEnabled
         hoverLock.unlock()
+        // The tap only subscribes to pointer moves while focus-follows-mouse
+        // is on; rebuild it when a reload flips that.
+        if let tap = hotkeyTap,
+           tapNeedsRestart(observingMouseMoved: tap.observesMouseMoved, wanted: wanted)
+        {
+            DispatchQueue.main.async { [weak self] in
+                self?.restartTapForMouseSetting()
+            }
+        }
+    }
+
+    /// Main thread. Re-creates the tap with the current mouse-move setting.
+    private func restartTapForMouseSetting() {
+        guard let tap = hotkeyTap else {
+            return
+        }
+        hoverLock.lock()
+        let wanted = hoverEnabled
+        hoverLock.unlock()
+        guard tapNeedsRestart(observingMouseMoved: tap.observesMouseMoved, wanted: wanted) else {
+            return
+        }
+        tap.stop()
+        hotkeyTap = nil
+        startTap()
+        GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted)")
     }
 
     private func currentDispatcher() -> HotkeyDispatcher {
@@ -241,14 +307,23 @@ final class SessionHost: @unchecked Sendable {
         return dispatcherTable
     }
 
-    /// Read-only state for the main window. Safe from any thread: it runs
-    /// on the session queue.
+    /// Read-only state for the main window. Never waits on the session
+    /// queue: returns the last published snapshot and asks the queue for a
+    /// fresh one (visible on the next call; the UI polls every 2-3 s).
     func snapshot() -> SessionSnapshot {
-        queue.sync {
+        queue.async { [weak self] in
+            self?.publishSnapshot()
+        }
+        return snapshotCell.read()
+    }
+
+    /// Must run on `queue`.
+    private func publishSnapshot() {
+        snapshotCell.publish(
             SessionSnapshot(
                 keybindings: session.config.keybindings, facts: sessionFacts(), config: session.config
             )
-        }
+        )
     }
 
     /// Must run on `queue`.
@@ -291,15 +366,21 @@ final class SessionHost: @unchecked Sendable {
     /// Patch config.toml from the app, then reload it exactly like the IPC
     /// `reload` verb. Nothing is reloaded when the edit is rejected.
     func applyConfigEdits(_ edits: [ConfigEdit]) -> Result<PatchedConfig, ConfigErrors> {
-        queue.sync {
-            let result = GioCore.applyConfigEdits(edits)
-            if case .success = result {
+        // The file patch and validation need no session state, so they run
+        // on the caller (main) without waiting on the queue; only the live
+        // reload hops onto it.
+        let result = GioCore.applyConfigEdits(edits)
+        if case .success = result {
+            queue.async { [weak self] in
+                guard let self else {
+                    return
+                }
                 dispatch(.reload, session: &session)
                 applyReloadedConfig()
                 GioLog.record(.info, "config edited from the app and reloaded")
             }
-            return result
         }
+        return result
     }
 
     /// After `session.config` changed: rebuild bindings and messages,
@@ -309,6 +390,7 @@ final class SessionHost: @unchecked Sendable {
         configMessages = loadGioConfig().messages
         reapplyRules()
         reflowAll()
+        publishSnapshot()
     }
 
     // MARK: - IPC
@@ -1472,13 +1554,22 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func startTap() {
+        hoverLock.lock()
+        let observeMouseMoved = hoverEnabled
+        hoverLock.unlock()
+        // Only subscribed while focus-follows-mouse is on: otherwise every
+        // mouse move would cost a main-thread callback.
+        var moveHandler: (@Sendable (CGPoint) -> Void)?
+        if observeMouseMoved {
+            moveHandler = { [weak self] location in
+                self?.handlePointerMoved(location)
+            }
+        }
         let tap = HotkeyTap(
             onMouseDown: { [weak self] location in
                 self?.recordClick(at: location)
             },
-            onMouseMoved: { [weak self] location in
-                self?.handlePointerMoved(location)
-            },
+            onMouseMoved: moveHandler,
             onCombo: { [weak self] combo in
                 self?.handleCombo(combo) ?? false
             }

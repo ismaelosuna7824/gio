@@ -31,13 +31,14 @@ public struct DesktopActions: Sendable {
     /// Re-read config.toml in the running session (same as `gio reload`).
     public var reloadConfig: @Sendable () -> Void
     /// Bring every parked or off-screen window back on screen without
-    /// quitting; returns how many windows were moved.
-    public var restoreAllWindows: @Sendable () -> Int
+    /// quitting. Asynchronous: the completion (main queue) gets how many
+    /// windows were moved.
+    public var restoreAllWindows: @Sendable (@escaping @Sendable (Int) -> Void) -> Void
 
     public init(
         applyEdits: @escaping @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
         reloadConfig: @escaping @Sendable () -> Void = {},
-        restoreAllWindows: @escaping @Sendable () -> Int = { 0 }
+        restoreAllWindows: @escaping @Sendable (@escaping @Sendable (Int) -> Void) -> Void = { $0(0) }
     ) {
         self.applyEdits = applyEdits
         self.reloadConfig = reloadConfig
@@ -56,8 +57,8 @@ public enum ApplyFeedback: Equatable, Sendable {
     case rejected(messages: [String])
 }
 
-/// Main-thread model behind the window. `fetch` is host-provided and may
-/// block briefly on the session queue.
+/// Main-thread model behind the window. `fetch` is host-provided and must
+/// not wait on the session queue (it returns the last published snapshot).
 @MainActor
 public final class DesktopModel: ObservableObject {
     @Published public private(set) var snapshot = SessionSnapshot()
@@ -77,6 +78,15 @@ public final class DesktopModel: ObservableObject {
         snapshot = fetch()
     }
 
+    /// Session-side changes land asynchronously; look again shortly so the
+    /// window reflects them without waiting for the next poll.
+    private func refreshSoon() {
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            self?.refresh()
+        }
+    }
+
     /// Patch the config file and reload it live; the snapshot then reflects
     /// the reloaded config. Invalid edits are rejected with the parser's
     /// messages and leave the file untouched.
@@ -88,19 +98,25 @@ public final class DesktopModel: ObservableObject {
         case .failure(let errors): feedback = .rejected(messages: errors.messages)
         }
         refresh()
+        refreshSoon()
         return feedback
     }
 
     public func reloadConfig() {
         actions.reloadConfig()
         refresh()
+        refreshSoon()
     }
 
     /// Windows moved back on screen. Tiling keeps running: the next reflow
-    /// parks off-viewport columns again.
-    public func restoreAllWindows() -> Int {
-        let moved = actions.restoreAllWindows()
-        refresh()
-        return moved
+    /// parks off-viewport columns again. `completion` gets the moved count
+    /// once the session finished.
+    public func restoreAllWindows(completion: @escaping @MainActor (Int) -> Void) {
+        actions.restoreAllWindows { [weak self] moved in
+            Task { @MainActor in
+                self?.refresh()
+                completion(moved)
+            }
+        }
     }
 }

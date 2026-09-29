@@ -152,6 +152,8 @@ rg "reflow timing|anim done|focus adopt|focus dropped|restore" ~/.config/gio/gio
 | `discovery exclude pid=N app=<name> <label>` | info | A window was excluded (`ignore(...)`) with its reason. |
 | `discovery skipped=N windows with unreadable attributes` | debug | Windows whose attributes could not be read. |
 | `hotkey tap refused; running without global hotkeys` | warn | Accessibility permission missing or tap creation failed. |
+| `hotkey tap re-enabled after <timeout\|userInput\|watchdog> (count=N)` | warn first, then debug | macOS disabled the event tap (slow main thread) and Gio switched it back on. Frequent lines mean something keeps blocking the main thread. |
+| `hotkey tap restarted mouse-moved=<bool>` | info | A config reload changed `focus-follows-mouse`, so the tap was rebuilt with or without pointer moves. |
 | `observation refused for ... app(s)` | warn | An app refused an AX observer; it is retried when it activates or relaunches. |
 | `guardian started parent=N`, `guardian clean exit`, `guardian restore applied=N ...` | info | Guardian process markers; restore only after an abrupt Gio death. |
 | `config reloaded from the app`, `config edited from the app and reloaded`, `session started`, `ipc serving <path>` | info | Lifecycle markers. |

@@ -53,32 +53,42 @@ private func tapCallback(
         return Unmanaged.passUnretained(event)
     }
     let box: TapBox = Unmanaged.fromOpaque(refcon).takeUnretainedValue()
-    if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+    switch tapEventAction(for: type) {
+    case .reenable(let reason):
+        // macOS turned the tap off (slow callback). Without this the keyboard
+        // stays dead for the whole session.
+        box.reenable(reason)
+        return Unmanaged.passUnretained(event)
+    case .mouseDown:
         // Observed only, never swallowed. Cocoa coordinates: the space the
         // window frames are kept in.
         box.onMouseDown?(NSEvent.mouseLocation)
         return Unmanaged.passUnretained(event)
-    }
-    if type == .mouseMoved {
+    case .mouseMoved:
         box.onMouseMoved?(NSEvent.mouseLocation)
         return Unmanaged.passUnretained(event)
-    }
-    guard type == .keyDown else {
+    case .passThrough:
         return Unmanaged.passUnretained(event)
+    case .keyDown:
+        guard let combo = tapCombo(from: event) else {
+            return Unmanaged.passUnretained(event)
+        }
+        // Returning nil swallows the key. Only exact matches are swallowed, so
+        // ordinary typing (including Option-accented characters) passes through
+        // untouched — at the cost that WM keys must be unambiguous.
+        return box.onCombo(combo) ? nil : Unmanaged.passUnretained(event)
     }
-    guard let combo = tapCombo(from: event) else {
-        return Unmanaged.passUnretained(event)
-    }
-    // Returning nil swallows the key. Only exact matches are swallowed, so
-    // ordinary typing (including Option-accented characters) passes through
-    // untouched — at the cost that WM keys must be unambiguous.
-    return box.onCombo(combo) ? nil : Unmanaged.passUnretained(event)
 }
 
-final class TapBox {
+final class TapBox: @unchecked Sendable {
     let onCombo: @Sendable (HotkeyCombo) -> Bool
     let onMouseDown: (@Sendable (CGPoint) -> Void)?
     let onMouseMoved: (@Sendable (CGPoint) -> Void)?
+    /// The callback (main) and the watchdog (main) both use these; the lock
+    /// keeps `stop()` from racing them. Never held across a call out.
+    private let lock = NSLock()
+    private var port: CFMachPort?
+    private var tracker = TapReenableTracker()
 
     init(
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
@@ -88,6 +98,35 @@ final class TapBox {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
+    }
+
+    func attach(_ port: CFMachPort?) {
+        lock.lock()
+        self.port = port
+        lock.unlock()
+    }
+
+    /// Switch the tap back on and log it (warn once, debug after).
+    func reenable(_ reason: TapReenableReason) {
+        lock.lock()
+        guard let port else {
+            lock.unlock()
+            return
+        }
+        CGEvent.tapEnable(tap: port, enable: true)
+        let entry = tracker.record(reason)
+        lock.unlock()
+        GioLog.record(entry.level, entry.message)
+    }
+
+    /// Watchdog tick: re-enable when the tap is off.
+    func checkEnabled() {
+        lock.lock()
+        let enabled = port.map { CGEvent.tapIsEnabled(tap: $0) } ?? true
+        lock.unlock()
+        if tapWatchdogAction(isEnabled: enabled) == .reenable {
+            reenable(.watchdog)
+        }
     }
 }
 
@@ -100,9 +139,16 @@ public final class HotkeyTap {
     private var port: CFMachPort?
     private var source: CFRunLoopSource?
     private var boxRefcon: UnsafeMutableRawPointer?
+    private var watchdog: DispatchSourceTimer?
     private let onCombo: @Sendable (HotkeyCombo) -> Bool
     private let onMouseDown: (@Sendable (CGPoint) -> Void)?
     private let onMouseMoved: (@Sendable (CGPoint) -> Void)?
+
+    /// Whether this tap subscribes to pointer moves (only when a handler was
+    /// given; the host passes one only for focus-follows-mouse).
+    public var observesMouseMoved: Bool {
+        onMouseMoved != nil
+    }
 
     /// `onMouseDown` observes clicks and `onMouseMoved` pointer moves (Cocoa
     /// global location) without swallowing either.
@@ -118,19 +164,16 @@ public final class HotkeyTap {
 
     @discardableResult
     public func start() -> Bool {
-        var eventTypes: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
-        if onMouseMoved != nil {
-            eventTypes.append(.mouseMoved)
-        }
         guard port == nil else {
             return true
         }
-        let boxRefcon = Unmanaged.passRetained(TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved)).toOpaque()
+        let box = TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved)
+        let boxRefcon = Unmanaged.passRetained(box).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: eventTypes.reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) },
+            eventsOfInterest: tapEventMask(observingMouseMoved: onMouseMoved != nil),
             callback: tapCallback,
             userInfo: boxRefcon
         ) else {
@@ -138,14 +181,30 @@ public final class HotkeyTap {
             return false
         }
         self.port = port
+        box.attach(port)
         self.boxRefcon = boxRefcon
         source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, port, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: port, enable: true)
+        startWatchdog(box)
         return true
     }
 
+    /// Every 2 s on main: a tap macOS disabled without telling us is switched
+    /// back on. Cheap (one flag read).
+    private func startWatchdog(_ box: TapBox) {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 2, repeating: 2, leeway: .milliseconds(500))
+        timer.setEventHandler { [weak box] in
+            box?.checkEnabled()
+        }
+        timer.resume()
+        watchdog = timer
+    }
+
     public func stop() {
+        watchdog?.cancel()
+        watchdog = nil
         if let port {
             CGEvent.tapEnable(tap: port, enable: false)
         }
@@ -155,6 +214,8 @@ public final class HotkeyTap {
         }
         port = nil
         if let boxRefcon {
+            let box: TapBox = Unmanaged.fromOpaque(boxRefcon).takeUnretainedValue()
+            box.attach(nil)
             Unmanaged<TapBox>.fromOpaque(boxRefcon).release()
             self.boxRefcon = nil
         }

@@ -31,7 +31,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
             actions: DesktopActions(
                 applyEdits: { [host] in host.applyConfigEdits($0) },
                 reloadConfig: { [host] in host.reloadConfig() },
-                restoreAllWindows: { [host] in host.restoreAllWindows() }
+                restoreAllWindows: { [host] completion in host.restoreAllWindows(completion: completion) }
             )
         )
     )
