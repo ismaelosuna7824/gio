@@ -59,7 +59,7 @@ Notes:
 
 Gio parses a strict **subset of TOML**:
 
-- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus-ring]`, `[keybindings]` and array tables `[[window-rules]]`.
+- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus-ring]`, `[logging]`, `[keybindings]` and array tables `[[window-rules]]`.
 - `key = value` with double-quoted strings, integers, decimals, `true`/`false`, and flat lists of numbers like `[0.33, 0.5, 800]` (a trailing comma is tolerated; nested lists are not).
 - `#` comments outside quotes. Keys may be quoted (`"Alt+H" = ...`).
 - No escapes in strings, no multi-line values, no inline tables.
@@ -102,6 +102,14 @@ An invalid config never stops the window manager.
 | `duration-ms` | number | `200` | Length of one `ease-out` animation. Rounded and clamped to `0...1000` with a warning. `0` is instant for both curves. |
 | `spring-damping-ratio` | number | `1.0` | `0.2...3`. `1` settles without overshoot; lower values bounce. Clamped with a warning. |
 | `spring-stiffness` | number | `800` | `100...3000`. Higher is faster. Clamped with a warning. A spring never runs longer than 1 s. |
+
+### `[logging]`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `level` | string | `"info"` | Minimum severity written to `~/.config/gio/gio.log`: `trace`, `debug`, `info`, `warn`, `error`. Lines below it cost nothing. Use `"debug"` while troubleshooting (per-event hotkey/focus/reconcile lines), then go back. Applies on `gio reload`. |
+
+The file is written in batches and rotates at about 1 MB to `gio.log.1` (one backup kept); `gio logs` and the Logs section read the current file only.
 
 ### `[focus-ring]`
 
@@ -150,6 +158,9 @@ spring-stiffness = 800
 enabled = true
 width = 4
 active-color = "#7fc8ff"
+
+[logging]
+level = "info"
 
 [keybindings]
 "Alt+Shift+R" = "switch-preset-column-width"

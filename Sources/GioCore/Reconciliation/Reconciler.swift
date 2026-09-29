@@ -283,7 +283,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         for line in timing.slowWindowLines {
             GioLog.record(.debug, line)
         }
-        GioLog.record(.info, timing.summaryLine)
+        // Routine fast reflows are debug noise; only slow ones surface at info.
+        GioLog.record(timing.totalMilliseconds < 16 ? .debug : .info, timing.summaryLine)
         GioLog.record(
             .debug,
             "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"

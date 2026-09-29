@@ -97,36 +97,54 @@ final class LogStore: @unchecked Sendable {
 /// Global log. `logFilePath` is assignable so tests isolate file output;
 /// production uses `~/.config/gio/gio.log`. Set once at startup (or per
 /// test) and only read afterwards — hence the escape hatch, not a lock.
+///
+/// Lines below `minimumLevel` (default `.info`) cost one compare: the
+/// message autoclosure is never evaluated. File writes go through a
+/// persistent, batched, rotating `LogFileSink`; call `flush()` before exit.
 public enum GioLog {
     private static let store = LogStore()
     public nonisolated(unsafe) static var logFilePath: String =
         FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/gio.log"
 
-    public static func record(_ level: LogLevel, _ message: String) {
-        let entry = LogEntry(timestamp: isoNow(), level: level, message: message)
-        store.append(entry)
-        let line = entry.line() + "\n"
-        guard let data = line.data(using: .utf8) else {
+    private struct State {
+        var minimumLevel: LogLevel = .info
+        var sink: LogFileSink?
+        var stamp: (second: Int, text: String) = (-1, "")
+    }
+
+    private static let lock = NSLock()
+    private nonisolated(unsafe) static var state = State()
+    private nonisolated(unsafe) static let formatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    /// Lowest severity that is recorded (ring and file).
+    public static var minimumLevel: LogLevel {
+        get { lock.withLock { state.minimumLevel } }
+        set { lock.withLock { state.minimumLevel = newValue } }
+    }
+
+    public static func record(_ level: LogLevel, _ message: @autoclosure () -> String) {
+        let sink: LogFileSink? = lock.withLock {
+            guard level >= state.minimumLevel else {
+                return nil
+            }
+            return currentSink()
+        }
+        guard let sink else {
             return
         }
-        do {
-            let url = URL(fileURLWithPath: logFilePath)
-            try FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true
-            )
-            if FileManager.default.fileExists(atPath: logFilePath) {
-                let handle = try FileHandle(forWritingTo: url)
-                defer {
-                    try? handle.close()
-                }
-                try handle.seekToEnd()
-                try handle.write(contentsOf: data)
-            } else {
-                try data.write(to: url, options: .atomic)
-            }
-        } catch {
-            // Logging is best-effort: disk failures stay silent by design.
-        }
+        let entry = LogEntry(timestamp: timestamp(), level: level, message: message())
+        store.append(entry)
+        sink.append(entry.line(), immediate: level >= .warn)
+    }
+
+    /// Write every queued line to disk, synchronously.
+    public static func flush() {
+        let sink = lock.withLock { state.sink }
+        sink?.flush()
     }
 
     public static func entries(minLevel: LogLevel = .trace) -> [LogEntry] {
@@ -134,6 +152,7 @@ public enum GioLog {
     }
 
     public static func readFile(minLevel: LogLevel = .trace, path: String? = nil) -> [String] {
+        flush()
         let resolved = path ?? logFilePath
         guard let text = try? String(contentsOfFile: resolved, encoding: .utf8) else {
             return []
@@ -150,11 +169,33 @@ public enum GioLog {
 
     static func clearForTests() {
         store.clear()
+        lock.withLock {
+            state.sink?.close()
+            state.sink = nil
+            state.minimumLevel = .trace
+        }
     }
 
-    private static func isoNow() -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        return formatter.string(from: Date())
+    /// Caller holds `lock`. Rebuilds the sink when `logFilePath` changed.
+    private static func currentSink() -> LogFileSink {
+        if let sink = state.sink, sink.path == logFilePath {
+            return sink
+        }
+        state.sink?.close()
+        let sink = LogFileSink(path: logFilePath)
+        state.sink = sink
+        return sink
+    }
+
+    /// ISO-8601 prefix cached per wall-clock second.
+    private static func timestamp() -> String {
+        let now = Date()
+        let second = Int(now.timeIntervalSince1970)
+        return lock.withLock {
+            if state.stamp.second != second {
+                state.stamp = (second, formatter.string(from: now))
+            }
+            return state.stamp.text
+        }
     }
 }

@@ -150,8 +150,10 @@ final class ReflowTimingTests: XCTestCase {
         reconciler.reconcile(frames: [:], focused: nil, currentlyFocused: nil)
         let timing = try XCTUnwrap(reconciler.lastTiming)
         XCTAssertNil(timing.slowestApp)
-        XCTAssertTrue(GioLog.entries(minLevel: .info).contains {
+        // PA-01: a fast (<16ms) reflow summary is debug noise, not info.
+        let summary = GioLog.entries(minLevel: .debug).first {
             $0.message.hasPrefix("reflow timing total=0ms windows=0 axCalls=0 slowest=none")
-        })
+        }
+        XCTAssertEqual(summary?.level, .debug)
     }
 }

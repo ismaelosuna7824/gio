@@ -32,6 +32,7 @@ private enum ConfigSection: Equatable {
     case behavior
     case animations
     case focusRing
+    case logging
     case keybindings
     case windowRules
     case ignored(String)
@@ -92,6 +93,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "behavior": section = .behavior
             case "animations": section = .animations
             case "focus-ring": section = .focusRing
+            case "logging": section = .logging
             case "keybindings": section = .keybindings
             case let name:
                 warnings.append("line \(line): unknown table [\(name)], ignored")
@@ -126,6 +128,8 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyAnimationsKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .focusRing:
             applyFocusRingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
+        case .logging:
+            applyLoggingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .keybindings:
             applyBindingKey(key, value: value, line: line, errors: &errors, config: &config)
         case .windowRules:
@@ -400,6 +404,22 @@ func applyFocusRingKey(
         config.focusRing.activeColor = color
     default:
         warnings.append("line \(line): unknown focus-ring key '\(key)', ignored")
+    }
+}
+
+func applyLoggingKey(
+    _ key: String, value: ConfigValue, line: Int,
+    errors: inout [String], warnings: inout [String], config: inout GioConfig
+) {
+    switch key {
+    case "level":
+        guard case .string(let text) = value, let level = LogLevel(name: text) else {
+            errors.append("line \(line): logging.level expects one of trace, debug, info, warn, error")
+            return
+        }
+        config.logging.level = level
+    default:
+        warnings.append("line \(line): unknown logging key '\(key)', ignored")
     }
 }
 

@@ -104,12 +104,22 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var isActive: Bool { enabled && durationMilliseconds > 0 }
 }
 
+/// PA-01: minimum severity written to the ring and `gio.log`.
+public struct LoggingSectionConfig: Equatable, Sendable {
+    public var level: LogLevel
+
+    public init(level: LogLevel = .info) {
+        self.level = level
+    }
+}
+
 public struct GioConfig: Sendable {
     public var layout: LayoutSectionConfig
     public var behavior: BehaviorSectionConfig
     public var animations: AnimationsSectionConfig
     /// NF-01: consumed by the session host (focus ring overlay).
     public var focusRing: FocusRingSectionConfig
+    public var logging: LoggingSectionConfig
     /// Ordered file bindings; applied over dispatcher defaults.
     public var keybindings: [(HotkeyCombo, HotkeyAction)]
     public var rules: [WindowRule]
@@ -119,6 +129,7 @@ public struct GioConfig: Sendable {
         behavior: BehaviorSectionConfig = BehaviorSectionConfig(),
         animations: AnimationsSectionConfig = AnimationsSectionConfig(),
         focusRing: FocusRingSectionConfig = FocusRingSectionConfig(),
+        logging: LoggingSectionConfig = LoggingSectionConfig(),
         keybindings: [(HotkeyCombo, HotkeyAction)] = [],
         rules: [WindowRule] = []
     ) {
@@ -126,6 +137,7 @@ public struct GioConfig: Sendable {
         self.behavior = behavior
         self.animations = animations
         self.focusRing = focusRing
+        self.logging = logging
         self.keybindings = keybindings
         self.rules = rules
     }

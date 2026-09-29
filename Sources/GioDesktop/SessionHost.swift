@@ -135,6 +135,7 @@ final class SessionHost: @unchecked Sendable {
         }
         let (config, configMessages) = loadGioConfig()
         session.config = config
+        GioLog.minimumLevel = config.logging.level
         refreshDispatcher()
         self.configMessages = configMessages
         for message in configMessages {
@@ -191,6 +192,7 @@ final class SessionHost: @unchecked Sendable {
         instanceLock.release()
         // Windows are back on screen: the guardian has nothing to rescue.
         guardian?.signalClean()
+        GioLog.flush()
     }
 
     @discardableResult
@@ -436,6 +438,7 @@ final class SessionHost: @unchecked Sendable {
     /// After `session.config` changed: rebuild bindings and messages,
     /// re-evaluate rules, relayout. Must run on `queue`.
     private func applyReloadedConfig() {
+        GioLog.minimumLevel = session.config.logging.level
         refreshDispatcher()
         configMessages = loadGioConfig().messages
         reapplyRules()
@@ -1018,7 +1021,7 @@ final class SessionHost: @unchecked Sendable {
             }
             learnMinimumSizes(from: report)
             GioLog.record(
-                .info,
+                .debug,
                 "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"
             )
             // Our writes echo back as moved/resized events: remember them

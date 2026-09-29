@@ -127,7 +127,7 @@ Run the signed **Gio** scheme from Xcode with several windows open (a browser, a
 
 ## Log recipes
 
-Logs are written to `~/.config/gio/gio.log` (all levels; the file has no level filter) and shown in the **Logs** section and by `GioCLI logs [--level ...]`. Lines look like `[timestamp] [LEVEL] message`. Messages contain IDs, counts, timings and app names, never window titles.
+Logs are written to `~/.config/gio/gio.log` (minimum level from `[logging] level`, default `info`; batched writes, rotated at about 1 MB to `gio.log.1`). Set `level = "debug"` and `gio reload` to see `reflow timing`, `focus adopt`, `hotkey` and `reconcile` lines and shown in the **Logs** section and by `GioCLI logs [--level ...]`. Lines look like `[timestamp] [LEVEL] message`. Messages contain IDs, counts, timings and app names, never window titles.
 
 Start with:
 

@@ -30,6 +30,7 @@ public func runGuardianProcess(parentPID: Int32) -> Int32 {
         },
         log: { GioLog.record(.info, $0) }
     )
+    GioLog.flush()
     return result == .restored || result == .cleanExit || result == .parentAlive ? 0 : 1
 }
 

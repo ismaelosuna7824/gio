@@ -48,6 +48,11 @@ public func defaultConfigTemplate() -> String {
     # Hex color; leave commented to use the Niri blue.
     # active-color = "#7fc8ff"
 
+    [logging]
+    # Minimum severity written to ~/.config/gio/gio.log: trace, debug, info,
+    # warn or error. Lines below it cost nothing; use "debug" to troubleshoot.
+    level = "info"
+
     [keybindings]
     "Alt+H" = "focus-left"
     "Alt+L" = "focus-right"
