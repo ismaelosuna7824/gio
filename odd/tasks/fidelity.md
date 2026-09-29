@@ -54,6 +54,12 @@ Review: UNAVAILABLE.
   PublishedValue snapshot cache (no main-thread queue.sync except start/shutdown), MenuBar IPC
   off-main. Bundles 20/7/19/30/649 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
   Route: delegated writer. FI-02 LIVE PASS: `min size learned` WhatsApp w=970, Figma w=900.
+- [ ] FI-05 — Render verification (live 2026-09-29): user saw an empty area where windows should
+  be until pressing Alt+J; log at the time: final passes `already=10` (AX reported every window at
+  target). Hypothesis: WindowServer/app did not reflect the AX move (Chromium/Electron after
+  unparking). Fix: ~150ms after motion settles compare AX frames with CGWindowList bounds
+  (public, no Screen Recording) for visible windows; log `render mismatch id= app= ax= ws=`;
+  corrective nudge rewrite; log `render nudge ... fixed=<bool>`. Route: delegated writer.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.
