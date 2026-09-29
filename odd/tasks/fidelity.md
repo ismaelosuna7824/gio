@@ -74,6 +74,9 @@ Review: UNAVAILABLE.
   DONE: moveColumn swap on Alt+Shift+H/L (old move-window-left/right unbound, names kept),
   focusNow at motion start + reassert on final pass, ReflowCoalescer one reflow per tick.
   Bundles 22/7/19/32/747 all 0 failures. LIVE PENDING.
+  Follow-up `ea629c8` (user: "cubre el caso de una vez"): final-pass reassert also on same-app
+  drift (frontmost focused window != target) and once when unreadable; log `focus reassert id=
+  reason=`. Bundles 22/7/19/32/771 all 0 failures (parent re-ran).
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.
