@@ -385,16 +385,30 @@ final class SessionHost: @unchecked Sendable {
                     workspace.viewportOffset = revealed
                 }
             }
-            let (placed, _) = splitVisibleFrames(layout.frames, in: visible)
+            let plan = planParking(
+                frames: layout.frames,
+                viewport: visible,
+                display: display.frame,
+                otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame)
+            )
             // Never let the reconciler raise a minimized window.
             let focused = workspace.focusedWindow.flatMap {
                 session.registry.find($0)?.isMinimized == true ? nil : $0
             }
-            _ = reconciler.reconcile(
-                frames: placed, focused: focused, currentlyFocused: focused
+            let report = reconciler.reconcile(
+                frames: plan.visible, parked: plan.parked,
+                focused: focused, currentlyFocused: focused
             )
-            // Our writes echo back as moved/resized events: remember them.
-            echoGate.recordApplied(placed, at: ProcessInfo.processInfo.systemUptime)
+            GioLog.record(
+                .info,
+                "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"
+            )
+            // Our writes echo back as moved/resized events: remember them
+            // (parked ones too, so they never retrigger a reflow).
+            echoGate.recordApplied(
+                plan.visible.merging(plan.parked.mapValues(\.frame)) { first, _ in first },
+                at: ProcessInfo.processInfo.systemUptime
+            )
             workspace.viewportOffset = layout.viewportOffset
             session.manager.update(workspace)
             displays.updateViewport(

@@ -69,30 +69,22 @@ final class TileAssemblyTests: XCTestCase {
         XCTAssertNil(workspace.focusedWindow)
     }
 
-    func testSplitVisibleFrames() {
-        let viewport = CGRect(x: 0, y: 0, width: 1000, height: 800)
-        let frames = [
-            WindowID(pid: 1, elementID: 1): CGRect(x: 8, y: 8, width: 400, height: 784),
-            WindowID(pid: 1, elementID: 2): CGRect(x: 900, y: 8, width: 400, height: 784),
-            WindowID(pid: 1, elementID: 3): CGRect(x: 1200, y: 8, width: 400, height: 784),
-        ]
-        let (visible, skipped) = splitVisibleFrames(frames, in: viewport)
-        XCTAssertEqual(Set(visible.keys), [WindowID(pid: 1, elementID: 1), WindowID(pid: 1, elementID: 2)])
-        XCTAssertEqual(skipped, 1)
-    }
-
     func testReportDescribesCounts() {
         let report = TileReflowReport(
             managed: [WindowID(pid: 1, elementID: 1)],
             skippedMinimized: 1,
             skippedUntileable: 2,
             skippedDiscovery: 0,
-            reconcile: ReconcileReport(applied: [WindowID(pid: 1, elementID: 1)])
+            reconcile: ReconcileReport(
+                applied: [WindowID(pid: 1, elementID: 1)],
+                parked: [WindowID(pid: 1, elementID: 2), WindowID(pid: 1, elementID: 3)]
+            )
         )
         let text = report.describe()
         XCTAssertTrue(text.contains("managed=1"))
         XCTAssertTrue(text.contains("minimized=1"))
         XCTAssertTrue(text.contains("untileable=2"))
         XCTAssertTrue(text.contains("applied=1"))
+        XCTAssertTrue(text.contains("parked=2"))
     }
 }

@@ -19,6 +19,9 @@ public protocol WindowActuator: AnyObject {
 public struct ReconcileReport: Equatable, Sendable {
     public var applied: [WindowID]
     public var alreadyCorrect: [WindowID]
+    /// Off-viewport windows written to their parking spot (already-parked
+    /// ones count as `alreadyCorrect`).
+    public var parked: [WindowID]
     public var vanished: [WindowID]
     public var failed: [WindowID]
     /// First error description per failed window, so live retests report
@@ -30,6 +33,7 @@ public struct ReconcileReport: Equatable, Sendable {
     public init(
         applied: [WindowID] = [],
         alreadyCorrect: [WindowID] = [],
+        parked: [WindowID] = [],
         vanished: [WindowID] = [],
         failed: [WindowID] = [],
         failureNotes: [WindowID: String] = [:],
@@ -38,6 +42,7 @@ public struct ReconcileReport: Equatable, Sendable {
     ) {
         self.applied = applied
         self.alreadyCorrect = alreadyCorrect
+        self.parked = parked
         self.vanished = vanished
         self.failed = failed
         self.failureNotes = failureNotes
@@ -64,40 +69,25 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         self.tolerance = tolerance
     }
 
+    /// Parked windows are written first (outgoing before incoming, less
+    /// flashing) and are never focused. A parked write counts as done when
+    /// the window keeps its size and only a small strip stays on the
+    /// intended side, because macOS may clamp the position.
     @discardableResult
     public func reconcile(
         frames: [WindowID: CGRect],
+        parked: [WindowID: ParkedTarget] = [:],
         focused: WindowID?,
         currentlyFocused: WindowID?
     ) -> ReconcileReport {
         var report = ReconcileReport()
-        for id in frames.keys.sorted() {
-            let desired = frames[id]!
-            let actual: CGRect?
-            do {
-                actual = try actuator.frame(of: id)
-            } catch {
-                report.failed.append(id)
-                report.failureNotes[id] = String(describing: error)
-                continue
-            }
-            guard let actual else {
-                report.vanished.append(id)
-                continue
-            }
-            guard !matches(desired, actual) else {
-                report.alreadyCorrect.append(id)
-                continue
-            }
-            do {
-                try actuator.setFrame(desired, for: id)
-                report.applied.append(id)
-            } catch {
-                report.failed.append(id)
-                report.failureNotes[id] = String(describing: error)
-            }
+        for id in parked.keys.sorted() {
+            reconcileOne(id, desired: parked[id]!.frame, parkedTarget: parked[id], into: &report)
         }
-        if let focused, focused != currentlyFocused {
+        for id in frames.keys.sorted() where parked[id] == nil {
+            reconcileOne(id, desired: frames[id]!, parkedTarget: nil, into: &report)
+        }
+        if let focused, focused != currentlyFocused, parked[focused] == nil {
             do {
                 try actuator.focus(id: focused)
                 report.focusChanged = true
@@ -107,12 +97,78 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
         GioLog.record(
             .debug,
-            "reconcile applied=\(report.applied.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"
+            "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"
         )
         if !report.failed.isEmpty {
             GioLog.record(.warn, "reconcile failures persist; see firstFailure in tile report")
         }
         return report
+    }
+
+    private func reconcileOne(
+        _ id: WindowID, desired: CGRect, parkedTarget: ParkedTarget?, into report: inout ReconcileReport
+    ) {
+        let actual: CGRect?
+        do {
+            actual = try actuator.frame(of: id)
+        } catch {
+            report.failed.append(id)
+            report.failureNotes[id] = String(describing: error)
+            return
+        }
+        guard let actual else {
+            report.vanished.append(id)
+            return
+        }
+        if matches(desired, actual) || parkedTarget.map({ isParked(actual, $0) }) == true {
+            report.alreadyCorrect.append(id)
+            return
+        }
+        do {
+            try actuator.setFrame(desired, for: id)
+            record(id, parkedTarget != nil, into: &report)
+        } catch {
+            // macOS may clamp a parked position; accept a landing that is
+            // still parked (size kept, small strip on the intended side).
+            if let parkedTarget, let landed = try? actuator.frame(of: id), isParked(landed, parkedTarget) {
+                GioLog.record(.debug, "parked clamped id=\(id.pid):\(id.elementID)")
+                record(id, true, into: &report)
+                return
+            }
+            report.failed.append(id)
+            report.failureNotes[id] = String(describing: error)
+        }
+    }
+
+    private func record(_ id: WindowID, _ isParkedWrite: Bool, into report: inout ReconcileReport) {
+        if isParkedWrite {
+            report.parked.append(id)
+        } else {
+            report.applied.append(id)
+        }
+    }
+
+    /// Largest strip of a parked window allowed inside its display.
+    public static var maxParkedStrip: CGFloat { 40 }
+
+    private func isParked(_ actual: CGRect, _ target: ParkedTarget) -> Bool {
+        guard abs(actual.width - target.frame.width) <= tolerance,
+              abs(actual.height - target.frame.height) <= tolerance
+        else {
+            return false
+        }
+        let inside = actual.intersection(target.display)
+        let strip = Self.maxParkedStrip
+        let visibleWidth = inside.isNull ? 0 : inside.width
+        let visibleHeight = inside.isNull ? 0 : inside.height
+        switch target.edge {
+        case .left:
+            return actual.minX < target.display.minX && visibleWidth <= strip
+        case .right:
+            return actual.maxX > target.display.maxX && visibleWidth <= strip
+        case .corner:
+            return visibleWidth <= strip && visibleHeight <= strip
+        }
     }
 
     private func matches(_ requested: CGRect, _ actual: CGRect) -> Bool {

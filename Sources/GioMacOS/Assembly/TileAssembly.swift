@@ -26,7 +26,6 @@ public struct TileReflowReport: Equatable, Sendable {
     public var skippedMinimized: Int
     public var skippedUntileable: Int
     public var skippedDiscovery: Int
-    public var skippedOffscreen: Int = 0
     public var reconcile: ReconcileReport
     public var displayInfo: String = ""
     public var configMessages: [String] = []
@@ -36,9 +35,9 @@ public struct TileReflowReport: Equatable, Sendable {
         for id in managed {
             lines.append("  pid=\(id.pid) element=\(id.elementID)")
         }
-        lines.append("skipped minimized=\(skippedMinimized) untileable=\(skippedUntileable) discovery=\(skippedDiscovery) offscreen=\(skippedOffscreen)")
+        lines.append("skipped minimized=\(skippedMinimized) untileable=\(skippedUntileable) discovery=\(skippedDiscovery)")
         lines.append(
-            "reconcile applied=\(reconcile.applied.count) already=\(reconcile.alreadyCorrect.count) vanished=\(reconcile.vanished.count) failed=\(reconcile.failed.count) focusChanged=\(reconcile.focusChanged) focusFailed=\(reconcile.focusFailed)"
+            "reconcile applied=\(reconcile.applied.count) parked=\(reconcile.parked.count) already=\(reconcile.alreadyCorrect.count) vanished=\(reconcile.vanished.count) failed=\(reconcile.failed.count) focusChanged=\(reconcile.focusChanged) focusFailed=\(reconcile.focusFailed)"
         )
         if let first = reconcile.firstFailure {
             lines.append("firstFailure=\(first)")
@@ -83,24 +82,15 @@ public func selectTileCandidates(_ found: [DiscoveredSystemWindow]) -> (
     return (candidates, skipped)
 }
 
-/// Split layout frames into visible and off-screen sets. macOS refuses
-/// fully off-screen placements (learned live: writes outside the display
-/// never stick), so only intersecting frames are attempted. The rest stay
-/// managed state for future scrolled reflows — skipped, never failed.
-public func splitVisibleFrames(
-    _ frames: [WindowID: CGRect],
-    in viewport: CGRect
-) -> (visible: [WindowID: CGRect], skippedOffscreen: Int) {
-    var visible: [WindowID: CGRect] = [:]
-    var skipped = 0
-    for (id, frame) in frames {
-        if frame.intersects(viewport) {
-            visible[id] = frame
-        } else {
-            skipped += 1
-        }
+/// Full frame of the screen holding `viewport` plus every other screen's
+/// frame (Cocoa space), for parking off-viewport columns. Falls back to the
+/// viewport itself when no screen matches.
+public func parkingGeometry(for viewport: CGRect) -> (display: CGRect, others: [CGRect]) {
+    let screens = NSScreen.screens.map(\.frame)
+    guard let home = screens.first(where: { $0.contains(CGPoint(x: viewport.midX, y: viewport.midY)) }) else {
+        return (viewport, screens)
     }
-    return (visible, skipped)
+    return (home, screens.filter { $0 != home })
 }
 
 /// One column per window, focused on the first, viewport at zero.
@@ -172,25 +162,29 @@ public func runTileReflow(
     let layout = try engine.calculate(
         workspace: tilingWorkspace(from: workspace, modes: modes), viewport: display
     )
-    let (visibleFrames, skippedOffscreen) = splitVisibleFrames(layout.frames, in: display)
+    let geometry = parkingGeometry(for: display)
+    let plan = planParking(
+        frames: layout.frames, viewport: display,
+        display: geometry.display, otherDisplays: geometry.others
+    )
     // Never steal focus: the desired focus is the currently focused window,
     // and only when it is among the tiled ones (it always is here).
     let reconciler = WindowReconciler(actuator: actuator)
     let reconcile = reconciler.reconcile(
-        frames: visibleFrames,
+        frames: plan.visible,
+        parked: plan.parked,
         focused: focusedID,
         currentlyFocused: focusedID
     )
     GioLog.record(
         .info,
-        "tile managed=\(managed.count) skipped min=\(skippedMinimized) untileable=\(skippedUntileable) offscreen=\(skippedOffscreen) applied=\(reconcile.applied.count) failed=\(reconcile.failed.count)"
+        "tile managed=\(managed.count) skipped min=\(skippedMinimized) untileable=\(skippedUntileable) applied=\(reconcile.applied.count) parked=\(reconcile.parked.count) failed=\(reconcile.failed.count)"
     )
     return TileReflowReport(
         managed: managed.map(\.id),
         skippedMinimized: skippedMinimized,
         skippedUntileable: skippedUntileable,
         skippedDiscovery: found.skipped,
-        skippedOffscreen: skippedOffscreen,
         reconcile: reconcile,
         displayInfo: describeDisplayGeometry(chosen: display),
         configMessages: configMessages
