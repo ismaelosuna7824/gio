@@ -36,6 +36,22 @@ final class SessionHost: @unchecked Sendable {
     private let dispatcher = HotkeyDispatcher()
     private var isShuttingDown = false
     private var reflowDeferral = ReflowDeferral()
+    private var focusSettle = FocusSettle<FocusEvent>()
+    private let clickLock = NSLock()
+    private var tappedClick: MouseClick?
+
+    /// One focus signal awaiting adoption. `element` is the window the
+    /// event itself carried (focused-window changes), if any.
+    private struct FocusEvent: Equatable {
+        let source: FocusSource
+        let pid: pid_t
+        let element: AXUIElement?
+
+        static func == (lhs: FocusEvent, rhs: FocusEvent) -> Bool {
+            lhs.source == rhs.source && lhs.pid == rhs.pid
+                && sameElement(lhs.element, rhs.element)
+        }
+    }
 
     /// UI hook, always invoked on the main thread.
     var onSummonLauncher: (() -> Void)?
@@ -199,11 +215,15 @@ final class SessionHost: @unchecked Sendable {
         // Clicks change macOS focus behind our back: adopt the observed
         // focus instead of fighting it on the next reflow. Every app reports
         // a focused window; only the frontmost app's is the user's.
-        if let focusedID = adoptableFocus(
-            among: focusCandidates,
-            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
-        ) {
-            adoptFocus(focusedID)
+        // A click in flight is the focus events' business (they validate
+        // it against the click point), never the rescan's.
+        if currentClick() == nil,
+           let focusedID = adoptableFocus(
+               among: focusCandidates,
+               frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
+           )
+        {
+            adoptFocus(focusedID, source: .rescan)
         }
         if onlyPID == nil {
             reapDeadPids(live: liveIDs)
@@ -384,22 +404,61 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// Adopt `id` as the session focus (current workspace). True when the
-    /// focus changed.
+    /// Adopt `id` as the session focus (current workspace), logging what it
+    /// did to the viewport. True when the focus changed. Callers that adopt
+    /// outside a reflow follow up with `reflowAll` when `scrolls` is set.
     @discardableResult
-    private func adoptFocus(_ id: WindowID) -> Bool {
+    private func adoptFocus(_ id: WindowID, source: FocusSource) -> Bool {
         let current = session.manager.currentWorkspace()
+        let column = current.columns.firstIndex { $0.windows.contains(id) }
+        let visibility = isVisibleInViewport(id)
         guard let adopted = adoptingFocus(id, in: current), adopted != current else {
+            logAdoption(source, id, column, visibility, changed: false)
             return false
         }
         session.manager.update(adopted)
+        logAdoption(source, id, column, visibility, changed: true)
         return true
     }
 
-    /// Would laying out the current workspace scroll the viewport (focused
-    /// column hidden, or offset out of bounds)? Decides whether a click on
-    /// an already-visible column needs any reflow at all.
-    private func viewportNeedsScroll() -> Bool {
+    private func logAdoption(
+        _ source: FocusSource, _ id: WindowID, _ column: Int?, _ visible: Bool?, changed: Bool
+    ) {
+        let scroll = pendingScroll().map { "\(Int($0.from))->\(Int($0.to))" } ?? "no scroll"
+        let placement = visible.map { $0 ? "visible" : "parked" } ?? "unplaced"
+        GioLog.record(
+            .debug,
+            "focus adopt source=\(source.rawValue) id=\(id.pid):\(id.elementID) "
+                + "column=\(column.map(String.init) ?? "none") \(placement) "
+                + "changed=\(changed) scroll=\(scroll)"
+        )
+    }
+
+    /// Would `id` be inside its display's viewport under the current offset?
+    private func isVisibleInViewport(_ id: WindowID) -> Bool? {
+        let modes = tileableModes()
+        for display in displays.allDisplays() {
+            guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)),
+                  workspace.columns.contains(where: { $0.windows.contains(id) })
+            else {
+                continue
+            }
+            let viewport = visibleFrames[display.id] ?? display.frame
+            guard let layout = try? engine().calculate(
+                workspace: tilingWorkspace(from: workspace, modes: modes), viewport: viewport
+            ), let frame = layout.frames[id]
+            else {
+                return nil
+            }
+            return frame.intersects(viewport)
+        }
+        return nil
+    }
+
+    /// The viewport move laying out the current workspaces would make
+    /// (focused column hidden, or offset out of bounds), if any. Decides
+    /// whether a click on an already-visible column needs any reflow.
+    private func pendingScroll() -> (from: CGFloat, to: CGFloat)? {
         let modes = tileableModes()
         for display in displays.allDisplays() {
             guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)),
@@ -412,10 +471,10 @@ final class SessionHost: @unchecked Sendable {
                 continue
             }
             if planned.workspace.viewportOffset != workspace.viewportOffset {
-                return true
+                return (workspace.viewportOffset, planned.workspace.viewportOffset)
             }
         }
-        return false
+        return nil
     }
 
     /// Every write funnels through here. While a mouse button is down the
@@ -613,7 +672,7 @@ final class SessionHost: @unchecked Sendable {
                 // full resync (it retries the tap and rebuilds observers).
                 scheduleReflow()
             }
-            adoptFocusedWindow(of: event.pid)
+            requestFocusAdoption(.activation, pid: event.pid, element: nil)
         case .window(let kind):
             handleWindowEvent(kind, pid: event.pid, element: event.element)
         }
@@ -665,7 +724,7 @@ final class SessionHost: @unchecked Sendable {
                 try? session.registry.update(record)
             }
         case .adoptFocus:
-            adoptFocusedWindow(of: pid)
+            requestFocusAdoption(.focusChanged, pid: pid, element: element)
         case .resync:
             scheduleReflow()
         case .ignore:
@@ -673,27 +732,133 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// Light path for a click or app switch: no rescan. The frontmost app's
-    /// focused window becomes the session focus (a background app changing
-    /// its own key window is not the user's focus); an unknown window goes
-    /// through single-window admission; a reflow follows only when the
-    /// viewport has to scroll to show the focused column.
-    private func adoptFocusedWindow(of pid: pid_t) {
-        guard pid == NSWorkspace.shared.frontmostApplication?.processIdentifier,
-              let element = focusedWindowElement(pid: pid)
-        else {
+    /// The click explaining a focus event right now, if any: a button is
+    /// down or one went down moments ago, at a point inside a window area.
+    private func currentClick() -> MouseClick? {
+        clickLock.lock()
+        let tapped = tappedClick
+        clickLock.unlock()
+        let click = recentClick(
+            pressed: NSEvent.pressedMouseButtons != 0,
+            currentLocation: NSEvent.mouseLocation,
+            now: ProcessInfo.processInfo.systemUptime,
+            lastTapped: tapped
+        )
+        return windowAreaClick(
+            click, visibleAreas: displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame }
+        )
+    }
+
+    /// Light path for a click or app switch: no rescan. Keyboard-driven
+    /// events adopt at once; mouse-driven ones coalesce, settle and are
+    /// validated against the click (`FocusSettle`). The activation and the
+    /// focused-window event of one click therefore adopt once.
+    private func requestFocusAdoption(_ source: FocusSource, pid: pid_t, element: AXUIElement?) {
+        // A background app changing its own key window is not the user's focus.
+        if source == .focusChanged,
+           pid != NSWorkspace.shared.frontmostApplication?.processIdentifier
+        {
             return
         }
-        guard let id = actuator?.id(matching: element, pid: pid) else {
+        let event = FocusEvent(source: source, pid: pid, element: element)
+        switch focusSettle.request(event, click: currentClick()) {
+        case .adoptNow(let event):
+            if let element = focusedElement(for: event, fresh: false) {
+                adoptResolved(element, event: event)
+            }
+        case .wait(let delay):
+            scheduleFocusPoll(after: delay)
+        case .coalesced:
+            break
+        }
+    }
+
+    private func scheduleFocusPoll(after delay: TimeInterval) {
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.isShuttingDown else {
+                return
+            }
+            let poll = self.focusSettle.poll(
+                mouseDown: NSEvent.pressedMouseButtons != 0,
+                now: ProcessInfo.processInfo.systemUptime
+            )
+            switch poll {
+            case .idle:
+                break
+            case .wait(let next):
+                self.scheduleFocusPoll(after: next)
+            case .resolve(let event, let click):
+                self.validateClickFocus(event, click: click, fresh: false)
+            }
+        }
+    }
+
+    /// The window to adopt: the one the event carried the first time, the
+    /// app's current key window when re-reading.
+    private func focusedElement(for event: FocusEvent, fresh: Bool) -> AXUIElement? {
+        if !fresh, let element = event.element {
+            return element
+        }
+        return focusedWindowElement(pid: event.pid)
+    }
+
+    private func validateClickFocus(_ event: FocusEvent, click: MouseClick, fresh: Bool) {
+        let element = NSWorkspace.shared.frontmostApplication?.processIdentifier == event.pid
+            ? focusedElement(for: event, fresh: fresh) : nil
+        let known = element.flatMap { actuator?.id(matching: $0, pid: event.pid) }
+        var matches = false
+        var frame: CGRect?
+        if let known {
+            frame = try? actuator?.frame(of: known)
+            matches = focusMatchesClick(frame: frame, click: click.location)
+        } else if element != nil {
+            // Unknown window: single-window admission decides, nothing to compare.
+            matches = true
+        }
+        switch focusSettle.judge(matchesClick: matches) {
+        case .adopt:
+            if let element {
+                adoptResolved(element, event: event)
+            }
+        case .retry(let delay):
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, !self.isShuttingDown,
+                      let (latest, latestClick) = self.focusSettle.resolveAgain()
+                else {
+                    return
+                }
+                self.validateClickFocus(latest, click: latestClick, fresh: true)
+            }
+        case .giveUp:
+            let id = known.map { "\($0.pid):\($0.elementID)" } ?? "none"
+            let box = frame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" }
+                ?? "unreadable"
+            GioLog.record(
+                .debug,
+                "focus dropped source=\(event.source.rawValue) id=\(id) frame=\(box) "
+                    + "click=\(Int(click.location.x)),\(Int(click.location.y)) "
+                    + "reason=focused window not under click"
+            )
+        }
+    }
+
+    /// The frontmost app's window becomes the session focus; an unknown
+    /// window goes through single-window admission; a reflow follows only
+    /// when the viewport has to scroll to show the focused column.
+    private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
+        guard event.pid == NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+            return
+        }
+        guard let id = actuator?.id(matching: element, pid: event.pid) else {
             // Registration focuses the new window and reflows.
-            registerAppearedWindow(element, pid: pid, attempt: 0)
+            registerAppearedWindow(element, pid: event.pid, attempt: 0)
             return
         }
         if session.registry.find(id)?.isMinimized == true {
             return
         }
-        adoptFocus(id)
-        if viewportNeedsScroll() {
+        adoptFocus(id, source: event.source)
+        if pendingScroll() != nil {
             reflowAll()
         }
     }
@@ -769,10 +934,21 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    private func recordClick(at location: CGPoint) {
+        clickLock.lock()
+        tappedClick = MouseClick(location: location, time: ProcessInfo.processInfo.systemUptime)
+        clickLock.unlock()
+    }
+
     private func startTap() {
-        let tap = HotkeyTap { [weak self] combo in
-            self?.handleCombo(combo) ?? false
-        }
+        let tap = HotkeyTap(
+            onMouseDown: { [weak self] location in
+                self?.recordClick(at: location)
+            },
+            onCombo: { [weak self] combo in
+                self?.handleCombo(combo) ?? false
+            }
+        )
         if tap.start() {
             hotkeyTap = tap
         } else {
@@ -875,5 +1051,14 @@ final class SessionHost: @unchecked Sendable {
         if let record = try? session.registry.beginFullscreen(id: id, frame: display.frame) {
             fullscreenRecords[id] = record
         }
+    }
+}
+
+/// Same AX element (CFEqual), or both absent.
+private func sameElement(_ lhs: AXUIElement?, _ rhs: AXUIElement?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): return true
+    case (let lhs?, let rhs?): return CFEqual(lhs, rhs)
+    default: return false
     }
 }

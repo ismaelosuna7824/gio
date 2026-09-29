@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import GioCore
@@ -36,10 +37,19 @@ func tapCombo(from event: CGEvent) -> HotkeyCombo? {
 private func tapCallback(
     proxy: CGEventTapProxy, type: CGEventType, event: CGEvent, refcon: UnsafeMutableRawPointer?
 ) -> Unmanaged<CGEvent>? {
-    guard type == .keyDown, let refcon else {
+    guard let refcon else {
         return Unmanaged.passUnretained(event)
     }
     let box: TapBox = Unmanaged.fromOpaque(refcon).takeUnretainedValue()
+    if type == .leftMouseDown || type == .rightMouseDown || type == .otherMouseDown {
+        // Observed only, never swallowed. Cocoa coordinates: the space the
+        // window frames are kept in.
+        box.onMouseDown?(NSEvent.mouseLocation)
+        return Unmanaged.passUnretained(event)
+    }
+    guard type == .keyDown else {
+        return Unmanaged.passUnretained(event)
+    }
     guard let combo = tapCombo(from: event) else {
         return Unmanaged.passUnretained(event)
     }
@@ -51,9 +61,14 @@ private func tapCallback(
 
 final class TapBox {
     let onCombo: @Sendable (HotkeyCombo) -> Bool
+    let onMouseDown: (@Sendable (CGPoint) -> Void)?
 
-    init(onCombo: @Sendable @escaping (HotkeyCombo) -> Bool) {
+    init(
+        onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
+        onMouseDown: (@Sendable (CGPoint) -> Void)?
+    ) {
         self.onCombo = onCombo
+        self.onMouseDown = onMouseDown
     }
 }
 
@@ -67,9 +82,16 @@ public final class HotkeyTap {
     private var source: CFRunLoopSource?
     private var boxRefcon: UnsafeMutableRawPointer?
     private let onCombo: @Sendable (HotkeyCombo) -> Bool
+    private let onMouseDown: (@Sendable (CGPoint) -> Void)?
 
-    public init(onCombo: @Sendable @escaping (HotkeyCombo) -> Bool) {
+    /// `onMouseDown` observes clicks (Cocoa global location) without
+    /// swallowing them.
+    public init(
+        onMouseDown: (@Sendable (CGPoint) -> Void)? = nil,
+        onCombo: @Sendable @escaping (HotkeyCombo) -> Bool
+    ) {
         self.onCombo = onCombo
+        self.onMouseDown = onMouseDown
     }
 
     @discardableResult
@@ -77,12 +99,13 @@ public final class HotkeyTap {
         guard port == nil else {
             return true
         }
-        let boxRefcon = Unmanaged.passRetained(TapBox(onCombo: onCombo)).toOpaque()
+        let boxRefcon = Unmanaged.passRetained(TapBox(onCombo: onCombo, onMouseDown: onMouseDown)).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: CGEventMask(1 << CGEventType.keyDown.rawValue),
+            eventsOfInterest: [CGEventType.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+                .reduce(CGEventMask(0)) { $0 | (1 << $1.rawValue) },
             callback: tapCallback,
             userInfo: boxRefcon
         ) else {
