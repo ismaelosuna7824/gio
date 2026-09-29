@@ -37,9 +37,9 @@ main thread never waits on the session queue. Conventional Commits, NO Co-Author
 origin feat/gio-niri-rewrite after verified batches; no PR. Quote trailing-space path.
 
 ## Tasks
-- [ ] PA-01 — Logging: one persistent handle, static formatter, `@autoclosure` + min level
+- [x] PA-01 (`8255385`) — Logging: one persistent handle, static formatter, `@autoclosure` + min level
   (default info), background batched writes, rotation ~1 MB, drop routine debug noise. (#1, #13)
-- [ ] PA-02 — Idle ~0%: MenuBar refresh on menuWillOpen/push instead of 3s IPC poll; watchdog
+- [x] PA-02 (`22f7024`) — Idle ~0%: MenuBar refresh on menuWillOpen/push instead of 3s IPC poll; watchdog
   relaxed (30s, large leeway); UI tickers only while the main window is visible; LogsView tails
   from last offset, no textSelection on 1000 rows. (#9, #12)
 - [ ] PA-03 — Frame pacing: timer interval from the display's maximumFramesPerSecond; whole-point
@@ -53,6 +53,15 @@ origin feat/gio-niri-rewrite after verified batches; no PR. Quote trailing-space
 - [ ] PA-06 — Adaptive size animation: per-app EWMA of write cost/drops/clamps; fast apps grow
   during flight (maximize grows while neighbours retreat, no overlap along the path); slow apps keep
   the FI-03 final-pass grow.
+
+Evidence PA-01/02 (route: one delegated writer): autoclosure + min level (default info),
+persistent batched sink (32 lines / 100ms, warn+ immediate), rotation 1MB -> gio.log.1,
+`[logging] level`; menu bar push (`publishBarState`) instead of 3s IPC poll, watchdog 30s,
+UI tickers only while window + section visible, incremental LogTail (500 rows). TDD note:
+PA-01 sink written before its tests (mutation-checked level gate instead of pre-impl RED) —
+deviation recorded. Bundles 25/7/19/32/795 all 0 failures (parent re-ran); signed build OK.
+Remaining periodic: 30s watchdog, visible-only UI refresh, motion timer during animations.
+LIVE PENDING.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
@@ -70,3 +79,4 @@ Read-only audit: delegated Explore (done). PA-01..PA-06: delegated writers, sequ
 
 ## Progress
 - 2026-09-29: audit done, document created. Next: user go-ahead, then PA-01.
+- 2026-09-29: user approved in order. PA-01 + PA-02 done, pushed. Next: PA-03 + PA-05.
