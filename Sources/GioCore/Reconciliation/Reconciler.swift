@@ -9,6 +9,13 @@ public protocol WindowActuator: AnyObject {
     func frame(of id: WindowID) throws -> CGRect?
     func setFrame(_ frame: CGRect, for id: WindowID) throws
     func focus(id: WindowID) throws
+    /// Cumulative Accessibility calls issued for windows of `pid`. Optional
+    /// instrumentation (MO-01): the default reports 0.
+    func axCallCount(forPid pid: pid_t) -> Int
+}
+
+public extension WindowActuator {
+    func axCallCount(forPid pid: pid_t) -> Int { 0 }
 }
 
 /// What one `reconcile` pass did, in deterministic (sorted) order.
@@ -63,10 +70,21 @@ public struct ReconcileReport: Equatable, Sendable {
 public final class WindowReconciler<Actuator: WindowActuator> {
     private let actuator: Actuator
     private let tolerance: CGFloat
+    private let clock: ReflowClock
+    private let appName: @Sendable (pid_t) -> String?
 
-    public init(actuator: Actuator, tolerance: CGFloat = 1) {
+    /// Timing of the most recent `reconcile` pass (MO-01).
+    public private(set) var lastTiming: ReflowTiming?
+
+    public init(
+        actuator: Actuator, tolerance: CGFloat = 1,
+        clock: @escaping ReflowClock = systemReflowClock,
+        appName: @escaping @Sendable (pid_t) -> String? = { _ in nil }
+    ) {
         self.actuator = actuator
         self.tolerance = tolerance
+        self.clock = clock
+        self.appName = appName
     }
 
     /// Parked windows are written first (outgoing before incoming, less
@@ -81,20 +99,47 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         currentlyFocused: WindowID?
     ) -> ReconcileReport {
         var report = ReconcileReport()
+        let started = clock()
+        var windowTimings: [WindowWriteTiming] = []
+        func timed(_ id: WindowID, _ work: () -> Void) {
+            let callsBefore = actuator.axCallCount(forPid: id.pid)
+            let windowStart = clock()
+            work()
+            windowTimings.append(WindowWriteTiming(
+                id: id, app: appName(id.pid) ?? "pid\(id.pid)",
+                milliseconds: (clock() - windowStart) * 1000,
+                axCalls: actuator.axCallCount(forPid: id.pid) - callsBefore
+            ))
+        }
         for id in parked.keys.sorted() {
-            reconcileOne(id, desired: parked[id]!.frame, parkedTarget: parked[id], into: &report)
+            timed(id) { reconcileOne(id, desired: parked[id]!.frame, parkedTarget: parked[id], into: &report) }
         }
         for id in frames.keys.sorted() where parked[id] == nil {
-            reconcileOne(id, desired: frames[id]!, parkedTarget: nil, into: &report)
+            timed(id) { reconcileOne(id, desired: frames[id]!, parkedTarget: nil, into: &report) }
         }
+        var focusMilliseconds = 0.0
+        var focusCalls = 0
         if let focused, focused != currentlyFocused, parked[focused] == nil {
+            let callsBefore = actuator.axCallCount(forPid: focused.pid)
+            let focusStart = clock()
             do {
                 try actuator.focus(id: focused)
                 report.focusChanged = true
             } catch {
                 report.focusFailed = true
             }
+            focusMilliseconds = (clock() - focusStart) * 1000
+            focusCalls = actuator.axCallCount(forPid: focused.pid) - callsBefore
         }
+        let timing = ReflowTiming(
+            totalMilliseconds: (clock() - started) * 1000, focusMilliseconds: focusMilliseconds,
+            windows: windowTimings, focusAXCalls: focusCalls
+        )
+        lastTiming = timing
+        for line in timing.slowWindowLines {
+            GioLog.record(.debug, line)
+        }
+        GioLog.record(.info, timing.summaryLine)
         GioLog.record(
             .debug,
             "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"

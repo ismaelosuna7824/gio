@@ -23,6 +23,8 @@ public final class AXWindowActuator: WindowActuator {
 
     private var handles: [UInt64: Handle] = [:]
     private var flip: AXVerticalFlip
+    private let callLock = NSLock()
+    private var callCounts: [pid_t: Int] = [:]
 
     /// - Parameter displayHeight: FULL display height for the AX flip
     ///   (RW-09: main display). Frames cross this boundary in Cocoa coords.
@@ -63,6 +65,14 @@ public final class AXWindowActuator: WindowActuator {
         handles.removeValue(forKey: elementID)
     }
 
+    public func axCallCount(forPid pid: pid_t) -> Int {
+        callLock.withLock { callCounts[pid, default: 0] }
+    }
+
+    private func countCalls(_ n: Int, pid: pid_t) {
+        callLock.withLock { callCounts[pid, default: 0] += n }
+    }
+
     private func handle(for id: WindowID) -> Handle? {
         guard let handle = handles[id.elementID], handle.pid == id.pid else {
             return nil
@@ -75,6 +85,7 @@ public final class AXWindowActuator: WindowActuator {
         guard let handle = handle(for: id) else {
             return nil
         }
+        countCalls(2, pid: id.pid)
         return try readFrame(handle.element).map { flip.toCocoa($0) }
     }
 
@@ -92,6 +103,7 @@ public final class AXWindowActuator: WindowActuator {
         guard let handle = handle(for: id) else {
             throw SystemWindowActionError.unknownHandle(elementID: id.elementID)
         }
+        countCalls(2, pid: id.pid)
         let current = try readFrame(handle.element)
         guard let current else {
             // Vanished between diff and write: report honestly, write nothing.
@@ -100,8 +112,10 @@ public final class AXWindowActuator: WindowActuator {
         if framesEqual(current, target) {
             return
         }
+        countCalls(2, pid: id.pid)
         try checkAXSettable(handle.element, attribute: kAXPositionAttribute as String)
         try checkAXSettable(handle.element, attribute: kAXSizeAttribute as String)
+        countCalls(2, pid: id.pid)
         let growing = target.size.width > current.size.width + 1
             || target.size.height > current.size.height + 1
         if growing {
@@ -111,6 +125,7 @@ public final class AXWindowActuator: WindowActuator {
             try writeAXSize(target.size, to: handle.element)
             try writeAXPosition(target.origin, to: handle.element)
         }
+        countCalls(2, pid: id.pid)
         let actual = try readFrame(handle.element)
         guard let actual, framesEqual(actual, target) else {
             throw SystemWindowActionError.frameMismatch(

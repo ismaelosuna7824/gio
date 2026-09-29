@@ -515,7 +515,10 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator else {
             return
         }
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = WindowReconciler(
+            actuator: actuator,
+            appName: { NSRunningApplication(processIdentifier: $0)?.localizedName }
+        )
         let modes = tileableModes()
         for display in displays.allDisplays() {
             guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
