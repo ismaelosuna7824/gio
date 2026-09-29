@@ -17,6 +17,17 @@ independent of how fast each app repaints, while real windows move only once.
 User approved the snapshot overlay (2026-09-29) knowing it requires Screen Recording permission:
 "la idea es que esto se vea fluido, que se sienta bien al usar".
 
+## Design update (2026-09-29, live measurement, user accepted "si")
+Measured on the user's Mac with content cached: per-window capture p50 57-147ms, max 101-179ms,
+backdrop 115-139ms, total 117-183ms. On-keypress capture would delay every ~350ms animation, so:
+- Pre-captured snapshot cache: after each settle (async, background, one-shot — no periodic
+  timers), capture visible windows + adjacent columns' windows; at motion start use cached images
+  (instant). Windows without a cached image animate via AX in that motion (fallback per window).
+- Backdrop = the display's desktop wallpaper image (NSWorkspace desktopImageURL, loaded once, cached
+  per display) instead of a live backdrop capture.
+- Accepted tradeoff (user): during the ~350ms flight the image shows content as of the last settle;
+  non-managed windows are not shown during the flight.
+
 ## Design
 1. Motion start: capture every animated window (desktop-independent window capture) and a display
    backdrop EXCLUDING the animated windows (and Gio's own windows).
@@ -47,6 +58,12 @@ pure parts; Conventional Commits, NO Co-Authored-By; push after verified batches
   over-budget=8 unmatched=1` (cold, fetch inside budget). Added measure mode (2s cap, fetch/p50/p90/
   max/backdrop/unmatched reasons) + SCShareableContent prefetch outside the budget. Bundles
   25/7/19/33/920 all 0 failures (parent re-ran). LIVE PENDING: user measurement.
+- [ ] SM-02c — Fixes from live measurement: (a) PA-04 regression — render verification with
+  `.optionOnScreenOnly` silently skips a visible target that is NOT on screen (live: focus ring on
+  WhatsApp's frame, window not drawn, no `render mismatch`); a missing expected window must count
+  as a mismatch and get the nudge; (b) Figma unmatched (`no-same-size-cg-entry`: AX 888 vs actual
+  900 after min-size learning) — match by nearest frame within pid when unique, tolerant to learned
+  minimum sizes.
 - [ ] SM-03 — Overlay renderer: per-display overlay window, backdrop + window layers, CA spring
   animations (position + bounds), retarget from presentation values, teardown.
 - [ ] SM-04 — Orchestration: motion start -> capture -> overlay + single real write -> settle ->
@@ -78,3 +95,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 ## Progress
 - 2026-09-29: document created after live evidence. Next: SM-00..SM-02.
 - 2026-09-29: SM-00..SM-02 done, pushed. Next: user measures capture latency; then SM-03/SM-04.
+- 2026-09-29: measured (above); user accepted pre-capture + wallpaper backdrop tradeoff. Next: SM-02c, SM-03..SM-05 (route: one delegated writer, sequential commits).
