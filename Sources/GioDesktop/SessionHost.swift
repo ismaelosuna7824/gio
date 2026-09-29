@@ -93,6 +93,10 @@ final class SessionHost: @unchecked Sendable {
     private var rendererLog = RendererLogGate()
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
+    /// SM-02b: managed set the shareable content was last prefetched for, and
+    /// whether a prefetch is running (session queue only).
+    private var lastPrefetchedWindows: Set<WindowID>?
+    private var prefetchInFlight = false
     /// PA-04: pids with windows in the running motion; their moved/resized
     /// events are our own writes and are dropped before any lookup.
     private var animatingPids: Set<pid_t> = []
@@ -263,6 +267,25 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// SM-02b: refreshes the ScreenCaptureKit content in the background at
+    /// session start and whenever the managed window set changes, so motion
+    /// requests do not pay the fetch inside their budget. Must run on `queue`.
+    private func prefetchSnapshotContentIfNeeded(permissionGranted: Bool) {
+        let managed = Set(session.registry.managedWindows().map(\.id))
+        guard shouldPrefetchShareableContent(
+            managed: managed, lastPrefetched: lastPrefetchedWindows,
+            permissionGranted: permissionGranted, inFlight: prefetchInFlight
+        ) else {
+            return
+        }
+        lastPrefetchedWindows = managed
+        prefetchInFlight = true
+        Task.detached { [snapshotCapturer, weak self] in
+            await snapshotCapturer.prefetch(managed: managed)
+            self?.queue.async { self?.prefetchInFlight = false }
+        }
+    }
+
     /// SM-02 debug action (Diagnostics): captures the visible managed windows
     /// and a backdrop once, logs the summary and hands it back on the main
     /// queue. Never runs from a motion; images are released on return. The
@@ -296,15 +319,13 @@ final class SessionHost: @unchecked Sendable {
                 }
                 let request = SnapshotCaptureRequest(
                     windows: frames, displays: screens,
-                    primaryDisplayHeight: NSScreen.screens.first?.frame.height ?? 1169
+                    primaryDisplayHeight: NSScreen.screens.first?.frame.height ?? 1169,
+                    measure: true
                 )
                 Task.detached { [snapshotCapturer] in
                     let result = await snapshotCapturer.capture(request)
                     let summary = result.summary
-                    let detail = summary.misses.isEmpty
-                        ? ""
-                        : " (" + Dictionary(grouping: summary.misses.values, by: \.rawValue)
-                            .map { "\($0.key)=\($0.value.count)" }.sorted().joined(separator: ", ") + ")"
+                    let detail = result.measurement.map { "\n" + $0.report } ?? ""
                     DispatchQueue.main.async { completion(summary.logLine + detail) }
                 }
             }
@@ -481,6 +502,9 @@ final class SessionHost: @unchecked Sendable {
         if let line = rendererLog.line(config: session.config.animations, permission: screenRecording) {
             GioLog.record(.info, line)
         }
+        prefetchSnapshotContentIfNeeded(
+            permissionGranted: effectiveRenderer(config: session.config.animations, permission: screenRecording) == .snapshot
+        )
         return SessionFacts(
             configPath: path, configExists: FileManager.default.fileExists(atPath: path),
             configMessages: configMessages, accessibilityGranted: hasAXPermission(),

@@ -62,7 +62,7 @@ struct DiagnosticsView: View {
                 Button("Quit Gio", role: .destructive) { NSApplication.shared.terminate(nil) }
             }
             if let actionNote {
-                Text(actionNote).font(.callout).foregroundStyle(.secondary)
+                Text(actionNote).font(.callout.monospacedDigit()).foregroundStyle(.secondary).textSelection(.enabled)
             }
             Spacer(minLength: 0)
         }

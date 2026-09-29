@@ -43,16 +43,24 @@ public struct SnapshotCaptureRequest: Sendable {
     public var primaryDisplayHeight: CGFloat
     public var includeBackdrop: Bool
     public var budgetMilliseconds: Int
+    /// Debug measurement: a generous cap instead of the budget, and the
+    /// result carries a latency breakdown (Diagnostics "Test snapshot capture").
+    public var measure: Bool
+
+    /// Cap used in measure mode so slow captures still report their latency.
+    public static let measureCapMilliseconds = 2000
 
     public init(
         windows: [WindowID: CGRect], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
-        includeBackdrop: Bool = true, budgetMilliseconds: Int = SnapshotBudget.defaultMilliseconds
+        includeBackdrop: Bool = true, budgetMilliseconds: Int = SnapshotBudget.defaultMilliseconds,
+        measure: Bool = false
     ) {
         self.windows = windows
         self.displays = displays
         self.primaryDisplayHeight = primaryDisplayHeight
         self.includeBackdrop = includeBackdrop
         self.budgetMilliseconds = budgetMilliseconds
+        self.measure = measure
     }
 }
 
@@ -62,6 +70,8 @@ public struct SnapshotCaptureResult: @unchecked Sendable {
     public let snapshots: [WindowID: CapturedSnapshot]
     public let backdrops: [UInt32: CapturedBackdrop]
     public let summary: SnapshotCaptureSummary
+    /// Only in measure mode.
+    public let measurement: SnapshotMeasurement?
 }
 
 public final class SnapshotCapturer: @unchecked Sendable {
@@ -94,11 +104,26 @@ public final class SnapshotCapturer: @unchecked Sendable {
                     requested: ids, matches: Dictionary(uniqueKeysWithValues: ids.map { ($0, .matched(0)) }),
                     captured: [], failed: Set(ids), backdropsRequested: 0, backdropsCaptured: 0,
                     elapsedMilliseconds: 0
-                )
+                ),
+                measurement: nil
             )
         }
         GioLog.record(.info, result.summary.logLine)
+        if let measurement = result.measurement {
+            GioLog.record(.info, measurement.logLine)
+        }
         return result
+    }
+
+    /// Refreshes the shareable content in the background so requests on the
+    /// motion hot path hit the cache. Call when the managed window set
+    /// changes and at session start (after Screen Recording is granted).
+    /// Never throws; the fetch time is logged at debug.
+    public func prefetch(managed: Set<WindowID>) async {
+        guard #available(macOS 14.0, *) else {
+            return
+        }
+        _ = await refreshCache(managed: managed)
     }
 
     // MARK: - ScreenCaptureKit (macOS 14+)
@@ -120,6 +145,34 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// usable from any queue; the box carries them into concurrent tasks.
     private struct Box<Value>: @unchecked Sendable {
         let value: Value
+    }
+
+    /// Per-capture timings, written from concurrent tasks.
+    private final class Timings: @unchecked Sendable {
+        private let lock = NSLock()
+        private var windows: [Double] = []
+        private var backdrop: Double?
+        private(set) var fetch: Double = 0
+        private(set) var fetchCached = true
+
+        func setFetch(_ milliseconds: Double, cached: Bool) {
+            lock.withLock {
+                fetch = milliseconds
+                fetchCached = cached
+            }
+        }
+
+        func addWindow(_ milliseconds: Double) {
+            lock.withLock { windows.append(milliseconds) }
+        }
+
+        func addBackdrop(_ milliseconds: Double) {
+            lock.withLock { backdrop = Swift.max(backdrop ?? 0, milliseconds) }
+        }
+
+        func read() -> (fetch: Double, cached: Bool, windows: [Double], backdrop: Double?) {
+            lock.withLock { (fetch, fetchCached, windows, backdrop) }
+        }
     }
 
     /// Collects results from concurrent captures and resumes the waiter once:
@@ -241,15 +294,17 @@ public final class SnapshotCapturer: @unchecked Sendable {
             ? displaysNeedingBackdrop(windowFrames: Array(request.windows.values), displays: request.displays)
             : []
         let collector = Collector()
+        let timings = Timings()
+        let budget = request.measure ? SnapshotCaptureRequest.measureCapMilliseconds : request.budgetMilliseconds
         await collector.wait {
             let timer = DispatchWorkItem { collector.finish() }
             DispatchQueue.global(qos: .userInteractive).asyncAfter(
-                deadline: .now() + .milliseconds(request.budgetMilliseconds), execute: timer
+                deadline: .now() + .milliseconds(budget), execute: timer
             )
             Task {
                 await self.runJobs(
                     request: request, ids: ids, matches: matches, backdropDisplays: backdropDisplays,
-                    collector: collector
+                    collector: collector, timings: timings
                 )
             }
         }
@@ -271,28 +326,52 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 displayID: displayID, image: image, frame: display.frame, scale: display.scale
             )
         }
-        return SnapshotCaptureResult(
-            snapshots: snapshots, backdrops: backdrops,
-            summary: makeSnapshotSummary(
+        let summary = makeSnapshotSummary(
                 requested: ids, matches: matches, captured: Set(snapshots.keys), failed: out.failed,
                 backdropsRequested: backdropDisplays.count, backdropsCaptured: backdrops.count,
                 elapsedMilliseconds: elapsed
             )
+        var measurement: SnapshotMeasurement?
+        if request.measure {
+            let timed = timings.read()
+            let sckIDs = lock.withLock { (content as? Cache).map { Set($0.windows.keys) } } ?? []
+            var reasons: [SnapshotUnmatchedReason: Int] = [:]
+            for id in ids {
+                if let reason = classifySnapshotMiss(
+                    pid: id.pid, match: matches[id] ?? .missing, candidates: candidates, sckWindowIDs: sckIDs
+                ) {
+                    reasons[reason, default: 0] += 1
+                    if summary.misses[id] != nil {
+                        GioLog.record(.info, "snapshot unmatched id=\(id.pid):\(id.elementID) reason=\(reason.rawValue)")
+                    }
+                }
+            }
+            measurement = SnapshotMeasurement(
+                fetchMilliseconds: timed.fetch, fetchCached: timed.cached, windows: ids.count,
+                windowMilliseconds: timed.windows, backdropMilliseconds: timed.backdrop,
+                totalMilliseconds: elapsed, unmatchedReasons: reasons
+            )
+        }
+        return SnapshotCaptureResult(
+            snapshots: snapshots, backdrops: backdrops, summary: summary, measurement: measurement
         )
     }
 
     @available(macOS 14.0, *)
     private func runJobs(
         request: SnapshotCaptureRequest, ids: [WindowID], matches: [WindowID: SnapshotMatch],
-        backdropDisplays: [UInt32], collector: Collector
+        backdropDisplays: [UInt32], collector: Collector,
+        timings: Timings
     ) async {
         let managed = Set(ids)
         let needed = Set(ids.compactMap { id -> UInt32? in
             if case .matched(let windowID)? = matches[id] { return windowID }
             return nil
         })
-        guard let cache = await ensureCache(managed: managed, needed: needed, needsDisplays: !backdropDisplays.isEmpty),
-              !collector.isFinished
+        let fetchBegan = DispatchTime.now().uptimeNanoseconds
+        let lookup = await ensureCache(managed: managed, needed: needed, needsDisplays: !backdropDisplays.isEmpty)
+        timings.setFetch(Double(DispatchTime.now().uptimeNanoseconds - fetchBegan) / 1_000_000, cached: lookup.cached)
+        guard let cache = lookup.cache, !collector.isFinished
         else {
             collector.failAll(ids.filter { if case .matched? = matches[$0] { return true } else { return false } })
             return
@@ -329,6 +408,9 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 let image = try? await Self.captureWindow(boxed.value, size: frame.size, scale: scale)
                 let millis = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
                 GioLog.record(.debug, "snapshot window id=\(job.id.pid):\(job.id.elementID) ms=\(Int(millis.rounded())) ok=\(image != nil)")
+                if image != nil {
+                    timings.addWindow(millis)
+                }
                 collector.complete(window: job.id, image: image)
             }
         }
@@ -342,27 +424,42 @@ public final class SnapshotCapturer: @unchecked Sendable {
             let boxedDisplay = Box(value: display)
             let boxedExcluded = Box(value: excluded)
             Task {
+                let began = DispatchTime.now().uptimeNanoseconds
                 let image = try? await Self.captureBackdrop(
                     boxedDisplay.value, excluding: boxedExcluded.value, size: info.frame.size, scale: info.scale
                 )
+                if image != nil {
+                    timings.addBackdrop(Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000)
+                }
                 collector.complete(display: displayID, image: image)
             }
         }
     }
 
-    /// The cached shareable content, refreshed only when the managed window
-    /// set changed or a wanted window (or display) is missing from it.
+    /// The cached shareable content. The hot path only refreshes when a
+    /// wanted window (or display) is missing from it; the background prefetch
+    /// normally keeps it warm so the fetch stays outside the request budget.
     @available(macOS 14.0, *)
-    private func ensureCache(managed: Set<WindowID>, needed: Set<UInt32>, needsDisplays: Bool) async -> Cache? {
+    private func ensureCache(
+        managed: Set<WindowID>, needed: Set<UInt32>, needsDisplays: Bool
+    ) async -> (cache: Cache?, cached: Bool) {
         let cached = lock.withLock { content as? Cache }
-        if let cached, cached.managed == managed, needed.allSatisfy({ cached.windows[$0] != nil }),
+        if let cached, needed.allSatisfy({ cached.windows[$0] != nil }),
            !needsDisplays || !cached.displays.isEmpty {
-            return cached
+            return (cached, true)
         }
+        return (await refreshCache(managed: managed), false)
+    }
+
+    @available(macOS 14.0, *)
+    private func refreshCache(managed: Set<WindowID>) async -> Cache? {
+        let began = DispatchTime.now().uptimeNanoseconds
         do {
             let fresh = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let cache = Cache(content: fresh, managed: managed)
             lock.withLock { content = cache }
+            let millis = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
+            GioLog.record(.debug, "snapshot shareable content fetch ms=\(Int(millis.rounded())) windows=\(cache.windows.count)")
             return cache
         } catch {
             GioLog.record(.warn, "snapshot shareable content failed: \(error.localizedDescription)")
