@@ -1151,6 +1151,12 @@ final class SessionHost: @unchecked Sendable {
             commit(next, over: workspace)
         case .maximizeColumn:
             commit(toggleMaximizeFocusedColumn(in: workspace), over: workspace)
+        case .centerColumn:
+            let viewport = focusedViewport()
+            commit(
+                centerFocusedColumn(in: workspace, modes: tileableModes(), engine: engine(), viewport: viewport),
+                over: workspace
+            )
         }
         reflowAll()
     }
@@ -1162,15 +1168,19 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// Layout config plus the viewport width of the display showing the
-    /// current workspace: what width actions resolve proportions against.
-    private func focusedSizing() -> (config: LayoutConfig, viewportWidth: CGFloat) {
+    /// Usable frame of the display showing the current workspace.
+    private func focusedViewport() -> CGRect {
         let current = session.manager.current
         let display = displays.allDisplays().first { Int($0.workspace.rawValue) == current }
             ?? displays.allDisplays().first
-        let width = display.map { (visibleFrames[$0.id] ?? $0.frame).width }
-            ?? NSScreen.main?.visibleFrame.width ?? 1800
-        return (engine().config, width)
+        return display.map { visibleFrames[$0.id] ?? $0.frame }
+            ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
+    }
+
+    /// Layout config plus the viewport width of the display showing the
+    /// current workspace: what width actions resolve proportions against.
+    private func focusedSizing() -> (config: LayoutConfig, viewportWidth: CGFloat) {
+        (engine().config, focusedViewport().width)
     }
 
     private func narrowMove(in workspace: inout Workspace, direction: FocusDirection) {
