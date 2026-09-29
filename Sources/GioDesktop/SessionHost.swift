@@ -35,6 +35,7 @@ final class SessionHost: @unchecked Sendable {
     private var visibleFrames: [DisplayID: CGRect] = [:]
     private let dispatcher = HotkeyDispatcher()
     private var isShuttingDown = false
+    private var reflowDeferral = ReflowDeferral()
 
     /// UI hook, always invoked on the main thread.
     var onSummonLauncher: (() -> Void)?
@@ -166,7 +167,7 @@ final class SessionHost: @unchecked Sendable {
         }
         let flip = AXVerticalFlip(displayHeight: mainHeight())
         var liveIDs = Set<WindowID>()
-        var focusedID: WindowID?
+        var focusCandidates: [FocusCandidate] = []
         // Minimized windows are candidates too: they stay registered (and
         // keep their column) but sit out of the layout.
         for candidate in found.windows + found.floating {
@@ -187,23 +188,22 @@ final class SessionHost: @unchecked Sendable {
                         applyMinimized(candidate.window.isMinimized, to: known)
                     }
                 }
-                if candidate.window.isFocused && !candidate.window.isMinimized {
-                    focusedID = known
-                }
+                focusCandidates.append(FocusCandidate(
+                    id: known, isFocused: candidate.window.isFocused,
+                    isMinimized: candidate.window.isMinimized
+                ))
                 continue
             }
             liveIDs.insert(registerNew(candidate))
         }
         // Clicks change macOS focus behind our back: adopt the observed
-        // focus instead of fighting it on the next reflow.
-        if let focusedID {
-            var current = session.manager.currentWorkspace()
-            if let row = current.columns.firstIndex(where: { $0.windows.contains(focusedID) }) {
-                current.focusedColumn = row
-                current.columns[row].focusedWindowIndex = current.columns[row].windows.firstIndex(of: focusedID)!
-                current.focusedWindow = focusedID
-                session.manager.update(current)
-            }
+        // focus instead of fighting it on the next reflow. Every app reports
+        // a focused window; only the frontmost app's is the user's.
+        if let focusedID = adoptableFocus(
+            among: focusCandidates,
+            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
+        ) {
+            adoptFocus(focusedID)
         }
         if onlyPID == nil {
             reapDeadPids(live: liveIDs)
@@ -384,48 +384,93 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// Adopt `id` as the session focus (current workspace). True when the
+    /// focus changed.
+    @discardableResult
+    private func adoptFocus(_ id: WindowID) -> Bool {
+        let current = session.manager.currentWorkspace()
+        guard let adopted = adoptingFocus(id, in: current), adopted != current else {
+            return false
+        }
+        session.manager.update(adopted)
+        return true
+    }
+
+    /// Would laying out the current workspace scroll the viewport (focused
+    /// column hidden, or offset out of bounds)? Decides whether a click on
+    /// an already-visible column needs any reflow at all.
+    private func viewportNeedsScroll() -> Bool {
+        let modes = tileableModes()
+        for display in displays.allDisplays() {
+            guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)),
+                  let planned = try? planDisplayLayout(
+                      workspace: workspace, modes: modes, engine: engine(),
+                      viewport: visibleFrames[display.id] ?? display.frame,
+                      display: display.frame, otherDisplays: []
+                  )
+            else {
+                continue
+            }
+            if planned.workspace.viewportOffset != workspace.viewportOffset {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// Every write funnels through here. While a mouse button is down the
+    /// reflow waits (polling every 50 ms, coalesced) so nothing moves under
+    /// the cursor; a user's manual drag is therefore not fought, and the
+    /// window snaps back to its column after release.
     private func reflowAll() {
-        guard let actuator, !isShuttingDown else {
+        guard !isShuttingDown else {
+            return
+        }
+        switch reflowDeferral.request(mouseDown: NSEvent.pressedMouseButtons != 0) {
+        case .apply:
+            performReflow()
+        case .poll(let delay):
+            scheduleDeferredReflow(after: delay)
+        case .alreadyPolling:
+            break
+        }
+    }
+
+    private func scheduleDeferredReflow(after delay: TimeInterval) {
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.isShuttingDown else {
+                return
+            }
+            switch self.reflowDeferral.poll(mouseDown: NSEvent.pressedMouseButtons != 0) {
+            case .apply:
+                self.performReflow()
+            case .poll(let next):
+                self.scheduleDeferredReflow(after: next)
+            case .alreadyPolling:
+                break
+            }
+        }
+    }
+
+    private func performReflow() {
+        guard let actuator else {
             return
         }
         let reconciler = WindowReconciler(actuator: actuator)
         let modes = tileableModes()
         for display in displays.allDisplays() {
-            guard var workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
+            guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
                 continue
             }
             let visible = visibleFrames[display.id] ?? display.frame
-            var layout: LayoutResult
-            do {
-                layout = try engine().calculate(
-                    workspace: tilingWorkspace(from: workspace, modes: modes),
-                    viewport: visible
-                )
-            } catch {
+            guard let planned = try? planDisplayLayout(
+                workspace: workspace, modes: modes, engine: engine(),
+                viewport: visible, display: display.frame,
+                otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame)
+            ) else {
                 continue
             }
-            // Niri rule: the focused column is always visible. Reveal it
-            // first, then lay out again from the scrolled offset so every
-            // frame below is computed against the viewport users see.
-            if let revealed = revealOffset(
-                workspace: workspace, layout: layout, viewport: visible
-            ), revealed != workspace.viewportOffset {
-                var scrolled = workspace
-                scrolled.viewportOffset = revealed
-                if let relaid = try? engine().calculate(
-                    workspace: tilingWorkspace(from: scrolled, modes: modes),
-                    viewport: visible
-                ) {
-                    layout = relaid
-                    workspace.viewportOffset = revealed
-                }
-            }
-            let plan = planParking(
-                frames: layout.frames,
-                viewport: visible,
-                display: display.frame,
-                otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame)
-            )
+            let plan = planned.plan
             // Never let the reconciler raise a minimized window.
             let focused = workspace.focusedWindow.flatMap {
                 session.registry.find($0)?.isMinimized == true ? nil : $0
@@ -444,33 +489,11 @@ final class SessionHost: @unchecked Sendable {
                 plan.visible.merging(plan.parked.mapValues(\.frame)) { first, _ in first },
                 at: ProcessInfo.processInfo.systemUptime
             )
-            workspace.viewportOffset = layout.viewportOffset
-            session.manager.update(workspace)
+            session.manager.update(planned.workspace)
             displays.updateViewport(
-                Viewport(offset: layout.viewportOffset, width: visible.width), for: display.id
+                Viewport(offset: planned.layout.viewportOffset, width: visible.width), for: display.id
             )
         }
-    }
-
-    /// Focused column's content range revealed into the viewport.
-    /// Nil when nothing needs scrolling (or no focused window to reveal).
-    private func revealOffset(
-        workspace: Workspace, layout: LayoutResult, viewport: CGRect
-    ) -> CGFloat? {
-        guard let focused = workspace.focusedWindow,
-              let column = workspace.columns.first(where: { $0.windows.contains(focused) })
-        else {
-            return nil
-        }
-        let frames = column.windows.compactMap { layout.frames[$0] }
-        guard !frames.isEmpty else {
-            return nil
-        }
-        let lower = frames.map(\.origin.x).min()!
-        let upper = frames.map(\.maxX).max()!
-        let revealed = Viewport(offset: workspace.viewportOffset, width: viewport.width)
-            .ensureVisible(range: lower..<upper, contentWidth: layout.contentWidth)
-        return revealed.offset == workspace.viewportOffset ? nil : revealed.offset
     }
 
     /// Debounced reflow. `full` also re-enumerates windows (resync); a
@@ -585,7 +608,12 @@ final class SessionHost: @unchecked Sendable {
             {
                 observationBook.didAttach(event.pid)
             }
-            scheduleReflow()
+            if hotkeyTap == nil {
+                // Permission may have arrived late: the one activation-time
+                // full resync (it retries the tap and rebuilds observers).
+                scheduleReflow()
+            }
+            adoptFocusedWindow(of: event.pid)
         case .window(let kind):
             handleWindowEvent(kind, pid: event.pid, element: event.element)
         }
@@ -636,10 +664,37 @@ final class SessionHost: @unchecked Sendable {
                 record.title = title
                 try? session.registry.update(record)
             }
+        case .adoptFocus:
+            adoptFocusedWindow(of: pid)
         case .resync:
             scheduleReflow()
         case .ignore:
             break
+        }
+    }
+
+    /// Light path for a click or app switch: no rescan. The frontmost app's
+    /// focused window becomes the session focus (a background app changing
+    /// its own key window is not the user's focus); an unknown window goes
+    /// through single-window admission; a reflow follows only when the
+    /// viewport has to scroll to show the focused column.
+    private func adoptFocusedWindow(of pid: pid_t) {
+        guard pid == NSWorkspace.shared.frontmostApplication?.processIdentifier,
+              let element = focusedWindowElement(pid: pid)
+        else {
+            return
+        }
+        guard let id = actuator?.id(matching: element, pid: pid) else {
+            // Registration focuses the new window and reflows.
+            registerAppearedWindow(element, pid: pid, attempt: 0)
+            return
+        }
+        if session.registry.find(id)?.isMinimized == true {
+            return
+        }
+        adoptFocus(id)
+        if viewportNeedsScroll() {
+            reflowAll()
         }
     }
 

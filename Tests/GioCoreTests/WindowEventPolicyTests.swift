@@ -70,9 +70,9 @@ final class WindowEventPolicyTests: XCTestCase {
         XCTAssertEqual(windowEventAction(for: .titleChanged, isKnownWindow: false), .ignore)
     }
 
-    func testFocusChangeRequestsResync() {
-        XCTAssertEqual(windowEventAction(for: .focusedWindowChanged, isKnownWindow: false), .resync)
-        XCTAssertEqual(windowEventAction(for: .focusedWindowChanged, isKnownWindow: true), .resync)
+    func testFocusChangeAdoptsFocusWithoutResync() {
+        XCTAssertEqual(windowEventAction(for: .focusedWindowChanged, isKnownWindow: false), .adoptFocus)
+        XCTAssertEqual(windowEventAction(for: .focusedWindowChanged, isKnownWindow: true), .adoptFocus)
     }
 
     // MARK: Echo gate

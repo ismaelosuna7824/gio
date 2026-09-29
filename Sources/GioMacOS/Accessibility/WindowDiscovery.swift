@@ -118,6 +118,11 @@ private enum ElementClassification {
     case skipped
 }
 
+/// The app's current key window, if any (light-path focus adoption).
+public func focusedWindowElement(pid: pid_t) -> AXUIElement? {
+    axFocusedWindow(of: AXUIElementCreateApplication(pid))
+}
+
 private func axFocusedWindow(of appElement: AXUIElement) -> AXUIElement? {
     var rawFocused: CFTypeRef?
     guard AXUIElementCopyAttributeValue(

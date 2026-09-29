@@ -44,6 +44,9 @@ public enum WindowEventAction: Equatable, Sendable {
     /// Known window deminimized: back into its column, focused.
     case restore
     case updateTitle
+    /// The app's focused window changed (a click, a key switch): adopt it
+    /// as the session focus on a light path, no rescan.
+    case adoptFocus
     /// Fall back to the debounced full resync.
     case resync
     case ignore
@@ -68,7 +71,7 @@ public func windowEventAction(for kind: WindowEventKind, isKnownWindow: Bool) ->
     case .titleChanged:
         return isKnownWindow ? .updateTitle : .ignore
     case .focusedWindowChanged:
-        return .resync
+        return .adoptFocus
     }
 }
 
