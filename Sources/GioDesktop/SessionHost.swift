@@ -1070,6 +1070,10 @@ final class SessionHost: @unchecked Sendable {
     /// validated against the click (`FocusSettle`). The activation and the
     /// focused-window event of one click therefore adopt once.
     private func requestFocusAdoption(_ source: FocusSource, pid: pid_t, element: AXUIElement?) {
+        // Gio's own window (main window, launcher) is never a tiling focus.
+        guard pid != ProcessInfo.processInfo.processIdentifier else {
+            return
+        }
         // A background app changing its own key window is not the user's focus.
         if source == .focusChanged,
            pid != NSWorkspace.shared.frontmostApplication?.processIdentifier

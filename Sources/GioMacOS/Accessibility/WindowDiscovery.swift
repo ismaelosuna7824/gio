@@ -204,7 +204,9 @@ private func classifyElement(
 /// may retry). Tile and float outcomes are both returned; minimized and
 /// fullscreen windows come back flagged on `window` for the caller to filter.
 public func discoverSystemWindow(element: AXUIElement, pid: pid_t) -> DiscoveredSystemWindow? {
-    guard AXIsProcessTrusted() else {
+    guard isManageableProcess(pid: pid, ownPID: ProcessInfo.processInfo.processIdentifier, onlyPID: nil),
+          AXIsProcessTrusted()
+    else {
         return nil
     }
     let appElement = AXUIElementCreateApplication(pid)

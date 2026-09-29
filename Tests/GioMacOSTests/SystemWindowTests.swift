@@ -1,4 +1,6 @@
 import XCTest
+import ApplicationServices
+import GioCore
 @testable import GioMacOS
 
 final class SystemWindowTests: XCTestCase {
@@ -60,6 +62,26 @@ final class DiscoveryScopeTests: XCTestCase {
     func testOwnProcessIsNeverManaged() {
         XCTAssertFalse(isManageableProcess(pid: 42, ownPID: 42, onlyPID: nil))
         XCTAssertFalse(isManageableProcess(pid: 42, ownPID: 42, onlyPID: 42))
+    }
+
+    // Live crash 2026-09-29: Gio's own main window was adopted as focus,
+    // registered and animated; AX writes to an in-process element run
+    // AppKit off the main thread and crash. The actuator is the last gate.
+    func testActuatorRefusesGiosOwnWindows() {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let actuator = AXWindowActuator(displayHeight: 1000)
+        let element = AXUIElementCreateApplication(ownPID)
+        actuator.register(elementID: 1, pid: ownPID, element: element, appElement: element)
+        XCTAssertNil(actuator.id(matching: element, pid: ownPID))
+        XCTAssertNil(actuator.element(for: WindowID(pid: ownPID, elementID: 1)))
+    }
+
+    func testActuatorStillRegistersOtherProcesses() {
+        let other: pid_t = ProcessInfo.processInfo.processIdentifier &+ 1
+        let actuator = AXWindowActuator(displayHeight: 1000)
+        let element = AXUIElementCreateApplication(other)
+        actuator.register(elementID: 1, pid: other, element: element, appElement: element)
+        XCTAssertEqual(actuator.id(matching: element, pid: other), WindowID(pid: other, elementID: 1))
     }
 
     func testOtherProcessesFollowOnlyPID() {

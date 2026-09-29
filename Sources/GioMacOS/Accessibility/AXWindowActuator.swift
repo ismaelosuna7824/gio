@@ -75,6 +75,13 @@ public final class AXWindowActuator: WindowActuator {
         element: AXUIElement,
         appElement: AXUIElement
     ) {
+        // AX calls on Gio's own elements run AppKit in-process on the calling
+        // (lane) thread and crash; Gio's windows are never actuated.
+        guard isManageableProcess(
+            pid: pid, ownPID: ProcessInfo.processInfo.processIdentifier, onlyPID: nil
+        ) else {
+            return
+        }
         _ = AXUIElementSetMessagingTimeout(element, Self.messagingTimeoutSeconds)
         _ = AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
         stateLock.withLock {
