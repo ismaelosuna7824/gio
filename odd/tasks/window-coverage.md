@@ -72,6 +72,13 @@ Window admission, observation and registration only. Out of scope: animation/per
   parked leftovers are recovered by the initial layout; a no-daemon recovery command
   (`gio-poc restore`) covers SIGKILL (e.g. Xcode Stop).
   DONE `cb1781f`: pure planRestore (cascade 32pt), reconciler restoreOffscreen, SessionHost.shutdown on terminate + SIGTERM/INT/HUP, startup restore of off-screen non-tiled, `gio-poc restore` + `gio-poc-restore` scheme. 13 tests RED -> GREEN, 315 executed 0 failures. LIVE PENDING. Review: UNAVAILABLE.
+- [x] WC-09 — Stale focus on click (live retest 2026-09-29): restore on Quit works
+  (`restore applied=9`), but some clicks still produce `reflow applied=2 parked=8
+  already=0` with no hotkey and no clamps -> viewport jumps to a far column. Hypothesis:
+  activation arrives before the app's AXFocusedWindow updates, so a stale (parked) window
+  is adopted. Fix: log focus adoption (source, id, column, scroll), and for mouse-driven
+  focus adopt only a window containing the click point after the focus settles.
+  DONE `9d25405`: FocusSettle (mouse-down via existing tap, settle 80ms, click-point validation, one re-read then drop, coalesce), single requestFocusAdoption entry, `focus adopt`/`focus dropped` debug logs. Code confirmed double adoption per click + unchecked AXFocusedWindow read; stale read itself LIVE PENDING. 15 tests RED -> GREEN, 343 executed 0 failures (parent spot-check). Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -105,3 +112,5 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: WC-06 done `3a30bbe`. Next: user live retest.
 - 2026-09-29: live retest: parking works; clicks cause full re-layout (can't select), quitting leaves windows parked at 1pt, no animation (phase 2/4). Added WC-07, WC-08 (user-reported defects of built behavior). Route: one delegated writer, two commits.
 - 2026-09-29: WC-08 `cb1781f` + WC-07 `4a6351b` done; 328 executed 0 failures (parent spot-check). Next: user live retest, then phase 2 perf.
+- 2026-09-29: live retest: test 5 (quit restore) PASS; test 2 (click) intermittent FAIL with many windows. Added WC-09. Route: delegated writer.
+- 2026-09-29: WC-09 done `9d25405`. Next: user live retest of click (look for `focus dropped` / `focus adopt ... parked`).
