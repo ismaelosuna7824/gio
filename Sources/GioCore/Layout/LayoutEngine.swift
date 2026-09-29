@@ -99,7 +99,9 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
             throw LayoutError.invalidViewport
         }
 
-        let defaultWidth = config.defaultColumnWidth ?? viewport.width / 2
+        let defaultWidth = config.defaultColumnWidth ?? proportionalColumnWidth(
+            0.5, viewportWidth: viewport.width, padding: config.padding, gap: config.gap
+        )
         var widths: [CGFloat] = []
         var framedColumns: [Column] = []
         for column in workspace.columns where !column.windows.isEmpty {
@@ -142,4 +144,13 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         }
         return LayoutResult(frames: frames, contentWidth: contentWidth, viewportOffset: offset)
     }
+}
+
+/// Niri proportion semantics: a column of proportion `p` takes that share of
+/// the strip after padding, so `1/p` such columns plus their gaps fill the
+/// viewport exactly (two 0.5 columns never overflow by a gap).
+public func proportionalColumnWidth(
+    _ proportion: CGFloat, viewportWidth: CGFloat, padding: CGFloat, gap: CGFloat
+) -> CGFloat {
+    proportion * (viewportWidth - padding * 2 + gap) - gap
 }

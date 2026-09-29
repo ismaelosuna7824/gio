@@ -60,9 +60,12 @@ public func revealOffset(
     guard !frames.isEmpty else {
         return nil
     }
-    let lower = frames.map(\.origin.x).min()!
-    let upper = frames.map(\.maxX).max()!
-    let revealed = Viewport(offset: workspace.viewportOffset, width: viewport.width)
+    // Layout frames are screen rects (`viewport.minX + contentX - offset`);
+    // the viewport scrolls in content space, so convert back before comparing.
+    let toContent = layout.viewportOffset - viewport.minX
+    let lower = frames.map(\.origin.x).min()! + toContent
+    let upper = frames.map(\.maxX).max()! + toContent
+    let revealed = Viewport(offset: layout.viewportOffset, width: viewport.width)
         .ensureVisible(range: lower..<upper, contentWidth: layout.contentWidth)
-    return revealed.offset == workspace.viewportOffset ? nil : revealed.offset
+    return revealed.offset == layout.viewportOffset ? nil : revealed.offset
 }

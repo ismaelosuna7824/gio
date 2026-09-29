@@ -79,7 +79,9 @@ public struct GioConfig: Sendable {
     /// else engine default (nil).
     public func resolveDefaultColumnWidth(viewportWidth: CGFloat) -> CGFloat? {
         if let fraction = layout.defaultColumnWidthFraction {
-            return fraction * viewportWidth
+            return proportionalColumnWidth(
+                fraction, viewportWidth: viewportWidth, padding: layout.padding, gap: layout.gaps
+            )
         }
         return layout.defaultColumnWidthPoints
     }

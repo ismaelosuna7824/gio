@@ -67,11 +67,11 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "J")), .focusDown
         )
-        XCTAssertEqual(config.resolveDefaultColumnWidth(viewportWidth: 1000), 500)
+        XCTAssertEqual(config.resolveDefaultColumnWidth(viewportWidth: 1000), 484)
         let layout = config.makeLayoutConfig(viewportWidth: 1000)
         XCTAssertEqual(layout.gap, 8)
         XCTAssertEqual(layout.padding, 12)
-        XCTAssertEqual(layout.defaultColumnWidth, 500)
+        XCTAssertEqual(layout.defaultColumnWidth, 484)
     }
 
     func testAbsoluteWidthResolves() throws {

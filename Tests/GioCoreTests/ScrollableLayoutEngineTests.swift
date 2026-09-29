@@ -26,8 +26,9 @@ final class ScrollableLayoutEngineTests: XCTestCase {
             id: WorkspaceID(1), columns: [column(windows: [id(1)])]
         )
         let result = try engine.calculate(workspace: workspace, viewport: viewport)
-        XCTAssertEqual(result.frames, [id(1): CGRect(x: 8, y: 8, width: 500, height: 784)])
-        XCTAssertEqual(result.contentWidth, 516)
+        // Niri proportion 0.5: 0.5 * (1000 - 2*8 + 8) - 8 = 488.
+        XCTAssertEqual(result.frames, [id(1): CGRect(x: 8, y: 8, width: 488, height: 784)])
+        XCTAssertEqual(result.contentWidth, 504)
         XCTAssertEqual(result.viewportOffset, 0)
     }
 
