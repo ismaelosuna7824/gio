@@ -35,9 +35,12 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
             )
         )
     )
+    private let focusRing = FocusRingController()
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        focusRing.start()
+        host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
         if let error = host.start() {
             print("[gio] cannot start: \(error)")
             NSApplication.shared.terminate(nil)
@@ -68,12 +71,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         host.shutdown()
+        focusRing.stop()
     }
 
     /// `gio restart`: restore windows and release the socket and lock, start a
     /// fresh instance (it waits for the lock if needed), then exit.
     private func restartSession() {
         host.shutdown()
+        focusRing.stop()
         relaunchGio { NSApplication.shared.terminate(nil) }
     }
 

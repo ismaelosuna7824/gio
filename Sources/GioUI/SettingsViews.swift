@@ -38,12 +38,14 @@ struct LayoutSettingsView: View {
     @State private var form: LayoutSettingsForm
     @State private var focusFollowsMouse: Bool
     @State private var mouseFollowsFocus: Bool
+    @State private var ring: FocusRingSettingsForm
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
         self.model = model
         let config = model.snapshot.config
         _form = State(initialValue: LayoutSettingsForm(config: config.layout))
+        _ring = State(initialValue: FocusRingSettingsForm(config: config.focusRing))
         _focusFollowsMouse = State(initialValue: config.behavior.focusFollowsMouse)
         _mouseFollowsFocus = State(initialValue: config.behavior.mouseFollowsFocus)
     }
@@ -77,18 +79,29 @@ struct LayoutSettingsView: View {
                 Text("Moves the cursor to the focused window after a keyboard focus change.")
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section("Focus ring") {
+                Toggle("Draw a ring around the focused window", isOn: $ring.enabled)
+                numberField("Width (0-20 points)", $ring.width)
+                TextField("Color (hex)", text: $ring.colorText)
+                Text("A click-through outline that follows the focused window, including while it animates. Hidden for minimized, off-screen and fullscreen windows and while Gio itself is active.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
             Section {
                 HStack {
                     Button("Apply") { apply() }
                         .keyboardShortcut(.defaultAction)
-                        .disabled(!form.problems.isEmpty)
+                        .disabled(!problems.isEmpty)
                     Button("Revert") { revert() }
                 }
-                FeedbackView(problems: form.problems, feedback: feedback)
+                FeedbackView(problems: problems, feedback: feedback)
             }
         }
         .formStyle(.grouped)
         .navigationTitle("Layout")
+    }
+
+    private var problems: [String] {
+        form.problems + ring.problems
     }
 
     private func numberField(_ title: String, _ value: Binding<Double>) -> some View {
@@ -98,6 +111,7 @@ struct LayoutSettingsView: View {
     private func apply() {
         feedback = model.apply(
             form.edits + behaviorEdits(focusFollowsMouse: focusFollowsMouse, mouseFollowsFocus: mouseFollowsFocus)
+                + ring.edits
         )
         if case .applied? = feedback {
             revert(keepFeedback: true)
@@ -107,6 +121,7 @@ struct LayoutSettingsView: View {
     private func revert(keepFeedback: Bool = false) {
         let config = model.snapshot.config
         form = LayoutSettingsForm(config: config.layout)
+        ring = FocusRingSettingsForm(config: config.focusRing)
         focusFollowsMouse = config.behavior.focusFollowsMouse
         mouseFollowsFocus = config.behavior.mouseFollowsFocus
         if !keepFeedback {

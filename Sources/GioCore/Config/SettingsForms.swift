@@ -96,6 +96,43 @@ public func animationEdits(enabled: Bool, durationMilliseconds: Int) -> [ConfigE
     ]
 }
 
+public func focusRingEdits(enabled: Bool, width: Int, colorHex: String) -> [ConfigEdit] {
+    [
+        .set(table: "focus-ring", key: "enabled", value: .bool(enabled)),
+        .set(table: "focus-ring", key: "width", value: .int(width)),
+        .set(table: "focus-ring", key: "active-color", value: .string(colorHex)),
+    ]
+}
+
+public struct FocusRingSettingsForm: Equatable, Sendable {
+    public var enabled: Bool
+    public var width: Double
+    public var colorText: String
+
+    public init(config: FocusRingSectionConfig, theme: GioTheme? = nil) {
+        enabled = config.enabled
+        width = Double(config.width)
+        colorText = config.resolvedColor(theme: theme).hex
+    }
+
+    public var problems: [String] {
+        var found: [String] = []
+        let range = FocusRingSectionConfig.widthRange
+        if !(width.isFinite && width >= Double(range.lowerBound) && width <= Double(range.upperBound)) {
+            found.append("Ring width must be \(range.lowerBound) to \(range.upperBound) points.")
+        }
+        if ThemeColor(hex: colorText) == nil {
+            found.append("Ring color must be a hex color like #7fc8ff.")
+        }
+        return found
+    }
+
+    public var edits: [ConfigEdit] {
+        let color = ThemeColor(hex: colorText)?.hex ?? colorText
+        return focusRingEdits(enabled: enabled, width: Int(width.rounded()), colorHex: color)
+    }
+}
+
 public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool) -> [ConfigEdit] {
     [
         .set(table: "behavior", key: "focus-follows-mouse", value: .bool(focusFollowsMouse)),

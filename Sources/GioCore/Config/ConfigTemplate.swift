@@ -28,6 +28,14 @@ public func defaultConfigTemplate() -> String {
     enabled = true
     duration-ms = 200
 
+    [focus-ring]
+    # A rounded outline drawn around the focused window (click-through overlay).
+    enabled = true
+    # Thickness in points (0-20; 0 hides it).
+    width = 4
+    # Hex color; leave commented to use the Niri blue.
+    # active-color = "#7fc8ff"
+
     [keybindings]
     "Alt+H" = "focus-left"
     "Alt+L" = "focus-right"

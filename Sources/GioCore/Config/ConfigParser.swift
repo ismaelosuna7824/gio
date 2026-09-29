@@ -31,6 +31,7 @@ private enum ConfigSection: Equatable {
     case layout
     case behavior
     case animations
+    case focusRing
     case keybindings
     case windowRules
     case ignored(String)
@@ -90,6 +91,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "layout": section = .layout
             case "behavior": section = .behavior
             case "animations": section = .animations
+            case "focus-ring": section = .focusRing
             case "keybindings": section = .keybindings
             case let name:
                 warnings.append("line \(line): unknown table [\(name)], ignored")
@@ -122,6 +124,8 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyBehaviorKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .animations:
             applyAnimationsKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
+        case .focusRing:
+            applyFocusRingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .keybindings:
             applyBindingKey(key, value: value, line: line, errors: &errors, config: &config)
         case .windowRules:
@@ -315,6 +319,39 @@ func applyAnimationsKey(
         config.animations.durationMilliseconds = rounded
     } else {
         warnings.append("line \(line): unknown animations key '\(key)', ignored")
+    }
+}
+
+func applyFocusRingKey(
+    _ key: String, value: ConfigValue, line: Int,
+    errors: inout [String], warnings: inout [String], config: inout GioConfig
+) {
+    switch key {
+    case "enabled":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "focus-ring", errors: &errors) {
+            config.focusRing.enabled = $0
+        }
+    case "width":
+        guard let number = value.number, number.isFinite else {
+            errors.append("line \(line): focus-ring.width expects a number of points")
+            return
+        }
+        let range = FocusRingSectionConfig.widthRange
+        let rounded = Int(min(max(number.rounded(), Double(range.lowerBound)), Double(range.upperBound)))
+        if Double(rounded) != number.rounded() {
+            warnings.append(
+                "line \(line): focus-ring.width clamped to \(rounded) (valid \(range.lowerBound)-\(range.upperBound))"
+            )
+        }
+        config.focusRing.width = rounded
+    case "active-color":
+        guard case .string(let text) = value, let color = ThemeColor(hex: text) else {
+            errors.append("line \(line): focus-ring.active-color expects a hex color like \"#7fc8ff\"")
+            return
+        }
+        config.focusRing.activeColor = color
+    default:
+        warnings.append("line \(line): unknown focus-ring key '\(key)', ignored")
     }
 }
 

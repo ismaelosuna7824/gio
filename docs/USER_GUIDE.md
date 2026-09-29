@@ -55,7 +55,7 @@ Notes:
 
 Gio parses a strict **subset of TOML**:
 
-- Tables `[layout]`, `[behavior]`, `[animations]`, `[keybindings]` and array tables `[[window-rules]]`.
+- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus-ring]`, `[keybindings]` and array tables `[[window-rules]]`.
 - `key = value` with double-quoted strings, integers, decimals, `true`/`false`, and flat lists of numbers like `[0.33, 0.5, 800]` (a trailing comma is tolerated; nested lists are not).
 - `#` comments outside quotes. Keys may be quoted (`"Alt+H" = ...`).
 - No escapes in strings, no multi-line values, no inline tables.
@@ -66,7 +66,7 @@ Validation outcomes:
 | --- | --- |
 | Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used**, and every message (with its line number) is shown in the app (**Overview**, **Diagnostics**) and returned by `gio reload`. |
 | Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility). |
-| `animations.duration-ms` outside 0 to 1000 | **Warning.** Clamped into range. |
+| `animations.duration-ms` outside 0 to 1000, `focus-ring.width` outside 0 to 20 | **Warning.** Clamped into range. |
 | Missing file | Silent defaults (first run). |
 
 An invalid config never stops the window manager.
@@ -95,6 +95,18 @@ An invalid config never stops the window manager.
 | `enabled` | bool | `true` | Off makes every reflow instant. |
 | `duration-ms` | number | `200` | Length of one animation. Rounded and clamped to `0...1000` with a warning. `0` is instant. |
 
+### `[focus-ring]`
+
+A rounded outline around the focused window, drawn by a click-through overlay that never takes focus. It follows the window while it animates.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `enabled` | bool | `true` | Off removes the ring. |
+| `width` | number | `4` | Thickness in points, rounded and clamped to `0...20` with a warning. `0` hides the ring. |
+| `active-color` | string | `"#7fc8ff"` | Hex color (`#RGB` or `#RRGGBB`); anything else is an error. When unset the active theme's active border color is used if it defines one, else the Niri blue. |
+
+The ring is hidden when nothing is focused, the focused window is minimized, fullscreen or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). Floating windows get the ring too. The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
+
 ### Custom key bindings
 
 The `[keybindings]` table maps a combo to an action name: `"Alt+H" = "focus-left"`.
@@ -121,6 +133,11 @@ preset-column-widths = [0.33333, 0.5, 0.66667]
 [animations]
 enabled = true
 duration-ms = 200
+
+[focus-ring]
+enabled = true
+width = 4
+active-color = "#7fc8ff"
 
 [keybindings]
 "Alt+Shift+R" = "switch-preset-column-width"
@@ -162,7 +179,7 @@ Behavior:
 | --- | --- |
 | **Overview** | Session status, Accessibility permission (with a **Request Access** button), config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 2 s. |
 | **Shortcuts** | Searchable reference of every action grouped by category (Focus, Move, Columns, Windows, Workspaces, App) with its current bindings, description and source (`default` or `config`). View-only: shortcuts are changed in `config.toml`. |
-| **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, and the two Focus toggles (focus follows mouse, mouse follows focus). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
+| **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, the two Focus toggles (focus follows mouse, mouse follows focus), and the **Focus ring** (enable, width, hex color). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
 | **Animations** | Enable toggle and duration slider (0 to 1000 ms). Apply and Revert as above. |
 | **Rules** | List of window rules with Add, Edit and Delete. Same validation as the file. |
 | **Logs** | Live tail of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll and **Clear view** (hides what is already in the file; it does not delete it). |

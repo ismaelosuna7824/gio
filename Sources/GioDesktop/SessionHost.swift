@@ -105,6 +105,12 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// NF-01: the focus ring state. The session queue posts (reflow, focus
+    /// adoption, every motion frame); the mailbox keeps only the newest value
+    /// and at most one main-queue block pending, so frames never back up main.
+    private let focusRingMailbox = LatestValueMailbox<FocusRingState>()
+    /// Focus ring hook, always invoked on the main thread.
+    var onFocusRing: ((FocusRingState) -> Void)?
     /// UI hook, always invoked on the main thread.
     var onSummonLauncher: (() -> Void)?
     /// `gio restart` (HD-05): invoked on the main thread shortly after the
@@ -383,6 +389,39 @@ final class SessionHost: @unchecked Sendable {
         return result
     }
 
+    /// Post the focus ring for the focused window of the current workspace.
+    /// Uses only session bookkeeping (registry, `physicalFrames`, display
+    /// frames): no AX call, cheap enough for every motion frame. Session queue.
+    private func publishFocusRing() {
+        let state = focusRingSnapshot()
+        guard focusRingMailbox.post(state) else {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let next = self.focusRingMailbox.take() else {
+                return
+            }
+            self.onFocusRing?(next)
+        }
+    }
+
+    private func focusRingSnapshot() -> FocusRingState {
+        let config = session.config.focusRing
+        guard config.enabled, let id = session.manager.currentWorkspace().focusedWindow,
+              let window = session.registry.find(id)
+        else {
+            return .hidden
+        }
+        return focusRingState(
+            config: config,
+            focused: FocusRingWindow(
+                frame: physicalFrames[id], isMinimized: window.isMinimized,
+                isFullscreen: window.mode == .fullscreen || fullscreen.isFullscreen(id)
+            ),
+            displays: displays.allDisplays().map(\.frame)
+        )
+    }
+
     /// After `session.config` changed: rebuild bindings and messages,
     /// re-evaluate rules, relayout. Must run on `queue`.
     private func applyReloadedConfig() {
@@ -391,6 +430,7 @@ final class SessionHost: @unchecked Sendable {
         reapplyRules()
         reflowAll()
         publishSnapshot()
+        publishFocusRing()
     }
 
     // MARK: - IPC
@@ -721,6 +761,7 @@ final class SessionHost: @unchecked Sendable {
         }
         session.manager.update(adopted)
         logAdoption(source, id, column, visibility, changed: true)
+        publishFocusRing()
         return true
     }
 
@@ -818,6 +859,8 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator else {
             return
         }
+        // Every exit (animation started or instant pass) refreshes the ring.
+        defer { publishFocusRing() }
         // One reconciler for the session: it remembers apps whose write lane
         // is still stuck so a hung app is never written twice at once.
         let reconciler = self.reconciler ?? WindowReconciler(
@@ -1058,6 +1101,8 @@ final class SessionHost: @unchecked Sendable {
         }
         let tick = player.tick()
         physicalFrames.merge(tick.sampled) { _, new in new }
+        // The ring follows the focused window's sampled frame every tick.
+        publishFocusRing()
         // Frame writes raise moved events like any other write of ours.
         echoGate.recordApplied(tick.sampled, at: ProcessInfo.processInfo.systemUptime)
         if let summary = tick.summary {
