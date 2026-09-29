@@ -45,7 +45,7 @@ origin feat/gio-niri-rewrite after verified batches; no PR. Quote trailing-space
 - [x] PA-03 (`5f291e5`) — Frame pacing: timer interval from the display's maximumFramesPerSecond; whole-point
   rounding + unified tolerance 1; spring ends under 1pt residual; no per-frame appName lookup;
   timings aggregated in place; AX call counting debug-only. (#2, #3, #4, #7)
-- [ ] PA-04 — Lean settle: trust `physicalFrames` for windows Gio placed (skip AX reads for parked /
+- [x] PA-04 (`2f655e0`) — Lean settle: trust `physicalFrames` for windows Gio placed (skip AX reads for parked /
   unchanged), render verification on-screen-only snapshot for visible targets, ring/echo/physical
   updates only for changed windows, cached inactive-workspace plan, hash-indexed handle lookup +
   echo check before resolution. (#5, #6, #8, #10, #14)
@@ -71,6 +71,15 @@ per pid with latest-frame slot (overwrite = drop), forgetApp on terminate, waitF
 counter. Bundles 25/7/19/32/822 all 0 failures (parent re-ran; writer ran twice + 15x motion).
 Not run under TSAN. LIVE PENDING.
 
+Evidence PA-04 (route: delegated writer, pre-impl RED compile): TrustedFrames (skip AX read when
+desired == trusted; invalidated by non-echo move/resize, minimize/restore/purge/re-register,
+failure, motion/preposition start, display change), render check only written visible targets,
+onScreenOnly snapshot, reuses settle frames (0 AX reads), in-place per-tick bookkeeping,
+FocusRingPublishGate (<1pt dropped), HandleIndex by CFHash, early motion-echo drop per pid,
+PlanMemo. Bundles 25/7/19/32/870 all 0 failures (writer 2 runs + parent re-run); signed build OK.
+Risks: windows moved without AX events stay trusted until next event/motion; motion-echo drop is
+per pid. LIVE PENDING.
+
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
 - Motion: fewer AX calls per animation (reported in `anim done`/timing) and frame rate matches display.
@@ -89,3 +98,4 @@ Read-only audit: delegated Explore (done). PA-01..PA-06: delegated writers, sequ
 - 2026-09-29: audit done, document created. Next: user go-ahead, then PA-01.
 - 2026-09-29: user approved in order. PA-01 + PA-02 done, pushed. Next: PA-03 + PA-05.
 - 2026-09-29: PA-03 + PA-05 done, pushed. Next: PA-04.
+- 2026-09-29: PA-04 done, pushed. Next: PA-06.
