@@ -1,0 +1,13 @@
+# Local Pi runtime state
+.atl/
+
+# SwiftPM / Xcode build products and per-user state
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/
+DerivedData/
+
+# macOS
+.DS_Store
