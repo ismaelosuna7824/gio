@@ -376,6 +376,7 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "switch-preset-column-width": return .switchPresetColumnWidth
     case "set-column-width-minus": return .shrinkColumnWidth
     case "set-column-width-plus": return .growColumnWidth
+    case "maximize-column": return .maximizeColumn
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -399,6 +400,7 @@ public func validActionNames() -> [String] {
         "workspace N", "move-to-workspace N",
         "toggle-floating", "fullscreen",
         "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
+        "maximize-column",
     ]
 }
 

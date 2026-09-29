@@ -62,3 +62,23 @@ public func stepFocusedColumnWidth(
     next.columns[next.focusedColumn].widthSpec = .proportion(min(max(proposed, smallest), 1))
     return next
 }
+
+/// Niri `maximize-column`: the focused column takes the full strip width
+/// (proportion 1.0); toggling again restores the width it had before. Any
+/// other width change forgets the saved width (see `Column.widthSpec`).
+public func toggleMaximizeFocusedColumn(in workspace: Workspace) -> Workspace {
+    guard workspace.focusedColumn >= 0, workspace.focusedColumn < workspace.columns.count else {
+        return workspace
+    }
+    var next = workspace
+    var column = next.columns[next.focusedColumn]
+    if let saved = column.savedWidthSpec {
+        column.widthSpec = saved
+    } else {
+        let previous = column.widthSpec
+        column.widthSpec = .proportion(1)
+        column.savedWidthSpec = previous
+    }
+    next.columns[next.focusedColumn] = column
+    return next
+}

@@ -23,6 +23,8 @@ public enum HotkeyAction: Equatable, Sendable {
     case shrinkColumnWidth
     /// Niri `set-column-width "+10%"` (Alt+Equal).
     case growColumnWidth
+    /// Niri `maximize-column` (Alt+F).
+    case maximizeColumn
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -57,7 +59,7 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 
 /// Plan defaults: Alt+HJKL focus, Alt+Shift+HJKL move, Alt+N workspace,
 /// Alt+Shift+N move-to-workspace, Alt+R cycle width presets,
-/// Alt+Minus / Alt+Equal step the width by 10%.
+/// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column.
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -74,6 +76,7 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt], "R"), .switchPresetColumnWidth),
         (combo([.alt], "Minus"), .shrinkColumnWidth),
         (combo([.alt], "Equal"), .growColumnWidth),
+        (combo([.alt], "F"), .maximizeColumn),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))

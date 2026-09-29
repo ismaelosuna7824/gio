@@ -29,7 +29,8 @@ public func defaultConfigTemplate() -> String {
     "Alt+J" = "focus-down"
     "Alt+K" = "focus-up"
     # Also available: "switch-preset-column-width" (Alt+R),
-    # "set-column-width-minus" (Alt+Minus), "set-column-width-plus" (Alt+Equal).
+    # "set-column-width-minus" (Alt+Minus), "set-column-width-plus" (Alt+Equal),
+    # "maximize-column" (Alt+F, toggles back to the previous width).
 
     [[window-rules]]
     app = "Calculator"

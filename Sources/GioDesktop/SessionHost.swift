@@ -1142,6 +1142,8 @@ final class SessionHost: @unchecked Sendable {
                 config: sizing.config, viewportWidth: sizing.viewportWidth
             )
             commit(next, over: workspace)
+        case .maximizeColumn:
+            commit(toggleMaximizeFocusedColumn(in: workspace), over: workspace)
         }
         reflowAll()
     }
