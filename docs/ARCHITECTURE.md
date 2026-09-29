@@ -231,7 +231,7 @@ flowchart LR
 Notes:
 
 - The tap is a `cgSessionEventTap` inserted at the head, running on the main run loop. It observes mouse-downs (never swallowed) and swallows only key-downs that exactly match a bound combo, so ordinary typing is unaffected.
-- `tapKeyNames` in `GioMacOS/Hotkeys/HotkeyTap.swift` is a fixed ANSI keycode table: `H J K L`, `1`..`9`, `Space`, `R F C`, `Minus`, `Equal`, `BracketLeft`, `BracketRight`. A config binding using any other key parses fine but **can never fire** until the table is extended.
+- Key names live in one shared vocabulary, `supportedKeyNames` (`GioCore/Hotkeys/KeyNames.swift`): A-Z, 0-9, F1-F12, arrows, Tab/Return/Escape/Space/Delete, Home/End/PageUp/PageDown and punctuation. `parseHotkey` accepts only these (plus aliases); `tapKeyCodes` in `GioMacOS/Hotkeys/HotkeyTap.swift` maps each name to its ANSI keycode, and a test keeps both identical. A config binding on any other key is a validation error.
 - `Alt+Space` is intercepted in `handleCombo` before the dispatcher and is not configurable.
 - The dispatcher is rebuilt from `config.makeDispatcher()` at start and on every reload (`refreshDispatcher`). Config bindings are additive: they bind or override combos on top of the defaults, and there is no unbind syntax.
 - If the tap cannot start (no Accessibility permission), Gio keeps running without global hotkeys and retries on the next resync.

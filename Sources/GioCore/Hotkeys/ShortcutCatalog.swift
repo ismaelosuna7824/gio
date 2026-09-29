@@ -161,9 +161,8 @@ public func keycaps(for combo: HotkeyCombo) -> [String] {
     let symbols: [(HotkeyModifier, String)] = [
         (.ctrl, "⌃"), (.alt, "⌥"), (.shift, "⇧"), (.cmd, "⌘"),
     ]
-    let keyNames = ["Minus": "-", "Equal": "=", "BracketLeft": "[", "BracketRight": "]"]
     return symbols.filter { combo.modifiers.contains($0.0) }.map(\.1)
-        + [keyNames[combo.key] ?? combo.key]
+        + [keycapSymbols[combo.key] ?? combo.key]
 }
 
 /// Case-insensitive match over name, description, config name and the

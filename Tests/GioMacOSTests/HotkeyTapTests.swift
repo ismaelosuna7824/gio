@@ -30,7 +30,7 @@ final class HotkeyTapTests: XCTestCase {
     }
 
     func testUnmappedKeycodesReturnNil() {
-        XCTAssertNil(tapCombo(from: keyEvent(keyCode: 53, flags: .maskAlternate)))
+        XCTAssertNil(tapCombo(from: keyEvent(keyCode: 10, flags: .maskAlternate)))
     }
 
     func testBareKeyParses() {
@@ -38,5 +38,30 @@ final class HotkeyTapTests: XCTestCase {
             tapCombo(from: keyEvent(keyCode: 40, flags: [])),
             HotkeyCombo(modifiers: [], key: "K")
         )
+    }
+}
+
+/// HD-03: the keycode map and the shared key vocabulary must agree exactly.
+final class HotkeyKeyTableTests: XCTestCase {
+    func testEveryParseableKeyNameHasAKeycodeAndViceVersa() {
+        XCTAssertEqual(Set(tapKeyCodes.keys), Set(supportedKeyNames))
+    }
+
+    func testKeycodesAreUnique() {
+        XCTAssertEqual(Set(tapKeyCodes.values).count, tapKeyCodes.count)
+    }
+
+    func testEveryKeycodeMapsBackToItsName() {
+        for (name, code) in tapKeyCodes {
+            let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true)!
+            event.flags = .maskAlternate
+            XCTAssertEqual(tapCombo(from: event), HotkeyCombo(modifiers: [.alt], key: name), name)
+        }
+    }
+
+    func testEveryTapKeyNameParsesAsAHotkey() {
+        for name in tapKeyCodes.keys {
+            XCTAssertEqual(parseHotkey("Alt+\(name)")?.key, name, name)
+        }
     }
 }

@@ -322,7 +322,13 @@ func applyBindingKey(
         return
     }
     guard let combo = parseHotkey(key) else {
-        errors.append("line \(line): cannot parse hotkey '\(key)'")
+        if case .unknownKey(let unknown)? = hotkeyFailure(key) {
+            errors.append(
+                "line \(line): unknown key '\(unknown)' in hotkey '\(key)' (valid: letters, digits, F1-F12, arrows, punctuation names; see the user guide)"
+            )
+        } else {
+            errors.append("line \(line): cannot parse hotkey '\(key)'")
+        }
         return
     }
     guard let action = parseActionName(name) else {

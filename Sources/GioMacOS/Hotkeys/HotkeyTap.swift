@@ -3,17 +3,27 @@ import CoreGraphics
 import Foundation
 import GioCore
 
-/// USB HID keycodes for the keys Gio binds (ANSI layout). Hardcoded
-/// deliberately: stable for decades, and avoids a Carbon dependency for
-/// a few integers.
-private let tapKeyNames: [Int64: String] = [
-    4: "H", 38: "J", 40: "K", 37: "L",
-    18: "1", 19: "2", 20: "3", 21: "4", 23: "5",
-    22: "6", 26: "7", 28: "8", 25: "9",
-    49: "Space",
-    15: "R", 3: "F", 8: "C",
-    27: "Minus", 24: "Equal", 33: "BracketLeft", 30: "BracketRight",
+/// Virtual keycodes (Carbon `kVK_ANSI_*`, ANSI layout) keyed by the shared
+/// key-name vocabulary (`supportedKeyNames`). Hardcoded deliberately: stable
+/// for decades, and avoids a Carbon dependency for a few integers. A test
+/// keeps this table and the vocabulary identical.
+let tapKeyCodes: [String: Int64] = [
+    "A": 0, "S": 1, "D": 2, "F": 3, "H": 4, "G": 5, "Z": 6, "X": 7, "C": 8, "V": 9,
+    "B": 11, "Q": 12, "W": 13, "E": 14, "R": 15, "Y": 16, "T": 17,
+    "1": 18, "2": 19, "3": 20, "4": 21, "6": 22, "5": 23, "Equal": 24, "9": 25,
+    "7": 26, "Minus": 27, "8": 28, "0": 29, "BracketRight": 30, "O": 31, "U": 32,
+    "BracketLeft": 33, "I": 34, "P": 35, "Return": 36, "L": 37, "J": 38, "Quote": 39,
+    "K": 40, "Semicolon": 41, "Backslash": 42, "Comma": 43, "Slash": 44, "N": 45,
+    "M": 46, "Period": 47, "Tab": 48, "Space": 49, "Grave": 50, "Delete": 51, "Escape": 53,
+    "F1": 122, "F2": 120, "F3": 99, "F4": 118, "F5": 96, "F6": 97, "F7": 98,
+    "F8": 100, "F9": 101, "F10": 109, "F11": 103, "F12": 111,
+    "Home": 115, "PageUp": 116, "End": 119, "PageDown": 121,
+    "Left": 123, "Right": 124, "Down": 125, "Up": 126,
 ]
+
+private let tapKeyNames: [Int64: String] = Dictionary(
+    uniqueKeysWithValues: tapKeyCodes.map { ($0.value, $0.key) }
+)
 
 func tapCombo(from event: CGEvent) -> HotkeyCombo? {
     guard let key = tapKeyNames[event.getIntegerValueField(.keyboardEventKeycode)] else {
