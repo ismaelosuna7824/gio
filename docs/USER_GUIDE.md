@@ -215,6 +215,10 @@ swift run GioCLI status
 
 Not every keyboard action has a CLI verb (for example column widths, maximize, fullscreen, consume/expel and center have none).
 
+## Recovery if Gio dies
+
+Gio starts a small helper (a second `Gio --guardian` process, no icon or window). If Gio is killed (Force Quit, `kill -9`, Xcode Stop, a crash), the helper brings parked windows back on screen within about a second and exits; the log shows `guardian restore applied=N`. It needs the same Accessibility permission as Gio. If it could not run, use `swift run gio-poc restore` or start Gio again.
+
 ## `gio-poc`
 
 `gio-poc` is the Accessibility proof-of-concept tool (`swift run gio-poc <verb>`). It talks to Accessibility directly, needs Accessibility permission for the terminal or tool that runs it, and does **not** go through the running app. Window indices are positional within one fresh enumeration per call.
@@ -226,7 +230,7 @@ Not every keyboard action has a CLI verb (for example column widths, maximize, f
 | `move <index> <x> <y>` | Move a window. |
 | `resize <index> <width> <height>` | Resize a window (positive sizes only). |
 | `tile` | One-shot placement of one column per window on the main display. **Do not run against a live desktop while Gio is running**: it competes with the session. |
-| `restore` | Bring parked or off-screen windows fully back on screen. Use after Gio was killed. |
+| `restore` | Bring parked or off-screen windows fully back on screen. Use after Gio was killed (normally the guardian does this for you; see below). |
 | `events` | Print window and app events until interrupted. |
 | `help` | Usage. |
 

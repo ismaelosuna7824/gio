@@ -147,6 +147,11 @@ func relaunchGio(done: @escaping @MainActor () -> Void) {
     done()
 }
 
+// Guardian mode (spawned by Gio itself): no app, no Dock icon, no lock, no IPC.
+if let guardianParent = parseGuardianLaunch(arguments: CommandLine.arguments) {
+    exit(runGuardianProcess(parentPID: guardianParent))
+}
+
 let gioDesktopDelegate = GioDesktopDelegate()
 let gioDesktopApp = NSApplication.shared
 gioDesktopApp.delegate = gioDesktopDelegate

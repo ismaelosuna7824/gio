@@ -94,6 +94,8 @@ final class SessionHost: @unchecked Sendable {
 
     /// Starts everything. Returns an error message instead of starting when
     /// another instance holds the lock or the socket cannot bind.
+    private var guardian: GuardianHandle?
+
     func start() -> String? {
         // A relaunched instance waits a few seconds for its predecessor's lock.
         guard instanceLock.acquire(
@@ -127,6 +129,7 @@ final class SessionHost: @unchecked Sendable {
         }
         self.server = server
         GioLog.record(.info, "session started")
+        guardian = spawnGuardian()
         queue.sync {
             self.initialSync()
         }
@@ -155,6 +158,8 @@ final class SessionHost: @unchecked Sendable {
         }
         server?.stop()
         instanceLock.release()
+        // Windows are back on screen: the guardian has nothing to rescue.
+        guardian?.signalClean()
     }
 
     @discardableResult

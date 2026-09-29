@@ -297,15 +297,19 @@ flowchart TD
     Term --> Restore["Cancel reflow, stop motion, restoreOffscreen for managed windows"]
     Restore --> Release["Stop IPC server, release lock"]
     Release --> Exit["Process exits"]
-    Run -->|"SIGKILL or crash"| Dead["No restore: windows stay parked"]
+    Init --> Spawn["Spawn guardian: same executable, --guardian pid, stdin pipe"]
+    Release --> Clean["Write clean to the pipe, close it"]
+    Clean --> GuardOk["Guardian exits, no restore"]
+    Run -->|"SIGKILL or crash"| Dead["No shutdown: windows stay parked, pipe hits EOF"]
     Hidden -->|"SIGKILL or crash"| Dead
-    Dead --> Recover["Run gio-poc restore, or launch Gio again"]
-    Recover --> Run
+    Dead --> Guard["Guardian: wait 150 ms, parent gone, run the no-daemon restore"]
+    Guard --> Recovered["Windows back on screen, guardian exits"]
 ```
 
 - `main.swift` sets the activation policy to `.accessory` before `run()`; `Info.plist` also sets `LSUIElement`. `desiredActivationPolicy(windowVisible:)` (in `GioUI/MainWindow.swift`) flips it to `.regular` while the main window is visible and back to `.accessory` when it closes.
 - The delegate ignores SIGTERM, SIGINT and SIGHUP at the default handler level and routes them through `host.shutdown()` then `terminate`. `shutdown()` is idempotent and synchronous, so the terminate hook can call it again safely.
-- **Limitation:** SIGKILL (for example Xcode's Stop), a crash, or a power loss cannot run any handler. Parked windows stay at the display edge. Recover with `gio-poc restore` (or the `gio-poc-restore` Xcode scheme) or start Gio again: the initial sync restores leftover off-screen windows that will not be tiled, and the first reflow re-places tiled ones.
+- **Limitation:** SIGKILL (for example Xcode's Stop), a crash, or a power loss cannot run any handler. The guardian (above) restores them within about a second; if it was not running, parked windows stay at the display edge. Recover with `gio-poc restore` (or the `gio-poc-restore` Xcode scheme) or start Gio again: the initial sync restores leftover off-screen windows that will not be tiled, and the first reflow re-places tiled ones.
+- **Guardian (HD-07).** After IPC is serving, `SessionHost.start` calls `spawnGuardian()`, which re-executes the same executable (`Bundle.main.executableURL`) with `--guardian <pid>` and a `Pipe` as the child's stdin. `main.swift` detects the flag before any `NSApplication` setup and calls `runGuardianProcess`: no Dock icon, no menu bar item, no window, no single-instance lock, no IPC. It closes inherited descriptors (so the lock and socket cannot outlive Gio through it). The protocol lives in `GioCore/Commands/Guardian.swift`: `shutdown()` writes `clean\n` and closes the pipe after the restore, so the guardian exits quietly. End-of-stream without `clean` (garbage counts as silence) means Gio died abruptly: after 150 ms the guardian confirms the parent pid is gone (`kill(pid, 0)`), and runs the same restore as `gio-poc restore` (`runRestoreOffscreen`; discovery skips its own pid). If Accessibility is missing it logs and exits. Log lines are `guardian started parent=N`, `guardian clean exit`, `guardian restore applied=N ...`. If the spawn fails Gio logs a warning and runs without it. Assumption to validate live: the child shares the parent's bundle and code signature, so the Accessibility (TCC) grant applies to it; TCC attributes a process to the signed code of its executable, not to who launched it.
 - Only one instance runs: `SingleInstanceLock` (`flock` on `~/.config/gio/gio.lock`).
 
 ## Coordinate spaces

@@ -27,7 +27,7 @@ All tests use **XCTest** (`import XCTest`); there is no Swift Testing suite. Cou
 | Reconciliation and motion | `ReconcilerTests`, `ParkedReconcileTests`, `LeanWriteTests`, `WriteLaneTests`, `ReflowTimingTests`, `AnimationTests`, `MotionPlannerTests`, `MotionPlayerTests`, `MotionWriteTests`, `WorkspaceSwitchMotionTests` |
 | Hotkeys and config | `HotkeyTests`, `ShortcutCatalogTests`, `ConfigTests`, `ConfigPatcherTests`, `MotionConfigTests`, `NiriControlsConfigTests`, `ThemeTests` |
 | Commands, IPC, diagnostics | `CommandDispatcherTests`, `IPCTests` (real socket round trips), `DoctorSetupTests`, `OverviewModelTests`, `LogViewModelTests`, `GioLogTests` |
-| Recovery and integration | `RecoveryTests`, `TilingPipelineTests` (created, rules, registry, workspace, layout, reconciler, refocus, switch, recover with a mock actuator) |
+| Recovery and integration | `RecoveryTests`, `GuardianTests` (pipe protocol, decision table, launch arguments), `TilingPipelineTests` (created, rules, registry, workspace, layout, reconciler, refocus, switch, recover with a mock actuator) |
 | Legacy | `TileLayoutTests`, `NativeTilingCoordinatorTests`, `SpaceWindowEligibilityTests`, `GapChangeTransactionTests`, `WorkspacePreferencesTests`, `VisibleAreaDiagnosticTests`, `DisplayUsableBoundsTests` |
 
 ### Not covered by automated tests
@@ -120,6 +120,7 @@ Run the signed **Gio** scheme from Xcode with several windows open (a browser, a
 | 10 | Desktop app | Close the main window, then reopen from the menu bar item. Check the Dock icon while the window is open. | Closing hides the window and the Dock icon; tiling continues. **Open Gio** brings it back. Only one Gio window exists (plus the summoned launcher). |
 | 11 | Quit restore | Park some windows (many columns), then Quit from the menu, Cmd+Q, and separately `kill -TERM <pid>`. | All parked windows return fully on screen. Log shows `restore applied=N`. |
 | 12 | Crash recovery | Stop from Xcode (SIGKILL) with parked windows, then run the `gio-poc-restore` scheme or `swift run gio-poc restore`. | Windows return on screen. |
+| 12b | Guardian | With parked windows, `kill -9 <gio pid>` (find it with `pgrep -x Gio`; the guardian is the second `Gio --guardian` process). Then quit Gio normally on another run. | After SIGKILL the windows return on screen within about 1 s with no manual step; log shows `guardian started parent=N` at launch and `guardian restore applied=N`. A normal Quit logs `guardian clean exit` and moves nothing. |
 | 13 | Own-window guard | Click Gio's main window and the launcher repeatedly. | No crash; Gio's windows are never moved or tiled. |
 | 14 | Displays | Connect or disconnect a second display. | Layout refits; unplugging one display does not corrupt the other. (Multi-display is not validated live yet.) |
 
@@ -151,6 +152,7 @@ rg "reflow timing|anim done|focus adopt|focus dropped|restore" ~/.config/gio/gio
 | `discovery skipped=N windows with unreadable attributes` | debug | Windows whose attributes could not be read. |
 | `hotkey tap refused; running without global hotkeys` | warn | Accessibility permission missing or tap creation failed. |
 | `observation refused for ... app(s)` | warn | An app refused an AX observer; it is retried when it activates or relaunches. |
+| `guardian started parent=N`, `guardian clean exit`, `guardian restore applied=N ...` | info | Guardian process markers; restore only after an abrupt Gio death. |
 | `config reloaded from the app`, `config edited from the app and reloaded`, `session started`, `ipc serving <path>` | info | Lifecycle markers. |
 
 Handy filters:
@@ -166,7 +168,7 @@ rg "anim done" ~/.config/gio/gio.log | tail -20          # recent animation qual
 Documented, not bugs to chase blindly:
 
 - **macOS will not place a window fully off-screen.** That is why parked windows keep a 1 pt sliver and the reconciler accepts clamped landings (up to 40 pt visible).
-- **SIGKILL, crashes and power loss cannot restore windows.** Use `gio-poc restore` or restart Gio.
+- **SIGKILL and crashes cannot run Gio's own restore.** The guardian process restores the windows instead (it needs Accessibility, same signed app). Power loss, or a guardian that failed to start, still needs `gio-poc restore` or restarting Gio.
 - **Accessibility speed depends on the app.** Each AX call is a cross-process request the target answers on its own schedule. One live sample saw a Slack write reach 250 ms (the lane timeout) while typical writes were a few ms. A hung app is abandoned after 0.25 s and skipped until it recovers.
 - **Other macOS Spaces.** Gio manages windows Accessibility reports for the current context; windows on other Spaces are not laid out. There is no Space switching support.
 - **Native fullscreen** windows are treated as `suspend` candidates and left alone. Gio's own fullscreen is a layout mode, not a Space.
