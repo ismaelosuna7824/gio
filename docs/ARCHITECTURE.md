@@ -181,7 +181,7 @@ Reconciler behavior for parked targets: written before visible windows in the sa
 - `AXWindowActuator.messagingTimeoutSeconds = 0.25` is applied to each AX element (the system default is about 6 s). The same timeout affects discovery reads on slow apps.
 - Per window the reconciler reads the actual frame, skips the write if it is within `tolerance` (1 pt) of the target or already parked, and otherwise calls `setFrame(_:from:for:verify:)` with the frame it already read (no second read).
 - Write order in the actuator: position first when the target grows in either dimension, size first when shrinking, to avoid macOS clamping a large frame written from a small position.
-- Focus, when requested, is applied last, after every lane. **`SessionHost.performReflow` passes `focused: nil`**, so the session does not itself raise or focus windows (only `gio-poc tile` does). Keyboard focus commands change the logical focus and the viewport; whether macOS keyboard focus should follow is a behavior to verify live and is not asserted here.
+- Focus, when requested, is applied last, after every lane. `SessionHost.performReflow` passes a focus target only when a keyboard or IPC action left a `FocusIntent` (focus, move, workspace, consume/expel, fullscreen). The target is focused and raised after its frame is written; during an animation it is held until the final exact pass. Passive reflows (AX events, click adoption, reload, rescans) pass `nil` and never steal focus. `FocusIntent` also ignores trailing activation events that contradict a fresh intent, and a mouse click cancels it.
 
 ### Motion and retargeting
 

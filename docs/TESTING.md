@@ -175,5 +175,5 @@ Documented, not bugs to chase blindly:
 - **Config bindings are additive and limited to the tap's key table.** See [USER_GUIDE](USER_GUIDE.md#custom-key-bindings).
 - **Parsed but not yet consumed:** `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus`, `layout.center-focused-column`, and themes. They are validated and stored, and they have no effect on the running session today.
 - **`gio restart`** parses but returns "restart requires the running Gio session (daemon)"; it does not restart anything.
-- **Session-driven focus:** `SessionHost.performReflow` calls the reconciler with `focused: nil`, so the session does not raise or focus OS windows on its own. Verify live whether keyboard focus follows `Alt+H/L/J/K` on your setup before depending on it.
+- **Session-driven focus:** keyboard and IPC focus/move/workspace actions carry a `FocusIntent` that the final reflow pass hands to the reconciler (pure logic is tested in `FocusIntentTests`); the AX focus and raise itself is verified live only. Check that `Alt+H/L/J/K` moves typing focus on your setup.
 - **App-level UI is compile-checked only** and several live behaviors are marked LIVE PENDING in `odd/tasks/`.

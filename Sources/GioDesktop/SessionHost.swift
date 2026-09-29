@@ -54,6 +54,8 @@ final class SessionHost: @unchecked Sendable {
     private var hiddenBook = HiddenWindowBook()
     private static let motionFrameInterval: DispatchTimeInterval = .microseconds(8333)
     private var focusSettle = FocusSettle<FocusEvent>()
+    /// HD-01: the window keyboard/IPC actions want focused (session queue only).
+    private var focusIntent = FocusIntent()
     private let clickLock = NSLock()
     private var tappedClick: MouseClick?
 
@@ -264,6 +266,7 @@ final class SessionHost: @unchecked Sendable {
             case .reload:
                 applyReloadedConfig()
             case .focus, .move, .workspace:
+                requestFocusIntent(if: command.carriesFocusIntent)
                 reflowAll()
             default:
                 break
@@ -711,12 +714,25 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         stopMotion()
-        for plan in plans {
-            // Never let the reconciler raise a minimized window: reflow
-            // applies geometry only, focus is adopted elsewhere.
+        // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
+        // pass nil so they never steal focus. The intent reaches the last
+        // plan only, so focus lands after every frame of the pass.
+        let focusTarget = focusIntent.take(
+            motionStarting: false,
+            parked: Set(plans.flatMap { $0.parked.keys }),
+            now: ProcessInfo.processInfo.systemUptime
+        )
+        for (planIndex, plan) in plans.enumerated() {
             let report = reconciler.reconcile(
-                frames: plan.visible, parked: plan.parked, focused: nil, currentlyFocused: nil
+                frames: plan.visible, parked: plan.parked,
+                focused: planIndex == plans.count - 1 ? focusTarget : nil, currentlyFocused: nil
             )
+            if let focusTarget, report.focusChanged || report.focusFailed {
+                GioLog.record(
+                    .debug,
+                    "focus intent id=\(focusTarget.pid):\(focusTarget.elementID) changed=\(report.focusChanged) failed=\(report.focusFailed)"
+                )
+            }
             GioLog.record(
                 .info,
                 "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"
@@ -1177,6 +1193,11 @@ final class SessionHost: @unchecked Sendable {
         if session.registry.find(id)?.isMinimized == true {
             return
         }
+        // Trailing activation events of a focus Gio just moved must not undo it.
+        if focusIntent.shouldIgnoreAdoption(of: id, now: ProcessInfo.processInfo.systemUptime) {
+            GioLog.record(.debug, "focus adopt ignored (superseded by keyboard intent) id=\(id.pid):\(id.elementID)")
+            return
+        }
         adoptFocus(id, source: event.source)
         if pendingScroll() != nil {
             reflowAll()
@@ -1258,6 +1279,10 @@ final class SessionHost: @unchecked Sendable {
         clickLock.lock()
         tappedClick = MouseClick(location: location, time: ProcessInfo.processInfo.systemUptime)
         clickLock.unlock()
+        // A click is the user choosing the focus: drop any pending keyboard intent.
+        queue.async { [weak self] in
+            self?.focusIntent.cancel()
+        }
     }
 
     private func startTap() {
@@ -1371,7 +1396,20 @@ final class SessionHost: @unchecked Sendable {
                 over: workspace
             )
         }
+        requestFocusIntent(if: action.carriesFocusIntent)
         reflowAll()
+    }
+
+    /// Ask the next reflow to focus and raise the current workspace's focused
+    /// window (after its frame lands; at the end of an animation).
+    private func requestFocusIntent(if carries: Bool) {
+        guard carries else {
+            return
+        }
+        focusIntent.request(
+            session.manager.currentWorkspace().focusedWindow,
+            now: ProcessInfo.processInfo.systemUptime
+        )
     }
 
     /// Store `next` when an action changed anything.

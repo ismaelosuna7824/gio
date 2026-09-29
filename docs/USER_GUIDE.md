@@ -45,7 +45,7 @@ Notes:
 - Vertical direction naming: `move-left`/`move-right` move a whole column, `move-up`/`move-down` reorder inside a column. Moving past the strip edge creates a new column.
 - Shrink/grow always end as a proportion of the display, so the column adapts across displays.
 - Fullscreen parks every tiled window where its column already is, so leaving fullscreen finds the strip unchanged.
-- Some actions only change the logical layout; whether macOS keyboard focus also moves is not asserted by the code (see [TESTING known limitations](TESTING.md#known-limitations)).
+- Focus, move, workspace, consume/expel and fullscreen actions also move macOS keyboard focus to the target window (after it lands, at the end of the animation). Sizing, centering and floating actions leave focus alone, and so do clicks and window events.
 
 ## Configuration reference
 

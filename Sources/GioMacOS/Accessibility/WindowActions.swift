@@ -104,6 +104,8 @@ func focusAXWindow(appElement: AXUIElement, element: AXUIElement, pid: pid_t) th
     guard status == .success else {
         throw SystemWindowActionError.focusRefused(pid: pid)
     }
+    // Bring the window above its siblings; the focus check below decides success.
+    _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
     var raw: CFTypeRef?
     guard AXUIElementCopyAttributeValue(
         appElement, kAXFocusedWindowAttribute as CFString, &raw

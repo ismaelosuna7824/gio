@@ -64,7 +64,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **Exhaustive switches are guardrails:** adding a `HotkeyAction` case breaks `actionInfo` (ShortcutCatalog) and `SessionHost.apply`; adding a `CLICommand` case breaks `dispatch` and the launcher's `describeAction`; adding a `MainSection` case breaks `title`, `symbol` and `detail(for:)`. Follow the recipes in `docs/CONTRIBUTING.md`.
 - **The hotkey tap only knows a fixed key table** (`tapKeyNames` in `HotkeyTap.swift`). A config binding on another key parses but never fires.
 - **Parsed-but-unused config:** `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus`, `layout.center-focused-column` and themes are stored, not consumed. Do not assume they have effect.
-- **`SessionHost` reflow passes `focused: nil` to the reconciler**, so the session does not itself focus OS windows. Do not assume keyboard focus follows logical focus without checking live.
+- **Only keyboard/IPC actions focus OS windows** (`FocusIntent`, HD-01). Passive reflows (AX events, click adoption, reload, rescan) pass `focused: nil`; never add a focus call to those paths or you will steal focus. Add new focus-moving actions to `HotkeyAction.carriesFocusIntent`.
 - macOS refuses fully off-screen windows: parked windows keep a 1 pt sliver. Do not "fix" that by moving frames further out.
 - Legacy code (`GioMac`, `GioApp`, `TileLayout`, `NativeTilingCoordinator`, ...) still builds and has tests. Do not reuse it for new features.
 
