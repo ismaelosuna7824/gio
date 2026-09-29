@@ -43,6 +43,8 @@ public struct ReconcileReport: Equatable, Sendable {
     /// First error description per failed window, so live retests report
     /// causes instead of bare IDs. Deterministic: sorted by ID on read.
     public var failureNotes: [WindowID: String]
+    /// Structured form of every failure (kind, requested and actual frame).
+    public var failures: [WindowID: ReconcileFailure]
     public var focusChanged: Bool
     public var focusFailed: Bool
 
@@ -53,6 +55,7 @@ public struct ReconcileReport: Equatable, Sendable {
         vanished: [WindowID] = [],
         failed: [WindowID] = [],
         failureNotes: [WindowID: String] = [:],
+        failures: [WindowID: ReconcileFailure] = [:],
         focusChanged: Bool = false,
         focusFailed: Bool = false
     ) {
@@ -62,6 +65,7 @@ public struct ReconcileReport: Equatable, Sendable {
         self.vanished = vanished
         self.failed = failed
         self.failureNotes = failureNotes
+        self.failures = failures
         self.focusChanged = focusChanged
         self.focusFailed = focusFailed
     }
@@ -84,6 +88,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let concurrency: LaneConcurrency
     private let executor = LaneExecutor()
     private let motion = MotionBook()
+    private var failureGate = FailureLogGate()
 
     /// Timing of the most recent `reconcile` pass (MO-01).
     public private(set) var lastTiming: ReflowTiming?
@@ -107,7 +112,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private enum WindowOutcome: Sendable {
         case alreadyCorrect
         case vanished
-        case failed(String)
+        case failed(String, ReconcileFailure)
         case applied
         case parkedApplied(clamped: Bool)
     }
@@ -144,7 +149,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             do {
                 actual = try actuator.frame(of: id)
             } catch {
-                return .failed(String(describing: error))
+                return failed(error, requested: item.desired, actual: nil)
             }
             guard let actual else {
                 return .vanished
@@ -163,8 +168,24 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 {
                     return .parkedApplied(clamped: true)
                 }
-                return .failed(String(describing: error))
+                return failed(error, requested: item.desired, actual: actual)
             }
+        }
+
+        /// The note stays the error's own text; the structured failure adds
+        /// the kind and both frames. A mismatch reports where the window
+        /// landed; other kinds report the frame read before the write.
+        private func failed(_ error: Error, requested: CGRect, actual: CGRect?) -> WindowOutcome {
+            let reporting = error as? FrameFailureReporting
+            return .failed(
+                String(describing: error),
+                ReconcileFailure(
+                    kind: reporting?.failureKind ?? "other",
+                    requested: requested,
+                    actual: reporting?.failureActual ?? actual,
+                    detail: reporting == nil ? String(describing: error) : nil
+                )
+            )
         }
 
         private func matches(_ requested: CGRect, _ actual: CGRect) -> Bool {
@@ -212,9 +233,10 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                     report.alreadyCorrect.append(id)
                 case .vanished:
                     report.vanished.append(id)
-                case .failed(let note):
+                case .failed(let note, let failure):
                     report.failed.append(id)
                     report.failureNotes[id] = note
+                    report.failures[id] = failure
                 case .applied:
                     report.applied.append(id)
                 case .parkedApplied(let clamped):
@@ -226,9 +248,13 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             case .skippedBusy:
                 report.failed.append(id)
                 report.failureNotes[id] = "timeout (previous write to this app still pending)"
+                report.failures[id] = ReconcileFailure(
+                    kind: "timeout", requested: frames[id] ?? parked[id]?.frame, detail: "app busy"
+                )
             case .timedOut, nil:
                 report.failed.append(id)
                 report.failureNotes[id] = "timeout"
+                report.failures[id] = ReconcileFailure(kind: "timeout", requested: frames[id] ?? parked[id]?.frame)
                 windowTimings.append(WindowWriteTiming(
                     id: id, app: appName(id.pid) ?? "pid\(id.pid)",
                     milliseconds: stallMilliseconds, axCalls: 0
@@ -262,10 +288,22 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             .debug,
             "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) vanished=\(report.vanished.count) failed=\(report.failed.count)"
         )
-        if !report.failed.isEmpty {
-            GioLog.record(.warn, "reconcile failures persist; see firstFailure in tile report")
-        }
+        logFailures(report)
         return report
+    }
+
+    /// FI-01: one line per failed window, warn the first time a (window,
+    /// kind) pair fails and debug on repeats.
+    private func logFailures(_ report: ReconcileReport) {
+        for id in report.failed.sorted() {
+            guard let failure = report.failures[id] else {
+                continue
+            }
+            let line = reconcileFailureLine(
+                id: id, app: appName(id.pid) ?? "pid\(id.pid)", failure: failure
+            )
+            GioLog.record(failureGate.level(for: id, kind: failure.kind), line)
+        }
     }
 
     /// MO-04 animation frame: written on the app's own lane, position and/or

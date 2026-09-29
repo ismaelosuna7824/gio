@@ -2,11 +2,12 @@ import ApplicationServices
 import AppKit
 import CoreGraphics
 import Foundation
+import GioCore
 
 /// Typed failures for single-window actions. Every case names the stage so a
 /// live retest can report exactly what macOS refused. The reconciler (Phase 8)
 /// will reuse these errors instead of inventing its own.
-public enum SystemWindowActionError: Error, CustomStringConvertible {
+public enum SystemWindowActionError: Error, CustomStringConvertible, FrameFailureReporting {
     case permissionDenied
     case badIndex(requested: Int, count: Int)
     case appNotRunning(pid: pid_t)
@@ -16,6 +17,28 @@ public enum SystemWindowActionError: Error, CustomStringConvertible {
     case focusRefused(pid: pid_t)
     case frameMismatch(requested: CGRect, actual: CGRect)
     case unknownHandle(elementID: UInt64)
+
+    /// FI-01 kind for the reconcile failure log: stable, no titles.
+    public var failureKind: String {
+        switch self {
+        case .permissionDenied: return "permissionDenied"
+        case .badIndex: return "badIndex"
+        case .appNotRunning: return "appNotRunning"
+        case .notSettable(let attribute): return "notSettable(\(attribute))"
+        case .writeFailed(let attribute, let status): return "writeFailed(\(attribute),\(status.rawValue))"
+        case .readbackFailed(let attribute, let status): return "readbackFailed(\(attribute),\(status.rawValue))"
+        case .focusRefused: return "focusRefused"
+        case .frameMismatch: return ReconcileFailure.frameMismatchKind
+        case .unknownHandle: return "unknownHandle"
+        }
+    }
+
+    public var failureActual: CGRect? {
+        if case .frameMismatch(_, let actual) = self, actual != .zero {
+            return actual
+        }
+        return nil
+    }
 
     public var description: String {
         switch self {

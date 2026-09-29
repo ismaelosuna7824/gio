@@ -140,7 +140,7 @@ rg "reflow timing|anim done|focus adopt|focus dropped|restore" ~/.config/gio/gio
 | `reflow slow window=pid:id app=<name> Yms axCalls=N` | debug | A window write that took more than 20 ms. Names the slow app. |
 | `reflow applied=A parked=P already=Q failed=F` | info | Outcome counts. `applied` = moved, `parked` = written to a parking spot, `already` = already correct (nothing written), `failed` = write failed or timed out. |
 | `reconcile applied=... parked=... already=... vanished=... failed=...` | debug | Same, from the reconciler, plus windows that no longer exist. |
-| `reconcile failures persist; see firstFailure in tile report` | warn | At least one window failed in the pass. |
+| `reconcile failure id=P:E app=<name> kind=<kind> requested=(x,y,w,h) actual=(x,y,w,h)` | warn, then debug | One failed window write. `kind` is `frameMismatch`, `writeFailed(<attr>,<AXError>)`, `readbackFailed(...)`, `timeout`, `other` and so on. Warned once per window and kind per session, debug on repeats. Ids and app names only, never titles. |
 | `parked clamped id=pid:id` | debug | macOS clamped a parked position; the landing was accepted because it still counts as parked. |
 | `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms` | info | One finished animation. `frames` = sampled display ticks, `dropped` = per-app frames skipped because that app was still writing. Live pass: 25 frames per 200 ms, `dropped` usually 0. |
 | `focus adopt source=<activation\|focusChanged\|rescan> id=pid:id column=N <visible\|parked\|unplaced> changed=<bool> scroll=<a->b\|no scroll>` | debug | Focus was adopted from the OS. `scroll=no scroll` on a visible column is healthy; a large scroll after a click on a visible column points to a reveal or geometry bug. |
