@@ -1,3 +1,4 @@
+@preconcurrency import ApplicationServices
 import AppKit
 import CoreGraphics
 import Foundation
@@ -27,6 +28,8 @@ final class SessionHost: @unchecked Sendable {
     private var pendingReflow: DispatchWorkItem?
     private var nextElementID: UInt64 = 0
     private var observationBook = ObservationBook()
+    private var echoGate = WriteEchoGate()
+    private var pendingFull = false
     private var tileability = TileabilityCache()
     private var fullscreenRecords: [WindowID: FullscreenRecord] = [:]
     private var visibleFrames: [DisplayID: CGRect] = [:]
@@ -145,58 +148,7 @@ final class SessionHost: @unchecked Sendable {
                 }
                 continue
             }
-            nextElementID += 1
-            let id = WindowID(pid: candidate.window.pid, elementID: nextElementID)
-            liveIDs.insert(id)
-            actuator?.register(
-                elementID: id.elementID, pid: id.pid,
-                element: candidate.element, appElement: candidate.appElement
-            )
-            var window = ManagedWindow(
-                id: id, pid: candidate.window.pid,
-                application: candidate.window.appName,
-                title: candidate.window.title ?? "",
-                frame: AXVerticalFlip(displayHeight: mainHeight()).toCocoa(candidate.window.frame),
-                mode: .tiled
-            )
-            let outcome = evaluateRules(session.config.rules, app: window.application)
-            window.mode = outcome.mode ?? .tiled
-            if outcome.mode == .floating {
-                window.floatReason = .rule
-            } else if let admitted = candidate.floatReason {
-                // Discovery floated it (dialog, panel, fixed size): managed
-                // and visible, never moved by the layout.
-                window.mode = .floating
-                window.floatReason = admitted
-            }
-            tileability.invalidate(id)
-            try? session.registry.register(window)
-            if let wanted = outcome.workspace,
-               WorkspaceManager.range.contains(wanted),
-               wanted != session.manager.current
-            {
-                var dest = session.manager.workspace(wanted)!
-                var column = Column(
-                    id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
-                    width: 0, windows: [id]
-                )
-                column.focusedWindowIndex = 0
-                dest.columns.append(column)
-                dest.focusedColumn = dest.columns.count - 1
-                dest.focusedWindow = id
-                session.manager.update(dest)
-            } else {
-                var current = session.manager.currentWorkspace()
-                var column = Column(
-                    id: ColumnID((current.columns.map(\.id.rawValue).max() ?? 0) + 1),
-                    width: 0, windows: [id]
-                )
-                column.focusedWindowIndex = 0
-                current.columns.append(column)
-                current.focusedColumn = current.columns.count - 1
-                current.focusedWindow = id
-                session.manager.update(current)
-            }
+            liveIDs.insert(registerNew(candidate))
         }
         // Clicks change macOS focus behind our back: adopt the observed
         // focus instead of fighting it on the next reflow.
@@ -212,6 +164,66 @@ final class SessionHost: @unchecked Sendable {
         if onlyPID == nil {
             reapDeadPids(live: liveIDs)
         }
+    }
+
+    /// Register a genuinely new window: fresh ID, retained AX handles,
+    /// rules and admission decide mode and workspace, a new column on the
+    /// target workspace, and a per-window observer subscription.
+    @discardableResult
+    private func registerNew(_ candidate: DiscoveredSystemWindow) -> WindowID {
+        nextElementID += 1
+        let id = WindowID(pid: candidate.window.pid, elementID: nextElementID)
+        actuator?.register(
+            elementID: id.elementID, pid: id.pid,
+            element: candidate.element, appElement: candidate.appElement
+        )
+        var window = ManagedWindow(
+            id: id, pid: candidate.window.pid,
+            application: candidate.window.appName,
+            title: candidate.window.title ?? "",
+            frame: AXVerticalFlip(displayHeight: mainHeight()).toCocoa(candidate.window.frame),
+            mode: .tiled
+        )
+        let outcome = evaluateRules(session.config.rules, app: window.application)
+        window.mode = outcome.mode ?? .tiled
+        if outcome.mode == .floating {
+            window.floatReason = .rule
+        } else if let admitted = candidate.floatReason {
+            // Discovery floated it (dialog, panel, fixed size): managed
+            // and visible, never moved by the layout.
+            window.mode = .floating
+            window.floatReason = admitted
+        }
+        tileability.invalidate(id)
+        try? session.registry.register(window)
+        if let wanted = outcome.workspace,
+           WorkspaceManager.range.contains(wanted),
+           wanted != session.manager.current
+        {
+            var dest = session.manager.workspace(wanted)!
+            var column = Column(
+                id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
+                width: 0, windows: [id]
+            )
+            column.focusedWindowIndex = 0
+            dest.columns.append(column)
+            dest.focusedColumn = dest.columns.count - 1
+            dest.focusedWindow = id
+            session.manager.update(dest)
+        } else {
+            var current = session.manager.currentWorkspace()
+            var column = Column(
+                id: ColumnID((current.columns.map(\.id.rawValue).max() ?? 0) + 1),
+                width: 0, windows: [id]
+            )
+            column.focusedWindowIndex = 0
+            current.columns.append(column)
+            current.focusedColumn = current.columns.count - 1
+            current.focusedWindow = id
+            session.manager.update(current)
+        }
+        eventObserver?.watch(window: candidate.element, pid: candidate.window.pid)
+        return id
     }
 
     /// Remove records whose process is gone (proof, not absence) from the
@@ -238,6 +250,7 @@ final class SessionHost: @unchecked Sendable {
         for id in ids.sorted() {
             session.registry.remove(id)
             tileability.invalidate(id)
+            echoGate.forget(id)
             fullscreenRecords.removeValue(forKey: id)
             actuator?.forget(elementID: id.elementID)
         }
@@ -334,6 +347,8 @@ final class SessionHost: @unchecked Sendable {
             _ = reconciler.reconcile(
                 frames: placed, focused: focused, currentlyFocused: focused
             )
+            // Our writes echo back as moved/resized events: remember them.
+            echoGate.recordApplied(placed, at: ProcessInfo.processInfo.systemUptime)
             workspace.viewportOffset = layout.viewportOffset
             session.manager.update(workspace)
             displays.updateViewport(
@@ -363,10 +378,23 @@ final class SessionHost: @unchecked Sendable {
         return revealed.offset == workspace.viewportOffset ? nil : revealed.offset
     }
 
-    private func scheduleReflow() {
+    /// Debounced reflow. `full` also re-enumerates windows (resync); a
+    /// light one only re-lays out what is registered. A pending full
+    /// request is never downgraded by a later light one.
+    private func scheduleReflow(full: Bool = true) {
+        pendingFull = pendingFull || full
         pendingReflow?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.resyncAndReflow()
+            guard let self else {
+                return
+            }
+            let wantsFull = self.pendingFull
+            self.pendingFull = false
+            if wantsFull {
+                self.resyncAndReflow()
+            } else {
+                self.reflowAll()
+            }
         }
         pendingReflow = work
         queue.asyncAfter(deadline: .now() + 0.3, execute: work)
@@ -381,9 +409,15 @@ final class SessionHost: @unchecked Sendable {
         // without relaunching.
         if hotkeyTap == nil {
             startTap()
+            if hotkeyTap != nil {
+                // Permission regained: observers built without it are dead,
+                // and every verdict is stale. The one full rebuild.
+                tileability.invalidateAll()
+                rebuildEventObservation()
+            }
         }
-        // Events may mean a resize or attribute change: re-probe everyone.
-        tileability.invalidateAll()
+        // Tileability verdicts are invalidated per window by resize events
+        // and on registration, not on every resync.
         enumerateAndPlace()
         syncObservers()
         reflowAll()
@@ -457,8 +491,72 @@ final class SessionHost: @unchecked Sendable {
                 observationBook.didAttach(event.pid)
             }
             scheduleReflow()
-        case .accessibility:
+        case .window(let kind):
+            handleWindowEvent(kind, pid: event.pid, element: event.element)
+        }
+    }
+
+    private func handleWindowEvent(_ kind: WindowEventKind, pid: pid_t, element: AXUIElement?) {
+        let known = element.flatMap { actuator?.id(matching: $0, pid: pid) }
+        switch windowEventAction(for: kind, isKnownWindow: known != nil) {
+        case .register:
+            if let element {
+                registerAppearedWindow(element, pid: pid, attempt: 0)
+            }
+        case .remove:
+            // Exactly this window: no rescan, no debounce.
+            if let known {
+                purge([known])
+                reflowAll()
+            }
+        case .frameChanged(let invalidate):
+            guard let known else {
+                return
+            }
+            if let observed = try? actuator?.frame(of: known),
+               echoGate.isEcho(known, observed: observed, at: ProcessInfo.processInfo.systemUptime)
+            {
+                return
+            }
+            if invalidate {
+                tileability.invalidate(known)
+            }
+            scheduleReflow(full: false)
+        case .reflow:
+            scheduleReflow(full: false)
+        case .updateTitle:
+            if let known, let element, let title = axTitle(of: element), !title.isEmpty,
+               var record = session.registry.find(known)
+            {
+                record.title = title
+                try? session.registry.update(record)
+            }
+        case .resync:
             scheduleReflow()
+        case .ignore:
+            break
+        }
+    }
+
+    /// A window appeared after startup (created or deminiaturized): classify
+    /// it with the admission rules, register it, reflow at once. Attributes
+    /// of a brand-new window are often unreadable for a moment, so an
+    /// unclassifiable element is retried a few times; minimized windows are
+    /// left for the minimize lifecycle.
+    private func registerAppearedWindow(_ element: AXUIElement, pid: pid_t, attempt: Int) {
+        if actuator?.id(matching: element, pid: pid) != nil {
+            return
+        }
+        if let candidate = discoverSystemWindow(element: element, pid: pid) {
+            guard !candidate.window.isMinimized else {
+                return
+            }
+            registerNew(candidate)
+            reflowAll()
+        } else if let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt) {
+            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+                self?.registerAppearedWindow(element, pid: pid, attempt: attempt + 1)
+            }
         }
     }
 

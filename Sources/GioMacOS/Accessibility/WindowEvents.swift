@@ -1,27 +1,31 @@
 import ApplicationServices
 import AppKit
 import Foundation
+import GioCore
 
-/// One observed event, tagged with the process it came from.
-public struct SystemWindowEvent: Sendable, CustomStringConvertible {
+/// One observed event, tagged with the process it came from. Window events
+/// carry the AX element they concern, so the host can act on that exact
+/// window (match it to a registered ID with `CFEqual`). The element is a
+/// thread-safe CF handle; the struct is `@unchecked Sendable` for that.
+public struct SystemWindowEvent: @unchecked Sendable, CustomStringConvertible {
     public enum Kind: Sendable, Equatable {
         case appLaunched
         case appTerminated
         case appActivated
-        /// An `AXObserver` notification (window created, moved, ...).
-        case accessibility
+        /// An `AXObserver` window notification (created, moved, ...).
+        case window(WindowEventKind)
     }
 
     public let kind: Kind
     public let pid: pid_t
     public let label: String
-    public let notification: String?
+    public let element: AXUIElement?
 
-    public init(kind: Kind, pid: pid_t, label: String, notification: String? = nil) {
+    public init(kind: Kind, pid: pid_t, label: String, element: AXUIElement? = nil) {
         self.kind = kind
         self.pid = pid
         self.label = label
-        self.notification = notification
+        self.element = element
     }
 
     public var description: String {
@@ -29,7 +33,7 @@ public struct SystemWindowEvent: Sendable, CustomStringConvertible {
         case .appLaunched: return "[event] app-launched \(label)"
         case .appTerminated: return "[event] app-terminated \(label)"
         case .appActivated: return "[event] app-activated \(label)"
-        case .accessibility: return "[event] \(label) notification=\(notification ?? "?")"
+        case .window(let kind): return "[event] \(label) window=\(kind)"
         }
     }
 }
@@ -164,6 +168,23 @@ public final class SystemWindowObserver: @unchecked Sendable {
         }
     }
 
+    /// Subscribe to one window's own notifications on its app's observer.
+    /// Idempotent; used for windows a full scan found without an event.
+    /// False when the app has no observer or the element is not a window.
+    @discardableResult
+    public func watch(window element: AXUIElement, pid: pid_t) -> Bool {
+        lock.lock()
+        let record = records[pid]
+        lock.unlock()
+        guard let record else {
+            return false
+        }
+        return addWindowNotifications(
+            to: element, observer: record.observer,
+            refcon: Unmanaged.passUnretained(record.context).toOpaque()
+        )
+    }
+
     /// Detach everything and stop workspace notifications.
     public func stop() {
         let center = NSWorkspace.shared.notificationCenter
@@ -184,14 +205,21 @@ public final class SystemWindowObserver: @unchecked Sendable {
         var created: AXObserver?
         guard AXObserverCreate(
             pid,
-            { _, _, notification, refcon in
+            { _, element, notification, refcon in
                 guard let refcon else {
                     return
                 }
                 let box: EventRefcon = Unmanaged.fromOpaque(refcon).takeUnretainedValue()
+                guard let kind = WindowEventKind(axNotification: notification as String) else {
+                    return
+                }
+                // A new window gets its own subscriptions before anyone can
+                // miss its destroyed/moved/resized events.
+                if kind == .windowCreated, let observer = box.observer {
+                    addWindowNotifications(to: element, observer: observer, refcon: refcon)
+                }
                 box.emit(SystemWindowEvent(
-                    kind: .accessibility, pid: box.pid, label: box.label,
-                    notification: notification as String
+                    kind: .window(kind), pid: box.pid, label: box.label, element: element
                 ))
             },
             &created
@@ -200,6 +228,7 @@ public final class SystemWindowObserver: @unchecked Sendable {
         else {
             return nil
         }
+        context.observer = observer
         let refcon = Unmanaged.passUnretained(context).toOpaque()
         let appElement = AXUIElementCreateApplication(pid)
         // The app-level window-created subscription is what covers windows
@@ -219,17 +248,8 @@ public final class SystemWindowObserver: @unchecked Sendable {
             == .success,
             let elements = rawWindows as? [AXUIElement]
         {
-            for element in elements where axIsStandardWindow(element) {
-                for notification in [
-                    kAXWindowMovedNotification,
-                    kAXWindowResizedNotification,
-                    kAXWindowMiniaturizedNotification,
-                    kAXWindowDeminiaturizedNotification,
-                    kAXTitleChangedNotification,
-                    kAXUIElementDestroyedNotification,
-                ] as [CFString] {
-                    _ = AXObserverAddNotification(observer, element, notification, refcon)
-                }
+            for element in elements {
+                addWindowNotifications(to: element, observer: observer, refcon: refcon)
             }
         }
         return observer
@@ -242,10 +262,37 @@ final class EventRefcon: @unchecked Sendable {
     let pid: pid_t
     let label: String
     let emit: @Sendable (SystemWindowEvent) -> Void
+    /// Set once right after creation; lets the callback subscribe new windows.
+    nonisolated(unsafe) var observer: AXObserver?
 
     init(pid: pid_t, label: String, emit: @escaping @Sendable (SystemWindowEvent) -> Void) {
         self.pid = pid
         self.label = label
         self.emit = emit
     }
+}
+
+/// Per-window subscriptions for any element with the window role: the
+/// admission classifier (not the subrole) decides later whether it is
+/// managed, so Electron/Java/Qt and dialog windows are covered too.
+@discardableResult
+func addWindowNotifications(
+    to element: AXUIElement, observer: AXObserver, refcon: UnsafeMutableRawPointer
+) -> Bool {
+    guard axString(of: element, attribute: kAXRoleAttribute as String)
+        == (kAXWindowRole as String)
+    else {
+        return false
+    }
+    for notification in [
+        kAXWindowMovedNotification,
+        kAXWindowResizedNotification,
+        kAXWindowMiniaturizedNotification,
+        kAXWindowDeminiaturizedNotification,
+        kAXTitleChangedNotification,
+        kAXUIElementDestroyedNotification,
+    ] as [CFString] {
+        _ = AXObserverAddNotification(observer, element, notification, refcon)
+    }
+    return true
 }

@@ -67,67 +67,22 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
         else {
             continue
         }
-        var rawFocused: CFTypeRef?
-        let focusedElement: AXUIElement? = {
-            guard AXUIElementCopyAttributeValue(
-                appElement, kAXFocusedWindowAttribute as CFString, &rawFocused
-            ) == .success,
-                let candidate = rawFocused,
-                CFGetTypeID(candidate) == AXUIElementGetTypeID()
-            else {
-                return nil
-            }
-            return (candidate as! AXUIElement)
-        }()
+        let focusedElement = axFocusedWindow(of: appElement)
         for element in elements {
-            let frame = axFrame(of: element)
-            let minimized = axBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false
-            let fullscreen = axBool(of: element, attribute: "AXFullScreen")
-                ?? axBool(of: element, attribute: "AXFullscreen")
             let appName = app.localizedName ?? "unknown"
-            let admission = classifyWindowAdmission(WindowAdmissionFacts(
-                role: axString(of: element, attribute: kAXRoleAttribute as String),
-                subrole: axString(of: element, attribute: kAXSubroleAttribute as String),
-                isPositionSettable: axIsSettable(element, attribute: kAXPositionAttribute as String),
-                isSizeSettable: axIsSettable(element, attribute: kAXSizeAttribute as String),
-                isFullscreen: fullscreen ?? false,
-                isMinimized: minimized,
-                hasValidFrame: frame != nil
-            ))
-            if case .ignore = admission {
-                ignored.append(ExcludedSystemWindow(
-                    pid: app.processIdentifier, appName: appName, admission: admission
-                ))
-                continue
-            }
-            // Float/suspend/tile all have a valid frame except a dialog or
-            // floating panel whose geometry is unreadable: count it as skipped.
-            guard let frame else {
-                skipped += 1
-                continue
-            }
-            let focused = focusedElement.map { CFEqual($0, element) } ?? false
-            let window = SystemWindow(
-                index: found.count + floating.count,
-                pid: app.processIdentifier,
-                appName: appName,
-                title: axTitle(of: element),
-                frame: frame,
-                isFocused: focused,
-                isMinimized: minimized,
-                isFullscreen: fullscreen
-            )
-            var discovered = DiscoveredSystemWindow(
-                window: window, element: element, appElement: appElement
-            )
-            if case .float(let reason) = admission {
-                discovered.floatReason = reason
-                floating.append(discovered)
-                GioLog.record(
-                    .info, "discovery exclude pid=\(window.pid) app=\(appName) \(admission.label)"
-                )
-            } else {
+            switch classifyElement(
+                element, pid: app.processIdentifier, appName: appName,
+                appElement: appElement, focused: focusedElement,
+                index: found.count + floating.count
+            ) {
+            case .tile(let discovered):
                 found.append(discovered)
+            case .float(let discovered):
+                floating.append(discovered)
+            case .ignored(let excluded):
+                ignored.append(excluded)
+            case .skipped:
+                skipped += 1
             }
         }
     }
@@ -142,6 +97,101 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
     return SystemWindowDiscoveryResult(
         windows: found, floating: floating, ignored: ignored, skipped: skipped
     )
+}
+
+private enum ElementClassification {
+    case tile(DiscoveredSystemWindow)
+    case float(DiscoveredSystemWindow)
+    case ignored(ExcludedSystemWindow)
+    case skipped
+}
+
+private func axFocusedWindow(of appElement: AXUIElement) -> AXUIElement? {
+    var rawFocused: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(
+        appElement, kAXFocusedWindowAttribute as CFString, &rawFocused
+    ) == .success,
+        let candidate = rawFocused,
+        CFGetTypeID(candidate) == AXUIElementGetTypeID()
+    else {
+        return nil
+    }
+    return (candidate as! AXUIElement)
+}
+
+/// Admission decision plus handles for one element. Shared by the full scan
+/// and the single-window path used when a window appears later.
+private func classifyElement(
+    _ element: AXUIElement,
+    pid: pid_t,
+    appName: String,
+    appElement: AXUIElement,
+    focused focusedElement: AXUIElement?,
+    index: Int
+) -> ElementClassification {
+    let frame = axFrame(of: element)
+    let minimized = axBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false
+    let fullscreen = axBool(of: element, attribute: "AXFullScreen")
+        ?? axBool(of: element, attribute: "AXFullscreen")
+    let admission = classifyWindowAdmission(WindowAdmissionFacts(
+        role: axString(of: element, attribute: kAXRoleAttribute as String),
+        subrole: axString(of: element, attribute: kAXSubroleAttribute as String),
+        isPositionSettable: axIsSettable(element, attribute: kAXPositionAttribute as String),
+        isSizeSettable: axIsSettable(element, attribute: kAXSizeAttribute as String),
+        isFullscreen: fullscreen ?? false,
+        isMinimized: minimized,
+        hasValidFrame: frame != nil
+    ))
+    if case .ignore = admission {
+        return .ignored(ExcludedSystemWindow(pid: pid, appName: appName, admission: admission))
+    }
+    // Float/suspend/tile all have a valid frame except a dialog or floating
+    // panel whose geometry is unreadable: count it as skipped.
+    guard let frame else {
+        return .skipped
+    }
+    let window = SystemWindow(
+        index: index,
+        pid: pid,
+        appName: appName,
+        title: axTitle(of: element),
+        frame: frame,
+        isFocused: focusedElement.map { CFEqual($0, element) } ?? false,
+        isMinimized: minimized,
+        isFullscreen: fullscreen
+    )
+    var discovered = DiscoveredSystemWindow(
+        window: window, element: element, appElement: appElement
+    )
+    if case .float(let reason) = admission {
+        discovered.floatReason = reason
+        GioLog.record(
+            .info, "discovery exclude pid=\(pid) app=\(appName) \(admission.label)"
+        )
+        return .float(discovered)
+    }
+    return .tile(discovered)
+}
+
+/// Classify one window that appeared after the initial scan. Nil when the
+/// classifier ignores it or its geometry is not readable yet (the caller
+/// may retry). Tile and float outcomes are both returned; minimized and
+/// fullscreen windows come back flagged on `window` for the caller to filter.
+public func discoverSystemWindow(element: AXUIElement, pid: pid_t) -> DiscoveredSystemWindow? {
+    guard AXIsProcessTrusted() else {
+        return nil
+    }
+    let appElement = AXUIElementCreateApplication(pid)
+    let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "unknown"
+    switch classifyElement(
+        element, pid: pid, appName: appName, appElement: appElement,
+        focused: axFocusedWindow(of: appElement), index: 0
+    ) {
+    case .tile(let discovered), .float(let discovered):
+        return discovered
+    case .ignored, .skipped:
+        return nil
+    }
 }
 
 /// Pre-tile probe: settable position/size and not native fullscreen
@@ -225,7 +275,7 @@ func axFrame(of element: AXUIElement) -> CGRect? {
     return CGRect(origin: point, size: dimensions)
 }
 
-func axTitle(of element: AXUIElement) -> String? {
+public func axTitle(of element: AXUIElement) -> String? {
     var raw: CFTypeRef?
     let status = AXUIElementCopyAttributeValue(element, kAXTitleAttribute as CFString, &raw)
     switch status {
