@@ -41,10 +41,10 @@ Not in scope: editing shortcuts by recording keys (view-only per user request).
   config overrides), description, category, source (default/config); searchable.
 - [x] DA-03 (`5c87689`) — Overview section: session status, Accessibility permission (with request
   button), workspaces, and windows with mode/reason (tiled/floating/minimized/hidden).
-- [ ] DA-04 — Settings sections: layout (gaps, padding, default width, presets), animations
+- [x] DA-04 (`1bca3d4`) — Settings sections: layout (gaps, padding, default width, presets), animations
   (enabled, duration), focus options, window rules; edits patch config.toml in place and
   trigger reload; validation messages shown inline.
-- [ ] DA-05 — Logs & diagnostics section: live log viewer with level filter, doctor facts,
+- [x] DA-05 (`143b294`) — Logs & diagnostics section: live log viewer with level filter, doctor facts,
   actions (reload config, restore all windows, open config file, quit).
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
@@ -55,6 +55,14 @@ OverviewModel. Fixed latent bug: SessionHost used defaults-only HotkeyDispatcher
 RED (compile) -> GREEN each task; 502 executed 0 failures (parent spot-check); signed build
 OK; pbxproj unchanged. Gaps: 2-3s polling refresh; launcher shadowing not shown. LIVE PENDING.
 Review: UNAVAILABLE.
+
+Evidence DA-04/05 (route: one delegated writer): ConfigPatcher (text-preserving, round-trip
+parse gate, atomic temp+rename, template on missing file), Layout/Animations/Focus/Rules
+views with Apply -> in-process reload; LogFilter + tail reader, Diagnostics (facts + Reload,
+Restore All Windows, Open Config File, Quit). RED (compile) -> GREEN; 540 executed 0 failures
+(parent spot-check); signed build OK; pbxproj unchanged. Gaps: rule block comments lost on
+update; rules match app name only; invalid existing config blocks edits; views untested
+beyond compile. LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Only one Gio window ever opens (plus the summoned launcher); closing it leaves the menu
@@ -77,3 +85,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 ## Progress
 - 2026-09-29: document created (niri-controls user-accepted live: "si parece mejor"). Next: DA-01..DA-03.
 - 2026-09-29: DA-01..DA-03 done. Next: DA-04..DA-05 (route: delegated writer).
+- 2026-09-29: DA-04 + DA-05 done. All tasks code-complete. Next: user live test.
