@@ -50,7 +50,7 @@ origin feat/gio-niri-rewrite after verified batches; no PR. Quote trailing-space
   updates only for changed windows, cached inactive-workspace plan, hash-indexed handle lookup +
   echo check before resolution. (#5, #6, #8, #10, #14)
 - [x] PA-05 (`4d65bc3`) — Per-pid persistent write lanes (no per-frame closure/worker allocation). (#4)
-- [ ] PA-06 — Adaptive size animation: per-app EWMA of write cost/drops/clamps; fast apps grow
+- [x] PA-06 (`a1e725f`) — Adaptive size animation: per-app EWMA of write cost/drops/clamps; fast apps grow
   during flight (maximize grows while neighbours retreat, no overlap along the path); slow apps keep
   the FI-03 final-pass grow.
 
@@ -80,6 +80,13 @@ PlanMemo. Bundles 25/7/19/32/870 all 0 failures (writer 2 runs + parent re-run);
 Risks: windows moved without AX events stay trusted until next event/motion; motion-echo drop is
 per pid. LIVE PENDING.
 
+Evidence PA-06 (route: delegated writer, pre-impl RED compile): ResizeCapability per app name
+(EWMA 0.4, cost <=4ms, drops <=10%, >=2 usable motions, clamp blocks 5 motions), SizePlanner
+overlap check 5-95% vs neighbours' motionFrames (1pt tolerance), delayed grow from first clear
+step, spring progress on dominant origin axis, `[animations] resize = adaptive|always|never`,
+`anim done ... sizeAnimated=N`. Bundles 25/7/19/32/890 all 0 failures (parent re-ran); signed
+build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TASKS CODE-COMPLETE.
+
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
 - Motion: fewer AX calls per animation (reported in `anim done`/timing) and frame rate matches display.
@@ -99,3 +106,4 @@ Read-only audit: delegated Explore (done). PA-01..PA-06: delegated writers, sequ
 - 2026-09-29: user approved in order. PA-01 + PA-02 done, pushed. Next: PA-03 + PA-05.
 - 2026-09-29: PA-03 + PA-05 done, pushed. Next: PA-04.
 - 2026-09-29: PA-04 done, pushed. Next: PA-06.
+- 2026-09-29: PA-06 done, pushed. Next: user live check (idle energy, fps, maximize).
