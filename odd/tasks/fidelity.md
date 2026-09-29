@@ -45,6 +45,15 @@ Prepositions keep full frame (window fully below display; accepted by parent: ca
 Overlap geometry tests are regression guards only (pure model can't reproduce app repaint lag).
 Bundles 20/7/19/23/647 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
 Review: UNAVAILABLE.
+- [x] FI-04 (`50d82a0`) — Hotkey tap resilience (live 2026-09-29): sessions 18:07Z/18:30Z/19:39Z had zero
+  `hotkey` lines. `tapCallback` ignores `.tapDisabledByTimeout`/`.tapDisabledByUserInput`, so a
+  macOS-disabled tap stays dead; tap always subscribes to mouseMoved (even with
+  focus-follows-mouse off); main thread may block on session queue during slow reflows (495ms
+  startup reflow). Fix: re-enable + watchdog, conditional mouseMoved, no main-thread queue.sync.
+  DONE: re-enable on disable events + 2s watchdog, mouseMoved only with focus-follows-mouse,
+  PublishedValue snapshot cache (no main-thread queue.sync except start/shutdown), MenuBar IPC
+  off-main. Bundles 20/7/19/30/649 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
+  Route: delegated writer. FI-02 LIVE PASS: `min size learned` WhatsApp w=970, Figma w=900.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.
@@ -62,3 +71,4 @@ Review: UNAVAILABLE.
 ## Progress
 - 2026-09-29: document created. Next: FI-01..FI-03.
 - 2026-09-29: FI-01..FI-03 done, pushed. Next: user live check.
+- 2026-09-29: live: shortcuts dead all session (tap disabled, never re-enabled). FI-04 done, pushed.
