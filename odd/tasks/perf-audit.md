@@ -42,14 +42,14 @@ origin feat/gio-niri-rewrite after verified batches; no PR. Quote trailing-space
 - [x] PA-02 (`22f7024`) — Idle ~0%: MenuBar refresh on menuWillOpen/push instead of 3s IPC poll; watchdog
   relaxed (30s, large leeway); UI tickers only while the main window is visible; LogsView tails
   from last offset, no textSelection on 1000 rows. (#9, #12)
-- [ ] PA-03 — Frame pacing: timer interval from the display's maximumFramesPerSecond; whole-point
+- [x] PA-03 (`5f291e5`) — Frame pacing: timer interval from the display's maximumFramesPerSecond; whole-point
   rounding + unified tolerance 1; spring ends under 1pt residual; no per-frame appName lookup;
   timings aggregated in place; AX call counting debug-only. (#2, #3, #4, #7)
 - [ ] PA-04 — Lean settle: trust `physicalFrames` for windows Gio placed (skip AX reads for parked /
   unchanged), render verification on-screen-only snapshot for visible targets, ring/echo/physical
   updates only for changed windows, cached inactive-workspace plan, hash-indexed handle lookup +
   echo check before resolution. (#5, #6, #8, #10, #14)
-- [ ] PA-05 — Per-pid persistent write lanes (no per-frame closure/worker allocation). (#4)
+- [x] PA-05 (`4d65bc3`) — Per-pid persistent write lanes (no per-frame closure/worker allocation). (#4)
 - [ ] PA-06 — Adaptive size animation: per-app EWMA of write cost/drops/clamps; fast apps grow
   during flight (maximize grows while neighbours retreat, no overlap along the path); slow apps keep
   the FI-03 final-pass grow.
@@ -62,6 +62,14 @@ PA-01 sink written before its tests (mutation-checked level gate instead of pre-
 deviation recorded. Bundles 25/7/19/32/795 all 0 failures (parent re-ran); signed build OK.
 Remaining periodic: 30s watchdog, visible-only UI refresh, motion timer during animations.
 LIVE PENDING.
+
+Evidence PA-03/05 (route: one delegated writer, pre-implementation RED on both): refresh rate
+from NSScreen.maximumFramesPerSecond (main, published), interval fixed per motion (30-120Hz),
+whole-point origins, shared 1pt tolerance, spring end <0.5pt; per-pid MotionWriteStats +
+AppNameCache (no per-write name lookup); AX call counting debug-only; persistent serial lane
+per pid with latest-frame slot (overwrite = drop), forgetApp on terminate, waitForMotionIdle
+counter. Bundles 25/7/19/32/822 all 0 failures (parent re-ran; writer ran twice + 15x motion).
+Not run under TSAN. LIVE PENDING.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
@@ -80,3 +88,4 @@ Read-only audit: delegated Explore (done). PA-01..PA-06: delegated writers, sequ
 ## Progress
 - 2026-09-29: audit done, document created. Next: user go-ahead, then PA-01.
 - 2026-09-29: user approved in order. PA-01 + PA-02 done, pushed. Next: PA-03 + PA-05.
+- 2026-09-29: PA-03 + PA-05 done, pushed. Next: PA-04.
