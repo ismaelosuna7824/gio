@@ -378,6 +378,8 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "set-column-width-plus": return .growColumnWidth
     case "maximize-column": return .maximizeColumn
     case "center-column": return .centerColumn
+    case "consume-or-expel-window-left": return .consumeOrExpelLeft
+    case "consume-or-expel-window-right": return .consumeOrExpelRight
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -402,6 +404,7 @@ public func validActionNames() -> [String] {
         "toggle-floating", "fullscreen",
         "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
         "maximize-column", "center-column",
+        "consume-or-expel-window-left", "consume-or-expel-window-right",
     ]
 }
 

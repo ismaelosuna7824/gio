@@ -32,6 +32,8 @@ public func defaultConfigTemplate() -> String {
     # "set-column-width-minus" (Alt+Minus), "set-column-width-plus" (Alt+Equal),
     # "maximize-column" (Alt+F, toggles back to the previous width),
     # "center-column" (Alt+C, scrolls the focused column to the middle),
+    # "consume-or-expel-window-left" (Alt+[) and "...-right" (Alt+]): pull the
+    # window into the neighbouring column, or push it out of a stacked one.
     # "fullscreen" (Alt+Shift+F; alias "fullscreen-window"; fills the display
     # under the menu bar, focusing another window restores the layout),
     # "toggle-floating" (Alt+Shift+Space; alias "toggle-window-floating").

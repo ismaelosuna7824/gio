@@ -1151,6 +1151,10 @@ final class SessionHost: @unchecked Sendable {
             commit(next, over: workspace)
         case .maximizeColumn:
             commit(toggleMaximizeFocusedColumn(in: workspace), over: workspace)
+        case .consumeOrExpelLeft:
+            commit(consumeOrExpelWindow(in: workspace, direction: .left), over: workspace)
+        case .consumeOrExpelRight:
+            commit(consumeOrExpelWindow(in: workspace, direction: .right), over: workspace)
         case .centerColumn:
             let viewport = focusedViewport()
             commit(

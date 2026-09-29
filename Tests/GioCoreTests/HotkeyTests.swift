@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 33)
+        XCTAssertEqual(dispatcher.bindingCount, 35)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
