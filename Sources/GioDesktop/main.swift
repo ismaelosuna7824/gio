@@ -13,17 +13,17 @@ func activateGio() {
     }
 }
 
-/// The unified Gio app: menu bar, launcher window and debug console over
-/// one session host (config, lock, IPC server, registry, workspaces,
-/// displays, actuator, event intake, hotkey tap). One process, accessory
-/// policy (no Dock icon). The `gio` CLI talks to it over IPC; the signed
+/// The unified Gio app: menu bar, main window and launcher over one
+/// session host (config, lock, IPC server, registry, workspaces, displays,
+/// actuator, event intake, hotkey tap). One process; activation policy is
+/// regular while the main window is visible and accessory otherwise. The `gio` CLI talks to it over IPC; the signed
 /// .app bundle is 1.0 packaging work.
 @MainActor
 final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
     private var launcherWindow: NSWindow?
-    private var labWindow: NSWindow?
+    private let mainWindow = MainWindowController()
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,15 +35,23 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         installSignalHandlers()
         let bar = MenuBarController()
         bar.onOpenLauncher = { [weak self] in self?.showLauncher() }
-        bar.onOpenDebug = { [weak self] in self?.toggleLab() }
+        bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
         bar.start()
         self.bar = bar
         host.onSummonLauncher = { [weak self] in self?.showLauncher() }
-        // First contact: no permission means a deaf session — open the
-        // debug console on its Request Access button instead of silence.
-        if !hasAXPermission() {
-            toggleLab()
-        }
+        mainWindow.installMainMenu()
+        // The window opens on launch (Dock icon while visible); closing it
+        // hides it and Gio keeps running from the menu bar.
+        mainWindow.show()
+    }
+
+    /// Dock icon click while the window is hidden (policy is regular only
+    /// while it is visible, but Cmd+Tab / Dock can race a hide).
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication, hasVisibleWindows flag: Bool
+    ) -> Bool {
+        mainWindow.show()
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -83,26 +91,6 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         }
         activateGio()
         launcherWindow?.makeKeyAndOrderFront(nil)
-    }
-
-    private func toggleLab() {
-        if let labWindow, labWindow.isVisible {
-            labWindow.close()
-            return
-        }
-        if labWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 620, height: 460),
-                styleMask: [.titled, .closable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Gio Debug"
-            window.contentView = NSHostingView(rootView: GioLabView())
-            labWindow = window
-        }
-        activateGio()
-        labWindow?.makeKeyAndOrderFront(nil)
     }
 }
 

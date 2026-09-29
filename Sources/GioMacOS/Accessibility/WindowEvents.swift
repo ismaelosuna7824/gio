@@ -123,7 +123,9 @@ public final class SystemWindowObserver: @unchecked Sendable {
     @discardableResult
     public func attachAllRunningApps() -> [String] {
         var refused: [String] = []
-        for app in NSWorkspace.shared.runningApplications where app.activationPolicy == .regular {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular && app.processIdentifier != ownPID {
             if !attach(pid: app.processIdentifier) {
                 refused.append(Self.label(for: app))
             }

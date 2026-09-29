@@ -45,6 +45,12 @@ public struct SystemWindowDiscoveryResult {
     public let completePIDs: Set<pid_t>
 }
 
+/// Gio's own windows (main window, launcher) are never managed, whatever
+/// the activation policy is at the moment.
+public func isManageableProcess(pid: pid_t, ownPID: pid_t, onlyPID: pid_t?) -> Bool {
+    pid != ownPID && (onlyPID == nil || pid == onlyPID)
+}
+
 public func requireAXPermission() throws {
     guard AXIsProcessTrusted() else {
         throw AXPermissionError.notTrusted
@@ -60,8 +66,11 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
     var ignored: [ExcludedSystemWindow] = []
     var skipped = 0
     var completePIDs = Set<pid_t>()
+    let ownPID = ProcessInfo.processInfo.processIdentifier
     let apps = NSWorkspace.shared.runningApplications.filter {
-        $0.activationPolicy == .regular && (onlyPID == nil || $0.processIdentifier == onlyPID)
+        $0.activationPolicy == .regular && isManageableProcess(
+            pid: $0.processIdentifier, ownPID: ownPID, onlyPID: onlyPID
+        )
     }
     for app in apps {
         let appElement = AXUIElementCreateApplication(app.processIdentifier)

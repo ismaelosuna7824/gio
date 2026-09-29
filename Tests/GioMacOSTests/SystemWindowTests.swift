@@ -55,3 +55,16 @@ final class SystemWindowTests: XCTestCase {
         XCTAssertEqual(describeFrame(CGRect(x: 8, y: 47, width: 440, height: 553)), "(8,47,440,553)")
     }
 }
+
+final class DiscoveryScopeTests: XCTestCase {
+    func testOwnProcessIsNeverManaged() {
+        XCTAssertFalse(isManageableProcess(pid: 42, ownPID: 42, onlyPID: nil))
+        XCTAssertFalse(isManageableProcess(pid: 42, ownPID: 42, onlyPID: 42))
+    }
+
+    func testOtherProcessesFollowOnlyPID() {
+        XCTAssertTrue(isManageableProcess(pid: 7, ownPID: 42, onlyPID: nil))
+        XCTAssertTrue(isManageableProcess(pid: 7, ownPID: 42, onlyPID: 7))
+        XCTAssertFalse(isManageableProcess(pid: 7, ownPID: 42, onlyPID: 8))
+    }
+}

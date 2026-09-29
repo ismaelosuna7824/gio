@@ -12,9 +12,9 @@ import GioCore
 public final class MenuBarController: NSObject {
     private var statusItem: NSStatusItem!
     private var timer: Timer?
-    /// Host-provided: summon the launcher window / debug console.
+    /// Host-provided: summon the launcher window / the main Gio window.
     public var onOpenLauncher: (() -> Void)?
-    public var onOpenDebug: (() -> Void)?
+    public var onOpenMain: (() -> Void)?
 
     public override init() {
         super.init()
@@ -55,6 +55,10 @@ public final class MenuBarController: NSObject {
 
     private func buildMenu(state: BarSessionState?) -> NSMenu {
         let menu = NSMenu()
+        let open = NSMenuItem(title: "Open Gio", action: #selector(openMain), keyEquivalent: "")
+        open.target = self
+        menu.addItem(open)
+        menu.addItem(.separator())
         for number in WorkspaceManager.range {
             let item = NSMenuItem(
                 title: "Workspace \(number)", action: #selector(switchWorkspace(_:)), keyEquivalent: ""
@@ -80,7 +84,7 @@ public final class MenuBarController: NSObject {
         reload.isEnabled = state != nil
         menu.addItem(reload)
         let preferences = NSMenuItem(
-            title: "Preferences…", action: #selector(openPreferences), keyEquivalent: ""
+            title: "Preferences…", action: #selector(openMain), keyEquivalent: ""
         )
         preferences.target = self
         menu.addItem(preferences)
@@ -89,14 +93,9 @@ public final class MenuBarController: NSObject {
         )
         launcher.target = self
         menu.addItem(launcher)
-        let debug = NSMenuItem(
-            title: "Debug Console", action: #selector(openDebug), keyEquivalent: ""
-        )
-        debug.target = self
-        menu.addItem(debug)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(
-            title: "Quit GioBar", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""
+            title: "Quit Gio", action: #selector(NSApplication.terminate(_:)), keyEquivalent: ""
         ))
         return menu
     }
@@ -111,23 +110,25 @@ public final class MenuBarController: NSObject {
         refresh()
     }
 
-    @objc private func openPreferences() {
-        let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml"
-        if !FileManager.default.fileExists(atPath: path) {
-            try? FileManager.default.createDirectory(
-                atPath: (path as NSString).deletingLastPathComponent,
-                withIntermediateDirectories: true
-            )
-            try? defaultConfigTemplate().write(toFile: path, atomically: true, encoding: .utf8)
-        }
-        NSWorkspace.shared.open(URL(fileURLWithPath: path))
-    }
-
     @objc private func openLauncher() {
         onOpenLauncher?()
     }
 
-    @objc private func openDebug() {
-        onOpenDebug?()
+    @objc private func openMain() {
+        onOpenMain?()
     }
+}
+
+/// Open `~/.config/gio/config.toml` in the default editor, writing the
+/// commented template first when it does not exist yet.
+public func openConfigFileInEditor() {
+    let path = FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml"
+    if !FileManager.default.fileExists(atPath: path) {
+        try? FileManager.default.createDirectory(
+            atPath: (path as NSString).deletingLastPathComponent,
+            withIntermediateDirectories: true
+        )
+        try? defaultConfigTemplate().write(toFile: path, atomically: true, encoding: .utf8)
+    }
+    NSWorkspace.shared.open(URL(fileURLWithPath: path))
 }
