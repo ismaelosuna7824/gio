@@ -247,6 +247,19 @@ func applyAnimationsKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "animations", errors: &errors) {
             config.animations.enabled = $0
         }
+    } else if key == "duration-ms" {
+        guard let number = value.number, number.isFinite else {
+            errors.append("line \(line): animations.duration-ms expects a number of milliseconds")
+            return
+        }
+        let range = AnimationsSectionConfig.durationRange
+        let rounded = Int(min(max(number.rounded(), Double(range.lowerBound)), Double(range.upperBound)))
+        if Double(rounded) != number.rounded() {
+            warnings.append(
+                "line \(line): animations.duration-ms clamped to \(rounded) (valid \(range.lowerBound)-\(range.upperBound))"
+            )
+        }
+        config.animations.durationMilliseconds = rounded
     } else {
         warnings.append("line \(line): unknown animations key '\(key)', ignored")
     }

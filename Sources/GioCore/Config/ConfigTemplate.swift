@@ -17,6 +17,10 @@ public func defaultConfigTemplate() -> String {
     focus-follows-mouse = false
     mouse-follows-focus = true
 
+    [animations]
+    enabled = true
+    duration-ms = 200
+
     [keybindings]
     "Alt+H" = "focus-left"
     "Alt+L" = "focus-right"

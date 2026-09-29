@@ -43,7 +43,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertTrue(config.layout.centerFocusedColumn)
         XCTAssertFalse(config.behavior.focusFollowsMouse)
         XCTAssertTrue(config.behavior.mouseFollowsFocus)
-        XCTAssertFalse(config.animations.enabled)
+        XCTAssertTrue(config.animations.enabled)
         XCTAssertTrue(config.keybindings.isEmpty)
         XCTAssertTrue(config.rules.isEmpty)
     }

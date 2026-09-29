@@ -104,6 +104,16 @@ public struct WriteEchoGate: Sendable {
         entries.removeValue(forKey: id)
     }
 
+    /// Inside the suppression window after our own write to `id`: the event
+    /// is an echo whatever the window reports, so callers can skip the
+    /// Accessibility read that `isEcho` needs (animation frames raise many).
+    public func isSuppressed(_ id: WindowID, at time: TimeInterval) -> Bool {
+        guard let entry = entries[id] else {
+            return false
+        }
+        return time - entry.at <= Self.suppression
+    }
+
     public func isEcho(_ id: WindowID, observed: CGRect, at time: TimeInterval) -> Bool {
         guard let entry = entries[id] else {
             return false

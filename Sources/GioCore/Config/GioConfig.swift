@@ -45,12 +45,22 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
 }
 
 public struct AnimationsSectionConfig: Equatable, Sendable {
-    /// Consumed by Phase 18 work.
-    public var enabled: Bool
+    public static let durationRange = 0...1000
 
-    public init(enabled: Bool = false) {
+    /// Scroll/focus motion (MO-04). Off means every reflow is instant.
+    public var enabled: Bool
+    /// Length of one animation, clamped to `durationRange` by the parser.
+    public var durationMilliseconds: Int
+
+    public init(enabled: Bool = true, durationMilliseconds: Int = 200) {
         self.enabled = enabled
+        self.durationMilliseconds = durationMilliseconds
     }
+
+    public var duration: TimeInterval { TimeInterval(durationMilliseconds) / 1000 }
+
+    /// Disabled or zero-length animations keep the instant behavior.
+    public var isActive: Bool { enabled && durationMilliseconds > 0 }
 }
 
 public struct GioConfig: Sendable {
