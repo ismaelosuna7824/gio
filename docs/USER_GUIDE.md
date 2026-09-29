@@ -102,6 +102,7 @@ An invalid config never stops the window manager.
 | `duration-ms` | number | `200` | Length of one `ease-out` animation. Rounded and clamped to `0...1000` with a warning. `0` is instant for both curves. |
 | `spring-damping-ratio` | number | `1.0` | `0.2...3`. `1` settles without overshoot; lower values bounce. Clamped with a warning. |
 | `spring-stiffness` | number | `800` | `100...3000`. Higher is faster. Clamped with a warning. A spring never runs longer than 1 s. |
+| `resize` | string | `"adaptive"` | How windows that grow (maximize, widen) behave during a move. `"adaptive"`: the window grows along with the motion when its app has proven it keeps up (cheap writes, few dropped frames, no recent size clamp) and no neighbour is in the way; other apps grow once at the end. `"always"`: skip the app check, still never overlap a neighbour. `"never"`: every grow happens once at the end. Shrinks always happen first. An unknown value warns and keeps the default. Gio learns each app over the first two motions, so a new app grows at the end at first. `gio logs` shows `sizeAnimated=N` in `anim done`. |
 
 ### `[logging]`
 
@@ -153,6 +154,7 @@ curve = "spring"
 duration-ms = 200
 spring-damping-ratio = 1.0
 spring-stiffness = 800
+resize = "adaptive"
 
 [focus-ring]
 enabled = true
@@ -203,7 +205,7 @@ Behavior:
 | **Overview** | Session status, Accessibility permission (with a **Request Access** button), config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 3 s while the window is visible (nothing runs when it is closed to the menu bar). |
 | **Shortcuts** | Searchable reference of every action grouped by category (Focus, Move, Columns, Windows, Workspaces, App) with its current bindings, description and source (`default` or `config`). View-only: shortcuts are changed in `config.toml`. |
 | **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, the two Focus toggles (focus follows mouse, mouse follows focus), and the **Focus ring** (enable, width, and color: a native color picker, preset swatches, a hex field kept in sync and a live preview; the ring is always opaque, so there is no opacity control; Apply writes `active-color = "#rrggbb"` and the ring updates immediately). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
-| **Animations** | Enable toggle and duration slider (0 to 1000 ms). Apply and Revert as above. |
+| **Animations** | Enable toggle, curve, spring or duration controls and the Resize mode (Adaptive, Always, Never). Apply and Revert as above. |
 | **Rules** | List of window rules with Add, Edit and Delete. Same validation as the file. |
 | **Logs** | Live tail (last 500 rows, current file only) of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll, **Copy visible** and **Clear view** (hides what is already in the file; it does not delete it). |
 | **Diagnostics** | Facts: version and build, session, Accessibility, config path and validity, IPC socket, display count, log file path. Buttons: **Reload Config**, **Restore All Windows** (brings parked windows on screen without quitting; tiling stays on, so the next layout change parks them again), **Open Config File**, **Quit Gio**. |

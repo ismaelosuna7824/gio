@@ -147,6 +147,7 @@ struct AnimationsSettingsView: View {
     @State private var curve: MotionCurveKind
     @State private var dampingRatio: Double
     @State private var stiffness: Double
+    @State private var resize: ResizeMode
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
@@ -157,6 +158,7 @@ struct AnimationsSettingsView: View {
         _curve = State(initialValue: animations.curve)
         _dampingRatio = State(initialValue: animations.springDampingRatio)
         _stiffness = State(initialValue: animations.springStiffness)
+        _resize = State(initialValue: animations.resize)
     }
 
     var body: some View {
@@ -197,6 +199,15 @@ struct AnimationsSettingsView: View {
                     .disabled(!enabled)
                     Text("0 ms or off makes every move instant.").font(.caption).foregroundStyle(.secondary)
                 }
+                Picker("Resize", selection: $resize) {
+                    Text("Adaptive").tag(ResizeMode.adaptive)
+                    Text("Always").tag(ResizeMode.always)
+                    Text("Never").tag(ResizeMode.never)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!enabled)
+                Text("Adaptive grows windows during the motion when their app keeps up and nothing is in the way; Never grows them once at the end. Always ignores how well the app keeps up.")
+                    .font(.caption).foregroundStyle(.secondary)
             }
             Section {
                 HStack {
@@ -213,7 +224,8 @@ struct AnimationsSettingsView: View {
     private func apply() {
         feedback = model.apply(animationEdits(
             enabled: enabled, durationMilliseconds: Int(duration),
-            curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness
+            curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness,
+            resize: resize
         ))
     }
 
@@ -224,6 +236,7 @@ struct AnimationsSettingsView: View {
         curve = animations.curve
         dampingRatio = animations.springDampingRatio
         stiffness = animations.springStiffness
+        resize = animations.resize
         feedback = nil
     }
 }

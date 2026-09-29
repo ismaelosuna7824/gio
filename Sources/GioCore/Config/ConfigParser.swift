@@ -342,6 +342,18 @@ func applyAnimationsKey(
         } else {
             warnings.append("line \(line): animations.curve '\(text)' is not \"spring\" or \"ease-out\", using the default")
         }
+    } else if key == "resize" {
+        guard case .string(let text) = value else {
+            errors.append("line \(line): animations.resize expects \"adaptive\", \"always\" or \"never\"")
+            return
+        }
+        if let mode = ResizeMode(rawValue: text) {
+            config.animations.resize = mode
+        } else {
+            warnings.append(
+                "line \(line): animations.resize '\(text)' is not \"adaptive\", \"always\" or \"never\", using the default"
+            )
+        }
     } else if key == "spring-damping-ratio" {
         applySpringNumber(
             key, value: value, line: line, range: SpringParameters.dampingRatioRange,

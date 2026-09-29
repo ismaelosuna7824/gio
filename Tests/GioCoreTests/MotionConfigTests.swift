@@ -120,6 +120,26 @@ final class MotionConfigTests: XCTestCase {
         )
     }
 
+    func testResizeModeDefaultsToAdaptiveAndParses() throws {
+        XCTAssertEqual(defaultGioConfig().animations.resize, .adaptive)
+        for mode in ["adaptive", "always", "never"] {
+            let (config, warnings) = try parseGioConfig("[animations]\nresize = \"\(mode)\"\n").get()
+            XCTAssertTrue(warnings.isEmpty)
+            XCTAssertEqual(config.animations.resize.rawValue, mode)
+        }
+        let (fallback, warnings) = try parseGioConfig("[animations]\nresize = \"sometimes\"\n").get()
+        XCTAssertEqual(fallback.animations.resize, .adaptive)
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("animations.resize"))
+    }
+
+    func testAnimationEditsCarryResizeWhenGiven() {
+        XCTAssertEqual(
+            animationEdits(enabled: true, durationMilliseconds: 200, resize: .never).last,
+            .set(table: "animations", key: "resize", value: .string("never"))
+        )
+    }
+
     func testEchoGateSuppressesByTimeWithoutNeedingTheObservedFrame() {
         var gate = WriteEchoGate()
         let id = WindowID(pid: 1, elementID: 1)

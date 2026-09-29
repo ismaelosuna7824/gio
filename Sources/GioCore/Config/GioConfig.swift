@@ -77,13 +77,17 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var curve: MotionCurveKind
     public var springDampingRatio: Double
     public var springStiffness: Double
+    /// PA-06: whether growing windows interpolate their size during flight.
+    public var resize: ResizeMode
 
     public init(
         enabled: Bool = true, durationMilliseconds: Int = 200,
         curve: MotionCurveKind = .spring,
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
-        springStiffness: Double = SpringParameters.niri.stiffness
+        springStiffness: Double = SpringParameters.niri.stiffness,
+        resize: ResizeMode = .adaptive
     ) {
+        self.resize = resize
         self.enabled = enabled
         self.durationMilliseconds = durationMilliseconds
         self.curve = curve

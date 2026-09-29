@@ -39,12 +39,19 @@ public struct MotionSummary: Equatable, Sendable {
     public let slowest: (app: String, milliseconds: Double)?
     /// NF-04: `spring` or `ease-out`.
     public let curve: String
+    /// PA-06: windows whose size followed the flight instead of the final pass.
+    public let sizeAnimated: Int
+    /// Per-pid write stats of this run (feeds `ResizeCapability`); not part of equality.
+    public let appStats: [pid_t: MotionWriteStats]
 
     public init(
         windows: Int, frames: Int, dropped: Int, duration: TimeInterval,
-        slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out"
+        slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out",
+        sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:]
     ) {
         self.curve = curve
+        self.sizeAnimated = sizeAnimated
+        self.appStats = appStats
         self.windows = windows
         self.frames = frames
         self.dropped = dropped
@@ -58,13 +65,13 @@ public struct MotionSummary: Equatable, Sendable {
             && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds
     }
 
-    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve>`
+    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S`
     /// `frames` counts sampled display ticks, `dropped` counts per-app frames
     /// skipped because that app was still writing. IDs and app names only.
     public var logLine: String {
         let slowestText = slowest.map { "\($0.app) \(Int($0.milliseconds.rounded()))ms" } ?? "none"
         return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) "
-            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve)"
+            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated)"
     }
 }
 
@@ -98,6 +105,7 @@ public final class MotionPlayer {
     /// instant the windows' last written positions belong to.
     private var lastElapsed: TimeInterval = 0
     private var runUsedSpring = false
+    private var runSizeAnimated: Set<WindowID> = []
 
     public private(set) var sampledFrames: [WindowID: CGRect] = [:]
 
@@ -132,6 +140,7 @@ public final class MotionPlayer {
             submitted = [:]
             sampledFrames = [:]
             runUsedSpring = false
+            runSizeAnimated = []
         }
         var previous: [WindowID: WindowAnimation] = [:]
         for animation in animations {
@@ -149,6 +158,9 @@ public final class MotionPlayer {
         runUsedSpring = runUsedSpring || animations.contains { $0.spring != nil }
         for animation in next {
             runWindows.insert(animation.id)
+            if animation.sizeSchedule != .none {
+                runSizeAnimated.insert(animation.id)
+            }
             if submitted[animation.id] == nil {
                 submitted[animation.id] = animation.from
             }
@@ -171,7 +183,9 @@ public final class MotionPlayer {
         var sampled: [WindowID: CGRect] = [:]
         var perPid: [pid_t: [MotionWrite]] = [:]
         for animation in animations {
-            let frame = wholePoints(animation.motionFrame(at: elapsed))
+            let frame = wholePoints(
+                animation.motionFrame(at: elapsed), size: animation.sizeSchedule != .none
+            )
             sampled[animation.id] = frame
             let last = submitted[animation.id] ?? animation.from
             if differs(frame, last) {
@@ -213,7 +227,8 @@ public final class MotionPlayer {
             // Rejected submissions plus frames the lanes overwrote before writing them.
             dropped: dropped + stats.values.reduce(0) { $0 + $1.drops },
             duration: clock() - runStart, slowest: slowest,
-            curve: runUsedSpring ? "spring" : "ease-out"
+            curve: runUsedSpring ? "spring" : "ease-out",
+            sizeAnimated: runSizeAnimated.count, appStats: stats
         )
         animations = []
         submitted = [:]
@@ -221,10 +236,13 @@ public final class MotionPlayer {
     }
 
     /// Origins are written on whole points: sub-point steps are invisible and
-    /// the writer ignores them anyway. Sizes are never interpolated (FI-03),
-    /// so they stay exact for the final pass.
-    private func wholePoints(_ frame: CGRect) -> CGRect {
-        CGRect(origin: CGPoint(x: frame.origin.x.rounded(), y: frame.origin.y.rounded()), size: frame.size)
+    /// the writer ignores them anyway. Sizes stay exact (FI-03) unless the
+    /// window's size follows the flight (PA-06), where they round too.
+    private func wholePoints(_ frame: CGRect, size interpolated: Bool) -> CGRect {
+        let size = interpolated
+            ? CGSize(width: frame.size.width.rounded(), height: frame.size.height.rounded())
+            : frame.size
+        return CGRect(origin: CGPoint(x: frame.origin.x.rounded(), y: frame.origin.y.rounded()), size: size)
     }
 
     private func differs(_ a: CGRect, _ b: CGRect) -> Bool {

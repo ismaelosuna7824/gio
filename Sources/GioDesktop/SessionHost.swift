@@ -59,6 +59,8 @@ final class SessionHost: @unchecked Sendable {
     private var tileability = TileabilityCache()
     /// FI-02: minimum sizes learned from clamped writes (session queue only).
     private var minimumSizes = MinimumSizeBook()
+    /// PA-06: which apps take size writes during motion (keyed by app name).
+    private var resizeCapability = ResizeCapability()
     private var fullscreen = FullscreenBook()
     private var visibleFrames: [DisplayID: CGRect] = [:]
     /// Effective hotkey table (defaults + config). Read on the main thread
@@ -810,6 +812,7 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         for id in changed.keys.sorted() {
+            noteResizeClamp(pid: id.pid)
             let size = changed[id]!
             GioLog.record(
                 .info,
@@ -819,6 +822,37 @@ final class SessionHost: @unchecked Sendable {
             )
         }
         scheduleReflow(full: false)
+    }
+
+    private func resizeKey(_ pid: pid_t) -> String {
+        NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid\(pid)"
+    }
+
+    private func logResizeCapability(_ key: String) {
+        let metrics = resizeCapability.metrics(key)
+        GioLog.record(
+            .debug,
+            "resize capability app=\(key) animate=\(resizeCapability.canAnimateSize(key)) "
+                + "cost=\(String(format: "%.1f", metrics?.costMilliseconds ?? 0))ms "
+                + "drops=\(String(format: "%.0f", (metrics?.dropRate ?? 0) * 100))%"
+        )
+    }
+
+    private func noteResizeClamp(pid: pid_t) {
+        let key = resizeKey(pid)
+        if resizeCapability.noteClamp(key) {
+            logResizeCapability(key)
+        }
+    }
+
+    /// Feed a finished motion's per-app write stats into the capability book.
+    private func learnResizeCapability(from summary: MotionSummary) {
+        for pid in summary.appStats.keys.sorted() {
+            let key = resizeKey(pid)
+            if resizeCapability.record(key, stats: summary.appStats[pid]!) {
+                logResizeCapability(key)
+            }
+        }
     }
 
     private func tileableModes() -> [WindowID: WindowMode] {
@@ -1024,6 +1058,9 @@ final class SessionHost: @unchecked Sendable {
         if settings.curve == .spring {
             animations = animations.map { $0.springing(settings.spring) }
         }
+        // PA-06: growing windows may follow the flight when their app keeps up.
+        let capablePids = Set(animations.map(\.id.pid).filter { resizeCapability.canAnimateSize(resizeKey($0)) })
+        animations = planSizeSchedules(animations, mode: settings.resize, capablePids: capablePids)
         if !animations.isEmpty {
             applyPrepositions(prepositions, reconciler: reconciler)
             startMotion(animations, reconciler: reconciler)
@@ -1397,6 +1434,7 @@ final class SessionHost: @unchecked Sendable {
         if let summary = tick.summary {
             stopMotion()
             GioLog.record(.info, summary.logLine)
+            learnResizeCapability(from: summary)
             performReflow(animate: false)
         }
     }

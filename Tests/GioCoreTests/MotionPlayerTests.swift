@@ -166,14 +166,34 @@ final class MotionPlayerTests: XCTestCase {
         XCTAssertEqual(sink.idleWaits, 1)
         XCTAssertEqual(
             summary?.logLine,
-            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=app20 42ms curve=ease-out"
+            "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=app20 42ms curve=ease-out sizeAnimated=0"
         )
+    }
+
+    func testSummaryCountsWindowsWhoseSizeWasAnimatedAndExposesPerAppStats() {
+        let clock = FakeClock(), sink = FakeSink()
+        let player = makePlayer(clock, sink)
+        var grower = WindowAnimation(
+            id: id(1, pid: 20), from: CGRect(x: 0, y: 0, width: 50, height: 50),
+            to: CGRect(x: 0, y: 0, width: 150, height: 50), duration: 1, easing: .linear
+        )
+        grower.sizeSchedule = .fromStart
+        player.start([grower, slide(id(2, pid: 30))])
+        sink.stats = [20: MotionWriteStats(count: 4, sumMilliseconds: 8, maxMilliseconds: 3)]
+        clock.now = 0.5
+        XCTAssertEqual(sink.accepted.count, 0)
+        let mid = player.tick()
+        XCTAssertEqual(mid.sampled[id(1, pid: 20)]?.width, 100)
+        clock.now = 1
+        let summary = player.tick().summary
+        XCTAssertTrue(summary?.logLine.hasSuffix("sizeAnimated=1") ?? false)
+        XCTAssertEqual(summary?.appStats[20]?.count, 4)
     }
 
     func testSummaryLineWithoutTimingsSaysNone() {
         let summary = MotionSummary(windows: 3, frames: 12, dropped: 2, duration: 0.2, slowest: nil)
         XCTAssertEqual(
-            summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none curve=ease-out"
+            summary.logLine, "anim done windows=3 frames=12 dropped=2 duration=200ms slowest=none curve=ease-out sizeAnimated=0"
         )
     }
 
