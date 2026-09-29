@@ -59,6 +59,11 @@ LIVE PENDING. Review: UNAVAILABLE.
   DONE: analytical spring (under/critical/over), velocity-preserving retarget, 1s cap,
   curve/damping/stiffness config + UI. Bundles 22/7/19/32/768 all 0 failures (parent re-ran);
   signed build OK. LIVE PENDING.
+- [x] NF-05 (`a8b0c13`) — Fullscreen gap (user request 2026-09-29: fullscreen touched every edge):
+  `[layout] fullscreen-gap` (unset = gaps, 0-64), frame inset on all sides under the menu bar,
+  focus ring shown in fullscreen when gap >= ring width; settings toggle + slider. Route:
+  delegated writer. Bundles 22/7/19/32/779 all 0 failures (parent re-ran); signed build OK.
+  LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
