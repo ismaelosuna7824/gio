@@ -64,13 +64,16 @@ Review: UNAVAILABLE.
   ambiguous skipped), mismatch vs AX frame, nudge = +1pt x then target (single shot), check 150ms
   after settle, re-check 100ms; cancelled by new motion / mouse down. Bundles 22/7/19/32/728 all
   0 failures (parent re-ran); signed build OK. LIVE PENDING (user: windows were missing).
-- [ ] FI-06 — Move column + immediate keyboard focus (live 2026-09-29): Alt+Shift+H/L runs
+- [x] FI-06 (`239b6d5`) — Move column + immediate keyboard focus (live 2026-09-29): Alt+Shift+H/L runs
   `moveWindow(.left/.right)`, which appends the window INTO the neighbour column (stacking; OrbStack
   then clamped 366 -> 452 high). Niri moves the whole column. Rapid keys: each retarget restarted
   the full 200ms (`anim done ... duration=1142ms`) and focus intent waited for the final pass, so
   typing went to the old window. Fix: Alt+Shift+H/L = move-column-left/right (swap, composition
   kept; stacking stays on Alt+[ / ]); apply keyboard focus immediately. Route: delegated writer
   (shared with NF-04).
+  DONE: moveColumn swap on Alt+Shift+H/L (old move-window-left/right unbound, names kept),
+  focusNow at motion start + reassert on final pass, ReflowCoalescer one reflow per tick.
+  Bundles 22/7/19/32/747 all 0 failures. LIVE PENDING.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.

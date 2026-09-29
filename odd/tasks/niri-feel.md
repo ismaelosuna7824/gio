@@ -52,10 +52,13 @@ LIVE PENDING. Review: UNAVAILABLE.
   pueda cambiar el color desde la desktop app"). Route: delegated writer. DONE: ColorPicker (sRGB, no
   opacity) + presets + hex field + preview; normalizedHexColor; 8 tests RED -> GREEN; bundles
   22/7/19/30/705 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
-- [ ] NF-04 — Spring animations (user approved 2026-09-29): critically damped spring (Niri
+- [x] NF-04 (`2768b44`) — Spring animations (user approved 2026-09-29): critically damped spring (Niri
   view-movement default: damping-ratio 1.0, stiffness 800, epsilon 0.0001) replacing ease-out;
   retarget preserves velocity; `[animations]` gains `curve = "spring" | "ease-out"`, spring
   params; position-only motion rules (FI-03) kept. Route: delegated writer (shared with FI-06).
+  DONE: analytical spring (under/critical/over), velocity-preserving retarget, 1s cap,
+  curve/damping/stiffness config + UI. Bundles 22/7/19/32/768 all 0 failures (parent re-ran);
+  signed build OK. LIVE PENDING.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
