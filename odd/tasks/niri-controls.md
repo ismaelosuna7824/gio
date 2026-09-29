@@ -31,19 +31,26 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
 - Conventional Commits, NO Co-Authored-By. Push/PR not authorized. Quote trailing-space path.
 
 ## Tasks
-- [ ] NC-01 — Width presets + step resize: Alt+R cycles `preset-column-widths`
+- [x] NC-01 (`be48f8b`) — Width presets + step resize: Alt+R cycles `preset-column-widths`
   (default 1/3, 1/2, 2/3, Niri proportion semantics), Alt+Minus / Alt+Equal = -/+10%,
   config key parsed/validated.
-- [ ] NC-02 — Maximize column toggle (Alt+F): focused column takes full width; toggling
+- [x] NC-02 (`0c4d429`) — Maximize column toggle (Alt+F): focused column takes full width; toggling
   again restores the previous width.
-- [ ] NC-03 — Real fullscreen toggle (Alt+Shift+F): focused window fills the display
+- [x] NC-03 (`fa807f9`) — Real fullscreen toggle (Alt+Shift+F): focused window fills the display
   frame (no native macOS fullscreen Space), others park; toggle restores its column.
-- [ ] NC-04 — Center column (Alt+C): viewport centers the focused column.
-- [ ] NC-05 — Consume/expel (Alt+BracketLeft / Alt+BracketRight): pull the focused window
+- [x] NC-04 (`77f9ca1`) — Center column (Alt+C): viewport centers the focused column.
+- [x] NC-05 (`f5c874d`) — Consume/expel (Alt+BracketLeft / Alt+BracketRight): pull the focused window
   into the neighbouring column / push it out into its own new column.
 - [ ] NC-06 — Hide inactive workspaces: windows of non-active workspaces park off-screen
   (corner/edge, display-aware), restore on switch back and on Gio exit.
 - [ ] NC-07 — Animated workspace switch using the MO-04 player.
+
+Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
+resolved per display; savedWidthSpec for maximize; FullscreenBook + full-display frame below
+menu bar, others parked in place; center survives reveal; consume keeps height weight.
+Bindings: Alt+R, Alt+Minus/Equal, Alt+F, Alt+Shift+F, Alt+Shift+Space (floating), Alt+C,
+Alt+BracketLeft/Right. RED (compile) -> GREEN each task; 455 executed 0 failures (parent
+spot-check); signed build OK. Gaps: no CLI/IPC equivalents; LIVE PENDING. Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Each binding works live and animates; toggles are reversible without drift.
@@ -64,3 +71,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 
 ## Progress
 - 2026-09-29: document created (after MO-04 live pass: 25 frames/200ms, dropped ~0). Next: NC-01..NC-05.
+- 2026-09-29: NC-01..NC-05 done. Next: NC-06..NC-07 (route: delegated writer).
