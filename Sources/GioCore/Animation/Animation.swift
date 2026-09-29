@@ -79,6 +79,29 @@ public struct WindowAnimation: Equatable, Sendable {
         )
     }
 
+    /// The frame a window is actually WRITTEN during motion (FI-03): the
+    /// origin follows `frame(at:)`, but the size never interpolates. A
+    /// dimension that shrinks takes its new value from the first frame (the
+    /// window gets out of its neighbours' way before anything moves), and a
+    /// dimension that grows keeps its old value all the way, including at
+    /// completion; the final exact pass applies it once the neighbours have
+    /// moved. Every frame after the first is therefore position-only (one
+    /// Accessibility write per window). `frame(at:)` stays the full
+    /// interpolation, for callers that want the ideal frame.
+    public func motionFrame(at elapsed: Double) -> CGRect {
+        let full = frame(at: elapsed)
+        guard duration > 0 else {
+            return full
+        }
+        return CGRect(
+            origin: full.origin,
+            size: CGSize(
+                width: min(from.size.width, to.size.width),
+                height: min(from.size.height, to.size.height)
+            )
+        )
+    }
+
     public func isComplete(at elapsed: Double) -> Bool {
         !elapsed.isFinite || elapsed >= duration
     }

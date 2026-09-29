@@ -142,7 +142,7 @@ public final class MotionPlayer {
         var sampled: [WindowID: CGRect] = [:]
         var perPid: [pid_t: [MotionWrite]] = [:]
         for animation in animations {
-            let frame = animation.frame(at: elapsed)
+            let frame = animation.motionFrame(at: elapsed)
             sampled[animation.id] = frame
             let last = submitted[animation.id] ?? animation.from
             if differs(frame, last) {
