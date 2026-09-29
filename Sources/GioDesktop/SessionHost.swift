@@ -116,6 +116,8 @@ final class SessionHost: @unchecked Sendable {
     var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight]) -> Void)?
     var overlayRetarget: ((Int, [WindowID: CGRect], [SnapshotDisplayFlight]) -> Void)?
     var overlayEnd: ((Bool) -> Void)?
+    /// Main thread: removes a running flight at once (mouse down); true when one ran.
+    var overlayAbortForMouseDown: (() -> Bool)?
     /// Wallpaper backdrops, readable from any thread.
     var overlayWallpapers: WallpaperCache?
     /// Screens as the capture needs them (id, frame, scale), read on main.
@@ -1437,6 +1439,26 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// The overlay came down on its own (watchdog, mouse down): treat it as a
+    /// settle without the fade. Called from the main thread.
+    func snapshotFlightAborted(_ reason: SnapshotAbortReason) {
+        queue.async { [weak self] in
+            guard let self, !self.isShuttingDown, self.flightGate.isActive else {
+                return
+            }
+            GioLog.record(reason.logLevel, snapshotAbortLine(reason: reason))
+            self.flightGate.abort()
+            self.flightIDs = []
+            self.flightDisplays = []
+            self.flightWindows = []
+            self.publishFocusRing()
+            if !self.renderCandidates.isEmpty {
+                self.scheduleRenderCheck()
+            }
+            self.scheduleSnapshotRefresh()
+        }
+    }
+
     /// Layers landed and the real windows settled: remove the overlay, show
     /// the ring, verify the render and refresh the image cache in the
     /// background.
@@ -2283,6 +2305,11 @@ final class SessionHost: @unchecked Sendable {
             }
             self.publishDisplayRefreshes()
             self.queue.async {
+                if self.flightGate.isActive {
+                    // Screens changed under the flight: come down, then relayout.
+                    GioLog.record(.info, snapshotAbortLine(reason: .displayChange))
+                    self.endSnapshotFlight(fadeOut: false)
+                }
                 self.syncDisplays()
                 self.reflowAll()
             }
@@ -2374,6 +2401,8 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func recordClick(at location: CGPoint) {
+        // Clicks must hit real windows: an overlay in the air comes down now.
+        _ = overlayAbortForMouseDown?()
         clickLock.lock()
         tappedClick = MouseClick(location: location, time: ProcessInfo.processInfo.systemUptime)
         clickLock.unlock()

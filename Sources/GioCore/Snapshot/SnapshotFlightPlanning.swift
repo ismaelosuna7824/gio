@@ -181,3 +181,22 @@ public func snapshotFlightLine(layers: Int, cacheAgeMilliseconds: Int, duration:
 public func snapshotFallbackLine(reason: SnapshotFallbackReason, count: Int) -> String {
     "snapshot fallback reason=\(reason.rawValue) ids=\(count)"
 }
+
+/// Why an overlay flight was cut short (SM-05).
+public enum SnapshotAbortReason: String, Equatable, Sendable {
+    /// The flight outlived the watchdog limit.
+    case watchdog
+    /// A mouse button went down: clicks must land on real windows at once.
+    case mouseDown = "mouse-down"
+    /// Screens changed under the flight.
+    case displayChange = "display-change"
+
+    public var logLevel: LogLevel {
+        self == .watchdog ? .warn : .info
+    }
+}
+
+/// `snapshot flight aborted reason=watchdog|mouse-down|display-change`
+public func snapshotAbortLine(reason: SnapshotAbortReason) -> String {
+    "snapshot flight aborted reason=\(reason.rawValue)"
+}

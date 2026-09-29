@@ -162,6 +162,18 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         XCTAssertEqual(snapshotFallbackLine(reason: .noBackdrop, count: 0), "snapshot fallback reason=no-backdrop ids=0")
     }
 
+    func testAbortLinesNameTheReason() {
+        XCTAssertEqual(snapshotAbortLine(reason: .watchdog), "snapshot flight aborted reason=watchdog")
+        XCTAssertEqual(snapshotAbortLine(reason: .mouseDown), "snapshot flight aborted reason=mouse-down")
+        XCTAssertEqual(snapshotAbortLine(reason: .displayChange), "snapshot flight aborted reason=display-change")
+    }
+
+    func testOnlyTheWatchdogIsAWarning() {
+        XCTAssertEqual(SnapshotAbortReason.watchdog.logLevel, .warn)
+        XCTAssertEqual(SnapshotAbortReason.mouseDown.logLevel, .info)
+        XCTAssertEqual(SnapshotAbortReason.displayChange.logLevel, .info)
+    }
+
     func testAnimDoneLineNamesTheRenderer() {
         let ax = MotionSummary(windows: 1, frames: 2, dropped: 0, duration: 0.2, slowest: nil)
         XCTAssertTrue(ax.logLine.hasSuffix("renderer=ax"))

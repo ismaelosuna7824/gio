@@ -344,6 +344,12 @@ public final class SnapshotOverlayController {
 
     /// Called on main when every display's springs of flight `token` finished.
     public var onFlightFinished: ((Int) -> Void)?
+    /// Called on main after the controller removed a flight on its own
+    /// (watchdog, mouse down): the session must settle as if it had ended.
+    public var onFlightAborted: ((Int, SnapshotAbortReason) -> Void)?
+    /// SM-05: independent of the session queue, so a stalled queue or a lost
+    /// completion callback can never leave the opaque overlay up.
+    private var watchdog = FlightWatchdog()
 
     public nonisolated init() {}
 
@@ -413,6 +419,7 @@ public final class SnapshotOverlayController {
         self.token = token
         endAll(fadeOut: false)
         pending = []
+        armWatchdog()
         for flight in flights {
             let key = WallpaperCache.key(flight.displayFrame)
             let overlay = overlays[key] ?? SnapshotOverlay(displayFrame: flight.displayFrame, spring: spring)
@@ -430,6 +437,7 @@ public final class SnapshotOverlayController {
     public func retarget(token: Int, targets: [WindowID: CGRect], adding flights: [SnapshotDisplayFlight]) {
         self.token = token
         pending = active
+        armWatchdog()
         for key in active.sorted() {
             guard let overlay = overlays[key] else {
                 continue
@@ -446,7 +454,38 @@ public final class SnapshotOverlayController {
         endAll(fadeOut: fadeOut)
     }
 
+    /// A mouse button went down during a flight: remove the overlay at once
+    /// so the click lands on the real window (already at its final frame).
+    /// True when a flight was running.
+    @discardableResult
+    public func abortForMouseDown() -> Bool {
+        guard !active.isEmpty else {
+            return false
+        }
+        let aborted = token
+        endAll(fadeOut: false)
+        onFlightAborted?(aborted, .mouseDown)
+        return true
+    }
+
+    private func armWatchdog() {
+        let armed = watchdog.arm(at: ProcessInfo.processInfo.systemUptime)
+        DispatchQueue.main.asyncAfter(deadline: .now() + FlightWatchdog.defaultLimit + 0.05) { [weak self] in
+            MainActor.assumeIsolated { self?.watchdogFired(armed) }
+        }
+    }
+
+    private func watchdogFired(_ armed: Int) {
+        guard watchdog.isExpired(armed, now: ProcessInfo.processInfo.systemUptime), !active.isEmpty else {
+            return
+        }
+        let aborted = token
+        endAll(fadeOut: false)
+        onFlightAborted?(aborted, .watchdog)
+    }
+
     private func endAll(fadeOut: Bool) {
+        watchdog.disarm()
         for key in active {
             overlays[key]?.onFinished = nil
             overlays[key]?.end(fadeOut: fadeOut)
@@ -461,6 +500,7 @@ public final class SnapshotOverlayController {
         }
         pending.remove(key)
         if pending.isEmpty {
+            watchdog.disarm()
             onFlightFinished?(token)
         }
     }

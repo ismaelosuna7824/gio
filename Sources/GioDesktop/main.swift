@@ -87,6 +87,11 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         let overlay = snapshotOverlay
         overlay.start()
         overlay.onFlightFinished = { [host] token in host.snapshotLayersFinished(token) }
+        overlay.onFlightAborted = { [host] _, reason in host.snapshotFlightAborted(reason) }
+        // The tap callback runs on the main run loop; never assume it blindly.
+        host.overlayAbortForMouseDown = {
+            Thread.isMainThread ? MainActor.assumeIsolated { overlay.abortForMouseDown() } : false
+        }
         host.overlayWallpapers = overlay.wallpapers
         host.overlayBegin = { [host] token, spring, flights in
             DispatchQueue.main.async {
