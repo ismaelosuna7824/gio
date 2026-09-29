@@ -71,15 +71,33 @@ public final class MenuBarController: NSObject {
         open.target = self
         menu.addItem(open)
         menu.addItem(.separator())
-        for number in WorkspaceManager.range {
-            let item = NSMenuItem(
-                title: "Workspace \(number)", action: #selector(switchWorkspace(_:)), keyEquivalent: ""
-            )
-            item.tag = number
-            item.target = self
-            item.state = state?.workspace == number ? .on : .off
-            item.isEnabled = state != nil
+        // NF-02: the dynamic stack of each display (index, windows, active
+        // mark). Only the focused display's rows switch; other stacks are info.
+        let stacks = state?.stacks ?? []
+        if stacks.isEmpty {
+            let item = NSMenuItem(title: "Workspace \(state?.workspace ?? 1)", action: nil, keyEquivalent: "")
+            item.state = state == nil ? .off : .on
+            item.isEnabled = false
             menu.addItem(item)
+        }
+        for (position, stack) in stacks.enumerated() {
+            if stacks.count > 1 {
+                let header = NSMenuItem(title: "Display \(position + 1)", action: nil, keyEquivalent: "")
+                header.isEnabled = false
+                menu.addItem(header)
+            }
+            for entry in stack.workspaces {
+                let windows = entry.windows == 0 ? "empty" : (entry.windows == 1 ? "1 window" : "\(entry.windows) windows")
+                let item = NSMenuItem(
+                    title: "Workspace \(entry.index) · \(windows)",
+                    action: #selector(switchWorkspace(_:)), keyEquivalent: ""
+                )
+                item.tag = entry.index
+                item.target = self
+                item.state = entry.isActive ? .on : .off
+                item.isEnabled = stack.focused
+                menu.addItem(item)
+            }
         }
         menu.addItem(.separator())
         let info = NSMenuItem(

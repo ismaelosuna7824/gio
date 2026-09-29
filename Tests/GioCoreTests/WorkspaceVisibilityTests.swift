@@ -98,20 +98,21 @@ final class WorkspaceVisibilityTests: XCTestCase {
 
     func testWindowsOutsideShownWorkspacesAreTheHiddenSet() {
         var manager = WorkspaceManager()
-        var first = manager.workspace(1)!
+        var first = manager.currentWorkspace()
         first.columns = [Column(id: ColumnID(1), width: 300, windows: [id(1)])]
         manager.update(first)
-        var third = manager.workspace(3)!
-        third.columns = [Column(id: ColumnID(1), width: 300, windows: [id(3), id(4)])]
-        manager.update(third)
-        XCTAssertEqual(manager.windows(outside: [1]), [id(3), id(4)])
-        XCTAssertEqual(manager.windows(outside: [3]), [id(1)])
-        XCTAssertEqual(manager.windows(outside: [1, 3]), [])
+        XCTAssertTrue(manager.focusDown())
+        var second = manager.currentWorkspace()
+        second.columns = [Column(id: ColumnID(1), width: 300, windows: [id(3), id(4)])]
+        manager.update(second)
+        XCTAssertEqual(manager.windows(outside: [first.id]), [id(3), id(4)])
+        XCTAssertEqual(manager.windows(outside: [second.id]), [id(1)])
+        XCTAssertEqual(manager.windows(outside: [first.id, second.id]), [])
     }
 
     func testMovedWindowJoinsHiddenSetWhenTargetIsNotShown() {
         var manager = WorkspaceManager()
-        var first = manager.workspace(1)!
+        var first = manager.currentWorkspace()
         first.columns = [
             Column(id: ColumnID(1), width: 300, windows: [id(1)]),
             Column(id: ColumnID(2), width: 300, windows: [id(2)]),
@@ -119,8 +120,8 @@ final class WorkspaceVisibilityTests: XCTestCase {
         first.focusedColumn = 1
         first.focusedWindow = id(2)
         manager.update(first)
-        XCTAssertTrue(manager.moveWindow(id(2), to: 4))
-        XCTAssertEqual(manager.windows(outside: [1]), [id(2)])
+        XCTAssertTrue(manager.moveWindow(id(2), to: 4))   // beyond the stack: the spare
+        XCTAssertEqual(manager.windows(outside: [first.id]), [id(2)])
         // Focus falls to the neighbour that stayed behind.
         XCTAssertEqual(manager.workspace(1)?.focusedWindow, id(1))
     }

@@ -9,27 +9,27 @@ final class FocusWindowPlanTests: XCTestCase {
 
     private func manager() -> WorkspaceManager {
         var manager = WorkspaceManager()
-        let first = Workspace(
-            id: WorkspaceID(1),
-            columns: [Column(id: ColumnID(1), width: 0, windows: [id(1)])],
-            focusedColumn: 0, focusedWindow: id(1)
-        )
-        let third = Workspace(
-            id: WorkspaceID(3),
-            columns: [
-                Column(id: ColumnID(1), width: 0, windows: [id(2)]),
-                Column(id: ColumnID(2), width: 0, windows: [id(3), id(4)]),
-            ],
-            focusedColumn: 0, focusedWindow: id(2)
-        )
+        var first = manager.currentWorkspace()
+        first.columns = [Column(id: ColumnID(1), width: 0, windows: [id(1)])]
+        first.focusedColumn = 0
+        first.focusedWindow = id(1)
         manager.update(first)
-        manager.update(third)
+        manager.focusDown()
+        var second = manager.currentWorkspace()
+        second.columns = [
+            Column(id: ColumnID(1), width: 0, windows: [id(2)]),
+            Column(id: ColumnID(2), width: 0, windows: [id(3), id(4)]),
+        ]
+        second.focusedColumn = 0
+        second.focusedWindow = id(2)
+        manager.update(second)
+        manager.switchTo(1)
         return manager
     }
 
     func testWindowOnAnotherWorkspaceSwitchesToItAndFocusesIt() throws {
         let plan = try XCTUnwrap(planFocusWindow(id(4), in: manager()))
-        XCTAssertEqual(plan.index, 3)
+        XCTAssertEqual(plan.index, 2)
         XCTAssertTrue(plan.switchesWorkspace)
         XCTAssertEqual(plan.workspace.focusedWindow, id(4))
         XCTAssertEqual(plan.workspace.focusedColumn, 1)

@@ -8,12 +8,12 @@ Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges 
 
 - **Scrollable column layout.** Windows live in columns; the focused column is always revealed by scrolling the strip minimally (Niri rule). Windows inside a column share its height.
 - **Keyboard control** (global `Alt`-based shortcuts, all rebindable in `config.toml`): focus and move windows, cycle or step column widths, maximize a column, center a column, consume/expel windows between columns, toggle floating and fullscreen.
-- **Nine workspaces.** Windows of inactive workspaces are hidden by parking them off the bottom corner of the display, and the switch is animated.
+- **Dynamic vertical workspaces.** Like Niri, each display has its own stack of workspaces with always one empty workspace at the bottom; emptied workspaces disappear once you leave them. Windows of inactive workspaces are hidden off the bottom corner of the display, and the switch is animated.
 - **Automatic window admission.** Every window is classified as tile, float (with a reason), ignore or suspend. Dialogs, fixed-size windows and panels float; minimized windows stay registered and rejoin their column when restored.
 - **Window rules.** `[[window-rules]]` in the config can force an app to float, tile or start on a given workspace.
 - **Parking of off-viewport columns.** macOS will not place a window fully off-screen, so hidden columns keep a 1 pt sliver inside the display edge.
 - **Animation.** Scroll, focus and workspace moves are animated by writing interpolated frames through Accessibility, with a configurable duration.
-- **Multi-display aware** layout state (one workspace and viewport per display).
+- **Multi-display aware** layout state (one workspace stack and viewport per display).
 - **Desktop app.** One main window (Overview, Shortcuts, Layout, Animations, Rules, Logs, Diagnostics), a menu bar item, and an `Alt+Space` launcher panel. Closing the window keeps Gio running from the menu bar.
 - **Config with live reload.** `~/.config/gio/config.toml` is a strict subset of TOML. Invalid config never breaks the window manager; it falls back to defaults and reports the problems.
 - **Command line.** A `gio` client controls the running app over a Unix socket. A separate `gio-poc` tool exercises Accessibility directly and can restore windows after a crash.

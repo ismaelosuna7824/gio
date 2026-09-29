@@ -97,6 +97,9 @@ final class IPCTests: XCTestCase {
 
     func testStatusQueryJSON() throws {
         var session = CommandSession()
+        var seed = session.manager.currentWorkspace()
+        seed.columns = [Column(id: ColumnID(9), width: 100, windows: [WindowID(pid: 7, elementID: 9)])]
+        session.manager.update(seed)
         XCTAssertTrue(session.manager.switchTo(2))
         let empty = try JSONSerialization.jsonObject(
             with: queryStatus(session: session).data(using: .utf8)!
@@ -105,7 +108,7 @@ final class IPCTests: XCTestCase {
         XCTAssertEqual(empty["columns"] as! Int, 0)
         XCTAssertTrue(empty["focusedWindow"] is NSNull)
 
-        var first = session.manager.workspace(2)!
+        var first = session.manager.currentWorkspace()
         let id = WindowID(pid: 7, elementID: 3)
         first.columns = [Column(id: ColumnID(1), width: 300, windows: [id])]
         first.focusedWindow = id
@@ -116,6 +119,15 @@ final class IPCTests: XCTestCase {
         XCTAssertEqual(filled["columns"] as! Int, 1)
         XCTAssertEqual(filled["focusedWindow"] as! String, "7:3")
         XCTAssertEqual(filled["windows"] as! Int, 1)
+        // NF-02: every display's stack is reported (index, counts, active).
+        let stacks = filled["stacks"] as! [[String: Any]]
+        XCTAssertEqual(stacks.count, 1)
+        XCTAssertEqual(stacks[0]["focused"] as! Bool, true)
+        XCTAssertEqual(stacks[0]["active"] as! Int, 2)
+        let entries = stacks[0]["workspaces"] as! [[String: Any]]
+        XCTAssertEqual(entries.map { $0["index"] as! Int }, [1, 2, 3])
+        XCTAssertEqual(entries.map { $0["windows"] as! Int }, [1, 1, 0])
+        XCTAssertEqual(entries.map { $0["active"] as! Bool }, [false, true, false])
     }
 
     func testDispatchStatusAndUnknown() {

@@ -31,8 +31,24 @@ public func queryStatus(session: CommandSession) -> String {
             "title": window.title,
         ]
     }
+    // NF-02: `workspace` stays the current index; `stacks` lists every
+    // display's dynamic stack (index, window/column counts, active marker).
+    let stacks: [[String: Any]] = session.manager.stackSummaries().map { summary in
+        [
+            "display": summary.display.rawValue,
+            "focused": summary.isFocused,
+            "active": summary.activeIndex,
+            "workspaces": summary.workspaces.map { entry -> [String: Any] in
+                [
+                    "index": entry.index, "windows": entry.windows,
+                    "columns": entry.columns, "active": entry.isActive,
+                ]
+            },
+        ]
+    }
     let dict: [String: Any] = [
         "workspace": session.manager.current,
+        "stacks": stacks,
         "focusedWindow": focused,
         "columns": workspace.columns.count,
         "windows": windows,

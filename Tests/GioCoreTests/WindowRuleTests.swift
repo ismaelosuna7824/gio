@@ -62,16 +62,34 @@ final class WindowRuleTests: XCTestCase {
         let registry = parts.0
         var manager = parts.1
         let rules = [WindowRule(app: "Calc", mode: .floating, workspace: 3)]
+        try placeWindow(window(1), rules: [], appKey: "Code", registry: registry, manager: &manager)
         let calc = ManagedWindow(
             id: id(7), pid: 11, application: "Calc", title: "",
             frame: CGRect(x: 0, y: 0, width: 300, height: 300), mode: .tiled
         )
         let placement = try placeWindow(calc, rules: rules, appKey: "Calc", registry: registry, manager: &manager)
-        XCTAssertEqual(placement, WindowPlacement(workspace: 3, column: 0))
+        // NF-02: index 3 is beyond the stack [1, spare], so the rule lands on
+        // the trailing empty workspace (index 2), which then grows a new spare.
+        XCTAssertEqual(placement, WindowPlacement(workspace: 2, column: 0))
         XCTAssertEqual(registry.find(id(7))!.mode, .floating)
-        XCTAssertEqual(manager.workspace(3)!.focusedWindow, id(7))
+        XCTAssertEqual(manager.workspace(2)!.focusedWindow, id(7))
         XCTAssertEqual(manager.current, 1)
-        XCTAssertTrue(manager.workspace(1)!.columns.isEmpty)
+        XCTAssertEqual(manager.stack(on: manager.focusedDisplay).count, 3)
+    }
+
+    func testRuleIndexWithinTheStackPicksThatWorkspace() throws {
+        let parts = setup()
+        let registry = parts.0
+        var manager = parts.1
+        try placeWindow(window(1), rules: [], appKey: "Code", registry: registry, manager: &manager)
+        manager.focusDown()
+        try placeWindow(window(2), rules: [], appKey: "Code", registry: registry, manager: &manager)
+        manager.switchTo(1)
+        let rules = [WindowRule(app: "Calc", workspace: 2)]
+        let placement = try placeWindow(window(3, app: "Calc"), rules: rules, appKey: "Calc", registry: registry, manager: &manager)
+        XCTAssertEqual(placement.workspace, 2)
+        XCTAssertEqual(manager.workspace(2)!.columns.count, 2)
+        XCTAssertEqual(manager.current, 1)
     }
 
     func testPlaceWindowIgnoresInvalidWorkspace() throws {

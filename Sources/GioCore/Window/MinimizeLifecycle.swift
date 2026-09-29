@@ -17,10 +17,9 @@ public func minimizeWindow(
     guard (try? registry.setMinimized(true, for: id)) != nil else {
         return false
     }
-    for index in WorkspaceManager.range {
-        guard var workspace = manager.workspace(index),
-              workspace.focusedWindow == id
-        else {
+    for candidate in manager.allWorkspaces {
+        var workspace = candidate
+        guard workspace.focusedWindow == id else {
             continue
         }
         let visible: (WindowID) -> Bool = { registry.find($0)?.isMinimized == false }
@@ -59,10 +58,9 @@ public func restoreWindow(
     guard (try? registry.setMinimized(false, for: id)) != nil else {
         return false
     }
-    for index in WorkspaceManager.range {
-        guard var workspace = manager.workspace(index),
-              let column = workspace.columns.firstIndex(where: { $0.windows.contains(id) })
-        else {
+    for candidate in manager.allWorkspaces {
+        var workspace = candidate
+        guard let column = workspace.columns.firstIndex(where: { $0.windows.contains(id) }) else {
             continue
         }
         workspace.focusedColumn = column

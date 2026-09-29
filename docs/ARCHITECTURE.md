@@ -84,8 +84,8 @@ Any new code path that enumerates windows or adopts focus must go through these 
 | `WindowRegistry` | Single owner of window membership (managed vs ignored). |
 | `Column` | Ordered vertical stack of `WindowID`s, a `ColumnWidthSpec` (`standard`, `proportion`, `points`), optional saved width (maximize toggle) and per-window height weights. |
 | `Workspace` | Horizontal strip of columns, `focusedColumn`, `focusedWindow`, `viewportOffset`. |
-| `WorkspaceManager` | Nine workspaces (`1...9`) and the current index. |
-| `DisplayManager` / `DisplayState` | Per display: frame, which workspace it shows, viewport. Connecting or disconnecting a display never touches workspaces. |
+| `WorkspaceManager` | NF-02 dynamic vertical workspaces: an ordered stack per display, stable `WorkspaceID`s, 1-based indices that shift. Invariants after every operation: exactly one trailing empty workspace per stack, empty workspaces the display is not on are removed, the active one may be empty only until you leave it, and windows are never lost (a removed display merges its windows into a survivor). `current` is the focused display's active workspace; `stackSummaries()` feeds status, the menu bar and the Overview. |
+| `DisplayManager` / `DisplayState` | Per display: frame, which workspace it shows (mirrored from `WorkspaceManager.activeID(on:)` on every reflow), viewport. The manager owns the stacks; `syncDisplays` registers displays and merges the windows of a vanished one into a surviving stack. |
 
 ## Event pipeline
 

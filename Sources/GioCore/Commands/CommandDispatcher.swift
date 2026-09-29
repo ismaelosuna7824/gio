@@ -74,12 +74,15 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return (["windows=\(windows.count)"] + windows.map(describeManagedWindow)).joined(separator: "\n")
     case .listWorkspaces:
         var lines = ["workspaces current=\(session.manager.current)"]
-        for index in WorkspaceManager.range {
-            let workspace = session.manager.workspace(index)!
-            let mark = index == session.manager.current ? "*" : " "
-            lines.append(
-                "\(mark)\(index) columns=\(workspace.columns.count) windows=\(workspace.columns.map(\.windows.count).reduce(0, +))"
-            )
+        let summaries = session.manager.stackSummaries()
+        for summary in summaries {
+            if summaries.count > 1 {
+                lines.append("display=\(summary.display.rawValue)\(summary.isFocused ? " focused" : "")")
+            }
+            for entry in summary.workspaces {
+                let mark = entry.isActive && summary.isFocused ? "*" : (entry.isActive ? "+" : " ")
+                lines.append("\(mark)\(entry.index) columns=\(entry.columns) windows=\(entry.windows)")
+            }
         }
         return lines.joined(separator: "\n")
     case .focus(let direction):
@@ -100,10 +103,12 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         session.manager.update(after)
         return "moved column=\(after.focusedColumn)"
     case .workspace(let number):
-        guard session.manager.switchTo(number) else {
+        guard WorkspaceManager.range.contains(number), session.manager.switchTo(number) else {
             return "invalid workspace (1...9)"
         }
-        return "switched to workspace \(number)"
+        return number == session.manager.current
+            ? "switched to workspace \(session.manager.current)"
+            : "switched to workspace \(session.manager.current) (\(number) is beyond the stack)"
     case .layoutInfo:
         let workspace = session.manager.currentWorkspace()
         var lines = [

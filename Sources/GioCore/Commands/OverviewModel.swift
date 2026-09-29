@@ -30,11 +30,15 @@ public struct WindowFact: Equatable, Sendable {
 
 public struct DisplayFact: Equatable, Sendable {
     public let id: UInt32
+    /// Index of the display's active workspace in its own stack.
     public let workspace: Int
+    /// The display's whole dynamic stack (NF-02); empty when unknown.
+    public let stack: [WorkspaceEntry]
 
-    public init(id: UInt32, workspace: Int) {
+    public init(id: UInt32, workspace: Int, stack: [WorkspaceEntry] = []) {
         self.id = id
         self.workspace = workspace
+        self.stack = stack
     }
 }
 
@@ -179,8 +183,14 @@ public func makeOverview(_ facts: SessionFacts) -> Overview {
     if facts.displays.isEmpty {
         displayLines = ["Current workspace: \(facts.currentWorkspace)"]
     } else {
-        displayLines = facts.displays.sorted { $0.id < $1.id }.enumerated().map { index, display in
-            "Display \(index + 1): workspace \(display.workspace)"
+        displayLines = facts.displays.sorted { $0.id < $1.id }.enumerated().flatMap { index, display in
+            var lines = ["Display \(index + 1): workspace \(display.workspace)"]
+            if !display.stack.isEmpty {
+                lines.append("Stack: " + display.stack.map { entry in
+                    (entry.isActive ? "▸" : "") + entry.label
+                }.joined(separator: " · "))
+            }
+            return lines
         }
     }
     let rows = windowRows(facts.windows)

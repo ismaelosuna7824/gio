@@ -48,7 +48,9 @@ struct OverviewView: View {
                         .foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
-                ForEach(overview.displayLines, id: \.self) { Text($0).foregroundStyle(.secondary) }
+                ForEach(Array(overview.displayLines.enumerated()), id: \.offset) { _, line in
+                    Text(line).foregroundStyle(.secondary)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

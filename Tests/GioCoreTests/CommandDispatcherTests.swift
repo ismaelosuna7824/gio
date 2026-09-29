@@ -44,14 +44,24 @@ final class CommandDispatcherTests: XCTestCase {
 
     func testDispatchWorkspaceAndLists() {
         var session = CommandSession()
-        XCTAssertEqual(dispatch(.workspace(4), session: &session), "switched to workspace 4")
-        XCTAssertEqual(session.manager.current, 4)
+        // Dynamic stack (NF-02): one empty workspace at start, so index 4 is
+        // beyond it and lands on the trailing one.
+        XCTAssertEqual(
+            dispatch(.workspace(4), session: &session),
+            "switched to workspace 1 (4 is beyond the stack)"
+        )
+        XCTAssertEqual(session.manager.current, 1)
         XCTAssertEqual(
             dispatch(.workspace(42), session: &session), "invalid workspace (1...9)"
         )
+        var first = session.manager.currentWorkspace()
+        first.columns = [Column(id: ColumnID(1), width: 300, windows: [WindowID(pid: 1, elementID: 1)])]
+        session.manager.update(first)
+        XCTAssertEqual(dispatch(.workspace(2), session: &session), "switched to workspace 2")
         let list = dispatch(.listWorkspaces, session: &session)
-        XCTAssertTrue(list.contains("workspaces current=4"))
-        XCTAssertTrue(list.contains("*4 columns=0"))
+        XCTAssertTrue(list.contains("workspaces current=2"))
+        XCTAssertTrue(list.contains(" 1 columns=1 windows=1"))
+        XCTAssertTrue(list.contains("*2 columns=0 windows=0"))
         XCTAssertEqual(dispatch(.listWindows, session: &session), "windows=0")
         XCTAssertTrue(dispatch(.layoutInfo, session: &session).contains("columns=0"))
     }
@@ -64,7 +74,7 @@ final class CommandDispatcherTests: XCTestCase {
             frame: CGRect(x: 0, y: 0, width: 100, height: 100), mode: .tiled
         )
         try registry.register(window)
-        var first = session.manager.workspace(1)!
+        var first = session.manager.currentWorkspace()
         first.columns = [Column(id: ColumnID(1), width: 300, windows: [window.id])]
         first.focusedWindow = window.id
         session.manager.update(first)

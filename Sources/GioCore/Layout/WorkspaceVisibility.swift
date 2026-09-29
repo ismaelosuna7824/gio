@@ -77,10 +77,10 @@ public struct HiddenWindowBook: Equatable, Sendable {
 extension WorkspaceManager {
     /// Windows that belong to a workspace no display shows: the ones a
     /// reflow must hide.
-    public func windows(outside shown: Set<Int>) -> Set<WindowID> {
+    public func windows(outside shown: Set<WorkspaceID>) -> Set<WindowID> {
         var hidden: Set<WindowID> = []
-        for index in Self.range where !shown.contains(index) {
-            for column in workspace(index)?.columns ?? [] {
+        for workspace in allWorkspaces where !shown.contains(workspace.id) {
+            for column in workspace.columns {
                 hidden.formUnion(column.windows)
             }
         }

@@ -69,9 +69,7 @@ final class SessionHost: @unchecked Sendable {
     private var player: MotionPlayer?
     private var motionTimer: DispatchSourceTimer?
     private var skipAnimationOnce = false
-    /// NC-06: the workspace the last reflow showed (so a switch knows which
-    /// display to repoint) and the pre-hide frames of floating windows.
-    private var shownWorkspace: WorkspaceID?
+    /// NC-06: the pre-hide frames of floating windows.
     private var hiddenBook = HiddenWindowBook()
     private static let motionFrameInterval: DispatchTimeInterval = .microseconds(8333)
     private var focusSettle = FocusSettle<FocusEvent>()
@@ -244,7 +242,7 @@ final class SessionHost: @unchecked Sendable {
             }
             let previous = session.manager.currentWorkspace().focusedWindow
             if plan.switchesWorkspace {
-                _ = session.manager.switchTo(plan.index)
+                _ = session.manager.focus(plan.workspace.id)
                 syncShownWorkspace()
             }
             session.manager.update(plan.workspace)
@@ -335,25 +333,28 @@ final class SessionHost: @unchecked Sendable {
     /// Must run on `queue`.
     private func sessionFacts() -> SessionFacts {
         let displayStates = displays.allDisplays()
-        let shown = displayStates.isEmpty
-            ? [session.manager.current]
-            : displayStates.map { Int($0.workspace.rawValue) }
-        var owner: [WindowID: Int] = [:]
-        for index in WorkspaceManager.range {
-            for column in session.manager.workspace(index)?.columns ?? [] {
-                for id in column.windows {
-                    owner[id] = index
+        let shown = session.manager.activeIDs
+        var owner: [WindowID: (index: Int, id: WorkspaceID)] = [:]
+        for display in session.manager.displayIDs {
+            for (offset, workspace) in session.manager.stack(on: display).enumerated() {
+                for column in workspace.columns {
+                    for id in column.windows {
+                        owner[id] = (offset + 1, workspace.id)
+                    }
                 }
             }
         }
+        let summaries = Dictionary(
+            uniqueKeysWithValues: session.manager.stackSummaries().map { ($0.display, $0) }
+        )
         let windows = session.registry.managedWindows().map { window -> WindowFact in
-            let workspace = owner[window.id]
+            let workspace = owner[window.id]?.index
             return WindowFact(
                 id: "\(window.id.pid):\(window.id.elementID)",
                 application: window.application, title: window.title, workspace: workspace,
                 mode: window.mode, floatReason: window.floatReason,
                 isMinimized: window.isMinimized,
-                workspaceIsShown: workspace.map(shown.contains) ?? true
+                workspaceIsShown: owner[window.id].map { shown.contains($0.id) } ?? true
             )
         }
         let path = session.configPath
@@ -363,7 +364,11 @@ final class SessionHost: @unchecked Sendable {
             configMessages: configMessages, accessibilityGranted: hasAXPermission(),
             currentWorkspace: session.manager.current,
             displays: displayStates.map {
-                DisplayFact(id: $0.id.rawValue, workspace: Int($0.workspace.rawValue))
+                DisplayFact(
+                    id: $0.id.rawValue,
+                    workspace: summaries[$0.id]?.activeIndex ?? 1,
+                    stack: summaries[$0.id]?.workspaces ?? []
+                )
             },
             windows: windows
         )
@@ -609,10 +614,10 @@ final class SessionHost: @unchecked Sendable {
         minimumSizes.forget(id)
         try? session.registry.register(window)
         if let wanted = outcome.workspace,
-           WorkspaceManager.range.contains(wanted),
-           wanted != session.manager.current
+           let destID = session.manager.ruleTarget(wanted),
+           destID != session.manager.currentID
         {
-            var dest = session.manager.workspace(wanted)!
+            var dest = session.manager.workspace(id: destID)!
             var column = Column(
                 id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
                 width: 0, windows: [id]
@@ -672,10 +677,8 @@ final class SessionHost: @unchecked Sendable {
             fullscreen.forget(id)
             actuator?.forget(elementID: id.elementID)
         }
-        for index in WorkspaceManager.range {
-            guard var workspace = session.manager.workspace(index) else {
-                continue
-            }
+        for candidate in session.manager.allWorkspaces {
+            var workspace = candidate
             let before = workspace
             workspace.stripWindows(idSet)
             if workspace != before {
@@ -687,13 +690,16 @@ final class SessionHost: @unchecked Sendable {
     private func syncDisplays() {
         let snapshot = snapshotDisplayList()
         let seen = Set(snapshot.map(\.id))
+        // Each display owns a workspace stack: register them first so a
+        // vanished display's windows merge into a survivor before anything
+        // is laid out.
+        session.manager.syncDisplays(snapshot.map(\.id))
         for display in snapshot {
             visibleFrames[display.id] = display.visibleFrame
-            if displays.display(display.id) == nil {
-                displays.connect(display.id, frame: display.frame, workspace: WorkspaceID(UInt64(session.manager.current)))
-            } else {
-                displays.connect(display.id, frame: display.frame, workspace: displays.display(display.id)!.workspace)
-            }
+            displays.connect(
+                display.id, frame: display.frame,
+                workspace: session.manager.activeID(on: display.id) ?? session.manager.currentID
+            )
         }
         for known in displays.allDisplays().map(\.id) where !seen.contains(known) {
             displays.disconnect(known)
@@ -782,7 +788,7 @@ final class SessionHost: @unchecked Sendable {
     private func isVisibleInViewport(_ id: WindowID) -> Bool? {
         let modes = tileableModes()
         for display in displays.allDisplays() {
-            guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)),
+            guard let workspace = session.manager.workspace(id: display.workspace),
                   workspace.columns.contains(where: { $0.windows.contains(id) })
             else {
                 continue
@@ -805,7 +811,7 @@ final class SessionHost: @unchecked Sendable {
     private func pendingScroll() -> (from: CGFloat, to: CGFloat)? {
         let modes = tileableModes()
         for display in displays.allDisplays() {
-            guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)),
+            guard let workspace = session.manager.workspace(id: display.workspace),
                   let planned = try? planDisplayLayout(
                       workspace: workspace, modes: modes, engine: engine(),
                       viewport: visibleFrames[display.id] ?? display.frame,
@@ -875,7 +881,7 @@ final class SessionHost: @unchecked Sendable {
         // Focusing away from a fullscreen window brings its column back.
         fullscreen.release(
             keeping: Set(displays.allDisplays().compactMap {
-                session.manager.workspace(Int($0.workspace.rawValue))?.focusedWindow
+                session.manager.workspace(id: $0.workspace)?.focusedWindow
             }),
             registry: session.registry
         )
@@ -889,7 +895,7 @@ final class SessionHost: @unchecked Sendable {
         var hovered: [WindowID: CGRect] = [:]
         let inactive = planInactiveWorkspaces()
         for (index, display) in displays.allDisplays().enumerated() {
-            guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
+            guard let workspace = session.manager.workspace(id: display.workspace) else {
                 continue
             }
             let visible = visibleFrames[display.id] ?? display.frame
@@ -897,7 +903,7 @@ final class SessionHost: @unchecked Sendable {
                 workspace: workspace, modes: modes, engine: engine(),
                 viewport: visible, display: display.frame,
                 otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame),
-                centering: Int(display.workspace.rawValue) == session.manager.current ? centering : .none
+                centering: display.workspace == session.manager.currentID ? centering : .none
             ) else {
                 continue
             }
@@ -980,9 +986,11 @@ final class SessionHost: @unchecked Sendable {
     /// Point a display at the current workspace when none shows it yet: the
     /// display that showed the previous one switches over.
     private func syncShownWorkspace() {
-        let current = WorkspaceID(UInt64(session.manager.current))
-        displays.show(current, replacing: shownWorkspace)
-        shownWorkspace = current
+        for display in displays.allDisplays() {
+            if let active = session.manager.activeID(on: display.id), active != display.workspace {
+                displays.assign(display.id, workspace: active)
+            }
+        }
     }
 
     /// Windows of workspaces no display shows hang off a corner of the first
@@ -994,7 +1002,7 @@ final class SessionHost: @unchecked Sendable {
         guard let hiddenDisplay = all.first else {
             return plan
         }
-        let shown = Set(all.map { Int($0.workspace.rawValue) })
+        let shown = Set(all.map(\.workspace))
         let windows = Dictionary(
             uniqueKeysWithValues: session.registry.managedWindows().map { ($0.id, $0) }
         )
@@ -1016,8 +1024,8 @@ final class SessionHost: @unchecked Sendable {
             frames: frames, display: hiddenDisplay.frame,
             otherDisplays: all.filter { $0.id != hiddenDisplay.id }.map(\.frame)
         )
-        let active = shown.flatMap { index in
-            (session.manager.workspace(index)?.columns ?? []).flatMap(\.windows)
+        let active = shown.flatMap { id in
+            (session.manager.workspace(id: id)?.columns ?? []).flatMap(\.windows)
         }
         // Keep the memory until the window really sits at its frame: a
         // retarget mid-flight (or an abandoned animation) must find it again.
@@ -1751,8 +1759,8 @@ final class SessionHost: @unchecked Sendable {
 
     /// Usable frame of the display showing the current workspace.
     private func focusedViewport() -> CGRect {
-        let current = session.manager.current
-        let display = displays.allDisplays().first { Int($0.workspace.rawValue) == current }
+        let current = session.manager.currentID
+        let display = displays.allDisplays().first { $0.workspace == current }
             ?? displays.allDisplays().first
         return display.map { visibleFrames[$0.id] ?? $0.frame }
             ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
@@ -1779,8 +1787,8 @@ final class SessionHost: @unchecked Sendable {
         guard let id = workspace.focusedWindow else {
             return
         }
-        let current = session.manager.current
-        guard let display = displays.allDisplays().first(where: { Int($0.workspace.rawValue) == current })
+        let current = session.manager.currentID
+        guard let display = displays.allDisplays().first(where: { $0.workspace == current })
             ?? displays.allDisplays().first
         else {
             return

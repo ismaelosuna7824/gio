@@ -18,6 +18,7 @@ extension WindowID {
 /// session has to switch there, and that workspace with the window adopted as
 /// its focus. Pure; the host applies it and asks the reconciler to focus.
 public struct WindowFocusPlan: Equatable, Sendable {
+    /// 1-based index in the owning display's stack (stable id: `workspace.id`).
     public var index: Int
     public var workspace: Workspace
     public var switchesWorkspace: Bool
@@ -25,9 +26,12 @@ public struct WindowFocusPlan: Equatable, Sendable {
 
 /// Nil when no workspace holds `id`.
 public func planFocusWindow(_ id: WindowID, in manager: WorkspaceManager) -> WindowFocusPlan? {
-    for index in WorkspaceManager.range {
-        if let workspace = manager.workspace(index), let adopted = adoptingFocus(id, in: workspace) {
-            return WindowFocusPlan(index: index, workspace: adopted, switchesWorkspace: index != manager.current)
+    for workspace in manager.allWorkspaces {
+        if let adopted = adoptingFocus(id, in: workspace), let place = manager.location(of: workspace.id) {
+            return WindowFocusPlan(
+                index: place.index, workspace: adopted,
+                switchesWorkspace: workspace.id != manager.currentID
+            )
         }
     }
     return nil

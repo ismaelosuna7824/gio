@@ -57,13 +57,8 @@ public func placeWindow(
     var placed = window
     placed.mode = outcome.mode ?? .tiled
     try registry.register(placed)
-    let destIndex: Int = {
-        if let wanted = outcome.workspace, WorkspaceManager.range.contains(wanted) {
-            return wanted
-        }
-        return manager.current
-    }()
-    var dest = manager.workspace(destIndex)!
+    let destID = outcome.workspace.flatMap { manager.ruleTarget($0) } ?? manager.currentID
+    var dest = manager.workspace(id: destID)!
     var column = Column(
         id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
         width: 0,
@@ -74,5 +69,8 @@ public func placeWindow(
     dest.focusedColumn = dest.columns.count - 1
     dest.focusedWindow = placed.id
     manager.update(dest)
-    return WindowPlacement(workspace: destIndex, column: dest.columns.count - 1)
+    return WindowPlacement(
+        workspace: manager.location(of: destID)?.index ?? manager.current,
+        column: dest.columns.count - 1
+    )
 }

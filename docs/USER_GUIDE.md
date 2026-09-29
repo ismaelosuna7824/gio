@@ -7,7 +7,7 @@ Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#
 ## Concepts
 
 - **Strip and viewport.** Each workspace is a horizontal strip of **columns**. A column stacks one or more windows vertically. The display is a viewport onto the strip and scrolls to keep the focused column visible.
-- **Workspaces.** Nine (`1` to `9`). Windows of workspaces that no display shows are hidden off the bottom corner of the display.
+- **Workspaces.** Niri-style dynamic vertical stack, one per display. You start with one empty workspace. Putting a window in the last (empty) workspace opens a new empty one below it, so there is always exactly one empty workspace at the bottom. An empty workspace you are not on is removed: leave it and it disappears, and the indices below it shift up. Windows are never lost when a workspace disappears (it only ever disappears when it is empty), and a display that is unplugged hands its windows to a remaining display's stack. `Alt+1` to `Alt+9` address the workspace at that position in the focused display's stack; a number past the end of the stack goes to the empty workspace at the bottom. Windows of workspaces that no display shows are hidden off the bottom corner of the display. Every switch, up or down, animates vertically through the bottom edge because macOS cannot place windows above the menu bar.
 - **Modes.** A window is `tiled` (in the strip), `floating` (managed but outside the strip, keeps its own frame) or `fullscreen` (Gio's layout mode filling the display under the menu bar, not a native macOS fullscreen Space).
 - **Alt** means the **Option** key.
 
@@ -159,7 +159,7 @@ A rule is a `[[window-rules]]` block:
 | --- | --- | --- | --- |
 | `app` | yes | non-empty string | **Exact** application name as macOS reports it (`localizedName`). No globs, no prefixes, no bundle IDs. |
 | `mode` | no | `"tiled"`, `"floating"`, `"fullscreen"` | Force the window's mode. |
-| `workspace` | no | integer `1` to `9` | Put the window on this workspace when it appears. |
+| `workspace` | no | integer `1` to `9` | Put the window on this position of the focused display's workspace stack when it appears. A number past the end of the stack uses the empty workspace at the bottom (intermediate empty workspaces cannot exist), so `workspace = 3` on a two-workspace stack lands on the bottom empty one. |
 
 Behavior:
 
@@ -189,7 +189,7 @@ Settings edits are text-level: unrelated lines, comments and ordering survive, t
 
 ### Menu bar item
 
-Title `Gio` (updated from the status query every 3 s). Menu: **Open Gio**, **Workspace 1** to **Workspace 9** (check mark on the current one), window and column counts, **Reload Config**, **Preferences...** (opens the main window), **Launcher...**, **Quit Gio**. With no session it shows `no session` and disables session actions. **Quit Gio** runs the normal shutdown, which restores parked windows.
+Title `Gio` (updated from the status query every 3 s). Menu: **Open Gio**, the workspace stack of each display (**Workspace N · windows**, check mark on the active one, only the focused display's rows switch), window and column counts, **Reload Config**, **Preferences...** (opens the main window), **Launcher...**, **Quit Gio**. With no session it shows `no session` and disables session actions. **Quit Gio** runs the normal shutdown, which restores parked windows.
 
 ## Launcher
 
@@ -217,12 +217,12 @@ swift run GioCLI status
 | `gio reload` | Re-read `config.toml`; prints messages if any. |
 | `gio restart` | Replies `restarting Gio session`, then Gio restores every window, releases its socket and lock, starts a fresh instance of itself (the app bundle, or the bare executable under `swift run`) and exits. The new instance waits up to about five seconds for the lock. Under `swift run` the new process is a child of the old one, so run it from a shell you keep open. |
 | `gio list-windows` | One line per managed window: pid, app, title, frame, mode, reason, minimized. |
-| `gio list-workspaces` | The nine workspaces with column and window counts; the current one is marked `*`. |
+| `gio list-workspaces` | The workspace stack with column and window counts; the current one is marked `*` (with several displays each stack is headed `display=<id>`, other displays' active workspace is marked `+`). |
 | `gio focus left\|right\|up\|down` | Move focus like `Alt+H/L/K/J`. |
 | `gio move left\|right\|up\|down` | Move the focused window like `Alt+Shift+H/L/K/J`. (The built-in usage text prints `up/down`; the parser wants `up` or `down`.) |
-| `gio workspace 1...9` | Switch workspace. |
+| `gio workspace 1...9` | Focus the workspace at this position of the focused display's stack (past the end: the empty one at the bottom). |
 | `gio layout info` | Current workspace columns, viewport offset, focused column and column widths. |
-| `gio status` | JSON snapshot: `workspace`, `focusedWindow`, `columns`, `windows`, `modes`, `floatingWindows`, `minimizedWindows`. Used by scripts and the menu bar. |
+| `gio status` | JSON snapshot: `workspace` (index of the current workspace in its stack), `stacks` (per display: `display`, `focused`, `active`, and `workspaces` with `index`, `windows`, `columns`, `active`), `focusedWindow`, `columns`, `windows`, `modes`, `floatingWindows`, `minimizedWindows`. Used by scripts and the menu bar. |
 | `gio setup` | Checks permission, writes the config template if none exists, reports bindings and themes. |
 | `gio doctor` | Health report: Accessibility, config, version, IPC, displays, recent errors. |
 | `gio update` | Reports that updates are not published yet. |

@@ -97,6 +97,22 @@ final class OverviewModelTests: XCTestCase {
         XCTAssertEqual(overview.windows.count, 1)
     }
 
+    func testOverviewListsEachDisplaysWorkspaceStack() {
+        let stack = [
+            WorkspaceEntry(index: 1, windows: 3, columns: 2, isActive: false),
+            WorkspaceEntry(index: 2, windows: 1, columns: 1, isActive: true),
+            WorkspaceEntry(index: 3, windows: 0, columns: 0, isActive: false),
+        ]
+        let overview = makeOverview(SessionFacts(
+            configPath: "/c", configExists: true, configMessages: [],
+            accessibilityGranted: true, currentWorkspace: 2,
+            displays: [DisplayFact(id: 10, workspace: 2, stack: stack)], windows: []
+        ))
+        XCTAssertEqual(overview.displayLines, [
+            "Display 1: workspace 2", "Stack: 1 (3) · ▸2 (1) · 3 (empty)",
+        ])
+    }
+
     func testConfigSummaryVariants() {
         func summary(exists: Bool, messages: [String]) -> String {
             makeOverview(SessionFacts(

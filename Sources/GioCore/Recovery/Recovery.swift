@@ -85,10 +85,8 @@ public func recover(state: inout RecoveryState, input: RecoveryInput) -> Recover
 }
 
 private func stripFromWorkspaces(_ ids: Set<WindowID>, state: inout RecoveryState) {
-    for index in WorkspaceManager.range {
-        guard var workspace = state.manager.workspace(index) else {
-            continue
-        }
+    for candidate in state.manager.allWorkspaces {
+        var workspace = candidate
         let before = workspace
         workspace.stripWindows(ids)
         if workspace != before {
