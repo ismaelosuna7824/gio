@@ -12,10 +12,19 @@ public protocol WindowActuator: AnyObject {
     /// Cumulative Accessibility calls issued for windows of `pid`. Optional
     /// instrumentation (MO-01): the default reports 0.
     func axCallCount(forPid pid: pid_t) -> Int
+    /// Hot-path write (MO-02): the caller already read `current` this pass,
+    /// so the implementation must not read it again, and `verify == false`
+    /// (parked windows, whose clamped landing is accepted anyway) skips the
+    /// blocking read-back. The default forwards to the plain `setFrame`.
+    func setFrame(_ frame: CGRect, from current: CGRect, for id: WindowID, verify: Bool) throws
 }
 
 public extension WindowActuator {
     func axCallCount(forPid pid: pid_t) -> Int { 0 }
+
+    func setFrame(_ frame: CGRect, from current: CGRect, for id: WindowID, verify: Bool) throws {
+        try setFrame(frame, for: id)
+    }
 }
 
 /// What one `reconcile` pass did, in deterministic (sorted) order.
@@ -213,7 +222,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             return
         }
         do {
-            try actuator.setFrame(desired, for: id)
+            try actuator.setFrame(desired, from: actual, for: id, verify: parkedTarget == nil)
             record(id, parkedTarget != nil, into: &report)
         } catch {
             // macOS may clamp a parked position; accept a landing that is

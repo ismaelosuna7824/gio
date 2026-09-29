@@ -13,7 +13,9 @@ import GioCore
 /// Write order relearns the hard-won rule: position-first when the target
 /// grows in either dimension (a size-first write of a large frame from a
 /// small tiled position overflows and macOS clamps it), size-first when
-/// shrinking. Every write verifies with ±1pt readback.
+/// shrinking. Visible writes verify the changed attributes with ±1pt
+/// readback; parked writes skip it (their clamped landing is accepted on
+/// the next pass anyway).
 public final class AXWindowActuator: WindowActuator {
     private struct Handle {
         let element: AXUIElement
@@ -90,6 +92,18 @@ public final class AXWindowActuator: WindowActuator {
     }
 
     public func setFrame(_ frame: CGRect, for id: WindowID) throws {
+        // Cold path (restore, one-off callers): the caller has no frame, so
+        // read it once, then share the lean write.
+        guard let current = try self.frame(of: id) else {
+            throw SystemWindowActionError.frameMismatch(requested: frame, actual: .zero)
+        }
+        try setFrame(frame, from: current, for: id, verify: true)
+    }
+
+    /// Hot path (MO-02): no pre-read, no settable probes (tileability is
+    /// cached per window by the host), only changed attributes are written,
+    /// and only those are read back — nothing at all when `verify` is false.
+    public func setFrame(_ frame: CGRect, from current: CGRect, for id: WindowID, verify: Bool) throws {
         // Cocoa in, AX on the wire: convert first, then all logic below is
         // in AX space (order rule, verification). Returned frame is Cocoa.
         let target = flip.toAX(frame)
@@ -103,33 +117,12 @@ public final class AXWindowActuator: WindowActuator {
         guard let handle = handle(for: id) else {
             throw SystemWindowActionError.unknownHandle(elementID: id.elementID)
         }
-        countCalls(2, pid: id.pid)
-        let current = try readFrame(handle.element)
-        guard let current else {
-            // Vanished between diff and write: report honestly, write nothing.
-            throw SystemWindowActionError.frameMismatch(requested: frame, actual: .zero)
-        }
-        if framesEqual(current, target) {
-            return
-        }
-        countCalls(2, pid: id.pid)
-        try checkAXSettable(handle.element, attribute: kAXPositionAttribute as String)
-        try checkAXSettable(handle.element, attribute: kAXSizeAttribute as String)
-        countCalls(2, pid: id.pid)
-        let growing = target.size.width > current.size.width + 1
-            || target.size.height > current.size.height + 1
-        if growing {
-            try writeAXPosition(target.origin, to: handle.element)
-            try writeAXSize(target.size, to: handle.element)
-        } else {
-            try writeAXSize(target.size, to: handle.element)
-            try writeAXPosition(target.origin, to: handle.element)
-        }
-        countCalls(2, pid: id.pid)
-        let actual = try readFrame(handle.element)
-        guard let actual, framesEqual(actual, target) else {
+        let io = AXElementFrameIO(element: handle.element) { [self] in countCalls($0, pid: id.pid) }
+        do {
+            try writeFrame(current: flip.toAX(current), target: target, verify: verify, io: io)
+        } catch FrameWriteError.mismatch(let actual) {
             throw SystemWindowActionError.frameMismatch(
-                requested: frame, actual: actual.map { flip.toCocoa($0) } ?? .zero
+                requested: frame, actual: actual == .zero ? .zero : flip.toCocoa(actual)
             )
         }
     }
@@ -190,21 +183,52 @@ func readFrame(_ element: AXUIElement) throws -> CGRect? {
     return CGRect(origin: point, size: dimensions)
 }
 
-func framesEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
-    abs(lhs.origin.x - rhs.origin.x) <= 1
-        && abs(lhs.origin.y - rhs.origin.y) <= 1
-        && abs(lhs.size.width - rhs.size.width) <= 1
-        && abs(lhs.size.height - rhs.size.height) <= 1
-}
+/// `FrameAttributeIO` over a real window element; every call is counted.
+struct AXElementFrameIO: FrameAttributeIO {
+    let element: AXUIElement
+    let count: (Int) -> Void
 
-func checkAXSettable(_ element: AXUIElement, attribute: String) throws {
-    var settable = DarwinBoolean(false)
-    let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
-    guard status == .success, settable.boolValue else {
-        if status != .success {
-            throw SystemWindowActionError.writeFailed(attribute: attribute, status: status)
+    func readPosition() throws -> CGPoint? {
+        count(1)
+        var raw: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &raw)
+        if status == .invalidUIElement {
+            return nil
         }
-        throw SystemWindowActionError.notSettable(attribute: attribute)
+        var point = CGPoint.zero
+        guard status == .success, let raw, CFGetTypeID(raw) == AXValueGetTypeID(),
+              AXValueGetValue(raw as! AXValue, .cgPoint, &point), point.x.isFinite, point.y.isFinite
+        else {
+            throw SystemWindowActionError.readbackFailed(attribute: "position", status: status)
+        }
+        return point
+    }
+
+    func readSize() throws -> CGSize? {
+        count(1)
+        var raw: CFTypeRef?
+        let status = AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &raw)
+        if status == .invalidUIElement {
+            return nil
+        }
+        var size = CGSize.zero
+        guard status == .success, let raw, CFGetTypeID(raw) == AXValueGetTypeID(),
+              AXValueGetValue(raw as! AXValue, .cgSize, &size),
+              size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0
+        else {
+            throw SystemWindowActionError.readbackFailed(attribute: "size", status: status)
+        }
+        return size
+    }
+
+    func writePosition(_ point: CGPoint) throws {
+        count(1)
+        try writeAXPosition(point, to: element)
+    }
+
+    func writeSize(_ size: CGSize) throws {
+        count(1)
+        try writeAXSize(size, to: element)
     }
 }
 
