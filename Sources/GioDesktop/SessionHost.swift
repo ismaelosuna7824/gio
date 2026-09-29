@@ -37,6 +37,13 @@ final class SessionHost: @unchecked Sendable {
     private let dispatcher = HotkeyDispatcher()
     private var isShuttingDown = false
     private var reflowDeferral = ReflowDeferral()
+    /// MO-04: where each window physically is (last applied or sampled
+    /// frame), the frame player and its display-rate timer. All on `queue`.
+    private var physicalFrames: [WindowID: CGRect] = [:]
+    private var player: MotionPlayer?
+    private var motionTimer: DispatchSourceTimer?
+    private var skipAnimationOnce = false
+    private static let motionFrameInterval: DispatchTimeInterval = .microseconds(8333)
     private var focusSettle = FocusSettle<FocusEvent>()
     private let clickLock = NSLock()
     private var tappedClick: MouseClick?
@@ -111,6 +118,8 @@ final class SessionHost: @unchecked Sendable {
             }
             isShuttingDown = true
             pendingReflow?.cancel()
+            stopMotion()
+            reconciler?.waitForMotionIdle(timeout: 0.3)
             restoreOffscreenWindows(session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id))
         }
         server?.stop()
@@ -350,6 +359,7 @@ final class SessionHost: @unchecked Sendable {
             session.registry.remove(id)
             tileability.invalidate(id)
             echoGate.forget(id)
+            physicalFrames.removeValue(forKey: id)
             fullscreenRecords.removeValue(forKey: id)
             actuator?.forget(elementID: id.elementID)
         }
@@ -512,7 +522,7 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    private func performReflow() {
+    private func performReflow(animate: Bool = true) {
         guard let actuator else {
             return
         }
@@ -523,7 +533,13 @@ final class SessionHost: @unchecked Sendable {
             appName: { NSRunningApplication(processIdentifier: $0)?.localizedName }
         )
         self.reconciler = reconciler
+        let settings = session.config.animations
+        let skip = skipAnimationOnce
+        skipAnimationOnce = false
+        let animating = animate && !skip && settings.isActive
         let modes = tileableModes()
+        var plans: [ParkingPlan] = []
+        var animations: [WindowAnimation] = []
         for display in displays.allDisplays() {
             guard let workspace = session.manager.workspace(Int(display.workspace.rawValue)) else {
                 continue
@@ -536,14 +552,30 @@ final class SessionHost: @unchecked Sendable {
             ) else {
                 continue
             }
-            let plan = planned.plan
-            // Never let the reconciler raise a minimized window.
-            let focused = workspace.focusedWindow.flatMap {
-                session.registry.find($0)?.isMinimized == true ? nil : $0
+            plans.append(planned.plan)
+            if animating {
+                learnPhysicalFrames(of: planned.plan.visible.keys)
+                animations += planMotion(
+                    current: physicalFrames, visible: planned.plan.visible,
+                    parked: planned.plan.parked, viewport: visible, duration: settings.duration
+                )
             }
+            // Logical state moves at once; only the physical writes animate.
+            session.manager.update(planned.workspace)
+            displays.updateViewport(
+                Viewport(offset: planned.layout.viewportOffset, width: visible.width), for: display.id
+            )
+        }
+        if !animations.isEmpty {
+            startMotion(animations, reconciler: reconciler)
+            return
+        }
+        stopMotion()
+        for plan in plans {
+            // Never let the reconciler raise a minimized window: reflow
+            // applies geometry only, focus is adopted elsewhere.
             let report = reconciler.reconcile(
-                frames: plan.visible, parked: plan.parked,
-                focused: focused, currentlyFocused: focused
+                frames: plan.visible, parked: plan.parked, focused: nil, currentlyFocused: nil
             )
             GioLog.record(
                 .info,
@@ -551,14 +583,76 @@ final class SessionHost: @unchecked Sendable {
             )
             // Our writes echo back as moved/resized events: remember them
             // (parked ones too, so they never retrigger a reflow).
-            echoGate.recordApplied(
-                plan.visible.merging(plan.parked.mapValues(\.frame)) { first, _ in first },
-                at: ProcessInfo.processInfo.systemUptime
-            )
-            session.manager.update(planned.workspace)
-            displays.updateViewport(
-                Viewport(offset: planned.layout.viewportOffset, width: visible.width), for: display.id
-            )
+            let applied = plan.visible.merging(plan.parked.mapValues(\.frame)) { first, _ in first }
+            echoGate.recordApplied(applied, at: ProcessInfo.processInfo.systemUptime)
+            physicalFrames.merge(applied) { _, new in new }
+            for id in report.failed + report.vanished {
+                physicalFrames.removeValue(forKey: id)
+            }
+        }
+    }
+
+    // MARK: - Motion (MO-04)
+
+    /// Windows about to be seen but never placed by us (new ones) have no
+    /// known physical frame; one read each lets them slide in.
+    private func learnPhysicalFrames(of ids: some Sequence<WindowID>) {
+        for id in ids where physicalFrames[id] == nil {
+            if let frame = try? actuator?.frame(of: id) {
+                physicalFrames[id] = frame
+            }
+        }
+    }
+
+    private func startMotion(_ animations: [WindowAnimation], reconciler: WindowReconciler<AXWindowActuator>) {
+        let player = self.player ?? MotionPlayer(
+            sink: reconciler,
+            appName: { NSRunningApplication(processIdentifier: $0)?.localizedName }
+        )
+        self.player = player
+        player.start(animations)
+        guard motionTimer == nil else {
+            return
+        }
+        // A display-rate timer on the session queue: a tick only samples and
+        // hands frames to per-app lanes (never an AX call here), so it costs
+        // microseconds, and sampling by elapsed time keeps late ticks honest.
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
+        timer.schedule(deadline: .now(), repeating: Self.motionFrameInterval, leeway: .microseconds(500))
+        timer.setEventHandler { [weak self] in
+            self?.motionTick()
+        }
+        motionTimer = timer
+        timer.resume()
+    }
+
+    private func stopMotion() {
+        motionTimer?.cancel()
+        motionTimer = nil
+        player?.cancel()
+    }
+
+    private func motionTick() {
+        guard let player, player.isActive, !isShuttingDown else {
+            stopMotion()
+            return
+        }
+        if NSEvent.pressedMouseButtons != 0 {
+            // Nothing moves under the cursor: abandon the flight, and let
+            // the deferred reflow finish instantly after release.
+            stopMotion()
+            skipAnimationOnce = true
+            reflowAll()
+            return
+        }
+        let tick = player.tick()
+        physicalFrames.merge(tick.sampled) { _, new in new }
+        // Frame writes raise moved events like any other write of ours.
+        echoGate.recordApplied(tick.sampled, at: ProcessInfo.processInfo.systemUptime)
+        if let summary = tick.summary {
+            stopMotion()
+            GioLog.record(.info, summary.logLine)
+            performReflow(animate: false)
         }
     }
 
@@ -700,6 +794,10 @@ final class SessionHost: @unchecked Sendable {
             }
         case .frameChanged(let invalidate):
             guard let known else {
+                return
+            }
+            // Animation frames raise a burst of events: skip the AX read.
+            if echoGate.isSuppressed(known, at: ProcessInfo.processInfo.systemUptime) {
                 return
             }
             if let observed = try? actuator?.frame(of: known),

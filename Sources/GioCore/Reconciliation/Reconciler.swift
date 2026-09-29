@@ -83,6 +83,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let appName: @Sendable (pid_t) -> String?
     private let concurrency: LaneConcurrency
     private let executor = LaneExecutor()
+    private let motion = MotionBook()
 
     /// Timing of the most recent `reconcile` pass (MO-01).
     public private(set) var lastTiming: ReflowTiming?
@@ -187,6 +188,9 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         currentlyFocused: WindowID?
     ) -> ReconcileReport {
         var report = ReconcileReport()
+        // An animation frame still being written would make its app look
+        // busy and fail; let it land first (bounded by the stall timeout).
+        waitForMotionIdle(timeout: 0.3)
         let started = clock()
         let lanes = planWriteLanes(frames: frames, parked: parked)
         let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, appName: appName)
@@ -264,6 +268,34 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return report
     }
 
+    /// MO-04 animation frame: written on the app's own lane, position and/or
+    /// size only, unverified (the final reconcile verifies). Never blocks and
+    /// never queues; false means the app is still busy and the frame is dropped.
+    public func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool {
+        guard executor.claim(pid) else {
+            return false
+        }
+        motion.group.enter()
+        let worker = MotionWorker(actuator: actuator, clock: clock, appName: appName)
+        let executor = executor, motion = motion
+        DispatchQueue.global(qos: .userInteractive).async {
+            for write in writes {
+                worker.write(write, into: motion)
+            }
+            executor.release(pid)
+            motion.group.leave()
+        }
+        return true
+    }
+
+    public func waitForMotionIdle(timeout: TimeInterval) {
+        _ = motion.group.wait(timeout: .now() + timeout)
+    }
+
+    public func takeMotionTimings() -> [WindowWriteTiming] {
+        motion.takeTimings()
+    }
+
     /// Gio is leaving: bring every listed window that is parked or off-screen
     /// back inside its display (see `planRestore`). Windows already on
     /// screen are not written. Never focuses; vanished windows are recorded.
@@ -310,6 +342,41 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// Largest strip of a parked window allowed inside its display.
     public static var maxParkedStrip: CGFloat { parkedStripLimit }
 }
+
+/// Timings and the in-flight marker of motion frames (MO-04).
+final class MotionBook: @unchecked Sendable {
+    let group = DispatchGroup()
+    private let lock = NSLock()
+    private var timings: [WindowWriteTiming] = []
+
+    func record(_ timing: WindowWriteTiming) {
+        lock.withLock { timings.append(timing) }
+    }
+
+    func takeTimings() -> [WindowWriteTiming] {
+        lock.withLock { defer { timings = [] }; return timings }
+    }
+}
+
+private struct MotionWorker<Actuator: WindowActuator>: @unchecked Sendable {
+    let actuator: Actuator
+    let clock: ReflowClock
+    let appName: @Sendable (pid_t) -> String?
+
+    func write(_ write: MotionWrite, into book: MotionBook) {
+        let callsBefore = actuator.axCallCount(forPid: write.id.pid)
+        let started = clock()
+        // A failed frame is not retried: the final reconcile owns correctness.
+        try? actuator.setFrame(write.to, from: write.from, for: write.id, verify: false)
+        book.record(WindowWriteTiming(
+            id: write.id, app: appName(write.id.pid) ?? "pid\(write.id.pid)",
+            milliseconds: (clock() - started) * 1000,
+            axCalls: actuator.axCallCount(forPid: write.id.pid) - callsBefore
+        ))
+    }
+}
+
+extension WindowReconciler: MotionFrameSink {}
 
 let parkedStripLimit: CGFloat = 40
 

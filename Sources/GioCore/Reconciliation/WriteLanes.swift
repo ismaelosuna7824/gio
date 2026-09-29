@@ -160,11 +160,11 @@ final class LaneExecutor: @unchecked Sendable {
         return outcome
     }
 
-    private func claim(_ pid: pid_t) -> Bool {
+    func claim(_ pid: pid_t) -> Bool {
         lock.withLock { busyPids.insert(pid).inserted }
     }
 
-    private func release(_ pid: pid_t) {
+    func release(_ pid: pid_t) {
         lock.withLock { _ = busyPids.remove(pid) }
     }
 }
