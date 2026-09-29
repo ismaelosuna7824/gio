@@ -58,18 +58,18 @@ pure parts; Conventional Commits, NO Co-Authored-By; push after verified batches
   over-budget=8 unmatched=1` (cold, fetch inside budget). Added measure mode (2s cap, fetch/p50/p90/
   max/backdrop/unmatched reasons) + SCShareableContent prefetch outside the budget. Bundles
   25/7/19/33/920 all 0 failures (parent re-ran). LIVE PENDING: user measurement.
-- [ ] SM-02c — Fixes from live measurement: (a) PA-04 regression — render verification with
+- [x] SM-02c (`71998d1`) — Fixes from live measurement: (a) PA-04 regression — render verification with
   `.optionOnScreenOnly` silently skips a visible target that is NOT on screen (live: focus ring on
   WhatsApp's frame, window not drawn, no `render mismatch`); a missing expected window must count
   as a mismatch and get the nudge; (b) Figma unmatched (`no-same-size-cg-entry`: AX 888 vs actual
   900 after min-size learning) — match by nearest frame within pid when unique, tolerant to learned
   minimum sizes.
-- [ ] SM-03 — Overlay renderer: per-display overlay window, backdrop + window layers, CA spring
+- [x] SM-03 (`6cc3b76`) — Overlay renderer: per-display overlay window, backdrop + window layers, CA spring
   animations (position + bounds), retarget from presentation values, teardown.
-- [ ] SM-04 — Orchestration: motion start -> capture -> overlay + single real write -> settle ->
+- [x] SM-04 (`cef607d`) — Orchestration: motion start -> capture -> overlay + single real write -> settle ->
   remove overlay; rapid retargets reuse layers, newly involved windows captured on demand; focus ring
   and focus intent timing preserved; workspace switch + maximize + scroll paths.
-- [ ] SM-05 — Safety + docs: watchdog, fallback matrix, memory limits (release images), docs.
+- [x] SM-05 (`0089044`) — Safety + docs: watchdog, fallback matrix, memory limits (release images), docs.
 
 Evidence SM-00..02 (route: one delegated writer): resize default never; renderer setting +
 effectiveRenderer (snapshot only when configured + granted) + permission UI (button-only
@@ -78,6 +78,15 @@ CGWindowID, exclusions, budget 45ms) + SnapshotCapturer (macOS 14+, else fallbac
 "Test snapshot capture". RED -> GREEN (GioMacOS parser test not run red first — noted). Bundles
 25/7/19/33/914 all 0 failures (parent re-ran); signed build OK. Snapshot renderer not wired yet.
 LIVE PENDING: capture latency measurement by user.
+
+Evidence SM-02c..05 (route: one delegated writer; RED compile per task, two small tests written
+with impl — noted): missing on-screen window = mismatch ws=missing, 80%-overlap matching; overlay
+level normal+1 below ring/Dock/menus, CASpringAnimation (k, 2ζ√k), wallpaper backdrop; cache =
+visible columns + adjacent columns + adjacent-workspace focused (<=12, 300ms after settle, LRU,
+60s max age); any visible window without image -> whole motion via AX (`snapshot fallback
+reason=cache-miss`); ring hidden during flight; 1.5s watchdog, mouse-down abort, display change,
+revoked permission -> AX. Bundles 25/7/19/33/969 all 0 failures (parent re-ran); signed build OK.
+Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallbacks. LIVE PENDING.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
@@ -96,3 +105,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-09-29: document created after live evidence. Next: SM-00..SM-02.
 - 2026-09-29: SM-00..SM-02 done, pushed. Next: user measures capture latency; then SM-03/SM-04.
 - 2026-09-29: measured (above); user accepted pre-capture + wallpaper backdrop tradeoff. Next: SM-02c, SM-03..SM-05 (route: one delegated writer, sequential commits).
+- 2026-09-29: SM-02c..SM-05 done, pushed. Next: user live test of snapshot renderer.
