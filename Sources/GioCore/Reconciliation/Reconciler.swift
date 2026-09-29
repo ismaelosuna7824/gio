@@ -354,6 +354,50 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return written.sorted()
     }
 
+    /// FI-05: read-only current frames for the render check, one lane per
+    /// app so a hung app cannot stall the rest. Vanished or unreadable
+    /// windows are absent from the result. Never writes.
+    public func currentFrames(of ids: [WindowID]) -> [WindowID: CGRect] {
+        guard !ids.isEmpty else {
+            return [:]
+        }
+        let lanes = planWriteLanes(frames: Dictionary(uniqueKeysWithValues: ids.map { ($0, CGRect.zero) }), parked: [:])
+        let reader = FrameReader(actuator: actuator)
+        let results = executor.run(lanes: lanes, mode: concurrency) { reader.read($0.id) }
+        var frames: [WindowID: CGRect] = [:]
+        for item in lanes.flatMap(\.items) {
+            if case .completed(let frame?)? = results[item.index] {
+                frames[item.id] = frame
+            }
+        }
+        return frames
+    }
+
+    /// FI-05 corrective nudge: write each window's steps in order (lean,
+    /// unverified, each from the previous step) on its app's lane. Returns
+    /// the ids whose every step was written, sorted. Never focuses; the
+    /// caller bounds it to one nudge per window per settle.
+    @discardableResult
+    public func nudge(steps: [WindowID: [CGRect]]) -> [WindowID] {
+        let known = steps.filter { !$0.value.isEmpty }
+        guard !known.isEmpty else {
+            return []
+        }
+        waitForMotionIdle(timeout: 0.3)
+        let lanes = planWriteLanes(frames: known.mapValues { $0.last! }, parked: [:])
+        let writer = NudgeWriter(actuator: actuator)
+        let results = executor.run(lanes: lanes, mode: concurrency) { item in
+            writer.write(known[item.id]!, for: item.id)
+        }
+        var written: [WindowID] = []
+        for item in lanes.flatMap(\.items) {
+            if case .completed(true)? = results[item.index] {
+                written.append(item.id)
+            }
+        }
+        return written.sorted()
+    }
+
     public func waitForMotionIdle(timeout: TimeInterval) {
         _ = motion.group.wait(timeout: .now() + timeout)
     }
@@ -421,6 +465,31 @@ final class MotionBook: @unchecked Sendable {
 
     func takeTimings() -> [WindowWriteTiming] {
         lock.withLock { defer { timings = [] }; return timings }
+    }
+}
+
+private struct FrameReader<Actuator: WindowActuator>: @unchecked Sendable {
+    let actuator: Actuator
+
+    func read(_ id: WindowID) -> CGRect? {
+        (try? actuator.frame(of: id)) ?? nil
+    }
+}
+
+private struct NudgeWriter<Actuator: WindowActuator>: @unchecked Sendable {
+    let actuator: Actuator
+
+    func write(_ steps: [CGRect], for id: WindowID) -> Bool {
+        guard var current = (try? actuator.frame(of: id)) ?? nil else {
+            return false
+        }
+        for step in steps {
+            guard (try? actuator.setFrame(step, from: current, for: id, verify: false)) != nil else {
+                return false
+            }
+            current = step
+        }
+        return true
     }
 }
 

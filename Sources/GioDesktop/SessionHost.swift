@@ -69,6 +69,9 @@ final class SessionHost: @unchecked Sendable {
     private var player: MotionPlayer?
     private var motionTimer: DispatchSourceTimer?
     private var skipAnimationOnce = false
+    /// FI-05: render verification bookkeeping (session queue only).
+    private var renderChecks = RenderCheckBook()
+    private var renderCheckWanted = false
     /// NC-06: the pre-hide frames of floating windows.
     private var hiddenBook = HiddenWindowBook()
     private static let motionFrameInterval: DispatchTimeInterval = .microseconds(8333)
@@ -867,6 +870,8 @@ final class SessionHost: @unchecked Sendable {
         }
         // Every exit (animation started or instant pass) refreshes the ring.
         defer { publishFocusRing() }
+        // A new pass invalidates any pending render check (FI-05).
+        renderChecks.cancel()
         // One reconciler for the session: it remembers apps whose write lane
         // is still stuck so a hung app is never written twice at once.
         let reconciler = self.reconciler ?? WindowReconciler(
@@ -978,7 +983,102 @@ final class SessionHost: @unchecked Sendable {
             for id in report.failed + report.vanished {
                 physicalFrames.removeValue(forKey: id)
             }
+            if !report.applied.isEmpty || !report.parked.isEmpty {
+                renderCheckWanted = true
+            }
         }
+        if renderCheckWanted {
+            renderCheckWanted = false
+            scheduleRenderCheck()
+        }
+    }
+
+    // MARK: - Render verification (FI-05)
+
+    /// ~150 ms after a settle that moved windows, compare Accessibility with
+    /// the WindowServer for the windows that should be on screen.
+    private func scheduleRenderCheck() {
+        let token = renderChecks.schedule()
+        queue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.runRenderCheck(token: token)
+        }
+    }
+
+    /// Never while a newer pass superseded the check, a motion is in
+    /// flight, a mouse button is down or Gio is leaving.
+    private func renderCheckMayRun(_ token: Int) -> Bool {
+        !isShuttingDown && renderChecks.isCurrent(token) && player?.isActive != true
+            && NSEvent.pressedMouseButtons == 0
+    }
+
+    private func renderViewports() -> [CGRect] {
+        displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame }
+    }
+
+    private func renderMismatches(
+        _ reconciler: WindowReconciler<AXWindowActuator>, targets: [WindowID: CGRect]
+    ) -> [RenderMismatch] {
+        let axFrames = reconciler.currentFrames(of: targets.keys.sorted())
+        return findRenderMismatches(
+            axFrames: axFrames, server: windowServerWindows(displayHeight: mainHeight()),
+            targets: targets, viewports: renderViewports()
+        )
+    }
+
+    private func runRenderCheck(token: Int) {
+        guard renderCheckMayRun(token), let reconciler else {
+            return
+        }
+        let targets = hoverFrames
+        let mismatches = renderMismatches(reconciler, targets: targets)
+        guard !mismatches.isEmpty else {
+            return
+        }
+        for mismatch in mismatches {
+            GioLog.record(
+                renderChecks.mismatchLevel(for: mismatch.id),
+                renderMismatchLine(
+                    id: mismatch.id, app: appName(mismatch.id.pid), ax: mismatch.ax, ws: mismatch.ws
+                )
+            )
+        }
+        // Corrective nudge through the reconciler, once per window per settle.
+        let viewports = renderViewports()
+        var steps: [WindowID: [CGRect]] = [:]
+        for id in renderChecks.claimNudges(mismatches.map(\.id)) {
+            guard let target = targets[id] else {
+                continue
+            }
+            let viewport = viewports.first { $0.intersects(target) } ?? target
+            steps[id] = planNudge(target: target, viewport: viewport)
+        }
+        let written = reconciler.nudge(steps: steps)
+        guard !written.isEmpty else {
+            return
+        }
+        echoGate.recordApplied(
+            Dictionary(uniqueKeysWithValues: written.compactMap { id in targets[id].map { (id, $0) } }),
+            at: ProcessInfo.processInfo.systemUptime
+        )
+        queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            guard let self, self.renderCheckMayRun(token), let reconciler = self.reconciler else {
+                return
+            }
+            let still = Set(
+                self.renderMismatches(reconciler, targets: targets.filter { written.contains($0.key) }).map(\.id)
+            )
+            for id in written {
+                let fixed = !still.contains(id)
+                GioLog.record(
+                    fixed ? .info : .warn,
+                    renderNudgeLine(id: id, app: self.appName(id.pid), fixed: fixed)
+                )
+            }
+        }
+    }
+
+    private func appName(_ pid: pid_t) -> String {
+        NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid\(pid)"
     }
 
     // MARK: - Workspace visibility (NC-06)
@@ -1073,6 +1173,7 @@ final class SessionHost: @unchecked Sendable {
         )
         self.player = player
         player.start(animations)
+        renderCheckWanted = true
         guard motionTimer == nil else {
             return
         }
