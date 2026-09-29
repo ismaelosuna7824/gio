@@ -25,7 +25,7 @@ open/close animations, tabbed columns, mouse move.
   batches; no PR. Quote trailing-space path.
 
 ## Tasks
-- [ ] NF-01 — Focus ring: borderless click-through overlay framing the focused window, follows
+- [x] NF-01 (`9680776`) — Focus ring: borderless click-through overlay framing the focused window, follows
   reflows and motion frames, hidden when nothing is focused / Gio's window is frontmost /
   fullscreen; config `[focus-ring] enabled, width, active-color` (theme-aware default), settings UI.
 - [ ] NF-02 — Dynamic vertical workspaces per display: always exactly one trailing empty
@@ -33,6 +33,14 @@ open/close animations, tabbed columns, mouse move.
   Alt+Shift+U / Alt+Shift+I move window down/up (creating the trailing one), Alt+1..9 index the
   stack, animated vertical switch reusing NC-07, hide/restore semantics preserved; app/menu bar
   and ShortcutCatalog updated.
+
+Evidence NF-01 (route: delegated writer): pure focusRingState (hidden: disabled/width 0/no focus/
+minimized/fullscreen/off-viewport <24pt), LatestValueMailbox coalescing, `.floating`
+non-activating click-through panel, published per reflow/adoption/reload/motion tick (no AX).
+Color: active-color > theme borderActive > #7fc8ff. 30 tests RED -> GREEN; bundles 20/7/19/30/679
+all 0 failures (parent re-ran); signed build OK. Gaps: user-dragged floating window ring stale
+until next reflow; ring tracks session focus, not unmanaged frontmost apps. LIVE PENDING.
+Review: UNAVAILABLE.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
@@ -49,3 +57,4 @@ open/close animations, tabbed columns, mouse move.
 
 ## Progress
 - 2026-09-29: document created; live verification of FI-04 and earlier pending on the user. Next: NF-01.
+- 2026-09-29: NF-01 done, pushed. Next: NF-02.
