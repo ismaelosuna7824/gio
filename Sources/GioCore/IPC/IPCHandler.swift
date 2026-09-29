@@ -24,6 +24,13 @@ public func queryStatus(session: CommandSession) -> String {
         }
         return entry
     }
+    let minimized: [[String: String]] = managed.filter(\.isMinimized).map { window in
+        [
+            "id": "\(window.id.pid):\(window.id.elementID)",
+            "app": window.application,
+            "title": window.title,
+        ]
+    }
     let dict: [String: Any] = [
         "workspace": session.manager.current,
         "focusedWindow": focused,
@@ -31,6 +38,7 @@ public func queryStatus(session: CommandSession) -> String {
         "windows": windows,
         "modes": modes,
         "floatingWindows": floating,
+        "minimizedWindows": minimized,
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
           let text = String(data: data, encoding: .utf8)

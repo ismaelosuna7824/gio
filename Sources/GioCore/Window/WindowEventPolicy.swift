@@ -37,9 +37,12 @@ public enum WindowEventAction: Equatable, Sendable {
     /// Geometry changed: unless it echoes our own write, optionally
     /// re-probe tileability for this window only, then reflow.
     case frameChanged(invalidateTileability: Bool)
-    /// Reflow for this window's state change (minimize lifecycle proper
-    /// arrives later).
+    /// Reflow for this window's state change.
     case reflow
+    /// Known window minimized: keep it registered, out of the layout.
+    case minimize
+    /// Known window deminimized: back into its column, focused.
+    case restore
     case updateTitle
     /// Fall back to the debounced full resync.
     case resync
@@ -59,9 +62,9 @@ public func windowEventAction(for kind: WindowEventKind, isKnownWindow: Bool) ->
     case .resized:
         return isKnownWindow ? .frameChanged(invalidateTileability: true) : .ignore
     case .miniaturized:
-        return isKnownWindow ? .reflow : .ignore
+        return isKnownWindow ? .minimize : .ignore
     case .deminiaturized:
-        return isKnownWindow ? .reflow : .register
+        return isKnownWindow ? .restore : .register
     case .titleChanged:
         return isKnownWindow ? .updateTitle : .ignore
     case .focusedWindowChanged:

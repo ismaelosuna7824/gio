@@ -49,6 +49,12 @@ public func reconcileTileability(
 ) -> [WindowID: WindowMode] {
     var modes: [WindowID: WindowMode] = [:]
     for window in registry.managedWindows() {
+        if window.isMinimized {
+            // Out of the layout without a probe (a minimized window's
+            // attributes are unreliable); any non-tiled mode filters it.
+            modes[window.id] = .floating
+            continue
+        }
         let probed = window.mode == .tiled
             || (window.mode == .floating && window.floatReason == .notResizable)
         guard probed else {

@@ -88,7 +88,10 @@ final class SessionHost: @unchecked Sendable {
         let response = dispatchIPC(argv, session: &session)
         if case .success(let command) = parsed {
             switch command {
-            case .focus, .move, .workspace, .reload:
+            case .reload:
+                reapplyRules()
+                reflowAll()
+            case .focus, .move, .workspace:
                 reflowAll()
             default:
                 break
@@ -129,21 +132,27 @@ final class SessionHost: @unchecked Sendable {
         let flip = AXVerticalFlip(displayHeight: mainHeight())
         var liveIDs = Set<WindowID>()
         var focusedID: WindowID?
-        let candidates = found.windows.filter { !$0.window.isMinimized }
-            + found.floating.filter { !$0.window.isMinimized }
-        for candidate in candidates {
+        // Minimized windows are candidates too: they stay registered (and
+        // keep their column) but sit out of the layout.
+        for candidate in found.windows + found.floating {
             if let known = actuator?.id(
                 matching: candidate.element, pid: candidate.window.pid
             ) {
                 liveIDs.insert(known)
                 if var record = session.registry.find(known) {
-                    record.frame = flip.toCocoa(candidate.window.frame)
+                    if !candidate.window.isMinimized {
+                        record.frame = flip.toCocoa(candidate.window.frame)
+                    }
                     if let title = candidate.window.title, !title.isEmpty {
                         record.title = title
                     }
                     try? session.registry.update(record)
+                    // A missed minimize/deminimize event heals here.
+                    if record.isMinimized != candidate.window.isMinimized {
+                        applyMinimized(candidate.window.isMinimized, to: known)
+                    }
                 }
-                if candidate.window.isFocused {
+                if candidate.window.isFocused && !candidate.window.isMinimized {
                     focusedID = known
                 }
                 continue
@@ -164,6 +173,35 @@ final class SessionHost: @unchecked Sendable {
         if onlyPID == nil {
             reapDeadPids(live: liveIDs)
         }
+        // Fallback for destroyed events whose element match failed: windows
+        // of a fully-read pid that the scan no longer lists are gone.
+        purge(vanishedWindowIDs(
+            registered: session.registry.managedWindows(),
+            scannedPIDs: found.completePIDs,
+            present: liveIDs
+        ))
+    }
+
+    private func applyMinimized(_ minimized: Bool, to id: WindowID) {
+        if minimized {
+            minimizeWindow(id, registry: session.registry, manager: &session.manager)
+        } else {
+            restoreWindow(id, registry: session.registry, manager: &session.manager)
+        }
+    }
+
+    /// Config reload: rule-owned floats follow the new rules. Workspace
+    /// assignment is not re-applied (rules place windows at arrival only).
+    private func reapplyRules() {
+        for change in reevaluateRules(session.config.rules, windows: session.registry.managedWindows()) {
+            switch change {
+            case .float(let id):
+                try? session.registry.setFloating(.rule, for: id)
+            case .tile(let id):
+                try? session.registry.setMode(.tiled, for: id)
+                tileability.invalidate(id)
+            }
+        }
     }
 
     /// Register a genuinely new window: fresh ID, retained AX handles,
@@ -182,7 +220,8 @@ final class SessionHost: @unchecked Sendable {
             application: candidate.window.appName,
             title: candidate.window.title ?? "",
             frame: AXVerticalFlip(displayHeight: mainHeight()).toCocoa(candidate.window.frame),
-            mode: .tiled
+            mode: .tiled,
+            isMinimized: candidate.window.isMinimized
         )
         let outcome = evaluateRules(session.config.rules, app: window.application)
         window.mode = outcome.mode ?? .tiled
@@ -207,8 +246,10 @@ final class SessionHost: @unchecked Sendable {
             )
             column.focusedWindowIndex = 0
             dest.columns.append(column)
-            dest.focusedColumn = dest.columns.count - 1
-            dest.focusedWindow = id
+            if !window.isMinimized {
+                dest.focusedColumn = dest.columns.count - 1
+                dest.focusedWindow = id
+            }
             session.manager.update(dest)
         } else {
             var current = session.manager.currentWorkspace()
@@ -218,8 +259,10 @@ final class SessionHost: @unchecked Sendable {
             )
             column.focusedWindowIndex = 0
             current.columns.append(column)
-            current.focusedColumn = current.columns.count - 1
-            current.focusedWindow = id
+            if !window.isMinimized {
+                current.focusedColumn = current.columns.count - 1
+                current.focusedWindow = id
+            }
             session.manager.update(current)
         }
         eventObserver?.watch(window: candidate.element, pid: candidate.window.pid)
@@ -343,7 +386,10 @@ final class SessionHost: @unchecked Sendable {
                 }
             }
             let (placed, _) = splitVisibleFrames(layout.frames, in: visible)
-            let focused = workspace.focusedWindow
+            // Never let the reconciler raise a minimized window.
+            let focused = workspace.focusedWindow.flatMap {
+                session.registry.find($0)?.isMinimized == true ? nil : $0
+            }
             _ = reconciler.reconcile(
                 frames: placed, focused: focused, currentlyFocused: focused
             )
@@ -524,6 +570,16 @@ final class SessionHost: @unchecked Sendable {
             scheduleReflow(full: false)
         case .reflow:
             scheduleReflow(full: false)
+        case .minimize:
+            if let known {
+                minimizeWindow(known, registry: session.registry, manager: &session.manager)
+                reflowAll()
+            }
+        case .restore:
+            if let known {
+                restoreWindow(known, registry: session.registry, manager: &session.manager)
+                reflowAll()
+            }
         case .updateTitle:
             if let known, let element, let title = axTitle(of: element), !title.isEmpty,
                var record = session.registry.find(known)
@@ -541,16 +597,13 @@ final class SessionHost: @unchecked Sendable {
     /// A window appeared after startup (created or deminiaturized): classify
     /// it with the admission rules, register it, reflow at once. Attributes
     /// of a brand-new window are often unreadable for a moment, so an
-    /// unclassifiable element is retried a few times; minimized windows are
-    /// left for the minimize lifecycle.
+    /// unclassifiable element is retried a few times. Minimized windows
+    /// register too (out of the layout until deminimized).
     private func registerAppearedWindow(_ element: AXUIElement, pid: pid_t, attempt: Int) {
         if actuator?.id(matching: element, pid: pid) != nil {
             return
         }
         if let candidate = discoverSystemWindow(element: element, pid: pid) {
-            guard !candidate.window.isMinimized else {
-                return
-            }
             registerNew(candidate)
             reflowAll()
         } else if let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt) {

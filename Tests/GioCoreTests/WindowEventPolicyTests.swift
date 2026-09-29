@@ -56,9 +56,9 @@ final class WindowEventPolicyTests: XCTestCase {
         XCTAssertEqual(windowEventAction(for: .moved, isKnownWindow: false), .ignore)
     }
 
-    func testMinimizeEventsReflowKnownWindows() {
-        XCTAssertEqual(windowEventAction(for: .miniaturized, isKnownWindow: true), .reflow)
-        XCTAssertEqual(windowEventAction(for: .deminiaturized, isKnownWindow: true), .reflow)
+    func testMinimizeEventsRouteToLifecycleForKnownWindows() {
+        XCTAssertEqual(windowEventAction(for: .miniaturized, isKnownWindow: true), .minimize)
+        XCTAssertEqual(windowEventAction(for: .deminiaturized, isKnownWindow: true), .restore)
     }
 
     func testDeminiaturizedUnknownWindowRegisters() {

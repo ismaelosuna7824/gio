@@ -38,7 +38,8 @@ func describeManagedWindow(_ window: ManagedWindow) -> String {
     let frame = window.frame
     let coords = "(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.size.width)),\(Int(frame.size.height)))"
     let reason = window.floatReason.map { " reason=\($0.rawValue)" } ?? ""
-    return "pid=\(window.pid) app=\(window.application) title=\(window.title.isEmpty ? "<unknown>" : window.title) frame=\(coords) mode=\(window.mode.rawValue)\(reason)"
+    let minimized = window.isMinimized ? " minimized=true" : ""
+    return "pid=\(window.pid) app=\(window.application) title=\(window.title.isEmpty ? "<unknown>" : window.title) frame=\(coords) mode=\(window.mode.rawValue)\(reason)\(minimized)"
 }
 
 /// Apply one command to the session, returning human-readable output.

@@ -39,6 +39,10 @@ public struct SystemWindowDiscoveryResult {
     /// Windows skipped because a required AX attribute was unreadable.
     /// Skips are evidence, never silent: callers must report the count.
     public let skipped: Int
+    /// Pids whose window list was read successfully and whose every element
+    /// was classified (none skipped). Only for these is absence from the scan
+    /// evidence that a registered window is gone.
+    public let completePIDs: Set<pid_t>
 }
 
 public func requireAXPermission() throws {
@@ -55,6 +59,7 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
     var floating: [DiscoveredSystemWindow] = []
     var ignored: [ExcludedSystemWindow] = []
     var skipped = 0
+    var completePIDs = Set<pid_t>()
     let apps = NSWorkspace.shared.runningApplications.filter {
         $0.activationPolicy == .regular && (onlyPID == nil || $0.processIdentifier == onlyPID)
     }
@@ -68,6 +73,12 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
             continue
         }
         let focusedElement = axFocusedWindow(of: appElement)
+        let skippedBefore = skipped
+        defer {
+            if skipped == skippedBefore {
+                completePIDs.insert(app.processIdentifier)
+            }
+        }
         for element in elements {
             let appName = app.localizedName ?? "unknown"
             switch classifyElement(
@@ -95,7 +106,8 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
         GioLog.record(.debug, "discovery skipped=\(skipped) windows with unreadable attributes")
     }
     return SystemWindowDiscoveryResult(
-        windows: found, floating: floating, ignored: ignored, skipped: skipped
+        windows: found, floating: floating, ignored: ignored, skipped: skipped,
+        completePIDs: completePIDs
     )
 }
 

@@ -37,6 +37,9 @@ public struct ManagedWindow: Equatable, Sendable {
     public var mode: WindowMode
     /// Why the window floats; nil unless `mode == .floating`.
     public var floatReason: FloatReason?
+    /// Minimized windows stay registered (and keep their column) but sit out
+    /// of the layout until they are deminimized.
+    public var isMinimized: Bool
 
     public init(
         id: WindowID,
@@ -45,7 +48,8 @@ public struct ManagedWindow: Equatable, Sendable {
         title: String,
         frame: CGRect,
         mode: WindowMode,
-        floatReason: FloatReason? = nil
+        floatReason: FloatReason? = nil,
+        isMinimized: Bool = false
     ) {
         self.id = id
         self.pid = pid
@@ -54,5 +58,6 @@ public struct ManagedWindow: Equatable, Sendable {
         self.frame = frame
         self.mode = mode
         self.floatReason = floatReason
+        self.isMinimized = isMinimized
     }
 }

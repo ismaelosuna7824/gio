@@ -118,6 +118,16 @@ public final class WindowRegistry {
         windows[id] = window
     }
 
+    /// Mark a window minimized or not without touching its mode or place.
+    /// Unknown IDs throw.
+    public func setMinimized(_ minimized: Bool, for id: WindowID) throws {
+        guard var window = windows[id] else {
+            throw WindowRegistryError.unknown(id)
+        }
+        window.isMinimized = minimized
+        windows[id] = window
+    }
+
     /// Float a window and record why. Unknown IDs throw.
     public func setFloating(_ reason: FloatReason, for id: WindowID) throws {
         guard var window = windows[id] else {
