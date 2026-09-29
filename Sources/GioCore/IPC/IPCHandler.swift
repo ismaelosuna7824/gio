@@ -50,11 +50,28 @@ public func queryStatus(session: CommandSession) -> String {
 
 /// Server-side argv handling shared by every transport: parse once, dispatch,
 /// wrap. Unknown verbs become failed responses, never crashes.
-public func dispatchIPC(_ argv: [String], session: inout CommandSession) -> IPCResponse {
+///
+/// `restartAvailable` is true only in a host that can really restart itself
+/// (HD-05): it acknowledges `restart` and performs the relaunch after replying.
+public func dispatchIPC(
+    _ argv: [String], session: inout CommandSession, restartAvailable: Bool = false
+) -> IPCResponse {
     switch parseCLICommand(argv) {
     case .success(let command):
+        if restartAvailable, command.requestsSessionRestart {
+            return IPCResponse(ok: true, output: restartAcknowledgement)
+        }
         return IPCResponse(ok: true, output: dispatch(command, session: &session))
     case .failure(let error):
         return IPCResponse(ok: false, error: String(describing: error))
+    }
+}
+
+public let restartAcknowledgement = "restarting Gio session"
+
+extension CLICommand {
+    /// Commands the hosting session must act on after replying.
+    public var requestsSessionRestart: Bool {
+        self == .restart
     }
 }

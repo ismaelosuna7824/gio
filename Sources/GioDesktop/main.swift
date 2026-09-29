@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import GioCore
 import GioMacOS
 import GioUI
 import SwiftUI
@@ -48,6 +49,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.start()
         self.bar = bar
         host.onSummonLauncher = { [weak self] in self?.showLauncher() }
+        host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it
         // hides it and Gio keeps running from the menu bar.
@@ -65,6 +67,13 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         host.shutdown()
+    }
+
+    /// `gio restart`: restore windows and release the socket and lock, start a
+    /// fresh instance (it waits for the lock if needed), then exit.
+    private func restartSession() {
+        host.shutdown()
+        relaunchGio { NSApplication.shared.terminate(nil) }
     }
 
     /// SIGTERM/SIGINT/SIGHUP: default handlers would kill the process with
@@ -101,6 +110,36 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         activateGio()
         launcherWindow?.makeKeyAndOrderFront(nil)
     }
+}
+
+/// Start a new instance of this app: its bundle when packaged, else the bare
+/// executable (`swift run`). `done` runs once the request is handed off.
+@MainActor
+func relaunchGio(done: @escaping @MainActor () -> Void) {
+    let bundleURL = Bundle.main.bundleURL
+    if bundleURL.pathExtension == "app" {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        configuration.arguments = [relaunchArgument]
+        NSWorkspace.shared.openApplication(at: bundleURL, configuration: configuration) { _, error in
+            if let error {
+                print("[gio] relaunch failed: \(error)")
+            }
+            DispatchQueue.main.async { done() }
+        }
+        return
+    }
+    if let executable = Bundle.main.executableURL {
+        let process = Process()
+        process.executableURL = executable
+        process.arguments = [relaunchArgument]
+        do {
+            try process.run()
+        } catch {
+            print("[gio] relaunch failed: \(error)")
+        }
+    }
+    done()
 }
 
 let gioDesktopDelegate = GioDesktopDelegate()

@@ -199,7 +199,7 @@ swift run GioCLI status
 | Verb | Effect |
 | --- | --- |
 | `gio reload` | Re-read `config.toml`; prints messages if any. |
-| `gio restart` | Parses, but only answers that it needs the running session; it does not restart anything. |
+| `gio restart` | Replies `restarting Gio session`, then Gio restores every window, releases its socket and lock, starts a fresh instance of itself (the app bundle, or the bare executable under `swift run`) and exits. The new instance waits up to about five seconds for the lock. Under `swift run` the new process is a child of the old one, so run it from a shell you keep open. |
 | `gio list-windows` | One line per managed window: pid, app, title, frame, mode, reason, minimized. |
 | `gio list-workspaces` | The nine workspaces with column and window counts; the current one is marked `*`. |
 | `gio focus left\|right\|up\|down` | Move focus like `Alt+H/L/K/J`. |

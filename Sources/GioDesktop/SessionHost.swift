@@ -86,13 +86,19 @@ final class SessionHost: @unchecked Sendable {
 
     /// UI hook, always invoked on the main thread.
     var onSummonLauncher: (() -> Void)?
+    /// `gio restart` (HD-05): invoked on the main thread shortly after the
+    /// IPC reply left; the app shuts the session down and relaunches itself.
+    var onRestart: (() -> Void)?
 
     // MARK: - Lifecycle
 
     /// Starts everything. Returns an error message instead of starting when
     /// another instance holds the lock or the socket cannot bind.
     func start() -> String? {
-        guard instanceLock.acquire(path: defaultLockPath()) else {
+        // A relaunched instance waits a few seconds for its predecessor's lock.
+        guard instanceLock.acquire(
+            path: defaultLockPath(), wait: .forLaunch(arguments: CommandLine.arguments)
+        ) else {
             return "another Gio instance is running"
         }
         let (config, configMessages) = loadGioConfig()
@@ -276,8 +282,15 @@ final class SessionHost: @unchecked Sendable {
     private func handleIPC(_ argv: [String]) -> IPCResponse {
         let parsed = parseCLICommand(argv)
         let previousFocus = session.manager.currentWorkspace().focusedWindow
-        let response = dispatchIPC(argv, session: &session)
+        let response = dispatchIPC(argv, session: &session, restartAvailable: true)
         if case .success(let command) = parsed {
+            if command.requestsSessionRestart {
+                GioLog.record(.info, "restart requested over IPC")
+                // Let the reply reach the client before the socket goes away.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                    self?.onRestart?()
+                }
+            }
             switch command {
             case .reload:
                 applyReloadedConfig()
