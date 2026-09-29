@@ -14,7 +14,7 @@ User (2026-09-29) accepted the recommendation: live-verify pending work, then fo
 dynamic workspaces ("dale asi entonces").
 
 ## Scope (authorized)
-NF-01 focus ring, NF-02 dynamic workspaces. Not yet: trackpad scroll, overview, spring and
+NF-01 focus ring, NF-02 dynamic workspaces. Not yet (trackpad deferred by user 2026-09-29): trackpad scroll, overview, spring and
 open/close animations, tabbed columns, mouse move.
 
 ## Constraints
@@ -52,6 +52,10 @@ LIVE PENDING. Review: UNAVAILABLE.
   pueda cambiar el color desde la desktop app"). Route: delegated writer. DONE: ColorPicker (sRGB, no
   opacity) + presets + hex field + preview; normalizedHexColor; 8 tests RED -> GREEN; bundles
   22/7/19/30/705 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
+- [ ] NF-04 — Spring animations (user approved 2026-09-29): critically damped spring (Niri
+  view-movement default: damping-ratio 1.0, stiffness 800, epsilon 0.0001) replacing ease-out;
+  retarget preserves velocity; `[animations]` gains `curve = "spring" | "ease-out"`, spring
+  params; position-only motion rules (FI-03) kept. Route: delegated writer (shared with FI-06).
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
