@@ -64,6 +64,8 @@ final class EventWorld: @unchecked Sendable {
     var forgotten: [WindowID] = []
     var forgottenApps: [pid_t] = []
     var opened: [WindowID] = []
+    /// NA-03: (ids, still registered when reported).
+    var closing: [([WindowID], Bool)] = []
     var reflows = 0
     var scheduledReflows: [Bool] = []
     var displaySnapshots: [DisplaySnapshot] = []
@@ -143,7 +145,10 @@ final class EventWorld: @unchecked Sendable {
             mainScreenFrame: { Self.screen },
             updateDisplayHeight: { self.displayHeights.append($0) },
             displaysChanged: { self.displayChanges += 1 },
-            windowOpened: { self.opened.append($0) }
+            windowOpened: { self.opened.append($0) },
+            windowsClosing: { ids in
+                self.closing.append((ids, ids.allSatisfy { self.session.registry.find($0) != nil }))
+            }
         )
     }
 
@@ -581,6 +586,13 @@ final class WindowEventRouterTests: XCTestCase {
         scheduler.advance(by: 5)
 
         XCTAssertFalse(world.registered.contains { $0.pid == EventWorld.ownPID })
+    }
+
+    func testDestroyedWindowIsReportedClosingBeforeItIsForgotten() {
+        send(.window(.destroyed), element: element)
+
+        XCTAssertEqual(world.closing.map(\.0), [[id]])
+        XCTAssertEqual(world.closing.first?.1, true, "reported while its record still exists")
     }
 
     func testDestroyedWindowIsPurgedImmediately() {

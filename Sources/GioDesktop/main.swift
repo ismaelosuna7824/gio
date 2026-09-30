@@ -39,6 +39,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let focusRing = FocusRingController()
     private let focusDim = FocusDimController()
     private let snapshotOverlay = SnapshotOverlayController()
+    private let closeGhosts = CloseGhostOverlay()
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -80,6 +81,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         host.shutdown()
         snapshotOverlay.stop()
+        closeGhosts.stop()
         focusRing.stop()
         focusDim.stop()
     }
@@ -116,6 +118,20 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { overlay.end(fadeOut: fadeOut) }
             }
         }
+        // NA-03: the close ghost, a window-sized layer that removes itself.
+        let ghosts = closeGhosts
+        host.ghostShow = { token, image, frame, duration, shrink in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    ghosts.show(token: token, image: image, frame: frame, duration: duration, shrink: shrink)
+                }
+            }
+        }
+        host.ghostRemove = { token in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { ghosts.remove(token: token) }
+            }
+        }
     }
 
     /// `gio restart`: restore windows and release the socket and lock, start a
@@ -123,6 +139,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private func restartSession() {
         host.shutdown()
         snapshotOverlay.stop()
+        closeGhosts.stop()
         focusRing.stop()
         focusDim.stop()
         relaunchGio { NSApplication.shared.terminate(nil) }

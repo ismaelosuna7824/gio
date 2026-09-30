@@ -88,6 +88,9 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     /// zoom instead of writing a new size (default on); other cases and apps
     /// without a usable zoom keep the ordinary write.
     public var nativeZoom: Bool
+    /// NA-03: `[animations.window-close] ghost`: a closing window in view
+    /// fades out from its cached image (needs Screen Recording). Off by default.
+    public var closeGhost: Bool
 
     public init(
         enabled: Bool = true, durationMilliseconds: Int = 200,
@@ -97,9 +100,11 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         resize: ResizeMode = .never,
         renderer: RendererKind = .ax,
         focusedGrow: FocusedGrowMode = .start,
-        nativeZoom: Bool = true
+        nativeZoom: Bool = true,
+        closeGhost: Bool = false
     ) {
         self.nativeZoom = nativeZoom
+        self.closeGhost = closeGhost
         self.focusedGrow = focusedGrow
         self.resize = resize
         self.renderer = renderer

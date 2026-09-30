@@ -56,6 +56,9 @@ public final class DiscoveryService: @unchecked Sendable {
         /// NA-02: a visible (not minimized) window was registered; the next
         /// animated pass lets it enter from below its tile.
         public var windowOpened: (WindowID) -> Void
+        /// NA-03: windows about to be purged, while their record, frame and
+        /// cached image still exist (the optional close ghost).
+        public var windowsClosing: ([WindowID]) -> Void
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -77,7 +80,8 @@ public final class DiscoveryService: @unchecked Sendable {
             connectDisplay: @escaping (DisplaySnapshot, WorkspaceID) -> Void,
             disconnectDisplay: @escaping (DisplayID) -> Void, mainScreenFrame: @escaping () -> CGRect?,
             updateDisplayHeight: @escaping (CGFloat) -> Void, displaysChanged: @escaping () -> Void,
-            windowOpened: @escaping (WindowID) -> Void = { _ in }
+            windowOpened: @escaping (WindowID) -> Void = { _ in },
+            windowsClosing: @escaping ([WindowID]) -> Void = { _ in }
         ) {
             self.ownPID = ownPID
             self.registry = registry
@@ -107,6 +111,7 @@ public final class DiscoveryService: @unchecked Sendable {
             self.updateDisplayHeight = updateDisplayHeight
             self.displaysChanged = displaysChanged
             self.windowOpened = windowOpened
+            self.windowsClosing = windowsClosing
         }
     }
 
@@ -334,6 +339,7 @@ public final class DiscoveryService: @unchecked Sendable {
         }
         let idSet = Set(ids)
         let registry = context.registry()
+        context.windowsClosing(ids.sorted())
         for id in ids.sorted() {
             registry.remove(id)
             context.forgetWindow(id)

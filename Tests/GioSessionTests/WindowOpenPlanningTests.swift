@@ -110,4 +110,22 @@ final class WindowOpenPlanningTests: XCTestCase {
         XCTAssertEqual(pass.prepositions[new], try XCTUnwrap(pass.plans[0].visible[new]))
         XCTAssertFalse(pass.animations.contains { $0.id == new })
     }
+
+    // MARK: Close (NA-03)
+
+    func testNeighboursGlideIntoTheGapOfAClosedWindow() throws {
+        let world = ReflowWorld()
+        let ids = world.addColumns(3)
+        _ = plan(world, opening: [])
+        var workspace = world.session.manager.currentWorkspace()
+        workspace.stripWindows([ids[0]])
+        world.session.manager.update(workspace)
+        world.physicalFrames.removeValue(forKey: ids[0])
+
+        let pass = plan(world, opening: [])
+
+        let glide = try XCTUnwrap(pass.animations.first { $0.id == ids[1] })
+        XCTAssertLessThan(glide.to.minX, glide.from.minX, "the right neighbour moves left into the gap")
+        XCTAssertFalse(pass.animations.contains { $0.id == ids[0] })
+    }
 }

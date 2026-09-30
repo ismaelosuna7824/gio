@@ -112,6 +112,11 @@ final class SessionHost: @unchecked Sendable {
     var overlayAbortForMouseDown: (() -> Bool)?
     /// Wallpaper backdrops, readable from any thread.
     var overlayWallpapers: WallpaperCache?
+    /// NA-03 close ghost hooks, set once by the app before `start()`; invoked
+    /// on the session queue, they hop to the main thread themselves.
+    var ghostShow: ((Int, CGImage, CGRect, TimeInterval, CGFloat) -> Void)?
+    var ghostRemove: ((Int) -> Void)?
+    private var closeGhost: CloseGhostController!
     /// The planning half of a reflow pass; owns the hidden-window book and
     /// the inactive parking memo (NC-06, PA-04).
     private var reflowPlanner: ReflowPlanner!
@@ -229,6 +234,9 @@ final class SessionHost: @unchecked Sendable {
                             config: session.config.animations, permission: hasScreenRecordingPermission()
                         ) == .snapshot
                 },
+                ghostCacheWanted: { [unowned self] in
+                    SnapshotCapturer.isSupported && closeGhostEnabled() && hasScreenRecordingPermission()
+                },
                 captureScreens: { [unowned self] in displayParameters.captureScreens },
                 capture: { [snapshotCapturer] request, done in
                     Task.detached {
@@ -245,6 +253,19 @@ final class SessionHost: @unchecked Sendable {
                 log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler
+        )
+        closeGhost = CloseGhostController(
+            context: .init(
+                isEnabled: { [unowned self] in closeGhostEnabled() },
+                isMinimized: { [unowned self] in session.registry.find($0)?.isMinimized ?? true },
+                physicalFrame: { [unowned self] in physicalFrames[$0] },
+                viewports: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
+                cachedImage: { [unowned self] id in
+                    snapshotRefresher.cache.entry(id).map { ($0.image, $0.frame, $0.capturedAt) }
+                },
+                log: { GioLog.record($0, $1) }
+            ),
+            port: HostGhostPort(host: self), scheduler: scheduler
         )
         overlayFlight = SnapshotFlightController(
             context: .init(
@@ -415,7 +436,8 @@ final class SessionHost: @unchecked Sendable {
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
                 },
-                windowOpened: { [unowned self] in openingWindows.mark($0) }
+                windowOpened: { [unowned self] in openingWindows.mark($0) },
+                windowsClosing: { [unowned self] in closeGhost.windowsClosing($0) }
             ),
             scheduler: scheduler
         )
@@ -582,6 +604,7 @@ final class SessionHost: @unchecked Sendable {
             motion.stop()
             overlayFlight.end(fadeOut: false)
             snapshotRefresher.removeAll()
+            closeGhost.removeAll()
             reconciler?.waitForMotionIdle(timeout: 0.3)
             restoreOffscreenWindows(session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id))
         }
@@ -972,6 +995,12 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// NA-03: the close ghost is configured and animations run.
+    private func closeGhostEnabled() -> Bool {
+        let settings = session.config.animations
+        return settings.closeGhost && settings.isActive
+    }
+
     private func performReflow(animate: Bool = true) {
         guard let actuator else {
             return
@@ -1359,6 +1388,23 @@ final class SessionHost: @unchecked Sendable {
             focus.noteSizingFocus(session.manager.currentWorkspace().focusedWindow)
         }
         reflowAll()
+    }
+}
+
+/// NA-03: forwards the close ghost to the app's hooks (set before `start()`).
+private final class HostGhostPort: CloseGhostPort, @unchecked Sendable {
+    private unowned let host: SessionHost
+
+    init(host: SessionHost) {
+        self.host = host
+    }
+
+    func showGhost(token: Int, image: CGImage, frame: CGRect, duration: TimeInterval, shrink: CGFloat) {
+        host.ghostShow?(token, image, frame, duration, shrink)
+    }
+
+    func removeGhost(token: Int) {
+        host.ghostRemove?(token)
     }
 }
 

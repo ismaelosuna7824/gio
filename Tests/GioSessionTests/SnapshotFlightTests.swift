@@ -31,6 +31,7 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
 final class SnapshotFlightTests: XCTestCase {
     private final class World: @unchecked Sendable {
         var rendererAvailable = true
+        var ghostWanted = false
         var motion = false
         var shuttingDown = false
         var coalesced = false
@@ -74,6 +75,7 @@ final class SnapshotFlightTests: XCTestCase {
                 isFlightActive: { [unowned self] in flight.isActive },
                 isMotionActive: { world.motion },
                 rendererAvailable: { world.rendererAvailable },
+                ghostCacheWanted: { world.ghostWanted },
                 captureScreens: {
                     ([SnapshotDisplay(id: 1, frame: SessionFixture.screen, scale: 1)], SessionFixture.screen.height)
                 },
@@ -306,6 +308,38 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(cache.cache.count, 0)
         cache.schedule()
         XCTAssertEqual(scheduler.pendingCount, 0)
+    }
+
+    // MARK: Close ghost cache (NA-03)
+
+    func testGhostCacheSurvivesTheAxRenderer() {
+        refresh([idA: a, idB: b])
+        world.rendererAvailable = false
+        world.ghostWanted = true
+        XCTAssertFalse(cache.rendererUsable(), "no overlay flight with the ax renderer")
+        XCTAssertEqual(cache.cache.count, 2, "the ghost keeps its images")
+        cache.schedule()
+        XCTAssertEqual(scheduler.pendingCount, 1)
+    }
+
+    func testGhostOnlyRefreshCapturesJustTheWindowsInView() throws {
+        let offscreen = WindowID(pid: 3, elementID: 3)
+        let far = CGRect(x: 3000, y: 100, width: 800, height: 900)
+        try fixture.session.registry.register(ManagedWindow(
+            id: offscreen, pid: 3, application: "App2", title: "secret", frame: far, mode: .tiled
+        ))
+        var workspace = fixture.session.manager.currentWorkspace()
+        workspace.columns.append(Column(id: ColumnID(3), width: 0, windows: [offscreen]))
+        fixture.session.manager.update(workspace)
+        fixture.physicalFrames[offscreen] = far
+        XCTAssertEqual(Set(cache.refreshSet().map(\.id)), [idA, idB, offscreen], "renderer: neighbours too")
+
+        world.rendererAvailable = false
+        world.ghostWanted = true
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+
+        XCTAssertEqual(Set(world.captures.last?.windows.keys ?? [:].keys), [idA, idB])
     }
 
     func testNoTimersAtRest() {

@@ -29,6 +29,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         public var isMotionActive: () -> Bool
         /// The snapshot renderer is configured, permitted and supported.
         public var rendererAvailable: () -> Bool
+        /// NA-03: the close ghost is on (and Screen Recording granted): keep a
+        /// light cache of the windows in view even with the ax renderer.
+        public var ghostCacheWanted: () -> Bool
         /// Screens as the capture needs them and the primary display height
         /// (read on main, handed over under a lock).
         public var captureScreens: () -> (screens: [SnapshotDisplay], primaryHeight: CGFloat)
@@ -44,6 +47,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             physicalFrame: @escaping (WindowID) -> CGRect?, isShuttingDown: @escaping () -> Bool,
             isFlightActive: @escaping () -> Bool, isMotionActive: @escaping () -> Bool,
             rendererAvailable: @escaping () -> Bool,
+            ghostCacheWanted: @escaping () -> Bool = { false },
             captureScreens: @escaping () -> (screens: [SnapshotDisplay], primaryHeight: CGFloat),
             capture: @escaping (SnapshotCaptureRequest, @escaping @Sendable ([WindowID: CapturedImage]) -> Void) -> Void,
             prefetch: @escaping (Set<WindowID>, @escaping @Sendable () -> Void) -> Void,
@@ -57,6 +61,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             self.isFlightActive = isFlightActive
             self.isMotionActive = isMotionActive
             self.rendererAvailable = rendererAvailable
+            self.ghostCacheWanted = ghostCacheWanted
             self.captureScreens = captureScreens
             self.capture = capture
             self.prefetch = prefetch
@@ -86,14 +91,20 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
 
     /// Snapshot rendering is in force: configured, permission granted,
     /// macOS 14+. Otherwise the cache is dropped (its memory is released and
-    /// an overlay is never shown without fresh images).
+    /// an overlay is never shown without fresh images), unless the close
+    /// ghost still wants it (NA-03).
     public func rendererUsable() -> Bool {
         let usable = context.rendererAvailable()
-        if !usable, cache.count > 0 {
+        if !usable, cache.count > 0, !context.ghostCacheWanted() {
             cache.removeAll()
             context.log(.debug, "snapshot cache cleared renderer=ax")
         }
         return usable
+    }
+
+    /// Someone uses the images: the overlay renderer or the close ghost.
+    public func cacheWanted() -> Bool {
+        context.rendererAvailable() || context.ghostCacheWanted()
     }
 
     /// Images mark as just used (the LRU order).
@@ -113,7 +124,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// One-shot, debounced: ~300 ms after a settle, capture the visible
     /// windows and their neighbours in the background. No periodic timer.
     public func schedule(delay: TimeInterval = 0.3) {
-        guard !context.isShuttingDown(), rendererUsable() else {
+        guard !context.isShuttingDown(), cacheWanted() else {
             return
         }
         token += 1
@@ -145,9 +156,11 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
 
     /// Windows to keep cached and where they are now: visible ones, the
     /// columns next to the viewport, and the focused window of the adjacent
-    /// workspaces of each display (at most 12).
+    /// workspaces of each display (at most 12). For the close ghost alone
+    /// (ax renderer), only the windows in view.
     public func refreshSet() -> [(id: WindowID, frame: CGRect)] {
         let session = context.session()
+        let ghostOnly = !context.rendererAvailable()
         var ordered: [WindowID] = []
         for display in context.displays() {
             guard let workspace = session.manager.workspace(id: display.workspace) else {
@@ -159,6 +172,10 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                     overlayDisplayIndex(from: $0, to: $0, displays: [display.frame]) != nil
                 } ?? false
             })
+            if ghostOnly {
+                ordered += columns.joined().filter { visible.contains($0) }
+                continue
+            }
             var extras: [WindowID] = []
             let stack = session.manager.stack(on: display.id)
             if let index = stack.firstIndex(where: { $0.id == display.workspace }) {
@@ -188,7 +205,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
 
     private func run(token: Int) {
         guard token == self.token, !context.isShuttingDown(), !context.isFlightActive(),
-              !context.isMotionActive(), rendererUsable()
+              !context.isMotionActive(), cacheWanted()
         else {
             return
         }
@@ -216,7 +233,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
 
     private func finish(_ images: [WindowID: CapturedImage]) {
         busy = false
-        guard !context.isShuttingDown(), rendererUsable() else {
+        guard !context.isShuttingDown(), cacheWanted() else {
             return
         }
         let now = context.now()
