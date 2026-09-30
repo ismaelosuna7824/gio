@@ -257,17 +257,61 @@ final class NativeZoomTests: XCTestCase {
 
     private let start = CGRect(x: 8, y: 8, width: 780, height: 884)
 
-    func testSettlesWhenBoundsAreStableForTwoConsecutiveFramesAfterChanging() {
+    /// Polls every 16 ms from `from` to `to` (inclusive) with the same bounds.
+    private func poll(
+        _ tracker: inout NativeZoomSettleTracker, _ bounds: CGRect?, from: Int, to: Int
+    ) -> NativeZoomSettle? {
+        var ms = from
+        while ms <= to {
+            if let settle = tracker.observe(bounds, elapsed: TimeInterval(ms) / 1000) {
+                return settle
+            }
+            ms += 16
+        }
+        return nil
+    }
+
+    func testSettlesOnlyAfterTheQuietPeriodFollowingTheLastChange() {
         var tracker = NativeZoomSettleTracker(start: start)
+        let final = CGRect(x: 8, y: 8, width: 1584, height: 884)
         XCTAssertNil(tracker.observe(start, elapsed: 0.016))
         XCTAssertNil(tracker.observe(start, elapsed: 0.5))
         // The app repaints late, then animates: every frame differs.
         XCTAssertNil(tracker.observe(CGRect(x: 8, y: 8, width: 900, height: 884), elapsed: 0.6))
         XCTAssertNil(tracker.observe(CGRect(x: 8, y: 8, width: 1200, height: 884), elapsed: 0.616))
-        XCTAssertNil(tracker.observe(CGRect(x: 8, y: 8, width: 1584, height: 884), elapsed: 0.632))
+        XCTAssertNil(tracker.observe(final, elapsed: 0.632))
+        // Two equal polls are no longer a settle: the quiet period must pass.
+        XCTAssertNil(tracker.observe(final, elapsed: 0.648))
+        XCTAssertNil(tracker.observe(final, elapsed: 0.664))
+        XCTAssertNil(tracker.observe(final, elapsed: 0.781))
         XCTAssertEqual(
-            tracker.observe(CGRect(x: 8, y: 8, width: 1584, height: 884), elapsed: 0.648),
-            .settled(CGRect(x: 8, y: 8, width: 1584, height: 884), milliseconds: 648)
+            tracker.observe(final, elapsed: 0.782),
+            .settled(final, milliseconds: 782, settleMilliseconds: 632)
+        )
+    }
+
+    func testAMultiStageZoomWithAPauseDoesNotSettleOnTheIntermediateFrame() {
+        var tracker = NativeZoomSettleTracker(start: start)
+        let stageOne = CGRect(x: 8, y: 8, width: 1584, height: 500)
+        let final = CGRect(x: 0, y: 0, width: 1600, height: 900)
+        XCTAssertNil(tracker.observe(stageOne, elapsed: 0.016))
+        // The app pauses 40 ms (the real logs settled at ~35 ms here)...
+        XCTAssertNil(poll(&tracker, stageOne, from: 32, to: 56))
+        // ...and then runs the second stage.
+        XCTAssertNil(tracker.observe(final, elapsed: 0.072))
+        let settle = poll(&tracker, final, from: 88, to: 400)
+        XCTAssertEqual(settle, .settled(final, milliseconds: 232, settleMilliseconds: 72))
+    }
+
+    func testSettleWaitsForTheMinimumTimeSinceThePress() {
+        var tracker = NativeZoomSettleTracker(start: start, quietPeriod: 0.05, minimumElapsed: 0.12)
+        let final = CGRect(x: 8, y: 8, width: 1584, height: 884)
+        XCTAssertNil(tracker.observe(final, elapsed: 0.02))
+        // Quiet for 60 ms already, but only 80 ms since the press.
+        XCTAssertNil(tracker.observe(final, elapsed: 0.08))
+        XCTAssertNil(tracker.observe(final, elapsed: 0.119))
+        XCTAssertEqual(
+            tracker.observe(final, elapsed: 0.12), .settled(final, milliseconds: 120, settleMilliseconds: 20)
         )
     }
 
@@ -276,21 +320,24 @@ final class NativeZoomTests: XCTestCase {
         XCTAssertNil(tracker.observe(start, elapsed: 0.016))
         XCTAssertNil(tracker.observe(start, elapsed: 0.032))
         XCTAssertNil(tracker.observe(start, elapsed: 0.048))
+        XCTAssertNil(tracker.observe(start, elapsed: 0.4))
     }
 
-    func testJitterWithinOnePointCountsAsStable() {
+    func testJitterWithinOnePointCountsAsStableAndDoesNotRestartTheQuietPeriod() {
         var tracker = NativeZoomSettleTracker(start: start)
         XCTAssertNil(tracker.observe(CGRect(x: 8, y: 8, width: 1584, height: 884), elapsed: 0.3))
-        XCTAssertNotNil(tracker.observe(CGRect(x: 8.5, y: 8, width: 1583.6, height: 884), elapsed: 0.316))
+        XCTAssertNil(tracker.observe(CGRect(x: 8.5, y: 8, width: 1583.6, height: 884), elapsed: 0.316))
+        XCTAssertNotNil(tracker.observe(CGRect(x: 8.5, y: 8, width: 1583.6, height: 884), elapsed: 0.45))
     }
 
-    func testSecondFrameThatDiffersResetsTheStableRun() {
+    func testAChangeRestartsTheQuietPeriod() {
         var tracker = NativeZoomSettleTracker(start: start)
         let a = CGRect(x: 8, y: 8, width: 1000, height: 884)
         let b = CGRect(x: 8, y: 8, width: 1300, height: 884)
         XCTAssertNil(tracker.observe(a, elapsed: 0.3))
-        XCTAssertNil(tracker.observe(b, elapsed: 0.316))
-        XCTAssertEqual(tracker.observe(b, elapsed: 0.332), .settled(b, milliseconds: 332))
+        XCTAssertNil(tracker.observe(b, elapsed: 0.44))
+        XCTAssertNil(tracker.observe(b, elapsed: 0.5))
+        XCTAssertEqual(tracker.observe(b, elapsed: 0.59), .settled(b, milliseconds: 590, settleMilliseconds: 440))
     }
 
     func testTimesOutUnchangedWhenTheWindowNeverMoved() {
@@ -468,6 +515,111 @@ final class NativeZoomTests: XCTestCase {
         let reconciler = WindowReconciler(actuator: actuator)
         XCTAssertEqual(reconciler.pressZoom(id(3)), .pressed)
         XCTAssertEqual(actuator.presses, [id(3)])
+    }
+
+    // MARK: post-correction verification (single reassert)
+
+    private let landed = CGRect(x: 0, y: 0, width: 1600, height: 900)
+
+    func testVerifiedWhenTheWindowIsAtTheTargetAndNeverReasserts() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        XCTAssertEqual(verifier.observe(target.offsetBy(dx: 2, dy: -2), writeFailed: false), .verified)
+    }
+
+    func testReassertsOnceWhenTheAppOverwroteTheCorrection() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        // The app's zoom finished after our write: it sits at its own frame
+        // (the same as before the write), not at the target.
+        XCTAssertEqual(verifier.observe(landed, writeFailed: false), .reassert(.overwritten))
+        // After the one reassert it lands...
+        XCTAssertEqual(verifier.observe(target, writeFailed: false), .verified)
+    }
+
+    func testNeverReassertsTwice() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        XCTAssertEqual(verifier.observe(landed, writeFailed: false), .reassert(.overwritten))
+        XCTAssertEqual(verifier.observe(landed, writeFailed: false), .unverified)
+        XCTAssertEqual(verifier.observe(landed, writeFailed: true), .unverified)
+    }
+
+    func testAWriteFailureReassertsOnceEvenIfTheFrameIsUnknown() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        XCTAssertEqual(verifier.observe(landed, writeFailed: true), .reassert(.writeFailed))
+        XCTAssertEqual(verifier.observe(landed, writeFailed: true), .unverified)
+    }
+
+    func testAWriteFailureThatStillLandedAtTheTargetIsVerified() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        XCTAssertEqual(verifier.observe(target, writeFailed: true), .verified)
+    }
+
+    func testABoundsStillMovingAreRecheckedAfterTheQuietPeriodBeforeReasserting() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        let mid = CGRect(x: 4, y: 4, width: 1592, height: 892)
+        // Neither the target nor the pre-write frame: the app is still animating.
+        XCTAssertEqual(verifier.observe(mid, writeFailed: false), .recheck)
+        // Held still and wrong: now it is an overwrite.
+        XCTAssertEqual(verifier.observe(mid, writeFailed: false), .reassert(.overwritten))
+    }
+
+    func testARecheckIsAllowedOnlyOnce() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        XCTAssertEqual(verifier.observe(CGRect(x: 1, y: 1, width: 1590, height: 890), writeFailed: false), .recheck)
+        // Still moving after the recheck: reassert anyway (one reassert, no endless waiting).
+        XCTAssertEqual(
+            verifier.observe(CGRect(x: 3, y: 3, width: 1594, height: 894), writeFailed: false), .reassert(.overwritten)
+        )
+    }
+
+    func testAnUnlistedWindowCannotBeVerified() {
+        var verifier = NativeZoomVerifier(target: target, before: landed)
+        XCTAssertEqual(verifier.observe(nil, writeFailed: false), .unverified)
+    }
+
+    func testVerificationTimingsAreTheDocumentedOnes() {
+        XCTAssertEqual(NativeZoomLimits.verifyDelay, 0.25)
+        XCTAssertEqual(NativeZoomLimits.quietPeriod, 0.15)
+        XCTAssertEqual(NativeZoomLimits.minimumSettleElapsed, 0.12)
+    }
+
+    func testTheBookKeepsAVerifyingWindowBusyUntilItEnds() {
+        var book = NativeZoomBook()
+        book.beginVerifying(id(1))
+        XCTAssertTrue(book.isBusy(id(1)))
+        XCTAssertTrue(book.isVerifying(id(1)))
+        XCTAssertFalse(book.isInFlight(id(1)))
+        book.endVerifying(id(1))
+        XCTAssertFalse(book.isBusy(id(1)))
+        book.beginVerifying(id(2))
+        book.forget(id(2))
+        XCTAssertFalse(book.isBusy(id(2)))
+    }
+
+    func testLogLineCarriesSettleMillisecondsAndVerifiedWhenKnown() {
+        XCTAssertEqual(
+            nativeZoomLogLine(
+                id: id(42, 7), app: "Figma", action: .maximize, outcome: .fallback(.mismatch), milliseconds: 232,
+                settleMilliseconds: 72, verified: true
+            ),
+            "native zoom id=42:7 app=Figma action=maximize result=fallback(mismatch) ms=232 settleMs=72 verified=true"
+        )
+        XCTAssertEqual(
+            nativeZoomLogLine(
+                id: id(42, 7), app: "Pen", action: .maximize, outcome: .corrected, milliseconds: 200, verified: false
+            ),
+            "native zoom id=42:7 app=Pen action=maximize result=corrected ms=200 verified=false"
+        )
+    }
+
+    func testReassertLogLineNamesTheReasonAndNoTitle() {
+        XCTAssertEqual(
+            nativeZoomReassertLogLine(id: id(42, 7), app: "Pen", reason: .writeFailed),
+            "native zoom reassert id=42:7 app=Pen reason=writeFailed"
+        )
+        XCTAssertEqual(
+            nativeZoomReassertLogLine(id: id(42, 7), app: "Figma", reason: .overwritten),
+            "native zoom reassert id=42:7 app=Figma reason=overwritten"
+        )
     }
 
     // MARK: config

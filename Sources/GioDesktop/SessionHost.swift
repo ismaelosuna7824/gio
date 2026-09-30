@@ -90,6 +90,9 @@ final class SessionHost: @unchecked Sendable {
     private var nativeZoom = NativeZoomBook()
     private var pendingZoomRequest: NativeZoomRequest?
     private var nativeZoomTimers: [WindowID: DispatchSourceTimer] = [:]
+    /// Post-correction checks of native zooms (session queue only).
+    private var zoomVerifications: [WindowID: ZoomVerification] = [:]
+    private var zoomWindowServerIDs: [WindowID: UInt32] = [:]
     private var skipAnimationOnce = false
     /// FI-05: render verification bookkeeping (session queue only).
     private var renderChecks = RenderCheckBook()
@@ -885,6 +888,7 @@ final class SessionHost: @unchecked Sendable {
             physicalFrames.removeValue(forKey: id)
             nativeZoom.forget(id)
             nativeZoomTimers.removeValue(forKey: id)?.cancel()
+            dropZoomVerification(id)
             resizeProbeGate.forget(id)
             snapshotCache.evict([id])
             fullscreen.forget(id)
@@ -1272,6 +1276,7 @@ final class SessionHost: @unchecked Sendable {
             if let zoomJob {
                 startNativeZoom(zoomJob, reconciler: reconciler)
             }
+            scheduleZoomVerifications(failed: [])
             return
         }
         stopMotion()
@@ -1310,6 +1315,7 @@ final class SessionHost: @unchecked Sendable {
                 warpCursorToFocus(focusTarget, plans: plans)
             }
         }
+        var zoomWriteFailures: Set<WindowID> = []
         for (planIndex, plan) in plans.enumerated() {
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
@@ -1323,6 +1329,7 @@ final class SessionHost: @unchecked Sendable {
                 )
             }
             learnMinimumSizes(from: report)
+            zoomWriteFailures.formUnion(report.failed)
             GioLog.record(
                 .debug,
                 "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"
@@ -1358,6 +1365,7 @@ final class SessionHost: @unchecked Sendable {
         if let zoomJob {
             startNativeZoom(zoomJob, reconciler: reconciler)
         }
+        scheduleZoomVerifications(failed: zoomWriteFailures)
         if snapshotFlight {
             // The final exact pass is done; the flight settles once its layers land too.
             if flightGate.passSettled(flightGate.currentToken) {
@@ -1984,21 +1992,35 @@ final class SessionHost: @unchecked Sendable {
 
     private func logNativeZoom(
         _ id: WindowID, action: NativeZoomAction, outcome: NativeZoomOutcome, milliseconds: Int,
-        errorCode: Int32? = nil
+        errorCode: Int32? = nil, settleMilliseconds: Int? = nil, verified: Bool? = nil
     ) {
         GioLog.record(
             .info,
             nativeZoomLogLine(
                 id: id, app: appName(id.pid), action: action, outcome: outcome, milliseconds: milliseconds,
-                errorCode: errorCode
+                errorCode: errorCode, settleMilliseconds: settleMilliseconds, verified: verified
             )
         )
+    }
+
+    /// A zoom that ended with a write: its verdict is logged once the window
+    /// has been checked again (`verified=`), with at most one reassert.
+    private struct ZoomVerification {
+        let action: NativeZoomAction
+        let outcome: NativeZoomOutcome
+        let settle: NativeZoomSettle
+        let target: CGRect
+        var verifier: NativeZoomVerifier
+        var writeFailed: Bool
+        var scheduled = false
+        var generation = 0
     }
 
     /// Judge the zooms that ended against the layout target of `plan`. An
     /// accepted zoom keeps the app's own frame (physical, trusted and echo
     /// gate updated, no correcting write); the others leave the window at the
-    /// frame it reached so this pass's ordinary write brings it to the target.
+    /// frame it reached so this pass's ordinary write brings it to the target,
+    /// and are verified again shortly after (`scheduleZoomVerifications`).
     private func judgeNativeZooms(_ pending: inout [NativeZoomResolution], plan: ParkingPlan, viewport: CGRect) {
         var rest: [NativeZoomResolution] = []
         let now = ProcessInfo.processInfo.systemUptime
@@ -2009,25 +2031,125 @@ final class SessionHost: @unchecked Sendable {
                 continue
             }
             let outcome = nativeZoomOutcome(settle: resolution.settle, target: target, visible: viewport)
-            logNativeZoom(
-                id, action: resolution.action, outcome: outcome, milliseconds: resolution.settle.milliseconds,
-                errorCode: resolution.settle.errorCode
-            )
+            let settleMs = resolution.settle.settleMilliseconds
             trustedFrames.invalidate(id)
-            guard case .settled(let actual, _) = resolution.settle else {
+            var actualFrame: CGRect?
+            if case .settled(let actual, _, _) = resolution.settle {
+                actualFrame = actual
+                physicalFrames[id] = actual
+                // Late frame events of the zoom are echoes of where it landed.
+                echoGate.recordApplied(id, frame: actual, at: now)
+            } else {
                 // Unknown frame: the pass reads it from the window itself.
                 physicalFrames.removeValue(forKey: id)
-                continue
             }
-            physicalFrames[id] = actual
-            // Late frame events of the zoom are echoes of where it landed.
-            echoGate.recordApplied(id, frame: actual, at: now)
-            if outcome == .exact {
-                nativeZoom.accept(id, target: target, actual: actual)
-                trustedFrames.trust(id, frame: actual)
+            if outcome == .exact, let actualFrame {
+                logNativeZoom(
+                    id, action: resolution.action, outcome: outcome, milliseconds: resolution.settle.milliseconds,
+                    errorCode: resolution.settle.errorCode, settleMilliseconds: settleMs, verified: true
+                )
+                nativeZoom.accept(id, target: target, actual: actualFrame)
+                trustedFrames.trust(id, frame: actualFrame)
+                zoomWindowServerIDs.removeValue(forKey: id)
+            } else if outcome == .fallback(.pressFailed) {
+                logNativeZoom(
+                    id, action: resolution.action, outcome: outcome, milliseconds: resolution.settle.milliseconds,
+                    errorCode: resolution.settle.errorCode, settleMilliseconds: settleMs
+                )
+                zoomWindowServerIDs.removeValue(forKey: id)
+            } else {
+                // The ordinary pass writes the target; the app's zoom may
+                // still overwrite it. Keep the window's events suppressed and
+                // check the WindowServer bounds again.
+                nativeZoom.beginVerifying(id)
+                var entry = ZoomVerification(
+                    action: resolution.action, outcome: outcome, settle: resolution.settle, target: target,
+                    verifier: NativeZoomVerifier(target: target, before: actualFrame ?? .zero), writeFailed: false
+                )
+                entry.generation = (zoomVerifications[id]?.generation ?? 0) + 1
+                zoomVerifications[id] = entry
             }
         }
         pending = rest
+    }
+
+    /// Start the verification clock of the zooms judged in this pass, once
+    /// the pass has written them. `failed` are the windows whose write failed
+    /// or timed out (an app that is busy).
+    private func scheduleZoomVerifications(failed: Set<WindowID>) {
+        for id in zoomVerifications.keys.sorted() where zoomVerifications[id]?.scheduled == false {
+            zoomVerifications[id]?.scheduled = true
+            zoomVerifications[id]?.writeFailed = failed.contains(id)
+            scheduleZoomVerify(id, after: NativeZoomLimits.verifyDelay)
+        }
+    }
+
+    private func scheduleZoomVerify(_ id: WindowID, after delay: TimeInterval) {
+        guard let generation = zoomVerifications[id]?.generation else {
+            return
+        }
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.isShuttingDown, self.zoomVerifications[id]?.generation == generation else {
+                return
+            }
+            self.verifyNativeZoom(id)
+        }
+    }
+
+    private func verifyNativeZoom(_ id: WindowID) {
+        guard var entry = zoomVerifications[id] else {
+            return
+        }
+        // Gio moved the window elsewhere since (a newer layout): not ours to judge.
+        if let physical = physicalFrames[id], !entry.writeFailed,
+           abs(physical.minX - entry.target.minX) > NativeZoomLimits.acceptTolerance
+            || abs(physical.maxX - entry.target.maxX) > NativeZoomLimits.acceptTolerance
+            || abs(physical.minY - entry.target.minY) > NativeZoomLimits.acceptTolerance
+            || abs(physical.maxY - entry.target.maxY) > NativeZoomLimits.acceptTolerance {
+            finishZoomVerification(id, entry, verified: false)
+            return
+        }
+        let bounds = zoomWindowServerIDs[id].flatMap { windowServerBounds(windowID: $0, displayHeight: mainHeight()) }
+        switch entry.verifier.observe(bounds, writeFailed: entry.writeFailed) {
+        case .verified:
+            finishZoomVerification(id, entry, verified: true)
+        case .unverified:
+            finishZoomVerification(id, entry, verified: false)
+        case .recheck:
+            zoomVerifications[id] = entry
+            scheduleZoomVerify(id, after: NativeZoomLimits.quietPeriod)
+        case .reassert(let reason):
+            GioLog.record(.info, nativeZoomReassertLogLine(id: id, app: appName(id.pid), reason: reason))
+            guard let reconciler else {
+                finishZoomVerification(id, entry, verified: false)
+                return
+            }
+            trustedFrames.invalidate(id)
+            let report = reconciler.reconcile(
+                frames: [id: entry.target], parked: [:], focused: nil, currentlyFocused: nil, trusted: trustedFrames
+            )
+            let now = ProcessInfo.processInfo.systemUptime
+            echoGate.recordApplied(id, frame: entry.target, at: now)
+            physicalFrames[id] = entry.target
+            entry.writeFailed = report.failed.contains(id)
+            zoomVerifications[id] = entry
+            scheduleZoomVerify(id, after: NativeZoomLimits.verifyDelay)
+        }
+    }
+
+    private func finishZoomVerification(_ id: WindowID, _ entry: ZoomVerification, verified: Bool) {
+        dropZoomVerification(id)
+        trustedFrames.invalidate(id)
+        logNativeZoom(
+            id, action: entry.action, outcome: entry.outcome, milliseconds: entry.settle.milliseconds,
+            errorCode: entry.settle.errorCode, settleMilliseconds: entry.settle.settleMilliseconds, verified: verified
+        )
+    }
+
+    private func dropZoomVerification(_ id: WindowID) {
+        zoomVerifications.removeValue(forKey: id)
+        zoomWindowServerIDs.removeValue(forKey: id)
+        nativeZoom.endVerifying(id)
     }
 
     /// Zooms whose window is no longer laid out on a display: nothing to judge.
@@ -2117,6 +2239,7 @@ final class SessionHost: @unchecked Sendable {
                 )
             }
         }
+        zoomWindowServerIDs[job.id] = job.windowID
         let began = ProcessInfo.processInfo.systemUptime
         var tracker = NativeZoomSettleTracker(start: job.start)
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)

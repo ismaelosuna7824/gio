@@ -32,8 +32,14 @@ public enum NativeZoomLimits {
     /// performed: the call blocks while the app runs its animation, so the
     /// short per-window timeout (PA-03) would report a false failure.
     public static let zoomMessagingTimeout: Float = 1.0
-    /// Consecutive polls with the same bounds that count as settled.
-    public static let stableFrames = 2
+    /// The WindowServer bounds must hold still this long after their last
+    /// change (about 9 polls) before the zoom counts as settled: multi-stage
+    /// app zooms pause for tens of milliseconds between stages.
+    public static let quietPeriod: TimeInterval = 0.15
+    /// And never sooner than this after the press.
+    public static let minimumSettleElapsed: TimeInterval = 0.12
+    /// After a correcting write, look at the window again this long later.
+    public static let verifyDelay: TimeInterval = 0.25
     /// Bounds within this many points are "the same" (rounding, jitter).
     public static let frameTolerance: CGFloat = 1
     /// Poll interval of the settle detection (about one 60 Hz frame).
@@ -141,7 +147,9 @@ public enum NativeZoomFallbackReason: String, Equatable, Sendable {
 
 /// How the wait for one zoom ended.
 public enum NativeZoomSettle: Equatable, Sendable {
-    case settled(CGRect, milliseconds: Int)
+    /// `milliseconds` is when the quiet period ended, `settleMilliseconds`
+    /// when the bounds made their last change (the time to quiet).
+    case settled(CGRect, milliseconds: Int, settleMilliseconds: Int? = nil)
     /// The bounds never changed before the timeout (the app ignored the zoom).
     case unchanged(milliseconds: Int)
     /// The bounds changed but never held still before the timeout.
@@ -152,9 +160,17 @@ public enum NativeZoomSettle: Equatable, Sendable {
 
     public var milliseconds: Int {
         switch self {
-        case .settled(_, let ms), .unchanged(let ms), .timedOut(let ms): return ms
+        case .settled(_, let ms, _), .unchanged(let ms), .timedOut(let ms): return ms
         case .pressFailed: return 0
         }
+    }
+
+    /// Time from the press to the last bounds change, when settled.
+    public var settleMilliseconds: Int? {
+        if case .settled(_, _, let settleMs) = self {
+            return settleMs
+        }
+        return nil
     }
 
     /// The AXError of a failed press, for the log.
@@ -186,7 +202,7 @@ public func nativeZoomOutcome(settle: NativeZoomSettle, target: CGRect, visible:
         return .fallback(.unchanged)
     case .timedOut:
         return .fallback(.timeout)
-    case .settled(let frame, _):
+    case .settled(let frame, _, _):
         let worst = worstEdgeDistance(frame, target)
         let inside = visible.insetBy(dx: -NativeZoomLimits.frameTolerance, dy: -NativeZoomLimits.frameTolerance)
             .contains(frame)
@@ -205,10 +221,12 @@ private func worstEdgeDistance(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
 }
 
 /// `native zoom id=<pid:elem> app=<name> action=maximize|restore result=exact|corrected|fallback(reason[:axerror]) ms=<n>`
+/// `settleMs=<n>` (time to quiet) and `verified=<bool>` (final check of the
+/// window-server bounds after a correcting write) follow when known.
 /// IDs and app names only, never titles.
 public func nativeZoomLogLine(
     id: WindowID, app: String, action: NativeZoomAction, outcome: NativeZoomOutcome, milliseconds: Int,
-    errorCode: Int32? = nil
+    errorCode: Int32? = nil, settleMilliseconds: Int? = nil, verified: Bool? = nil
 ) -> String {
     let result: String
     switch outcome {
@@ -221,26 +239,99 @@ public func nativeZoomLogLine(
             result = "fallback(\(reason.rawValue))"
         }
     }
-    return "native zoom id=\(id.pid):\(id.elementID) app=\(app) action=\(action.rawValue) result=\(result) ms=\(milliseconds)"
+    var line = "native zoom id=\(id.pid):\(id.elementID) app=\(app) action=\(action.rawValue) result=\(result) ms=\(milliseconds)"
+    if let settleMilliseconds {
+        line += " settleMs=\(settleMilliseconds)"
+    }
+    if let verified {
+        line += " verified=\(verified)"
+    }
+    return line
+}
+
+public enum NativeZoomReassertReason: String, Equatable, Sendable {
+    /// The app's zoom overwrote the correcting write.
+    case overwritten
+    /// The correcting write failed or timed out (an app that is busy).
+    case writeFailed
+}
+
+/// `native zoom reassert id=<pid:elem> app=<name> reason=overwritten|writeFailed`
+public func nativeZoomReassertLogLine(id: WindowID, app: String, reason: NativeZoomReassertReason) -> String {
+    "native zoom reassert id=\(id.pid):\(id.elementID) app=\(app) reason=\(reason.rawValue)"
+}
+
+public enum NativeZoomVerdict: Equatable, Sendable {
+    /// The window is at the target (within the acceptance tolerance).
+    case verified
+    /// Still moving: look again after the quiet period.
+    case recheck
+    /// Write the target one more time (only ever once).
+    case reassert(NativeZoomReassertReason)
+    /// Gave up: still off after the one reassert, or the window is unlisted.
+    case unverified
+}
+
+/// Judges the window-server bounds after a correcting or fallback write.
+/// At most one reassert per zoom and at most one recheck. Pure state machine;
+/// the host owns the timers.
+public struct NativeZoomVerifier: Sendable {
+    private let target: CGRect
+    private var previous: CGRect
+    private var rechecked = false
+    private var reasserted = false
+
+    /// `before` is the frame the window had when the zoom was judged.
+    public init(target: CGRect, before: CGRect) {
+        self.target = target
+        self.previous = before
+    }
+
+    public mutating func observe(_ bounds: CGRect?, writeFailed: Bool) -> NativeZoomVerdict {
+        guard let bounds else {
+            return .unverified
+        }
+        defer { previous = bounds }
+        if worstEdgeDistance(bounds, target) <= NativeZoomLimits.acceptTolerance {
+            return .verified
+        }
+        if reasserted {
+            return .unverified
+        }
+        if writeFailed {
+            reasserted = true
+            return .reassert(.writeFailed)
+        }
+        if !rechecked, worstEdgeDistance(bounds, previous) > NativeZoomLimits.frameTolerance {
+            rechecked = true
+            return .recheck
+        }
+        reasserted = true
+        return .reassert(.overwritten)
+    }
 }
 
 /// Watches the WindowServer bounds of a zooming window. The window is settled
-/// once its bounds changed and then held still for `stableFrames` consecutive
-/// polls; `timeout` seconds after the press it gives up. Time is injected.
+/// once its bounds changed, then held still for `quietPeriod` after the last
+/// change, and at least `minimumElapsed` seconds passed since the press;
+/// `timeout` seconds after the press it gives up. Time is injected.
 public struct NativeZoomSettleTracker: Sendable {
     private let start: CGRect
-    private let stableFrames: Int
+    private let quietMilliseconds: Int
+    private let minimumMilliseconds: Int
     private let timeout: TimeInterval
     private let tolerance: CGFloat
     private var last: CGRect?
-    private var run = 0
+    private var lastChangeMilliseconds = 0
 
     public init(
-        start: CGRect, stableFrames: Int = NativeZoomLimits.stableFrames,
+        start: CGRect, quietPeriod: TimeInterval = NativeZoomLimits.quietPeriod,
+        minimumElapsed: TimeInterval = NativeZoomLimits.minimumSettleElapsed,
         timeout: TimeInterval = NativeZoomLimits.settleTimeout, tolerance: CGFloat = NativeZoomLimits.frameTolerance
     ) {
         self.start = start
-        self.stableFrames = max(1, stableFrames)
+        self.quietMilliseconds = Int((quietPeriod * 1000).rounded())
+        self.minimumMilliseconds = Int((minimumElapsed * 1000).rounded())
         self.timeout = timeout
         self.tolerance = tolerance
     }
@@ -251,19 +342,18 @@ public struct NativeZoomSettleTracker: Sendable {
         let milliseconds = Int((elapsed * 1000).rounded())
         if let bounds {
             if let previous = last {
-                if similar(bounds, previous) {
-                    run += 1
-                } else {
+                if !similar(bounds, previous) {
                     last = bounds
-                    run = 1
+                    lastChangeMilliseconds = milliseconds
                 }
             } else if !similar(bounds, start) {
                 last = bounds
-                run = 1
+                lastChangeMilliseconds = milliseconds
             }
-            if let settled = last, run >= stableFrames {
-                return .settled(settled, milliseconds: milliseconds)
-            }
+        }
+        if let settled = last, milliseconds - lastChangeMilliseconds >= quietMilliseconds,
+           milliseconds >= minimumMilliseconds {
+            return .settled(settled, milliseconds: milliseconds, settleMilliseconds: lastChangeMilliseconds)
         }
         guard elapsed >= timeout else {
             return nil
@@ -298,6 +388,7 @@ public struct NativeZoomBook: Sendable {
     private var flights: [WindowID: NativeZoomAction] = [:]
     private var resolved: [WindowID: NativeZoomResolution] = [:]
     private var accepted: [WindowID: Accepted] = [:]
+    private var verifying: Set<WindowID> = []
 
     public init() {}
 
@@ -311,7 +402,21 @@ public struct NativeZoomBook: Sendable {
     /// In flight, or finished and waiting for the next reflow's verdict: its
     /// frame events are still expected and its focus ring stays hidden.
     public func isBusy(_ id: WindowID) -> Bool {
-        flights[id] != nil || resolved[id] != nil
+        flights[id] != nil || resolved[id] != nil || verifying.contains(id)
+    }
+
+    /// The post-correction check is pending: the window's events stay
+    /// suppressed until it ends.
+    public func isVerifying(_ id: WindowID) -> Bool {
+        verifying.contains(id)
+    }
+
+    public mutating func beginVerifying(_ id: WindowID) {
+        verifying.insert(id)
+    }
+
+    public mutating func endVerifying(_ id: WindowID) {
+        verifying.remove(id)
     }
 
     /// True while the window sits at a frame accepted from a native zoom.
@@ -349,6 +454,7 @@ public struct NativeZoomBook: Sendable {
         flights.removeValue(forKey: id)
         resolved.removeValue(forKey: id)
         accepted.removeValue(forKey: id)
+        verifying.remove(id)
     }
 
     /// Frames minus the windows mid-zoom: nothing of Gio writes them.
