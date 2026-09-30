@@ -87,6 +87,12 @@ visible columns + adjacent columns + adjacent-workspace focused (<=12, 300ms aft
 reason=cache-miss`); ring hidden during flight; 1.5s watchdog, mouse-down abort, display change,
 revoked permission -> AX. Bundles 25/7/19/33/969 all 0 failures (parent re-ran); signed build OK.
 Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallbacks. LIVE PENDING.
+- [x] SM-06 (`24b2998`) — Live bug: every snapshot flight ended after 6-83ms (spring ~350ms), so
+  windows jumped; user felt it less fluid. Flight end now deadline-based (FlightDeadline from
+  Gio's spring settle time, retarget extends, main timer), panel primed (orderFront + display +
+  CATransaction.flush) before adding springs with explicit beginTime; warn `snapshot flight too
+  short`. Root cause (CA completion on unrendered layers) unverified. Bundles 25/7/19/33/980 all 0
+  failures (parent re-ran); signed build OK. LIVE PENDING.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
