@@ -93,6 +93,12 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   CATransaction.flush) before adding springs with explicit beginTime; warn `snapshot flight too
   short`. Root cause (CA completion on unrendered layers) unverified. Bundles 25/7/19/33/980 all 0
   failures (parent re-ran); signed build OK. LIVE PENDING.
+- [x] SM-07 (`e638c5c`) — Live: flights now ~370ms but the overlay flickers on every Alt+H/J (wallpaper-file
+  backdrop lacks desktop icons, focus ring hides, unmanaged windows hidden, stale images, 60ms
+  fade). User chose real windows: default `renderer = "ax"`, snapshot kept as experimental
+  (settings label + docs). Route: inline (mechanical, 5 files). RED: 4 default tests failed first;
+  GREEN after change + pinning snapshot in 2 reason/log-gate tests. Bundles 25/7/19/33/980 all 0
+  failures; signed build OK.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
