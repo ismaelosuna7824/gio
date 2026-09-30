@@ -21,16 +21,9 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Sidebar tile symbol; see `sectionStyle` for the tint.
     public var symbol: String {
-        switch self {
-        case .overview: return "rectangle.3.group"
-        case .shortcuts: return "keyboard"
-        case .layout: return "rectangle.split.3x1"
-        case .animations: return "wand.and.stars"
-        case .rules: return "list.bullet.rectangle"
-        case .logs: return "text.alignleft"
-        case .diagnostics: return "stethoscope"
-        }
+        sectionStyle(self).symbol
     }
 }
 
