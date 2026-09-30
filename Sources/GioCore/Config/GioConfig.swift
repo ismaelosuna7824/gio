@@ -84,6 +84,10 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     /// When the focused window that grows gets its final size: `start`
     /// (default, first frame) or `end` (FI-03, final pass).
     public var focusedGrow: FocusedGrowMode
+    /// Maximize-column grows a single-window column by pressing the app's own
+    /// zoom instead of writing a new size (default on); other cases and apps
+    /// without a usable zoom keep the ordinary write.
+    public var nativeZoom: Bool
 
     public init(
         enabled: Bool = true, durationMilliseconds: Int = 200,
@@ -92,8 +96,10 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
         renderer: RendererKind = .ax,
-        focusedGrow: FocusedGrowMode = .start
+        focusedGrow: FocusedGrowMode = .start,
+        nativeZoom: Bool = true
     ) {
+        self.nativeZoom = nativeZoom
         self.focusedGrow = focusedGrow
         self.resize = resize
         self.renderer = renderer

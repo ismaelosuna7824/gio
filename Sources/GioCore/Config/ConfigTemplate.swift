@@ -49,6 +49,13 @@ public func defaultConfigTemplate() -> String {
     # not cut while the neighbours slide away (it may overlap them during the
     # flight); "end" waits for the final pass like every other window.
     focused-grow = "start"
+    # Maximize (Alt+F) on a single-window column presses the app's own zoom
+    # (the double-click on the title bar) instead of writing a new size: the
+    # app animates it in-process, so it does not wait to repaint. Gio keeps
+    # the frame the zoom lands on when it is close to the layout target and
+    # corrects or falls back to a normal write otherwise. Stacked columns and
+    # apps without a zoom button use the normal write. Set false to disable.
+    native-zoom = true
     # How motion is drawn: "ax" (default) moves the real windows every frame,
     # always showing live content. "snapshot" (experimental) animates window
     # images in an overlay: smoother on slow apps, but it can flicker and needs

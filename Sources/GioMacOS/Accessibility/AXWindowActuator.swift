@@ -171,6 +171,33 @@ public final class AXWindowActuator: WindowActuator {
         }
     }
 
+    public func zoomAvailability(of id: WindowID) -> ZoomAvailability {
+        guard (try? actuatorPermission()) != nil, let handle = handle(for: id) else {
+            return .unavailable("noWindow")
+        }
+        countCalls(3, pid: id.pid)
+        switch axZoomControl(of: handle.element) {
+        case .usable: return .available
+        case .unusable(let reason): return .unavailable(reason)
+        }
+    }
+
+    /// Trigger the window's own zoom. Writes no frame: the app animates the
+    /// window in-process, which is the point.
+    public func pressZoom(id: WindowID) -> ZoomPressResult {
+        guard (try? actuatorPermission()) != nil, let handle = handle(for: id) else {
+            return .unavailable("noWindow")
+        }
+        countCalls(4, pid: id.pid)
+        switch axZoomControl(of: handle.element) {
+        case .unusable(let reason):
+            return .unavailable(reason)
+        case .usable(let button, let action):
+            let status = AXUIElementPerformAction(button, action as CFString)
+            return status == .success ? .pressed : .unavailable("actionFailed(\(status.rawValue))")
+        }
+    }
+
     public func focus(id: WindowID) throws {
         try actuatorPermission()
         guard let handle = handle(for: id) else {

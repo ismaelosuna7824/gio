@@ -150,6 +150,7 @@ struct AnimationsSettingsView: View {
     @State private var resize: ResizeMode
     @State private var renderer: RendererKind
     @State private var focusedGrow: FocusedGrowMode
+    @State private var nativeZoom: Bool
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
@@ -163,6 +164,7 @@ struct AnimationsSettingsView: View {
         _resize = State(initialValue: animations.resize)
         _renderer = State(initialValue: animations.renderer)
         _focusedGrow = State(initialValue: animations.focusedGrow)
+        _nativeZoom = State(initialValue: animations.nativeZoom)
     }
 
     var body: some View {
@@ -220,6 +222,10 @@ struct AnimationsSettingsView: View {
                 .disabled(!enabled)
                 Text("At start (default) gives the focused window its final size in the first frame of maximize, fullscreen and width changes, so it is not cut while the others slide away. At end waits for the final pass. Adaptive or Always resize keep their own timing when they already grow the window during the motion.")
                     .font(.caption).foregroundStyle(.secondary)
+                Toggle("Use the app's own zoom to maximize", isOn: $nativeZoom)
+                    .disabled(!enabled)
+                Text("Maximize (Alt+F) on a single-window column presses the app's zoom, the same as double-clicking its title bar. The app animates it itself, so it does not wait to repaint at the new size. Gio keeps the frame the zoom lands on when it is close to the layout, and falls back to a normal resize otherwise. Stacked columns and apps without a zoom button always use the normal resize.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Renderer", selection: $renderer) {
                     Text("Accessibility").tag(RendererKind.ax)
                     Text("Snapshot (experimental)").tag(RendererKind.snapshot)
@@ -245,7 +251,7 @@ struct AnimationsSettingsView: View {
         feedback = model.apply(animationEdits(
             enabled: enabled, durationMilliseconds: Int(duration),
             curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness,
-            resize: resize, renderer: renderer, focusedGrow: focusedGrow
+            resize: resize, renderer: renderer, focusedGrow: focusedGrow, nativeZoom: nativeZoom
         ))
     }
 
@@ -259,6 +265,7 @@ struct AnimationsSettingsView: View {
         resize = animations.resize
         renderer = animations.renderer
         focusedGrow = animations.focusedGrow
+        nativeZoom = animations.nativeZoom
         feedback = nil
     }
 }

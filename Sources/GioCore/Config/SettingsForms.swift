@@ -107,7 +107,7 @@ public func animationEdits(
     enabled: Bool, durationMilliseconds: Int,
     curve: MotionCurveKind? = nil, springDampingRatio: Double? = nil, springStiffness: Double? = nil,
     resize: ResizeMode? = nil, renderer: RendererKind? = nil,
-    focusedGrow: FocusedGrowMode? = nil
+    focusedGrow: FocusedGrowMode? = nil, nativeZoom: Bool? = nil
 ) -> [ConfigEdit] {
     var edits: [ConfigEdit] = [
         .set(table: "animations", key: "enabled", value: .bool(enabled)),
@@ -130,6 +130,9 @@ public func animationEdits(
     }
     if let focusedGrow {
         edits.append(.set(table: "animations", key: "focused-grow", value: .string(focusedGrow.rawValue)))
+    }
+    if let nativeZoom {
+        edits.append(.set(table: "animations", key: "native-zoom", value: .bool(nativeZoom)))
     }
     return edits
 }

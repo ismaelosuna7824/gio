@@ -366,6 +366,10 @@ func applyAnimationsKey(
                 "line \(line): animations.focused-grow '\(text)' is not \"start\" or \"end\", using the default"
             )
         }
+    } else if key == "native-zoom" {
+        applyBoolKey(key, expected: key, value: value, line: line, table: "animations", errors: &errors) {
+            config.animations.nativeZoom = $0
+        }
     } else if key == "renderer" {
         guard case .string(let text) = value else {
             errors.append("line \(line): animations.renderer expects \"snapshot\" or \"ax\"")

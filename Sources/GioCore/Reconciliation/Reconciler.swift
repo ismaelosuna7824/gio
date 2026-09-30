@@ -21,11 +21,19 @@ public protocol WindowActuator: AnyObject {
     /// call, so an actuator may turn it off (debug logging only); timing then
     /// reports 0 calls and the counter is not even read. Default: true.
     var tracksCalls: Bool { get }
+    /// Whether the window's own zoom (the double-click on the title bar) can
+    /// be triggered. Default: unsupported.
+    func zoomAvailability(of id: WindowID) -> ZoomAvailability
+    /// Trigger the window's own zoom (a toggle). It writes no frame; the app
+    /// animates in-process. Default: unsupported.
+    func pressZoom(id: WindowID) -> ZoomPressResult
 }
 
 public extension WindowActuator {
     func axCallCount(forPid pid: pid_t) -> Int { 0 }
     var tracksCalls: Bool { true }
+    func zoomAvailability(of id: WindowID) -> ZoomAvailability { .unavailable("unsupported") }
+    func pressZoom(id: WindowID) -> ZoomPressResult { .unavailable("unsupported") }
 
     func setFrame(_ frame: CGRect, from current: CGRect, for id: WindowID, verify: Bool) throws {
         try setFrame(frame, for: id)
@@ -458,6 +466,33 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         return written.sorted()
     }
 
+    /// Native zoom: whether `id`'s app can zoom the window, asked on the app's
+    /// own lane like every other window operation. A lane that stalls reads as
+    /// unavailable.
+    public func zoomAvailability(of id: WindowID) -> ZoomAvailability {
+        runZoomOperation(on: id, timedOut: .unavailable("timeout")) { $0.zoomAvailability(of: id) }
+    }
+
+    /// Native zoom: trigger `id`'s own zoom on the app's lane. The only path
+    /// for this AX action; it writes no frame, so the caller marks the window
+    /// mid-zoom and never writes it until the zoom settled.
+    public func pressZoom(_ id: WindowID) -> ZoomPressResult {
+        runZoomOperation(on: id, timedOut: .unavailable("timeout")) { $0.pressZoom(id: id) }
+    }
+
+    private func runZoomOperation<Value: Sendable>(
+        on id: WindowID, timedOut: Value, _ operation: @escaping @Sendable (Actuator) -> Value
+    ) -> Value {
+        let lanes = planWriteLanes(frames: [id: .zero], parked: [:])
+        let actuator = actuator
+        let box = UncheckedSendableBox(actuator)
+        let results = executor.run(lanes: lanes, mode: concurrency) { _ in operation(box.value) }
+        if case .completed(let value)? = results[0] {
+            return value
+        }
+        return timedOut
+    }
+
     /// Bounded wait for the in-flight motion writes; frames still pending
     /// after the timeout are discarded (see `MotionLanes.waitForIdle`).
     public func waitForMotionIdle(timeout: TimeInterval) {
@@ -526,6 +561,14 @@ public final class WindowReconciler<Actuator: WindowActuator> {
 
     /// Largest strip of a parked window allowed inside its display.
     public static var maxParkedStrip: CGFloat { parkedStripLimit }
+}
+
+private struct UncheckedSendableBox<Value>: @unchecked Sendable {
+    let value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
 }
 
 /// Aggregated timings of motion frames (MO-04).
