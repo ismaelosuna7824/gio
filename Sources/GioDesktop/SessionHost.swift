@@ -113,24 +113,10 @@ final class SessionHost: @unchecked Sendable {
     private var trustedFrames = TrustedFrames()
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
-    /// SM-02b: managed set the shareable content was last prefetched for, and
-    /// whether a prefetch is running (session queue only).
-    private var lastPrefetchedWindows: Set<WindowID>?
-    private var prefetchInFlight = false
-    /// SM-04: pre-captured window images, refreshed once after each settle
-    /// (no periodic timer), the running overlay flight and its bookkeeping.
-    /// All on the session queue.
-    private var snapshotCache = SnapshotCache<CGImage>()
-    private var flightGate = SnapshotFlightGate()
-    private var flightIDs: Set<WindowID> = []
-    private var flightDisplays: Set<Int> = []
-    private var flightStartedAt: TimeInterval = 0
-    private var flightWindows: Set<WindowID> = []
-    private var flightCacheAgeMilliseconds = 0
-    private var flightReflowScheduled = false
-    private var cacheRefreshToken = 0
-    private var cacheRefreshBusy = false
-    private var cacheRefreshAgain = false
+    /// SM-04: pre-captured window images (refreshed once after each settle,
+    /// no periodic timer) and the running overlay flight.
+    private var snapshotRefresher: SnapshotCacheRefresher!
+    private var overlayFlight: SnapshotFlightController!
     /// SM-04 overlay hooks, set once by the app before `start()`. They are
     /// invoked on the session queue and hop to the main thread themselves.
     var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight]) -> Void)?
@@ -221,7 +207,7 @@ final class SessionHost: @unchecked Sendable {
             session: { [unowned self] in session },
             physicalFrame: { [unowned self] in physicalFrames[$0] },
             displayFrames: { [unowned self] in displays.allDisplays().map(\.frame) },
-            isFlightActive: { [unowned self] in flightGate.isActive },
+            isFlightActive: { [unowned self] in overlayFlight.isActive },
             isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
             isFullscreen: { [unowned self] in fullscreen.isFullscreen($0) },
             mainHop: mainQueueHop,
@@ -233,7 +219,7 @@ final class SessionHost: @unchecked Sendable {
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 displays: { [unowned self] in displays.allDisplays() },
                 isMotionActive: { [unowned self] in player?.isActive == true },
-                isFlightActive: { [unowned self] in flightGate.isActive },
+                isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isNativeZoomActive: { [unowned self] in
                     nativeZoom.hasInFlight || nativeZoom.hasResolved || !zoomVerifications.isEmpty
                 },
@@ -262,14 +248,14 @@ final class SessionHost: @unchecked Sendable {
             accessibilityGranted: { hasAXPermission() },
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
-            prefetchSnapshotContent: { [unowned self] in prefetchSnapshotContentIfNeeded(permissionGranted: $0) },
+            prefetchSnapshotContent: { [unowned self] in snapshotRefresher.prefetchIfNeeded(permissionGranted: $0) },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
             context: .init(
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 isMotionActive: { [unowned self] in player?.isActive == true },
-                isFlightActive: { [unowned self] in flightGate.isActive },
+                isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
                 isReady: { [unowned self] in reconciler != nil },
                 visibleTargets: { [unowned self] in hoverFrames },
@@ -281,6 +267,54 @@ final class SessionHost: @unchecked Sendable {
                 log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler
+        )
+        snapshotRefresher = SnapshotCacheRefresher(
+            context: .init(
+                session: { [unowned self] in session },
+                displays: { [unowned self] in displays.allDisplays() },
+                physicalFrame: { [unowned self] in physicalFrames[$0] },
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                isFlightActive: { [unowned self] in overlayFlight.isActive },
+                isMotionActive: { [unowned self] in player?.isActive == true },
+                rendererAvailable: { [unowned self] in
+                    SnapshotCapturer.isSupported
+                        && effectiveRenderer(
+                            config: session.config.animations, permission: hasScreenRecordingPermission()
+                        ) == .snapshot
+                },
+                captureScreens: { [unowned self] in refreshLock.withLock { (captureScreens, capturePrimaryHeight) } },
+                capture: { [snapshotCapturer] request, done in
+                    Task.detached {
+                        let result = await snapshotCapturer.capture(request)
+                        done(result.snapshots.mapValues { CapturedImage(image: $0.image, frame: $0.frame) })
+                    }
+                },
+                prefetch: { [snapshotCapturer] managed, done in
+                    Task.detached {
+                        await snapshotCapturer.prefetch(managed: managed)
+                        done()
+                    }
+                },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
+        overlayFlight = SnapshotFlightController(
+            context: .init(
+                displayFrames: { [unowned self] in displays.allDisplays().map(\.frame) },
+                physicalFrames: { [unowned self] in physicalFrames },
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                takeCoalescedReflow: { [unowned self] in reflowCoalescer.takeAtTick() },
+                performReflow: { [unowned self] in performReflow() },
+                publishFocusRing: { [unowned self] in publishFocusRing() },
+                scheduleRenderCheck: { [unowned self] in
+                    if renderVerifier.hasCandidates {
+                        renderVerifier.schedule()
+                    }
+                },
+                log: { GioLog.record($0, $1) }
+            ),
+            cache: snapshotRefresher, overlay: HostOverlayPort(host: self), scheduler: scheduler
         )
         configCoordinator = ConfigCoordinator(
             context: .init(
@@ -394,8 +428,8 @@ final class SessionHost: @unchecked Sendable {
             isShuttingDown = true
             pendingReflow?.cancel()
             stopMotion()
-            endSnapshotFlight(fadeOut: false)
-            snapshotCache.removeAll()
+            overlayFlight.end(fadeOut: false)
+            snapshotRefresher.removeAll()
             reconciler?.waitForMotionIdle(timeout: 0.3)
             restoreOffscreenWindows(session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id))
         }
@@ -427,7 +461,7 @@ final class SessionHost: @unchecked Sendable {
             }
             pendingReflow?.cancel()
             stopMotion()
-            endSnapshotFlight(fadeOut: false)
+            overlayFlight.end(fadeOut: false)
             reconciler?.waitForMotionIdle(timeout: 0.3)
             let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
             let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
@@ -436,25 +470,6 @@ final class SessionHost: @unchecked Sendable {
             DispatchQueue.main.async {
                 completion(moved)
             }
-        }
-    }
-
-    /// SM-02b: refreshes the ScreenCaptureKit content in the background at
-    /// session start and whenever the managed window set changes, so motion
-    /// requests do not pay the fetch inside their budget. Must run on `queue`.
-    private func prefetchSnapshotContentIfNeeded(permissionGranted: Bool) {
-        let managed = Set(session.registry.managedWindows().map(\.id))
-        guard shouldPrefetchShareableContent(
-            managed: managed, lastPrefetched: lastPrefetchedWindows,
-            permissionGranted: permissionGranted, inFlight: prefetchInFlight
-        ) else {
-            return
-        }
-        lastPrefetchedWindows = managed
-        prefetchInFlight = true
-        Task.detached { [snapshotCapturer, weak self] in
-            await snapshotCapturer.prefetch(managed: managed)
-            self?.queue.async { self?.prefetchInFlight = false }
         }
     }
 
@@ -826,7 +841,7 @@ final class SessionHost: @unchecked Sendable {
             nativeZoomTimers.removeValue(forKey: id)?.cancel()
             dropZoomVerification(id)
             resizeProbeGate.forget(id)
-            snapshotCache.evict([id])
+            snapshotRefresher.evict([id])
             fullscreen.forget(id)
             actuator?.forget(elementID: id.elementID)
         }
@@ -1029,12 +1044,12 @@ final class SessionHost: @unchecked Sendable {
         case .apply:
             // FI-06: during a motion the retargeting reflow waits for the next
             // tick, so a burst of keys costs one reflow, not one per key.
-            let flying = flightGate.isActive
+            let flying = overlayFlight.isActive
             if reflowCoalescer.request(motionActive: player?.isActive == true || flying) == .runNow {
                 performReflow()
             } else if flying {
                 // An overlay flight has no tick: one merged retarget shortly after the burst.
-                scheduleFlightReflow()
+                overlayFlight.scheduleReflow()
             }
         case .poll(let delay):
             scheduleDeferredReflow(after: delay)
@@ -1184,15 +1199,15 @@ final class SessionHost: @unchecked Sendable {
         // their final frames (the instant pass below) under an opaque overlay
         // that flies their images on the GPU; the AX motion is the fallback.
         var snapshotFlight = false
-        if animating, snapshotRendererUsable() {
+        if animating, snapshotRefresher.rendererUsable() {
             if !animations.isEmpty {
-                snapshotFlight = driveSnapshotFlight(animations: animations, plans: plans, spring: settings.spring)
+                snapshotFlight = overlayFlight.drive(animations: animations, plans: plans, spring: settings.spring)
             } else {
-                snapshotFlight = flightGate.isActive
+                snapshotFlight = overlayFlight.isActive
             }
         }
         if !snapshotFlight {
-            endSnapshotFlight(fadeOut: false)
+            overlayFlight.end(fadeOut: false)
         }
         if !animations.isEmpty && !snapshotFlight {
             applyPrepositions(prepositions, reconciler: reconciler)
@@ -1304,318 +1319,26 @@ final class SessionHost: @unchecked Sendable {
         scheduleZoomVerifications(failed: zoomWriteFailures)
         if snapshotFlight {
             // The final exact pass is done; the flight settles once its layers land too.
-            if flightGate.passSettled(flightGate.currentToken) {
-                settleSnapshotFlight()
-            }
+            overlayFlight.passSettled()
         } else {
             if renderVerifier.hasCandidates {
                 renderVerifier.schedule()
             }
-            scheduleSnapshotRefresh()
+            snapshotRefresher.schedule()
         }
     }
 
     // MARK: - Snapshot renderer (SM-04)
 
-    /// Snapshot rendering is in force: configured, permission granted,
-    /// macOS 14+. Otherwise the cache is dropped (its memory is released and
-    /// an overlay is never shown without fresh images). Session queue.
-    private func snapshotRendererUsable() -> Bool {
-        let settings = session.config.animations
-        let usable = SnapshotCapturer.isSupported
-            && effectiveRenderer(config: settings, permission: hasScreenRecordingPermission()) == .snapshot
-        if !usable, snapshotCache.count > 0 {
-            snapshotCache.removeAll()
-            GioLog.record(.debug, "snapshot cache cleared renderer=ax")
-        }
-        return usable
-    }
-
-    private func scheduleFlightReflow() {
-        guard !flightReflowScheduled else {
-            return
-        }
-        flightReflowScheduled = true
-        queue.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-            guard let self else {
-                return
-            }
-            self.flightReflowScheduled = false
-            if !self.isShuttingDown, self.reflowCoalescer.takeAtTick() {
-                self.performReflow()
-            }
-        }
-    }
-
-    private func makeFlights(_ items: [SnapshotFlightItem]) -> [SnapshotDisplayFlight] {
-        let frames = displays.allDisplays().map(\.frame)
-        var byDisplay: [Int: [SnapshotOverlayItem]] = [:]
-        for item in items {
-            guard let entry = snapshotCache.entry(item.id), frames.indices.contains(item.displayIndex) else {
-                continue
-            }
-            byDisplay[item.displayIndex, default: []].append(
-                SnapshotOverlayItem(id: item.id, image: entry.image, from: item.from, to: item.to)
-            )
-        }
-        return byDisplay.keys.sorted().map { SnapshotDisplayFlight(displayFrame: frames[$0], items: byDisplay[$0]!) }
-    }
-
-    /// Decide snapshot vs AX for this motion and start (or retarget) the
-    /// overlay flight. True when the overlay carries the motion. The caller
-    /// then runs the ordinary instant pass, which is the real windows' one
-    /// write. Session queue.
-    private func driveSnapshotFlight(
-        animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters
-    ) -> Bool {
-        let screens = displays.allDisplays().map(\.frame)
-        var targets: [WindowID: CGRect] = [:]
-        for plan in plans {
-            for (id, frame) in plan.visible where plan.parked[id] == nil {
-                targets[id] = frame
-            }
-            for (id, parked) in plan.parked {
-                targets[id] = parked.frame
-            }
-        }
-        var starts = physicalFrames.filter { targets[$0.key] != nil }
-        for animation in animations {
-            starts[animation.id] = animation.from
-        }
-        let now = ProcessInfo.processInfo.systemUptime
-        let usable: (WindowID) -> Bool = { [snapshotCache] id in
-            guard let entry = snapshotCache.entry(id) else {
-                return false
-            }
-            return snapshotEntryUsable(entry, currentFrame: starts[id] ?? targets[id] ?? entry.frame, now: now)
-        }
-        if flightGate.isActive {
-            let plan = planSnapshotRetarget(
-                active: flightIDs, starts: starts, targets: targets, displays: screens,
-                activeDisplays: flightDisplays, hasImage: usable
-            )
-            let token = flightGate.retarget()
-            overlayRetarget?(token, plan.retargets, makeFlights(plan.adds))
-            flightIDs.formUnion(plan.adds.map(\.id))
-            flightWindows.formUnion(plan.adds.map(\.id))
-            snapshotCache.touch(plan.adds.map(\.id), at: now)
-            if !plan.uncovered.isEmpty {
-                // No image: written once under the overlay, revealed when it ends.
-                GioLog.record(.debug, "snapshot retarget uncovered ids=\(plan.uncovered.count)")
-                scheduleSnapshotRefresh(delay: 0.05)
-            }
-            return true
-        }
-        let wallpapers = overlayWallpapers
-        let decision = planSnapshotFlight(
-            starts: starts, targets: targets, displays: screens, hasImage: usable,
-            backdropReady: { wallpapers?.hasImage(for: screens[$0]) ?? false }
-        )
-        switch decision {
-        case .fallback(let reason, let missing):
-            GioLog.record(.info, snapshotFallbackLine(reason: reason, count: missing.count))
-            // Next time the images are there.
-            scheduleSnapshotRefresh(delay: 0.05)
-            return false
-        case .snapshot(let items):
-            let flights = makeFlights(items)
-            guard !flights.isEmpty else {
-                return false
-            }
-            let ids = Set(items.map(\.id))
-            let token = flightGate.begin()
-            flightIDs = ids
-            flightWindows = ids
-            flightDisplays = Set(items.map(\.displayIndex))
-            flightStartedAt = now
-            flightCacheAgeMilliseconds = snapshotCache.maxAgeMilliseconds(of: ids, now: now)
-            snapshotCache.touch(ids, at: now)
-            overlayBegin?(token, spring, flights)
-            return true
-        }
-    }
-
     /// Overlay layers of flight `token` landed (called from the main thread).
     func snapshotLayersFinished(_ token: Int) {
-        queue.async { [weak self] in
-            guard let self, !self.isShuttingDown else {
-                return
-            }
-            if self.flightGate.layersFinished(token) {
-                self.settleSnapshotFlight()
-            }
-        }
+        overlayFlight.layersFinished(token)
     }
 
     /// The overlay came down on its own (watchdog, mouse down): treat it as a
     /// settle without the fade. Called from the main thread.
     func snapshotFlightAborted(_ reason: SnapshotAbortReason) {
-        queue.async { [weak self] in
-            guard let self, !self.isShuttingDown, self.flightGate.isActive else {
-                return
-            }
-            GioLog.record(reason.logLevel, snapshotAbortLine(reason: reason))
-            self.flightGate.abort()
-            self.flightIDs = []
-            self.flightDisplays = []
-            self.flightWindows = []
-            self.publishFocusRing()
-            if self.renderVerifier.hasCandidates {
-                self.renderVerifier.schedule()
-            }
-            self.scheduleSnapshotRefresh()
-        }
-    }
-
-    /// Layers landed and the real windows settled: remove the overlay, show
-    /// the ring, verify the render and refresh the image cache in the
-    /// background.
-    private func settleSnapshotFlight() {
-        let duration = ProcessInfo.processInfo.systemUptime - flightStartedAt
-        overlayEnd?(true)
-        GioLog.record(
-            .info,
-            MotionSummary(
-                windows: flightWindows.count, frames: 0, dropped: 0, duration: duration, slowest: nil,
-                curve: "spring", renderer: "snapshot"
-            ).logLine
-        )
-        GioLog.record(
-            .info,
-            snapshotFlightLine(
-                layers: flightIDs.count, cacheAgeMilliseconds: flightCacheAgeMilliseconds, duration: duration
-            )
-        )
-        flightIDs = []
-        flightDisplays = []
-        flightWindows = []
-        publishFocusRing()
-        if renderVerifier.hasCandidates {
-            renderVerifier.schedule()
-        }
-        scheduleSnapshotRefresh()
-    }
-
-    /// Abandon a flight without the normal settle (fallback to AX, shutdown).
-    private func endSnapshotFlight(fadeOut: Bool) {
-        guard flightGate.isActive else {
-            return
-        }
-        flightGate.abort()
-        flightIDs = []
-        flightDisplays = []
-        flightWindows = []
-        overlayEnd?(fadeOut)
-        publishFocusRing()
-    }
-
-    // MARK: Pre-captured cache
-
-    /// One-shot, debounced: ~300 ms after a settle, capture the visible
-    /// windows and their neighbours in the background. No periodic timer.
-    private func scheduleSnapshotRefresh(delay: TimeInterval = 0.3) {
-        guard !isShuttingDown, snapshotRendererUsable() else {
-            return
-        }
-        cacheRefreshToken += 1
-        let token = cacheRefreshToken
-        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            self?.runSnapshotRefresh(token: token)
-        }
-    }
-
-    /// Windows to keep cached and where they are now: visible ones, the
-    /// columns next to the viewport, and the focused window of the adjacent
-    /// workspaces of each display (at most 12).
-    private func snapshotRefreshSet() -> [(id: WindowID, frame: CGRect)] {
-        var ordered: [WindowID] = []
-        for display in displays.allDisplays() {
-            guard let workspace = session.manager.workspace(id: display.workspace) else {
-                continue
-            }
-            let columns = workspace.columns.map(\.windows)
-            let visible = Set(columns.joined().filter { id in
-                physicalFrames[id].map { overlayDisplayIndex(from: $0, to: $0, displays: [display.frame]) != nil } ?? false
-            })
-            var extras: [WindowID] = []
-            let stack = session.manager.stack(on: display.id)
-            if let index = stack.firstIndex(where: { $0.id == display.workspace }) {
-                for neighbour in [index - 1, index + 1] where stack.indices.contains(neighbour) {
-                    if let focused = stack[neighbour].focusedWindow {
-                        extras.append(focused)
-                    }
-                }
-            }
-            ordered += snapshotCaptureSet(columns: columns, visible: visible, extras: extras)
-        }
-        var seen: Set<WindowID> = []
-        var result: [(id: WindowID, frame: CGRect)] = []
-        for id in ordered where seen.insert(id).inserted {
-            guard let window = session.registry.find(id), !window.isMinimized, let frame = physicalFrames[id] else {
-                continue
-            }
-            result.append((id, frame))
-            if result.count == 12 {
-                break
-            }
-        }
-        return result
-    }
-
-    private func runSnapshotRefresh(token: Int) {
-        guard token == cacheRefreshToken, !isShuttingDown, !flightGate.isActive, player?.isActive != true,
-              snapshotRendererUsable()
-        else {
-            return
-        }
-        guard !cacheRefreshBusy else {
-            cacheRefreshAgain = true
-            return
-        }
-        let wanted = snapshotRefreshSet()
-        guard !wanted.isEmpty else {
-            return
-        }
-        let (screens, primary) = refreshLock.withLock { (captureScreens, capturePrimaryHeight) }
-        let request = SnapshotCaptureRequest(
-            windows: Dictionary(uniqueKeysWithValues: wanted.map { ($0.id, $0.frame) }),
-            displays: screens, primaryDisplayHeight: primary, includeBackdrop: false,
-            budgetMilliseconds: 1500, logLevel: .debug
-        )
-        cacheRefreshBusy = true
-        Task.detached { [snapshotCapturer, weak self] in
-            let result = await snapshotCapturer.capture(request)
-            self?.queue.async { self?.finishSnapshotRefresh(result) }
-        }
-    }
-
-    private func finishSnapshotRefresh(_ result: SnapshotCaptureResult) {
-        cacheRefreshBusy = false
-        guard !isShuttingDown, snapshotRendererUsable() else {
-            return
-        }
-        let now = ProcessInfo.processInfo.systemUptime
-        for (id, snapshot) in result.snapshots {
-            snapshotCache.store(
-                id, image: snapshot.image, frame: snapshot.frame,
-                pixels: snapshot.image.width * snapshot.image.height, at: now
-            )
-        }
-        // Gone or minimized windows lose their image; the rest stays under the cap.
-        let live = Set(session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id))
-        snapshotCache.retain(only: live)
-        let displayPixels = captureScreens.map {
-            Int($0.frame.width * $0.scale) * Int($0.frame.height * $0.scale)
-        }.max() ?? 0
-        let evicted = snapshotCache.enforce(capPixels: snapshotCacheCapPixels(displayPixels: displayPixels))
-        GioLog.record(
-            .debug,
-            "snapshot cache entries=\(snapshotCache.count) pixels=\(snapshotCache.totalPixels) evicted=\(evicted.count)"
-        )
-        if cacheRefreshAgain {
-            cacheRefreshAgain = false
-            scheduleSnapshotRefresh(delay: 0.05)
-        }
+        overlayFlight.aborted(reason)
     }
 
     private func appName(_ pid: pid_t) -> String {
@@ -2031,7 +1754,7 @@ final class SessionHost: @unchecked Sendable {
         }
         // The zoom needs the AX motion of the neighbours (a snapshot overlay
         // would fly an image of the window over its own zoom).
-        if enabled, request.columnWindowCount == 1, !animating || snapshotRendererUsable() {
+        if enabled, request.columnWindowCount == 1, !animating || snapshotRefresher.rendererUsable() {
             return skipped(.noAxMotion)
         }
         if case .ineligible(let reason) = nativeZoomEligibility(
@@ -2109,7 +1832,7 @@ final class SessionHost: @unchecked Sendable {
     private func finishNativeZoom(_ id: WindowID, settle: NativeZoomSettle) {
         nativeZoomTimers.removeValue(forKey: id)?.cancel()
         nativeZoom.finish(id, settle: settle)
-        guard player?.isActive != true, !flightGate.isActive else {
+        guard player?.isActive != true, !overlayFlight.isActive else {
             return
         }
         queue.async { [weak self] in
@@ -2600,11 +2323,8 @@ final class SessionHost: @unchecked Sendable {
             }
             self.publishDisplayRefreshes()
             self.queue.async {
-                if self.flightGate.isActive {
-                    // Screens changed under the flight: come down, then relayout.
-                    GioLog.record(.info, snapshotAbortLine(reason: .displayChange))
-                    self.endSnapshotFlight(fadeOut: false)
-                }
+                // Screens changed under the flight: come down, then relayout.
+                self.overlayFlight.abortForDisplayChange()
                 self.syncDisplays()
                 self.reflowAll()
             }
@@ -2932,6 +2652,40 @@ private func sameElement(_ lhs: AXUIElement?, _ rhs: AXUIElement?) -> Bool {
     case (nil, nil): return true
     case (let lhs?, let rhs?): return CFEqual(lhs, rhs)
     default: return false
+    }
+}
+
+/// SM-04: forwards the overlay flight to the app's hooks (set before `start()`).
+private final class HostOverlayPort: OverlayPort {
+    private unowned let host: SessionHost
+
+    init(host: SessionHost) {
+        self.host = host
+    }
+
+    func beginFlight(token: Int, spring: SpringParameters, flights: [OverlayFlight]) {
+        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init))
+    }
+
+    func retargetFlight(token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight]) {
+        host.overlayRetarget?(token, targets, adds.map(SnapshotDisplayFlight.init))
+    }
+
+    func endFlight(fadeOut: Bool) {
+        host.overlayEnd?(fadeOut)
+    }
+
+    func hasBackdrop(for displayFrame: CGRect) -> Bool {
+        host.overlayWallpapers?.hasImage(for: displayFrame) ?? false
+    }
+}
+
+private extension SnapshotDisplayFlight {
+    init(_ flight: OverlayFlight) {
+        self.init(
+            displayFrame: flight.displayFrame,
+            items: flight.items.map { SnapshotOverlayItem(id: $0.id, image: $0.image, from: $0.from, to: $0.to) }
+        )
     }
 }
 
