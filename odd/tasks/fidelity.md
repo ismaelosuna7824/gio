@@ -77,6 +77,15 @@ Review: UNAVAILABLE.
   Follow-up `ea629c8` (user: "cubre el caso de una vez"): final-pass reassert also on same-app
   drift (frontmost focused window != target) and once when unreadable; log `focus reassert id=
   reason=`. Bundles 22/7/19/32/771 all 0 failures (parent re-ran).
+- [x] FI-08 (`c35f5b7`) — Live test round 2026-09-30: 24 `render nudge ... fixed=false` with
+  `ws=missing` on visible windows (Chrome/Code/Finder/Ghostty/WhatsApp). Root cause: nudged set reset
+  every settle (repeats, proven) + any unmatched window treated as missing (edge/peek windows,
+  multi-window apps; partly inferred). Fix: evaluateRender (skip <50% on-screen, missing only if no
+  same-pid entry covers >=30%, ambiguous/overlapsOther = unknown), one failed nudge per window then
+  unverifiable, debug `render unmatched reason=`. RED compile -> GREEN; bundles 158(42 skipped)/7/19/
+  39/1134 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
+  Same live round PASSED: startup instant (3x), config edit+reload from app, native zoom 14/14
+  `corrected verified=true`, quit restore 3x + guardian clean exit.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.
