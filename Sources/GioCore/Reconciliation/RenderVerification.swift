@@ -126,32 +126,108 @@ public struct RenderMismatch: Equatable, Sendable {
     }
 }
 
-/// Windows whose target intersects a viewport and whose WindowServer bounds
-/// differ from their AX frame. A visible target with no on-screen entry is a
-/// mismatch with `ws == nil` (SM-02c: the list only holds on-screen windows).
-/// Ambiguous windows are skipped; a match whose size differs (minimum-size
-/// learning) is not a mismatch.
+/// Why a checked window could not be judged. Such windows are `unknown`:
+/// logged for diagnosis, never nudged.
+public enum UnmatchedReason: String, Equatable, Sendable {
+    /// Less than half of the window is on a display (peek/edge columns).
+    case offscreenTarget
+    /// Several candidate entries and none is clearly the window.
+    case ambiguous
+    /// No paired entry, but the app draws something over the expected area.
+    case overlapsOther
+}
+
+public struct RenderUnmatched: Equatable, Sendable {
+    public let id: WindowID
+    public let reason: UnmatchedReason
+    /// Layer-0 on-screen entries of the pid that were considered.
+    public let candidates: Int
+
+    public init(id: WindowID, reason: UnmatchedReason, candidates: Int) {
+        self.id = id
+        self.reason = reason
+        self.candidates = candidates
+    }
+}
+
+public struct RenderVerdict: Equatable, Sendable {
+    public let mismatches: [RenderMismatch]
+    public let unmatched: [RenderUnmatched]
+}
+
+/// Share of a window that must be on a display to be worth checking.
+public let renderMinVisibleRatio: CGFloat = 0.5
+/// Share of the expected area an entry of the pid must cover to count as
+/// "something of the app is drawn there".
+public let renderPresenceRatio: CGFloat = 0.3
+
+private func area(_ r: CGRect) -> CGFloat {
+    r.isNull ? 0 : r.width * r.height
+}
+
+private func visibleRatio(_ frame: CGRect, viewports: [CGRect]) -> CGFloat {
+    let total = area(frame)
+    guard total > 0 else {
+        return 0
+    }
+    return viewports.reduce(0) { $0 + area($1.intersection(frame)) } / total
+}
+
+/// Conservative verdict. `ws == nil` (missing) only when the pid has no
+/// on-screen entry covering at least 30% of the expected frame; ambiguous or
+/// unmatched-but-overlapping windows are `unmatched` (unknown); windows less
+/// than half on a display are skipped. A match whose size differs (minimum
+/// size learning) is not a mismatch. `axFrames` should be the settled frames
+/// the reconciler accepted, not the requested ones.
+public func evaluateRender(
+    axFrames: [WindowID: CGRect], server: [ServerWindow],
+    targets: [WindowID: CGRect], viewports: [CGRect]
+) -> RenderVerdict {
+    var unmatched: [RenderUnmatched] = []
+    var checked: [WindowID: CGRect] = [:]
+    for id in axFrames.keys.sorted() {
+        let frame = axFrames[id]!
+        guard let target = targets[id], viewports.contains(where: { $0.intersects(target) }) else {
+            continue
+        }
+        if visibleRatio(frame, viewports: viewports) < renderMinVisibleRatio {
+            unmatched.append(RenderUnmatched(
+                id: id, reason: .offscreenTarget, candidates: server.filter { $0.pid == id.pid }.count
+            ))
+            continue
+        }
+        checked[id] = frame
+    }
+    let matches = matchServerWindows(axFrames: checked, server: server)
+    var mismatches: [RenderMismatch] = []
+    for id in checked.keys.sorted() {
+        let frame = checked[id]!
+        let ofPid = server.filter { $0.pid == id.pid }
+        switch matches[id] {
+        case .matched(let ws)?:
+            if sameSize(ws, frame), isRenderMismatch(reference: frame, server: ws) {
+                mismatches.append(RenderMismatch(id: id, ax: frame, ws: ws))
+            }
+        case .missing?, nil:
+            let present = ofPid.contains { area($0.bounds.intersection(frame)) / area(frame) >= renderPresenceRatio }
+            if present {
+                unmatched.append(RenderUnmatched(id: id, reason: .overlapsOther, candidates: ofPid.count))
+            } else {
+                mismatches.append(RenderMismatch(id: id, ax: frame, ws: nil))
+            }
+        case .ambiguous?:
+            unmatched.append(RenderUnmatched(id: id, reason: .ambiguous, candidates: ofPid.count))
+        }
+    }
+    return RenderVerdict(mismatches: mismatches, unmatched: unmatched)
+}
+
+/// Mismatches only; see `evaluateRender`.
 public func findRenderMismatches(
     axFrames: [WindowID: CGRect], server: [ServerWindow],
     targets: [WindowID: CGRect], viewports: [CGRect]
 ) -> [RenderMismatch] {
-    let checked = axFrames.filter { id, _ in
-        targets[id].map { target in viewports.contains { $0.intersects(target) } } == true
-    }
-    let matches = matchServerWindows(axFrames: checked, server: server)
-    return checked.keys.sorted().compactMap { id in
-        switch matches[id] {
-        case .matched(let ws)?:
-            guard sameSize(ws, checked[id]!), isRenderMismatch(reference: checked[id]!, server: ws) else {
-                return nil
-            }
-            return RenderMismatch(id: id, ax: checked[id]!, ws: ws)
-        case .missing?, nil:
-            return RenderMismatch(id: id, ax: checked[id]!, ws: nil)
-        case .ambiguous?:
-            return nil
-        }
-    }
+    evaluateRender(axFrames: axFrames, server: server, targets: targets, viewports: viewports).mismatches
 }
 
 /// Minimal sequence that forces the WindowServer to take a fresh position:
@@ -171,8 +247,34 @@ public struct RenderCheckBook: Sendable {
     private var generation = 0
     private var nudged: Set<WindowID> = []
     private var warned: Set<WindowID> = []
+    private var unverifiable: Set<WindowID> = []
 
     public init() {}
+
+    /// A nudge that did not fix the window is its last: the window becomes
+    /// render-unverifiable and is no longer checked. True the first time
+    /// (the caller logs once).
+    public mutating func recordNudge(_ id: WindowID, fixed: Bool) -> Bool {
+        fixed ? false : unverifiable.insert(id).inserted
+    }
+
+    public func isUnverifiable(_ id: WindowID) -> Bool {
+        unverifiable.contains(id)
+    }
+
+    /// Frames of windows still worth checking.
+    public func checkable(_ frames: [WindowID: CGRect]) -> [WindowID: CGRect] {
+        frames.filter { !unverifiable.contains($0.key) }
+    }
+
+    /// Re-registered or gone windows start clean.
+    public mutating func forget(_ ids: some Sequence<WindowID>) {
+        for id in ids {
+            unverifiable.remove(id)
+            nudged.remove(id)
+            warned.remove(id)
+        }
+    }
 
     /// A new settle: supersedes any pending check and resets the nudge budget.
     public mutating func schedule() -> Int {
@@ -191,7 +293,7 @@ public struct RenderCheckBook: Sendable {
     }
 
     public mutating func claimNudges(_ ids: [WindowID]) -> [WindowID] {
-        ids.filter { nudged.insert($0).inserted }
+        ids.filter { !unverifiable.contains($0) && nudged.insert($0).inserted }
     }
 
     public mutating func mismatchLevel(for id: WindowID) -> LogLevel {
@@ -205,4 +307,12 @@ public func renderMismatchLine(id: WindowID, app: String, ax: CGRect, ws: CGRect
 
 public func renderNudgeLine(id: WindowID, app: String, fixed: Bool) -> String {
     "render nudge id=\(id.pid):\(id.elementID) app=\(app) fixed=\(fixed)"
+}
+
+public func renderUnmatchedLine(id: WindowID, app: String, reason: UnmatchedReason, candidates: Int) -> String {
+    "render unmatched id=\(id.pid):\(id.elementID) app=\(app) reason=\(reason.rawValue) candidates=\(candidates)"
+}
+
+public func renderUnverifiableLine(id: WindowID, app: String) -> String {
+    "render unverifiable id=\(id.pid):\(id.elementID) app=\(app) reason=nudgeNotFixed"
 }

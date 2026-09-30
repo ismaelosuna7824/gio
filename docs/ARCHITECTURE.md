@@ -297,6 +297,8 @@ Accessibility can report a window at its target while the WindowServer still dra
 
 SM-02c: `.optionOnScreenOnly` only lists windows that are on screen, so a visible target with no entry of its pid at all (nothing exact, same-size or 80%-overlapping) is a mismatch with `ws=missing` (`RenderMismatch.ws == nil`) and gets the nudge and the one re-check like any other; only ambiguous windows are skipped. A match whose size differs (`matchServerWindows` pass 3, minimum-size learning) is not a mismatch. While an overlay flight is up the check waits and is rescheduled at the settle, so it verifies the real windows after the overlay is gone.
 
+Conservative verdict (`evaluateRender`, pure): windows less than 50% on a display (peek/edge columns) are skipped (`render unmatched ... reason=offscreenTarget`). `ws=missing` is reported only when the pid has no on-screen layer-0 entry covering at least 30% of the expected frame; ambiguous candidates (`reason=ambiguous`) and unmatched-but-overlapping windows (`reason=overlapsOther`) are unknown and never nudged. The frames compared are the settled ones the reconciler accepted (learned minimum sizes). `render unmatched id= app= reason= candidates=N` is a debug line. A nudge that ends `fixed=false` marks the window render-unverifiable (`render unverifiable`, debug, once): it is not checked or nudged again until it is re-registered (new id) or purged.
+
 Bounds (`RenderCheckBook`): at most one nudge per window per settle, never a loop; any new reflow or motion cancels a pending check; the check also skips while a motion is in flight or a mouse button is down. It never blocks main or hotkeys.
 
 ### Focus settle

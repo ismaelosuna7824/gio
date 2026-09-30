@@ -1016,6 +1016,7 @@ final class SessionHost: @unchecked Sendable {
             minimumSizes.forget(id)
             echoGate.forget(id)
             trustedFrames.invalidate(id)
+            renderChecks.forget([id])
             physicalFrames.removeValue(forKey: id)
             nativeZoom.forget(id)
             nativeZoomTimers.removeValue(forKey: id)?.cancel()
@@ -1843,7 +1844,11 @@ final class SessionHost: @unchecked Sendable {
     /// frames the settle already read or verified, the server list only has
     /// on-screen windows.
     private func renderMismatches(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> [RenderMismatch] {
-        findRenderMismatches(
+        renderVerdict(axFrames: axFrames, targets: targets).mismatches
+    }
+
+    private func renderVerdict(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> RenderVerdict {
+        evaluateRender(
             axFrames: axFrames, server: windowServerWindows(displayHeight: mainHeight()),
             targets: targets, viewports: renderViewports()
         )
@@ -1854,7 +1859,9 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         let visible = hoverFrames
-        let axFrames = renderCheckFrames(candidates: renderCandidates, visible: visible, settled: renderSettled)
+        let axFrames = renderChecks.checkable(
+            renderCheckFrames(candidates: renderCandidates, visible: visible, settled: renderSettled)
+        )
         renderCandidates = []
         renderSettled = [:]
         // Nothing visible was written in this settle: skip the WindowServer
@@ -1863,7 +1870,16 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         let targets = visible.filter { axFrames[$0.key] != nil }
-        let mismatches = renderMismatches(axFrames: axFrames, targets: targets)
+        let verdict = renderVerdict(axFrames: axFrames, targets: targets)
+        for entry in verdict.unmatched {
+            GioLog.record(
+                .debug,
+                renderUnmatchedLine(
+                    id: entry.id, app: appName(entry.id.pid), reason: entry.reason, candidates: entry.candidates
+                )
+            )
+        }
+        let mismatches = verdict.mismatches
         guard !mismatches.isEmpty else {
             return
         }
@@ -1905,6 +1921,9 @@ final class SessionHost: @unchecked Sendable {
             )
             for id in written {
                 let fixed = !still.contains(id)
+                if self.renderChecks.recordNudge(id, fixed: fixed) {
+                    GioLog.record(.debug, renderUnverifiableLine(id: id, app: self.appName(id.pid)))
+                }
                 GioLog.record(
                     fixed ? .info : .warn,
                     renderNudgeLine(id: id, app: self.appName(id.pid), fixed: fixed)
