@@ -39,6 +39,7 @@ struct LayoutSettingsView: View {
     @State private var focusFollowsMouse: Bool
     @State private var mouseFollowsFocus: Bool
     @State private var ring: FocusRingSettingsForm
+    @State private var indicator: FocusSettingsForm
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
@@ -46,6 +47,7 @@ struct LayoutSettingsView: View {
         let config = model.snapshot.config
         _form = State(initialValue: LayoutSettingsForm(config: config.layout))
         _ring = State(initialValue: FocusRingSettingsForm(config: config.focusRing))
+        _indicator = State(initialValue: FocusSettingsForm(config: config.focus))
         _focusFollowsMouse = State(initialValue: config.behavior.focusFollowsMouse)
         _mouseFollowsFocus = State(initialValue: config.behavior.mouseFollowsFocus)
     }
@@ -89,13 +91,33 @@ struct LayoutSettingsView: View {
                 Text("Moves the cursor to the focused window after a keyboard focus change.")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("Focus ring") {
-                Toggle("Draw a ring around the focused window", isOn: $ring.enabled)
-                numberField("Width (0-20 points)", $ring.width)
-                FocusRingColorRow(form: $ring)
-                Toggle("Hide the ring on maximized and fullscreen windows", isOn: $ring.hideWhenMaximized)
-                Text("A click-through outline that follows the focused window, including while it animates. Hidden for minimized and off-screen windows, for maximized and fullscreen windows unless the option above is off, and while Gio itself is active.")
-                    .font(.caption).foregroundStyle(.secondary)
+            Section("Focus indicator") {
+                Picker("Indicator", selection: $indicator.indicator) {
+                    Text("Dim").tag(FocusIndicatorKind.dim)
+                    Text("Ring").tag(FocusIndicatorKind.ring)
+                    Text("None").tag(FocusIndicatorKind.none)
+                }
+                .pickerStyle(.segmented)
+                switch indicator.indicator {
+                case .dim:
+                    HStack {
+                        Slider(value: $indicator.dimStrength, in: FocusSectionConfig.dimStrengthRange, step: 0.01)
+                        Text("\(Int((indicator.dimStrength * 100).rounded()))%")
+                            .monospacedDigit().frame(width: 44, alignment: .trailing)
+                    }
+                    Text("Darkens the other visible tiled windows while nothing moves; the focused window stays lit. Floating windows, popovers and other apps' windows in front are never dimmed. Fades out when a motion starts and back in once it settles.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .ring:
+                    Toggle("Draw a ring around the focused window", isOn: $ring.enabled)
+                    numberField("Width (0-20 points)", $ring.width)
+                    FocusRingColorRow(form: $ring)
+                    Toggle("Hide the ring on maximized and fullscreen windows", isOn: $ring.hideWhenMaximized)
+                    Text("A click-through outline that follows the focused window, including while it animates. Hidden for minimized and off-screen windows, for maximized and fullscreen windows unless the option above is off, and while Gio itself is active.")
+                        .font(.caption).foregroundStyle(.secondary)
+                case .none:
+                    Text("No focus indicator is drawn.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
             Section {
                 HStack {
@@ -112,7 +134,7 @@ struct LayoutSettingsView: View {
     }
 
     private var problems: [String] {
-        form.problems + ring.problems
+        form.problems + ring.problems + indicator.problems
     }
 
     private func numberField(_ title: String, _ value: Binding<Double>) -> some View {
@@ -122,7 +144,7 @@ struct LayoutSettingsView: View {
     private func apply() {
         feedback = model.apply(
             form.edits + behaviorEdits(focusFollowsMouse: focusFollowsMouse, mouseFollowsFocus: mouseFollowsFocus)
-                + ring.edits
+                + ring.edits + indicator.edits
         )
         if case .applied? = feedback {
             revert(keepFeedback: true)
@@ -133,6 +155,7 @@ struct LayoutSettingsView: View {
         let config = model.snapshot.config
         form = LayoutSettingsForm(config: config.layout)
         ring = FocusRingSettingsForm(config: config.focusRing)
+        indicator = FocusSettingsForm(config: config.focus)
         focusFollowsMouse = config.behavior.focusFollowsMouse
         mouseFollowsFocus = config.behavior.mouseFollowsFocus
         if !keepFeedback {

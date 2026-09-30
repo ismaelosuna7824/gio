@@ -138,6 +138,8 @@ public struct GioConfig: Sendable {
     public var animations: AnimationsSectionConfig
     /// NF-01: consumed by the session host (focus ring overlay).
     public var focusRing: FocusRingSectionConfig
+    /// NF-06: which focus indicator runs (dim by default) and its strength.
+    public var focus: FocusSectionConfig
     public var logging: LoggingSectionConfig
     /// Ordered file bindings; applied over dispatcher defaults.
     public var keybindings: [(HotkeyCombo, HotkeyAction)]
@@ -148,6 +150,7 @@ public struct GioConfig: Sendable {
         behavior: BehaviorSectionConfig = BehaviorSectionConfig(),
         animations: AnimationsSectionConfig = AnimationsSectionConfig(),
         focusRing: FocusRingSectionConfig = FocusRingSectionConfig(),
+        focus: FocusSectionConfig = FocusSectionConfig(),
         logging: LoggingSectionConfig = LoggingSectionConfig(),
         keybindings: [(HotkeyCombo, HotkeyAction)] = [],
         rules: [WindowRule] = []
@@ -156,6 +159,7 @@ public struct GioConfig: Sendable {
         self.behavior = behavior
         self.animations = animations
         self.focusRing = focusRing
+        self.focus = focus
         self.logging = logging
         self.keybindings = keybindings
         self.rules = rules

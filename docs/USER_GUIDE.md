@@ -59,7 +59,7 @@ Notes:
 
 Gio parses a strict **subset of TOML**:
 
-- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus-ring]`, `[logging]`, `[keybindings]` and array tables `[[window-rules]]`.
+- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus]`, `[focus-ring]`, `[logging]`, `[keybindings]` and array tables `[[window-rules]]`.
 - `key = value` with double-quoted strings, integers, decimals, `true`/`false`, and flat lists of numbers like `[0.33, 0.5, 800]` (a trailing comma is tolerated; nested lists are not).
 - `#` comments outside quotes. Keys may be quoted (`"Alt+H" = ...`).
 - No escapes in strings, no multi-line values, no inline tables.
@@ -70,7 +70,7 @@ Validation outcomes:
 | --- | --- |
 | Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used**, and every message (with its line number) is shown in the app (**Overview**, **Diagnostics**) and returned by `gio reload`. |
 | Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility). |
-| `animations.duration-ms` outside 0 to 1000, `animations.spring-damping-ratio` outside 0.2 to 3, `animations.spring-stiffness` outside 100 to 3000, `focus-ring.width` outside 0 to 20 | **Warning.** Clamped into range. |
+| `animations.duration-ms` outside 0 to 1000, `animations.spring-damping-ratio` outside 0.2 to 3, `animations.spring-stiffness` outside 100 to 3000, `focus-ring.width` outside 0 to 20, `focus.dim-strength` outside 0.0 to 0.5 | **Warning.** Clamped into range. |
 | Missing file | Silent defaults (first run). |
 
 An invalid config never stops the window manager.
@@ -115,9 +115,20 @@ An invalid config never stops the window manager.
 
 The file is written in batches and rotates at about 1 MB to `gio.log.1` (one backup kept); `gio logs` and the Logs section read the current file only.
 
+### `[focus]`
+
+Which focus indicator runs.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `indicator` | string | `"dim"` | `"dim"` darkens the other visible tiled windows while nothing moves, so the focused window stays lit. `"ring"` draws the outline configured in `[focus-ring]`. `"none"` draws nothing. Anything else is an error. |
+| `dim-strength` | number | `0.15` | Opacity of the black dim over unfocused windows, clamped to `0.0...0.5` with a warning. Dark mode uses 80% of it. |
+
+The dim is drawn by click-through overlays (one per display, just above ordinary windows and below floating panels, menus and the Dock) and never takes focus. Only tiled windows are dimmed; floating windows, popovers and any window in front of a dimmed one (other apps included) stay untouched, and so do minimized, parked and off-screen windows. It fades out (80 ms) when a motion, workspace switch, native zoom or window drag starts and fades back in (150 ms) once everything settled; with Reduce Motion it appears and disappears without a fade. Settings, Layout, Focus indicator has a Dim / Ring / None control and a strength slider.
+
 ### `[focus-ring]`
 
-A rounded outline around the focused window, drawn by a click-through overlay that never takes focus. It follows the window while it animates.
+Used when `[focus] indicator = "ring"`. A rounded outline around the focused window, drawn by a click-through overlay that never takes focus. It follows the window while it animates.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -162,6 +173,10 @@ resize = "never"
 focused-grow = "start"
 native-zoom = true
 renderer = "ax"
+
+[focus]
+indicator = "dim"
+dim-strength = 0.15
 
 [focus-ring]
 enabled = true
@@ -212,7 +227,7 @@ Behavior:
 | --- | --- |
 | **Overview** | Session status, Accessibility permission (with a **Request Access** button), Screen Recording permission (with a **Request access** button and a relaunch hint), config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 3 s while the window is visible (nothing runs when it is closed to the menu bar). |
 | **Shortcuts** | Searchable reference of every action grouped by category (Focus, Move, Columns, Windows, Workspaces, App) with its current bindings, description and source (`default` or `config`). View-only: shortcuts are changed in `config.toml`. |
-| **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, the two Focus toggles (focus follows mouse, mouse follows focus), and the **Focus ring** (enable, width, hide on maximized/fullscreen, and color: a native color picker, preset swatches, a hex field kept in sync and a live preview; the ring is always opaque, so there is no opacity control; Apply writes `active-color = "#rrggbb"` and the ring updates immediately). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
+| **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), the center-focused-column mode, the two Focus toggles (focus follows mouse, mouse follows focus), the **Focus indicator** (Dim / Ring / None; Dim shows a strength slider) and, with Ring selected, the ring settings (enable, width, hide on maximized/fullscreen, and color: a native color picker, preset swatches, a hex field kept in sync and a live preview; the ring is always opaque, so there is no opacity control; Apply writes `active-color = "#rrggbb"` and the ring updates immediately). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
 | **Animations** | Enable toggle, curve, spring or duration controls and the Resize mode (Never, Adaptive, Always) and the Renderer (Snapshot, Accessibility). Apply and Revert as above. |
 | **Rules** | List of window rules with Add, Edit and Delete. Same validation as the file. |
 | **Logs** | Live tail (last 500 rows, current file only) of `~/.config/gio/gio.log` with a minimum-level picker, text search, auto-scroll, **Copy visible** and **Clear view** (hides what is already in the file; it does not delete it). |

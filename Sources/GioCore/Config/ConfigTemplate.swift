@@ -62,7 +62,16 @@ public func defaultConfigTemplate() -> String {
     # the Screen Recording permission (Gio falls back to "ax" while missing).
     renderer = "ax"
 
+    [focus]
+    # How the focused window stands out: "dim" (default) darkens the other
+    # visible tiled windows while nothing moves; "ring" draws the outline set
+    # up in [focus-ring]; "none" shows nothing.
+    indicator = "dim"
+    # Opacity of the dim over unfocused windows (0.0-0.5).
+    dim-strength = 0.15
+
     [focus-ring]
+    # Used when [focus] indicator = "ring".
     # A rounded outline drawn around the focused window (click-through overlay).
     enabled = true
     # Thickness in points (0-20; 0 hides it).

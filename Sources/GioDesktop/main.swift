@@ -37,12 +37,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         )
     )
     private let focusRing = FocusRingController()
+    private let focusDim = FocusDimController()
     private let snapshotOverlay = SnapshotOverlayController()
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         focusRing.start()
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
+        host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
         if let error = host.start() {
             print("[gio] cannot start: \(error)")
@@ -79,6 +81,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.shutdown()
         snapshotOverlay.stop()
         focusRing.stop()
+        focusDim.stop()
     }
 
     /// SM-04: the session queue drives the overlay through hooks that hop to
@@ -121,6 +124,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.shutdown()
         snapshotOverlay.stop()
         focusRing.stop()
+        focusDim.stop()
         relaunchGio { NSApplication.shared.terminate(nil) }
     }
 

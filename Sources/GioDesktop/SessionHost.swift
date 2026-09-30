@@ -200,6 +200,15 @@ final class SessionHost: @unchecked Sendable {
     private let focusRingMailbox = LatestValueMailbox<FocusRingState>()
     /// Focus ring hook, always invoked on the main thread.
     var onFocusRing: ((FocusRingState) -> Void)?
+    /// NF-06: the dim overlay state, same hand-off as the ring. The one-shot
+    /// recompute (one on-screen CGWindowList query, session queue) is
+    /// coalesced by `dimRecomputeScheduled`; no timer runs at rest.
+    private let focusDimMailbox = LatestValueMailbox<FocusDimState>()
+    private var dimRecomputeScheduled = false
+    /// Set by a non-echo frame event, cleared by the next reflow.
+    private var dimDragHeld = false
+    /// Dim overlay hook, always invoked on the main thread.
+    var onFocusDim: ((FocusDimState) -> Void)?
     /// UI hook, always invoked on the main thread.
     var onSummonLauncher: (() -> Void)?
     /// `gio restart` (HD-05): invoked on the main thread shortly after the
@@ -614,6 +623,7 @@ final class SessionHost: @unchecked Sendable {
     /// Uses only session bookkeeping (registry, `physicalFrames`, display
     /// frames): no AX call, cheap enough for every motion frame. Session queue.
     private func publishFocusRing() {
+        updateFocusDim()
         let state = focusRingSnapshot()
         guard ringGate.shouldPublish(state), focusRingMailbox.post(state) else {
             return
@@ -633,7 +643,7 @@ final class SessionHost: @unchecked Sendable {
         // and returns at the settle, so it never sits apart from its window.
         // Native zoom: hidden while the app animates its own window (it follows
         // physical frames), shown again once the zoom settled and was judged.
-        guard config.enabled, !flightGate.isActive, let id = session.manager.currentWorkspace().focusedWindow,
+        guard config.enabled, session.config.focus.showsRing, !flightGate.isActive, let id = session.manager.currentWorkspace().focusedWindow,
               !nativeZoom.isBusy(id), let window = session.registry.find(id)
         else {
             return .hidden
@@ -648,6 +658,102 @@ final class SessionHost: @unchecked Sendable {
             displays: displays.allDisplays().map(\.frame),
             fullscreenGap: session.config.layout.resolvedFullscreenGap
         )
+    }
+
+    // MARK: - Focus dim (NF-06)
+
+    private func focusDimActivity() -> FocusDimActivity {
+        FocusDimActivity(
+            motion: player?.isActive == true, flight: flightGate.isActive,
+            nativeZoom: nativeZoom.hasInFlight || nativeZoom.hasResolved || !zoomVerifications.isEmpty,
+            mouseDown: NSEvent.pressedMouseButtons != 0, dragHeld: dimDragHeld
+        )
+    }
+
+    /// Runs with every ring publication (reflow exits, adoption, flights,
+    /// motion ticks): hides at once while anything moves, otherwise asks for
+    /// one coalesced recompute. Session queue.
+    private func updateFocusDim() {
+        switch focusDimDecision(indicator: session.config.focus.indicator, activity: focusDimActivity()) {
+        case .hide(let reason):
+            postFocusDim(.hidden(reason))
+        case .compute, .retryAfterRelease:
+            scheduleFocusDimRecompute(after: 0.05)
+        }
+    }
+
+    private func scheduleFocusDimRecompute(after delay: TimeInterval) {
+        guard !dimRecomputeScheduled else {
+            return
+        }
+        dimRecomputeScheduled = true
+        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self else {
+                return
+            }
+            self.dimRecomputeScheduled = false
+            self.recomputeFocusDim()
+        }
+    }
+
+    /// Re-checks the timing rule (a motion may have started since), then
+    /// queries the WindowServer once. Never on main, never an AX call.
+    private func recomputeFocusDim() {
+        guard !isShuttingDown else {
+            return
+        }
+        switch focusDimDecision(indicator: session.config.focus.indicator, activity: focusDimActivity()) {
+        case .hide(let reason):
+            postFocusDim(.hidden(reason))
+        case .retryAfterRelease:
+            // Only while a button is held: compute after release.
+            scheduleFocusDimRecompute(after: 0.05)
+        case .compute:
+            postFocusDim(focusDimSnapshot())
+        }
+    }
+
+    /// Visible tiled windows of every shown workspace (Gio's physical frames)
+    /// against the on-screen z-order. Only the current workspace's focus is lit.
+    private func focusDimSnapshot() -> FocusDimState {
+        guard let focusedID = session.manager.currentWorkspace().focusedWindow,
+              let focusedFrame = physicalFrames[focusedID],
+              session.registry.find(focusedID)?.isMinimized == false
+        else {
+            return .hidden(.noFocus)
+        }
+        var windows: [DimWindow] = []
+        for display in displays.allDisplays() {
+            guard let workspace = session.manager.workspace(id: display.workspace) else {
+                continue
+            }
+            for id in workspace.columns.flatMap(\.windows) where id != focusedID {
+                guard let record = session.registry.find(id), record.mode == .tiled, !record.isMinimized,
+                      let frame = physicalFrames[id]
+                else {
+                    continue
+                }
+                windows.append(DimWindow(pid: id.pid, frame: frame))
+            }
+        }
+        let regions = focusDimRegions(
+            focused: DimWindow(pid: focusedID.pid, frame: focusedFrame), windows: windows,
+            frontToBack: windowServerWindows(displayHeight: mainHeight()),
+            displays: displays.allDisplays().map(\.frame)
+        )
+        return regions.isEmpty ? .hidden(.noFocus) : .shown(regions: regions, strength: session.config.focus.dimStrength)
+    }
+
+    private func postFocusDim(_ state: FocusDimState) {
+        guard focusDimMailbox.post(state) else {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let next = self.focusDimMailbox.take() else {
+                return
+            }
+            self.onFocusDim?(next)
+        }
     }
 
     /// After `session.config` changed: rebuild bindings and messages,
@@ -1147,6 +1253,8 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator else {
             return
         }
+        // The snap-back reflow after a drag releases the dim hold.
+        dimDragHeld = false
         // Every exit (animation started or instant pass) refreshes the ring.
         defer {
             publishFocusRing()
@@ -2170,6 +2278,8 @@ final class SessionHost: @unchecked Sendable {
         zoomVerifications.removeValue(forKey: id)
         zoomWindowServerIDs.removeValue(forKey: id)
         nativeZoom.endVerifying(id)
+        // The last verification lifts the zoom hold on the dim.
+        updateFocusDim()
     }
 
     /// Zooms whose window is no longer laid out on a display: nothing to judge.
@@ -2469,6 +2579,8 @@ final class SessionHost: @unchecked Sendable {
                 scheduleReflow()
             }
             requestFocusAdoption(.activation, pid: event.pid, element: nil)
+            // Another app's windows may now be in front of dimmed ones.
+            updateFocusDim()
         case .window(let kind):
             handleWindowEvent(kind, pid: event.pid, element: event.element)
         }
@@ -2510,6 +2622,9 @@ final class SessionHost: @unchecked Sendable {
                 return
             }
             // Not our echo: the window moved on its own (drag, app resize).
+            // The dim comes down and returns after the snap-back reflow.
+            dimDragHeld = true
+            postFocusDim(.hidden(.drag))
             trustedFrames.invalidate(known)
             nativeZoom.forget(known)
             if invalidate {

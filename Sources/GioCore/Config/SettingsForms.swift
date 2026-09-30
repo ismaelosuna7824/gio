@@ -191,6 +191,37 @@ public struct FocusRingSettingsForm: Equatable, Sendable {
     }
 }
 
+/// NF-06 `[focus]` edits.
+public func focusEdits(indicator: FocusIndicatorKind, dimStrength: Double) -> [ConfigEdit] {
+    [
+        .set(table: "focus", key: "indicator", value: .string(indicator.rawValue)),
+        .set(table: "focus", key: "dim-strength", value: .number(dimStrength)),
+    ]
+}
+
+public struct FocusSettingsForm: Equatable, Sendable {
+    public var indicator: FocusIndicatorKind
+    public var dimStrength: Double
+
+    public init(config: FocusSectionConfig) {
+        indicator = config.indicator
+        dimStrength = config.dimStrength
+    }
+
+    public var problems: [String] {
+        let range = FocusSectionConfig.dimStrengthRange
+        guard dimStrength.isFinite, range.contains(dimStrength) else {
+            return ["Dim strength must be \(range.lowerBound) to \(range.upperBound)."]
+        }
+        return []
+    }
+
+    public var edits: [ConfigEdit] {
+        // Two decimals keep the slider's value readable in config.toml.
+        focusEdits(indicator: indicator, dimStrength: (dimStrength * 100).rounded() / 100)
+    }
+}
+
 public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool) -> [ConfigEdit] {
     [
         .set(table: "behavior", key: "focus-follows-mouse", value: .bool(focusFollowsMouse)),

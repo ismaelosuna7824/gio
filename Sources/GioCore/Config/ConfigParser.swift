@@ -32,6 +32,7 @@ private enum ConfigSection: Equatable {
     case behavior
     case animations
     case focusRing
+    case focus
     case logging
     case keybindings
     case windowRules
@@ -93,6 +94,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "behavior": section = .behavior
             case "animations": section = .animations
             case "focus-ring": section = .focusRing
+            case "focus": section = .focus
             case "logging": section = .logging
             case "keybindings": section = .keybindings
             case let name:
@@ -128,6 +130,8 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyAnimationsKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .focusRing:
             applyFocusRingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
+        case .focus:
+            applyFocusKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .logging:
             applyLoggingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .keybindings:
@@ -448,6 +452,35 @@ func applyFocusRingKey(
         config.focusRing.activeColor = color
     default:
         warnings.append("line \(line): unknown focus-ring key '\(key)', ignored")
+    }
+}
+
+func applyFocusKey(
+    _ key: String, value: ConfigValue, line: Int,
+    errors: inout [String], warnings: inout [String], config: inout GioConfig
+) {
+    switch key {
+    case "indicator":
+        guard case .string(let text) = value, let kind = FocusIndicatorKind(rawValue: text.lowercased()) else {
+            errors.append("line \(line): focus.indicator expects \"dim\", \"ring\" or \"none\"")
+            return
+        }
+        config.focus.indicator = kind
+    case "dim-strength":
+        guard let number = value.number, number.isFinite else {
+            errors.append("line \(line): focus.dim-strength expects a number from 0.0 to 0.5")
+            return
+        }
+        let range = FocusSectionConfig.dimStrengthRange
+        let clamped = min(max(number, range.lowerBound), range.upperBound)
+        if clamped != number {
+            warnings.append(
+                "line \(line): focus.dim-strength clamped to \(clamped) (valid \(range.lowerBound)-\(range.upperBound))"
+            )
+        }
+        config.focus.dimStrength = clamped
+    default:
+        warnings.append("line \(line): unknown focus key '\(key)', ignored")
     }
 }
 
