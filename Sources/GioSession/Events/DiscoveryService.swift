@@ -72,6 +72,8 @@ public final class DiscoveryService: @unchecked Sendable {
         /// PF-02: a window was registered; its timings start the host's
         /// open timeline (`WindowOpenTimeline`).
         public var windowRegistered: (WindowOpenTiming) -> Void
+        /// Required, no default: a test fixture that forgot it used to write
+        /// its retry lines (fake `pid=7`) into the user's real log file.
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -100,7 +102,7 @@ public final class DiscoveryService: @unchecked Sendable {
             discoverAttempt: ((AXUIElement, pid_t) -> SingleWindowDiscovery)? = nil,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             windowRegistered: @escaping (WindowOpenTiming) -> Void = { _ in },
-            log: @escaping (LogLevel, String) -> Void = { GioLog.record($0, $1) }
+            log: @escaping (LogLevel, String) -> Void
         ) {
             self.followArrival = followArrival
             self.discoverAttempt = discoverAttempt
@@ -264,6 +266,10 @@ public final class DiscoveryService: @unchecked Sendable {
     public func registerAppeared(
         _ element: AXUIElement, pid: pid_t, attempt: Int = 0, createdAt: TimeInterval? = nil
     ) {
+        // Gio's own windows are never classified, registered or retried.
+        guard pid != context.ownPID else {
+            return
+        }
         if context.knownWindow(element, pid) != nil {
             return
         }
@@ -284,6 +290,12 @@ public final class DiscoveryService: @unchecked Sendable {
             reason = .frameUnreadable
         case .unclassified:
             reason = .unclassified
+        }
+        // A pid that is no longer (or never was) a running app has no window
+        // to wait for: one debug line, no retry schedule.
+        guard context.isRunning(pid) else {
+            context.log(.debug, "window register dropped pid=\(pid) reason=notRunning attempts=\(attempt + 1)")
+            return
         }
         guard let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt, reason: reason) else {
             context.log(.info, "window register gave up pid=\(pid) attempts=\(attempt + 1) reason=\(reason.rawValue)")

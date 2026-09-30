@@ -66,6 +66,7 @@ final class WindowOpenArrivalTests: XCTestCase {
     func testRegistrationReportsItsTiming() throws {
         world.session.config.rules = [WindowRule(app: "Firefox", openOnWorkspace: "Web", follow: .always)]
         let element = AXUIElementCreateApplication(4242)
+        world.running = [7]
         world.classify[7] = [nil, discovered(pid: 7, app: "Firefox")]
         discovery.registerAppeared(element, pid: 7)
         scheduler.advance(by: 0.1)
@@ -85,6 +86,7 @@ final class WindowOpenArrivalTests: XCTestCase {
         var attempts: [SingleWindowDiscovery] = [.frameUnreadable, .found(discovered(pid: 7))]
         context.discoverAttempt = { _, _ in attempts.removeFirst() }
         discovery = DiscoveryService(context: context, scheduler: scheduler)
+        world.running = [7]
 
         discovery.registerAppeared(AXUIElementCreateApplication(4242), pid: 7)
         XCTAssertTrue(world.registered.isEmpty)

@@ -459,7 +459,8 @@ final class SessionHost: @unchecked Sendable {
                     focus.requestIntent(if: true, previous: previous)
                 },
                 discoverAttempt: { discoverSystemWindowAttempt(element: $0, pid: $1) },
-                windowRegistered: { [unowned self] in openTimeline.registered($0) }
+                windowRegistered: { [unowned self] in openTimeline.registered($0) },
+                log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler
         )

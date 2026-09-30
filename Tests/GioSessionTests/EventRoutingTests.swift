@@ -151,7 +151,8 @@ final class EventWorld: @unchecked Sendable {
             windowsClosing: { ids in
                 self.closing.append((ids, ids.allSatisfy { self.session.registry.find($0) != nil }))
             },
-            followArrival: { self.follows.append($0) }
+            followArrival: { self.follows.append($0) },
+            log: { self.logs.append(($0, $1)) }
         )
     }
 
@@ -386,6 +387,7 @@ final class DiscoveryServiceTests: XCTestCase {
     // MARK: Appeared, terminated, purge
 
     func testAppearedWindowIsRetriedWhileUnreadableThenRegistered() {
+        world.running = [7]
         world.classify[7] = [nil, nil, discovered(pid: 7)]
         let element = AXUIElementCreateApplication(4242)
 
@@ -410,6 +412,7 @@ final class DiscoveryServiceTests: XCTestCase {
     }
 
     func testAppearedWindowGivesUpAfterTheRetries() {
+        world.running = [7]
         world.classify[7] = [nil, nil, nil, nil, discovered(pid: 7)]
         discovery.registerAppeared(AXUIElementCreateApplication(4242), pid: 7)
         scheduler.advance(by: 5)
