@@ -9,11 +9,12 @@ Instructions for AI coding agents working on Gio, a Niri-style scrollable tiling
 | `Sources/GioCore` | Pure logic. **No macOS UI/AX imports.** Registry, workspaces, layout, viewport, focus, move/resize, parking, motion planning, `WindowReconciler`, hotkeys, config, rules, IPC, logging, recovery. |
 | `Sources/GioMacOS` | macOS adapters: Accessibility (`AXWindowActuator`, discovery, events), `HotkeyTap`, displays, assemblies. |
 | `Sources/GioUI` | SwiftUI/AppKit views and view models (main window, menu bar, launcher, settings). **Put new UI here.** |
-| `Sources/GioDesktop` | `main.swift` (app delegate) and `SessionHost.swift` (the live session on the `gio.session` queue). The Xcode `Gio` target compiles exactly these two files. |
+| `Sources/GioSession` | Components extracted from `SessionHost` (publication, render verification) plus the `SystemProbe`/`SessionScheduler` seams; session queue only, unit-tested with fakes and a virtual clock. |
+| `Sources/GioDesktop` | `main.swift` (app delegate) and `SessionHost.swift` (the live session on the `gio.session` queue, composition root over `GioSession`). The Xcode `Gio` target compiles exactly these two files. |
 | `Sources/GioCLI` | `gio` client; the SwiftPM target/binary is named `GioCLI`. |
 | `Sources/GioPOC` | `gio-poc` AX proof of concept and `restore` recovery tool. |
 | `Sources/GioMac`, `Sources/GioApp` | **Legacy** prototype. Do not extend. |
-| `Tests/*` | One XCTest bundle per module: `GioCoreTests`, `GioMacOSTests`, `GioUITests`, `GioPOCTests`, `GioMacTests` (legacy). |
+| `Tests/*` | One XCTest bundle per module: `GioCoreTests`, `GioMacOSTests`, `GioUITests`, `GioSessionTests`, `GioPOCTests`, `GioMacTests` (legacy). |
 | `odd/tasks/*.md` | Feature documents: decisions, task IDs, commit hashes, evidence. |
 | `docs/` | Architecture, testing, user guide, contributing. |
 | `Gio.xcodeproj`, `Gio.xcworkspace` | Signed app project (scheme `Gio`) and helper schemes (`gio-poc-list`, `gio-poc-tile`, `gio-poc-restore`, `gio-doctor`). |
@@ -60,7 +61,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **The Xcode `Gio` target lists the `GioDesktop` files explicitly** in `Gio.xcodeproj/project.pbxproj` (`main.swift`, `SessionHost.swift`). A new file in `Sources/GioDesktop` will not be compiled by Xcode unless the pbxproj is edited. Put new UI and logic in `Sources/GioUI` or `Sources/GioCore`, which the app links as package products.
 - **Do not validate Accessibility behavior with `swift run GioDesktop`/`GioApp`.** They are not the signed app; the Accessibility grant is tied to code-signing identity. Use the Xcode `Gio` scheme. Signing lives in `Config/*.xcconfig` (`Signing.xcconfig` tracked defaults, `Signing.local.xcconfig` git-ignored personal override). Never edit `project.pbxproj` for signing and never commit signing changes.
 - **The app re-executes itself as a guardian** (`Gio --guardian <pid>`, HD-07). Detect the flag before any `NSApplication` setup; the guardian must never take the lock, serve IPC or show UI. Protocol and decision logic: `GioCore/Commands/Guardian.swift`.
-- **`SessionHost` and the views have no unit tests.** Extract the decision into Core so it can be tested.
+- **`SessionHost` and the views have no unit tests.** Extract the decision into Core, or the session-queue component into `GioSession` (closure context, `SystemProbe`, `ManualScheduler`), so it can be tested.
 - **Exhaustive switches are guardrails:** adding a `HotkeyAction` case breaks `actionInfo` (ShortcutCatalog) and `SessionHost.apply`; adding a `CLICommand` case breaks `dispatch` and the launcher's `describeAction`; adding a `MainSection` case breaks `title`, `symbol` and `detail(for:)`. Follow the recipes in `docs/CONTRIBUTING.md`.
 - **Key names are one shared vocabulary** (`supportedKeyNames` in `GioCore/Hotkeys/KeyNames.swift`) with a keycode per name in `tapKeyCodes` (`HotkeyTap.swift`); `HotkeyKeyTableTests` fails if they diverge. Unknown key names in config are validation errors.
 - **Parsed-but-unused config:** themes are stored, not consumed. `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus` and `layout.center-focused-column` are live (HD-04).

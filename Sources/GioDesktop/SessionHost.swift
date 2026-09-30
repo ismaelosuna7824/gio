@@ -106,12 +106,8 @@ final class SessionHost: @unchecked Sendable {
     /// first layout (launch, `gio restart`), Accessibility regained, and a
     /// mouse-abandoned motion (session queue only).
     private var instantPlacement = InstantPlacementGate()
-    /// FI-05: render verification bookkeeping (session queue only).
-    private var renderChecks = RenderCheckBook()
-    /// PA-04: windows written or animated since the last render check, and
-    /// the frames the settle already read or verified for them.
-    private var renderCandidates: Set<WindowID> = []
-    private var renderSettled: [WindowID: CGRect] = [:]
+    /// FI-05: render verification: candidates, settled frames, nudges.
+    private var renderVerifier: RenderVerifier!
     /// PA-04: frames Gio placed and verified; the final pass skips their AX
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
@@ -270,6 +266,23 @@ final class SessionHost: @unchecked Sendable {
             prefetchSnapshotContent: { [unowned self] in prefetchSnapshotContentIfNeeded(permissionGranted: $0) },
             log: { GioLog.record($0, $1) }
         ))
+        renderVerifier = RenderVerifier(
+            context: .init(
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                isMotionActive: { [unowned self] in player?.isActive == true },
+                isFlightActive: { [unowned self] in flightGate.isActive },
+                isMouseDown: { [unowned self] in probe.isMouseDown },
+                isReady: { [unowned self] in reconciler != nil },
+                visibleTargets: { [unowned self] in hoverFrames },
+                viewports: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
+                serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: mainHeight()) },
+                nudge: { [unowned self] in reconciler?.nudge(steps: $0) ?? [] },
+                recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
+                appName: { [unowned self] in appName($0) },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
     }
 
     // MARK: - Lifecycle
@@ -854,7 +867,7 @@ final class SessionHost: @unchecked Sendable {
             minimumSizes.forget(id)
             echoGate.forget(id)
             trustedFrames.invalidate(id)
-            renderChecks.forget([id])
+            renderVerifier.forget([id])
             physicalFrames.removeValue(forKey: id)
             nativeZoom.forget(id)
             nativeZoomTimers.removeValue(forKey: id)?.cancel()
@@ -1105,7 +1118,7 @@ final class SessionHost: @unchecked Sendable {
             barPublisher.publish()
         }
         // A new pass invalidates any pending render check (FI-05).
-        renderChecks.cancel()
+        renderVerifier.cancel()
         // One reconciler for the session: it remembers apps whose write lane
         // is still stuck so a hung app is never written twice at once.
         let reconciler = self.reconciler ?? WindowReconciler(
@@ -1327,13 +1340,9 @@ final class SessionHost: @unchecked Sendable {
             // Only visible windows written here are worth a render check;
             // a settle that wrote parked/hidden windows alone checks nothing.
             for id in report.applied where plan.visible[id] != nil && plan.parked[id] == nil {
-                renderCandidates.insert(id)
+                renderVerifier.insertCandidate(id)
             }
-            for id in renderCandidates {
-                if let settled = report.settledFrames[id] {
-                    renderSettled[id] = settled
-                }
-            }
+            renderVerifier.recordSettled(from: report.settledFrames)
             GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
         }
         if let zoomJob {
@@ -1346,8 +1355,8 @@ final class SessionHost: @unchecked Sendable {
                 settleSnapshotFlight()
             }
         } else {
-            if !renderCandidates.isEmpty {
-                scheduleRenderCheck()
+            if renderVerifier.hasCandidates {
+                renderVerifier.schedule()
             }
             scheduleSnapshotRefresh()
         }
@@ -1498,8 +1507,8 @@ final class SessionHost: @unchecked Sendable {
             self.flightDisplays = []
             self.flightWindows = []
             self.publishFocusRing()
-            if !self.renderCandidates.isEmpty {
-                self.scheduleRenderCheck()
+            if self.renderVerifier.hasCandidates {
+                self.renderVerifier.schedule()
             }
             self.scheduleSnapshotRefresh()
         }
@@ -1528,8 +1537,8 @@ final class SessionHost: @unchecked Sendable {
         flightDisplays = []
         flightWindows = []
         publishFocusRing()
-        if !renderCandidates.isEmpty {
-            scheduleRenderCheck()
+        if renderVerifier.hasCandidates {
+            renderVerifier.schedule()
         }
         scheduleSnapshotRefresh()
     }
@@ -1656,120 +1665,6 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    // MARK: - Render verification (FI-05)
-
-    /// ~150 ms after a settle that moved windows, compare Accessibility with
-    /// the WindowServer for the windows that should be on screen.
-    private func scheduleRenderCheck() {
-        let token = renderChecks.schedule()
-        queue.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-            self?.runRenderCheck(token: token)
-        }
-    }
-
-    /// Never while a newer pass superseded the check, a motion is in
-    /// flight, a mouse button is down or Gio is leaving.
-    private func renderCheckMayRun(_ token: Int) -> Bool {
-        !isShuttingDown && renderChecks.isCurrent(token) && player?.isActive != true
-            && !flightGate.isActive && !probe.isMouseDown
-    }
-
-    private func renderViewports() -> [CGRect] {
-        displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame }
-    }
-
-    /// PA-04: no AX read and no all-Spaces snapshot; `axFrames` are the
-    /// frames the settle already read or verified, the server list only has
-    /// on-screen windows.
-    private func renderMismatches(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> [RenderMismatch] {
-        renderVerdict(axFrames: axFrames, targets: targets).mismatches
-    }
-
-    private func renderVerdict(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> RenderVerdict {
-        evaluateRender(
-            axFrames: axFrames, server: probe.windowServerWindows(displayHeight: mainHeight()),
-            targets: targets, viewports: renderViewports()
-        )
-    }
-
-    private func runRenderCheck(token: Int) {
-        guard renderCheckMayRun(token), let reconciler else {
-            return
-        }
-        let visible = hoverFrames
-        let axFrames = renderChecks.checkable(
-            renderCheckFrames(candidates: renderCandidates, visible: visible, settled: renderSettled)
-        )
-        renderCandidates = []
-        renderSettled = [:]
-        // Nothing visible was written in this settle: skip the WindowServer
-        // snapshot entirely.
-        guard !axFrames.isEmpty else {
-            return
-        }
-        let targets = visible.filter { axFrames[$0.key] != nil }
-        let verdict = renderVerdict(axFrames: axFrames, targets: targets)
-        for entry in verdict.unmatched {
-            GioLog.record(
-                .debug,
-                renderUnmatchedLine(
-                    id: entry.id, app: appName(entry.id.pid), reason: entry.reason, candidates: entry.candidates
-                )
-            )
-        }
-        let mismatches = verdict.mismatches
-        guard !mismatches.isEmpty else {
-            return
-        }
-        for mismatch in mismatches {
-            GioLog.record(
-                renderChecks.mismatchLevel(for: mismatch.id),
-                renderMismatchLine(
-                    id: mismatch.id, app: appName(mismatch.id.pid), ax: mismatch.ax, ws: mismatch.ws
-                )
-            )
-        }
-        // Corrective nudge through the reconciler, once per window per settle.
-        let viewports = renderViewports()
-        var steps: [WindowID: [CGRect]] = [:]
-        for id in renderChecks.claimNudges(mismatches.map(\.id)) {
-            guard let target = targets[id] else {
-                continue
-            }
-            let viewport = viewports.first { $0.intersects(target) } ?? target
-            steps[id] = planNudge(target: target, viewport: viewport)
-        }
-        let written = reconciler.nudge(steps: steps)
-        guard !written.isEmpty else {
-            return
-        }
-        let nudgeTime = ProcessInfo.processInfo.systemUptime
-        for id in written {
-            if let target = targets[id] {
-                echoGate.recordApplied(id, frame: target, at: nudgeTime)
-            }
-        }
-        queue.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            guard let self, self.renderCheckMayRun(token) else {
-                return
-            }
-            let subset = targets.filter { written.contains($0.key) }
-            let still = Set(
-                self.renderMismatches(axFrames: axFrames.filter { written.contains($0.key) }, targets: subset).map(\.id)
-            )
-            for id in written {
-                let fixed = !still.contains(id)
-                if self.renderChecks.recordNudge(id, fixed: fixed) {
-                    GioLog.record(.debug, renderUnverifiableLine(id: id, app: self.appName(id.pid)))
-                }
-                GioLog.record(
-                    fixed ? .info : .warn,
-                    renderNudgeLine(id: id, app: self.appName(id.pid), fixed: fixed)
-                )
-            }
-        }
-    }
-
     private func appName(_ pid: pid_t) -> String {
         probe.applicationLabel(pid)
     }
@@ -1875,7 +1770,7 @@ final class SessionHost: @unchecked Sendable {
         // and the render check looks at them afterwards.
         for animation in animations {
             trustedFrames.invalidate(animation.id)
-            renderCandidates.insert(animation.id)
+            renderVerifier.insertCandidate(animation.id)
             animatingPids.insert(animation.id.pid)
         }
         guard motionTimer == nil else {
