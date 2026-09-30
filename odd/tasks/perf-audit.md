@@ -117,6 +117,12 @@ build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TAS
   gapped target (`exact|corrected|fallback(...)`); `[focus-ring] hide-when-maximized` (default
   true). TDD deviation: tests written first but RED not observed. Bundles 25/7/19/39/1064 all 0
   failures (parent re-ran); signed build OK. LIVE PENDING.
+- [x] PA-11 (`6c5364e`) — Live: WhatsApp/Figma `fallback(mismatch) ms=34-41` ended edge-to-edge (multi-
+  stage app zoom judged during a pause, then the app overwrote Gio's write); Pen correction timed
+  out (`app busy`). Settle now needs 150ms quiet + >=120ms since press; NativeZoomVerifier checks
+  ~250ms after any corrective write and reasserts once (`native zoom reassert reason=`); log adds
+  `settleMs=` and `verified=`. RED observed (compile). Bundles 25/7/19/39/1078 all 0 failures
+  (parent re-ran); signed build OK. LIVE PENDING.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
