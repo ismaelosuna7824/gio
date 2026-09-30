@@ -11,7 +11,7 @@ Contents: [Modules](#modules-and-dependency-rules) · [Invariants](#core-invaria
 | `GioCore` | library | none | All decisions: window registry, workspaces, layout, viewport, focus, move/resize, parking, motion planning, reconciler, hotkeys, config, rules, IPC, logging, recovery. Imports only `Foundation`, `CoreGraphics`, `Dispatch`, `Darwin`. |
 | `GioMacOS` | library | `GioCore` | macOS adapters: Accessibility discovery and events, `AXWindowActuator`, the `CGEvent` hotkey tap, display snapshots, restore/tile assemblies. |
 | `GioUI` | library | `GioCore`, `GioMacOS` | SwiftUI/AppKit: main window, menu bar, launcher, settings views and their view models. |
-| `GioSession` | library | `GioCore`, `GioMacOS` | Session-queue components extracted from `SessionHost`: `FocusRingPublisher`, `FocusDimPublisher`, `GatedStatePublisher` (menu bar), `SessionFactsBuilder`, `RenderVerifier`, and the `SystemProbe` / `SessionScheduler` (`QueueScheduler`, test `ManualScheduler`) seams. Each takes a small context of closures, never the host. |
+| `GioSession` | library | `GioCore`, `GioMacOS` | Session-queue components extracted from `SessionHost`: `FocusRingPublisher`, `FocusDimPublisher`, `GatedStatePublisher` (menu bar), `SessionFactsBuilder`, `RenderVerifier`, `ConfigCoordinator` (reload, config edits, the locked hotkey table, tap restart decision), `IPCRouter`, and the `SystemProbe` / `SessionScheduler` (`QueueScheduler`, test `ManualScheduler`) seams. Each takes a small context of closures, never the host. |
 | `GioDesktop` | executable | `GioCore`, `GioMacOS`, `GioUI`, `GioSession` | `main.swift` (app delegate, lifecycle) and `SessionHost.swift` (the live session, composition root). Built by the Xcode `Gio` target as `Gio.app`, which links `GioSession` as a package product. |
 | `GioCLI` | executable | `GioCore` | The `gio` client. The SwiftPM executable is named **`GioCLI`**; its usage text prints `gio`. |
 | `GioPOC` | executable | `GioMacOS` | `gio-poc`: Accessibility proof of concept, one-shot tile, and `restore` recovery. |
@@ -141,7 +141,7 @@ Stage by stage:
 9. **Actuation (`AXWindowActuator`).** Converts Cocoa frames to AX, orders position and size writes, verifies visible writes with a readback, and enforces a per-element messaging timeout.
 10. **Echo suppression.** Applied frames are recorded in `WriteEchoGate`; see [Echo gate](#echo-gate).
 
-IPC (`gio` CLI) enters the same queue: `IPCServer` calls `queue.sync { handleIPC }`, and verbs that change state (`focus`, `move`, `workspace`, `reload`) end in `reflowAll`.
+IPC (`gio` CLI) enters the same queue: `IPCServer` calls `queue.sync { ipcRouter.handle }` (`IPCRouter`), and verbs that change state (`focus`, `move`, `workspace`, `reload`) end in `reflowAll`.
 
 ## Layout details
 
@@ -337,7 +337,7 @@ Notes:
 - The tap is a `cgSessionEventTap` inserted at the head, running on the main run loop. It observes mouse-downs (never swallowed) and swallows only key-downs that exactly match a bound combo, so ordinary typing is unaffected.
 - Key names live in one shared vocabulary, `supportedKeyNames` (`GioCore/Hotkeys/KeyNames.swift`): A-Z, 0-9, F1-F12, arrows, Tab/Return/Escape/Space/Delete, Home/End/PageUp/PageDown and punctuation. `parseHotkey` accepts only these (plus aliases); `tapKeyCodes` in `GioMacOS/Hotkeys/HotkeyTap.swift` maps each name to its ANSI keycode, and a test keeps both identical. A config binding on any other key is a validation error.
 - `Alt+Space` is intercepted in `handleCombo` before the dispatcher and is not configurable. It hops to main and calls `LauncherPanelController.summon(source: .hotkey)` (the menu item uses `.menu`). Gio is usually an inactive accessory app at that point, so the non-activating panel is ordered in with `orderFrontRegardless()`, made key and its search field made first responder. `LauncherLifecycle` (`GioUI`, pure, tested) decides the rest: the toggle reads the real panel, a resign-key within 250 ms of showing reclaims key instead of dismissing, and generation tokens keep a stale fade-out from hiding a new show; a safety deadline forces alpha 1 if the appear animation never completes. Logged at info: `launcher summon source=`, `launcher shown frame=... key= active= level=`, `launcher dismissed reason=escape|toggle|resignKey|action`.
-- The dispatcher is rebuilt from `config.makeDispatcher()` at start and on every reload (`refreshDispatcher`). Config bindings are additive: they bind or override combos on top of the defaults, and there is no unbind syntax.
+- The dispatcher is rebuilt from `config.makeDispatcher()` at start and on every reload (`ConfigCoordinator.refreshDispatcher`). Config bindings are additive: they bind or override combos on top of the defaults, and there is no unbind syntax.
 - If the tap cannot start (no Accessibility permission), Gio keeps running without global hotkeys and retries on the next resync.
 
 ## Window lifecycle

@@ -9,7 +9,7 @@ Instructions for AI coding agents working on Gio, a Niri-style scrollable tiling
 | `Sources/GioCore` | Pure logic. **No macOS UI/AX imports.** Registry, workspaces, layout, viewport, focus, move/resize, parking, motion planning, `WindowReconciler`, hotkeys, config, rules, IPC, logging, recovery. |
 | `Sources/GioMacOS` | macOS adapters: Accessibility (`AXWindowActuator`, discovery, events), `HotkeyTap`, displays, assemblies. |
 | `Sources/GioUI` | SwiftUI/AppKit views and view models (main window, menu bar, launcher, settings). **Put new UI here.** |
-| `Sources/GioSession` | Components extracted from `SessionHost` (publication, render verification) plus the `SystemProbe`/`SessionScheduler` seams; session queue only, unit-tested with fakes and a virtual clock. |
+| `Sources/GioSession` | Components extracted from `SessionHost` (publication, render verification, config coordination, IPC routing) plus the `SystemProbe`/`SessionScheduler` seams; session queue only, unit-tested with fakes and a virtual clock. |
 | `Sources/GioDesktop` | `main.swift` (app delegate) and `SessionHost.swift` (the live session on the `gio.session` queue, composition root over `GioSession`). The Xcode `Gio` target compiles exactly these two files. |
 | `Sources/GioCLI` | `gio` client; the SwiftPM target/binary is named `GioCLI`. |
 | `Sources/GioPOC` | `gio-poc` AX proof of concept and `restore` recovery tool. |

@@ -72,12 +72,11 @@ final class SessionHost: @unchecked Sendable {
     private var resizeCapability = ResizeCapability()
     private var fullscreen = FullscreenBook()
     private var visibleFrames: [DisplayID: CGRect] = [:]
-    /// Effective hotkey table (defaults + config). Read on the main thread
-    /// by the tap, rebuilt on the session queue at start and on reload.
-    private let dispatcherLock = NSLock()
-    private var dispatcherTable = HotkeyDispatcher()
-    /// Config load messages (errors and warnings) for the Overview; on `queue`.
-    private var configMessages: [String] = []
+    /// Config reload and edits, the hotkey table (its own lock) and the
+    /// config messages for the Overview.
+    private var configCoordinator: ConfigCoordinator!
+    /// IPC requests on the session queue.
+    private var ipcRouter: IPCRouter!
     private var isShuttingDown = false
     private var reflowDeferral = ReflowDeferral()
     /// MO-04: where each window physically is (last applied or sampled
@@ -256,7 +255,7 @@ final class SessionHost: @unchecked Sendable {
             session: { [unowned self] in session },
             displays: { [unowned self] in displays.allDisplays() },
             visibleFrame: { [unowned self] in visibleFrames[$0] },
-            configMessages: { [unowned self] in configMessages },
+            configMessages: { [unowned self] in configCoordinator.messages },
             engine: { [unowned self] in engine() },
             tileableModes: { [unowned self] in tileableModes() },
             screenRecordingGranted: { hasScreenRecordingPermission() },
@@ -283,6 +282,50 @@ final class SessionHost: @unchecked Sendable {
             ),
             scheduler: scheduler
         )
+        configCoordinator = ConfigCoordinator(
+            context: .init(
+                session: { [unowned self] in session },
+                reloadSession: { [unowned self] in dispatch(.reload, session: &session) },
+                loadMessages: { loadGioConfig().messages },
+                patchFile: { GioCore.applyConfigEdits($0) },
+                applyLogLevel: { [unowned self] level in
+                    GioLog.minimumLevel = level
+                    actuator?.countsCalls = GioLog.minimumLevel <= .debug
+                },
+                invalidateConfigCaches: { [unowned self] in
+                    inactiveParking.invalidate()
+                    focusRing.resetGate()
+                },
+                setFocusFollowsMouse: { [unowned self] wanted in
+                    hoverLock.lock()
+                    hoverEnabled = wanted
+                    hoverLock.unlock()
+                },
+                tapObservesMouseMoved: { [unowned self] in hotkeyTap?.observesMouseMoved },
+                requestTapRestart: { [unowned self] in
+                    DispatchQueue.main.async { [weak self] in
+                        self?.restartTapForMouseSetting()
+                    }
+                },
+                reapplyRules: { [unowned self] in reapplyRules() },
+                reflow: { [unowned self] in reflowAll() },
+                publishSnapshot: { [unowned self] in publishSnapshot() },
+                publishFocusRing: { [unowned self] in publishFocusRing() },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
+        ipcRouter = IPCRouter(context: .init(
+            focusedWindow: { [unowned self] in session.manager.currentWorkspace().focusedWindow },
+            dispatch: { [unowned self] in dispatchIPC($0, session: &session, restartAvailable: true) },
+            applyReloadedConfig: { [unowned self] in configCoordinator.applyReloadedConfig() },
+            requestFocusIntent: { [unowned self] in requestFocusIntent(if: $0, previous: $1) },
+            reflow: { [unowned self] in reflowAll() },
+            publishBar: { [unowned self] in barPublisher.publish() },
+            mainAfter: { delay, block in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block) },
+            restart: { [weak self] in self?.onRestart?() },
+            log: { GioLog.record($0, $1) }
+        ))
     }
 
     // MARK: - Lifecycle
@@ -302,8 +345,8 @@ final class SessionHost: @unchecked Sendable {
         session.config = config
         GioLog.minimumLevel = config.logging.level
         publishDisplayRefreshes()
-        refreshDispatcher()
-        self.configMessages = configMessages
+        configCoordinator.refreshDispatcher()
+        configCoordinator.setMessages(configMessages)
         for message in configMessages {
             print("[gio] config: \(message)")
         }
@@ -316,7 +359,7 @@ final class SessionHost: @unchecked Sendable {
                 return IPCResponse(ok: false, error: "shutting down")
             }
             return self.queue.sync {
-                self.handleIPC(argv)
+                self.ipcRouter.handle(argv)
             }
         }
         do {
@@ -499,34 +542,7 @@ final class SessionHost: @unchecked Sendable {
 
     /// Same effect as the IPC `reload` verb, driven by the app.
     func reloadConfig() {
-        queue.async { [weak self] in
-            guard let self else {
-                return
-            }
-            dispatch(.reload, session: &session)
-            applyReloadedConfig()
-            GioLog.record(.info, "config reloaded from the app")
-        }
-    }
-
-    private func refreshDispatcher() {
-        let table = session.config.makeDispatcher()
-        dispatcherLock.lock()
-        dispatcherTable = table
-        dispatcherLock.unlock()
-        hoverLock.lock()
-        hoverEnabled = session.config.behavior.focusFollowsMouse
-        let wanted = hoverEnabled
-        hoverLock.unlock()
-        // The tap only subscribes to pointer moves while focus-follows-mouse
-        // is on; rebuild it when a reload flips that.
-        if let tap = hotkeyTap,
-           tapNeedsRestart(observingMouseMoved: tap.observesMouseMoved, wanted: wanted)
-        {
-            DispatchQueue.main.async { [weak self] in
-                self?.restartTapForMouseSetting()
-            }
-        }
+        configCoordinator.reloadFromApp()
     }
 
     /// Main thread. Re-creates the tap with the current mouse-move setting.
@@ -544,12 +560,6 @@ final class SessionHost: @unchecked Sendable {
         hotkeyTap = nil
         startTap()
         GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted)")
-    }
-
-    private func currentDispatcher() -> HotkeyDispatcher {
-        dispatcherLock.lock()
-        defer { dispatcherLock.unlock() }
-        return dispatcherTable
     }
 
     /// Read-only state for the main window. Never waits on the session
@@ -586,21 +596,7 @@ final class SessionHost: @unchecked Sendable {
     /// Patch config.toml from the app, then reload it exactly like the IPC
     /// `reload` verb. Nothing is reloaded when the edit is rejected.
     func applyConfigEdits(_ edits: [ConfigEdit]) -> Result<PatchedConfig, ConfigErrors> {
-        // The file patch and validation need no session state, so they run
-        // on the caller (main) without waiting on the queue; only the live
-        // reload hops onto it.
-        let result = GioCore.applyConfigEdits(edits)
-        if case .success = result {
-            queue.async { [weak self] in
-                guard let self else {
-                    return
-                }
-                dispatch(.reload, session: &session)
-                applyReloadedConfig()
-                GioLog.record(.info, "config edited from the app and reloaded")
-            }
-        }
-        return result
+        configCoordinator.applyConfigEdits(edits)
     }
 
     /// Post the focus ring (and refresh the dim) for the focused window of
@@ -608,49 +604,6 @@ final class SessionHost: @unchecked Sendable {
     private func publishFocusRing() {
         focusDim.update()
         focusRing.publish()
-    }
-
-    /// After `session.config` changed: rebuild bindings and messages,
-    /// re-evaluate rules, relayout. Must run on `queue`.
-    private func applyReloadedConfig() {
-        GioLog.minimumLevel = session.config.logging.level
-        actuator?.countsCalls = GioLog.minimumLevel <= .debug
-        inactiveParking.invalidate()
-        focusRing.resetGate()
-        refreshDispatcher()
-        configMessages = loadGioConfig().messages
-        reapplyRules()
-        reflowAll()
-        publishSnapshot()
-        publishFocusRing()
-    }
-
-    // MARK: - IPC
-
-    private func handleIPC(_ argv: [String]) -> IPCResponse {
-        let parsed = parseCLICommand(argv)
-        let previousFocus = session.manager.currentWorkspace().focusedWindow
-        let response = dispatchIPC(argv, session: &session, restartAvailable: true)
-        if case .success(let command) = parsed {
-            if command.requestsSessionRestart {
-                GioLog.record(.info, "restart requested over IPC")
-                // Let the reply reach the client before the socket goes away.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    self?.onRestart?()
-                }
-            }
-            switch command {
-            case .reload:
-                applyReloadedConfig()
-            case .focus, .move, .workspace:
-                requestFocusIntent(if: command.carriesFocusIntent, previous: previousFocus)
-                reflowAll()
-            default:
-                break
-            }
-        }
-        barPublisher.publish()
-        return response
     }
 
     // MARK: - Sync
@@ -2792,7 +2745,7 @@ final class SessionHost: @unchecked Sendable {
             }
             return true
         }
-        guard let action = currentDispatcher().action(for: combo) else {
+        guard let action = configCoordinator.currentDispatcher().action(for: combo) else {
             return false
         }
         queue.async { [weak self] in
