@@ -67,6 +67,7 @@ public enum GioColor {
     public static let ok = Color(nsColor: .systemGreen)
     public static let warning = Color(nsColor: .systemOrange)
     public static let error = Color(nsColor: .systemRed)
+    public static let info = Color(nsColor: .systemBlue)
     public static let neutral = Color(nsColor: .secondaryLabelColor)
 
     /// A status color as text: darkened in light mode so it reads on its

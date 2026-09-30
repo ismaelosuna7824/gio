@@ -43,13 +43,14 @@ public struct SectionIcon: View {
 // MARK: - StatusBadge
 
 public enum StatusKind: Equatable, Sendable {
-    case ok, warning, error, neutral
+    case ok, warning, error, info, neutral
 
     var symbol: String {
         switch self {
         case .ok: return "checkmark.circle.fill"
         case .warning: return "exclamationmark.triangle.fill"
         case .error: return "xmark.octagon.fill"
+        case .info: return "info.circle.fill"
         case .neutral: return "circle.dashed"
         }
     }
@@ -59,6 +60,7 @@ public enum StatusKind: Equatable, Sendable {
         case .ok: return GioColor.ok
         case .warning: return GioColor.warning
         case .error: return GioColor.error
+        case .info: return GioColor.info
         case .neutral: return GioColor.neutral
         }
     }
@@ -68,6 +70,7 @@ public enum StatusKind: Equatable, Sendable {
         case .ok: return GioColor.ink(.systemGreen)
         case .warning: return GioColor.ink(.systemOrange)
         case .error: return GioColor.ink(.systemRed)
+        case .info: return GioColor.ink(.systemBlue)
         case .neutral: return GioColor.secondaryText
         }
     }
@@ -77,15 +80,17 @@ public enum StatusKind: Equatable, Sendable {
 public struct StatusBadge: View {
     let kind: StatusKind
     let label: String
+    let symbol: String?
 
-    public init(_ kind: StatusKind, _ label: String) {
+    public init(_ kind: StatusKind, _ label: String, symbol: String? = nil) {
         self.kind = kind
         self.label = label
+        self.symbol = symbol
     }
 
     public var body: some View {
         HStack(spacing: GioSpacing.xxs) {
-            Image(systemName: kind.symbol)
+            Image(systemName: symbol ?? kind.symbol)
                 .font(.system(size: 10, weight: .bold))
             Text(label)
                 .font(GioFont.captionEmphasis)
@@ -283,10 +288,11 @@ public struct MetricTile: View {
             Text(detail ?? " ")
                 .font(GioFont.caption)
                 .foregroundStyle(GioColor.secondaryText)
-                .lineLimit(1)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .padding(GioSpacing.s + 2)
-        .frame(maxWidth: .infinity, minHeight: 92, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 104, maxHeight: .infinity, alignment: .topLeading)
         .background(RoundedRectangle(cornerRadius: GioRadius.medium, style: .continuous).fill(GioColor.card))
         .overlay(
             RoundedRectangle(cornerRadius: GioRadius.medium, style: .continuous)
@@ -326,11 +332,25 @@ public struct PreviewCanvas<Content: View>: View {
 
 // MARK: - Page scaffold
 
+private struct GioStaticPageKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Lay pages out without a `ScrollView` (NSScrollView-backed, so it does
+    /// not render through `ImageRenderer`). Snapshot tests only.
+    public var gioStaticPage: Bool {
+        get { self[GioStaticPageKey.self] }
+        set { self[GioStaticPageKey.self] = newValue }
+    }
+}
+
 /// Standard detail page: large title, optional subtitle, scrolling content.
 public struct GioPage<Content: View>: View {
     let title: String
     let subtitle: String?
     let content: Content
+    @Environment(\.gioStaticPage) private var isStatic
 
     public init(_ title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
         self.title = title
@@ -339,21 +359,31 @@ public struct GioPage<Content: View>: View {
     }
 
     public var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: GioSpacing.xl) {
-                VStack(alignment: .leading, spacing: GioSpacing.xxs) {
-                    Text(title).font(GioFont.pageTitle)
-                    if let subtitle {
-                        Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
-                    }
-                }
-                content
+        Group {
+            if isStatic {
+                column
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxHeight: .infinity, alignment: .top)
+            } else {
+                ScrollView { column }
             }
-            .padding(.horizontal, GioSpacing.xl)
-            .padding(.vertical, GioSpacing.l)
-            .frame(maxWidth: 820, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(GioColor.page)
+    }
+
+    private var column: some View {
+        VStack(alignment: .leading, spacing: GioSpacing.xl) {
+            VStack(alignment: .leading, spacing: GioSpacing.xxs) {
+                Text(title).font(GioFont.pageTitle)
+                if let subtitle {
+                    Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
+                }
+            }
+            content
+        }
+        .padding(.horizontal, GioSpacing.xl)
+        .padding(.vertical, GioSpacing.l)
+        .frame(maxWidth: 860, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .top)
     }
 }

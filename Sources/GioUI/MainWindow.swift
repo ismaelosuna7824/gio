@@ -35,23 +35,40 @@ public func desiredActivationPolicy(windowVisible: Bool) -> NSApplication.Activa
 
 public struct GioMainView: View {
     @State private var selection: MainSection? = .overview
-    private let model: DesktopModel
+    @ObservedObject private var model: DesktopModel
+    private let onSectionChange: (MainSection) -> Void
 
-    public init(model: DesktopModel) {
+    public init(model: DesktopModel, onSectionChange: @escaping (MainSection) -> Void = { _ in }) {
         self.model = model
+        self.onSectionChange = onSectionChange
     }
 
     public var body: some View {
         NavigationSplitView {
-            List(MainSection.allCases, selection: $selection) { section in
-                Label(section.title, systemImage: section.symbol)
-                    .tag(section)
+            List(selection: $selection) {
+                ForEach(sidebarGroups) { group in
+                    Section(group.title) {
+                        ForEach(group.sections) { section in
+                            SidebarRow(section: section).tag(section)
+                        }
+                    }
+                }
             }
-            .navigationSplitViewColumnWidth(min: 160, ideal: 180, max: 240)
+            .listStyle(.sidebar)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                SidebarHeader(status: sessionStatus(model.snapshot.facts), version: appVersionLabel())
+            }
+            .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             detail(for: selection ?? .overview)
+                .navigationTitle((selection ?? .overview).title)
         }
-        .frame(minWidth: 720, minHeight: 460)
+        .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
+        .frame(minWidth: mainWindowMinSize.width, minHeight: mainWindowMinSize.height)
+        .onAppear { onSectionChange(selection ?? .overview) }
+        .onChange(of: selection) { section in
+            onSectionChange(section ?? .overview)
+        }
     }
 
     @ViewBuilder
@@ -64,6 +81,83 @@ public struct GioMainView: View {
         case .rules: RulesSettingsView(model: model)
         case .logs: LogsView(model: model)
         case .diagnostics: DiagnosticsView(model: model)
+        }
+    }
+}
+
+/// Smallest and first-launch sizes of the main window's content.
+public let mainWindowMinSize = CGSize(width: 860, height: 580)
+public let mainWindowDefaultSize = CGSize(width: 1040, height: 700)
+
+/// `0.1.0` from the bundle, else the built-in version string.
+func appVersionLabel() -> String {
+    (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? gioVersion
+}
+
+/// One sidebar row: colored symbol tile and title, System Settings style.
+struct SidebarRow: View {
+    let section: MainSection
+
+    var body: some View {
+        Label {
+            Text(section.title)
+        } icon: {
+            SectionIcon(section, size: 20)
+        }
+        .padding(.vertical, 1)
+    }
+}
+
+/// Top of the sidebar: Gio mark, name, version and the session status dot.
+struct SidebarHeader: View {
+    let status: SessionStatus
+    let version: String
+    @Environment(\.gioAccent) private var accent
+
+    var body: some View {
+        HStack(spacing: GioSpacing.s - 2) {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(LinearGradient(
+                    colors: [Color(theme: accent), Color(nsColor: .systemIndigo)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                ))
+                .overlay(
+                    Image(systemName: "rectangle.split.3x1.fill")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
+                )
+                .frame(width: 34, height: 34)
+                .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(alignment: .firstTextBaseline, spacing: GioSpacing.xxs + 1) {
+                    Text("Gio").font(.system(size: 15, weight: .semibold))
+                    Text(version)
+                        .font(GioFont.caption.monospacedDigit())
+                        .foregroundStyle(GioColor.tertiaryText)
+                        .lineLimit(1)
+                }
+                HStack(spacing: GioSpacing.xxs + 1) {
+                    Circle().fill(statusColor).frame(width: 7, height: 7)
+                    Text(status.label)
+                        .font(GioFont.caption)
+                        .foregroundStyle(GioColor.secondaryText)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, GioSpacing.m)
+        .padding(.top, GioSpacing.xs)
+        .padding(.bottom, GioSpacing.s)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var statusColor: Color {
+        switch status.kind {
+        case .ok: return GioColor.ok
+        case .warning: return GioColor.warning
+        case .error: return GioColor.error
+        case .info: return GioColor.info
+        case .neutral: return GioColor.tertiaryText
         }
     }
 }
@@ -85,18 +179,7 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
 
     public func show() {
         if window == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 860, height: 560),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Gio"
-            window.contentView = NSHostingView(rootView: GioMainView(model: model))
-            window.isReleasedWhenClosed = false
-            window.delegate = self
-            window.center()
-            self.window = window
+            window = makeWindow()
         }
         NSApplication.shared.setActivationPolicy(desiredActivationPolicy(windowVisible: true))
         if #available(macOS 14.0, *) {
@@ -106,6 +189,34 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
         model.setWindowVisible(true)
+    }
+
+    private static let autosaveName = "GioMainWindow"
+
+    /// Unified toolbar window with a full-height sidebar; the title follows
+    /// the selected section and the frame is restored across launches.
+    private func makeWindow() -> NSWindow {
+        let hosting = NSHostingController(rootView: GioMainView(model: model) { [weak self] section in
+            self?.window?.title = section.title
+        })
+        hosting.sizingOptions = []
+        if #available(macOS 14.0, *) {
+            hosting.sceneBridgingOptions = [.title, .toolbars]
+        }
+        let window = NSWindow(contentViewController: hosting)
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.title = MainSection.overview.title
+        window.toolbar = NSToolbar(identifier: "GioMainToolbar")
+        window.toolbarStyle = .unified
+        window.contentMinSize = NSSize(width: mainWindowMinSize.width, height: mainWindowMinSize.height)
+        window.setContentSize(NSSize(width: mainWindowDefaultSize.width, height: mainWindowDefaultSize.height))
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        if !window.setFrameUsingName(Self.autosaveName) {
+            window.center()
+        }
+        window.setFrameAutosaveName(Self.autosaveName)
+        return window
     }
 
     public func hide() {

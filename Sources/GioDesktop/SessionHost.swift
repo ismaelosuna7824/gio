@@ -566,7 +566,27 @@ final class SessionHost: @unchecked Sendable {
                     stack: summaries[$0.id]?.workspaces ?? []
                 )
             },
-            windows: windows, screenRecordingGranted: screenRecording
+            windows: windows, screenRecordingGranted: screenRecording,
+            strip: currentWorkspaceStrip()
+        )
+    }
+
+    /// DD-02: the focused display's current workspace laid out as a strip
+    /// for the Overview miniature. Pure layout math on session state; no AX.
+    private func currentWorkspaceStrip() -> WorkspaceStripFact? {
+        let focused = session.manager.focusedDisplay
+        guard let display = displays.allDisplays().first(where: { $0.id == focused }) else {
+            return nil
+        }
+        let viewport = visibleFrames[display.id] ?? display.frame
+        let workspace = tilingWorkspace(from: session.manager.currentWorkspace(), modes: tileableModes())
+        guard let layout = try? engine().calculate(workspace: workspace, viewport: viewport) else {
+            return nil
+        }
+        return makeWorkspaceStrip(
+            workspace: workspace, layout: layout, viewport: viewport, displayID: display.id.rawValue,
+            index: session.manager.current,
+            application: { session.registry.find($0)?.application ?? "" }
         )
     }
 

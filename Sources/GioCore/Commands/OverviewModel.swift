@@ -53,11 +53,15 @@ public struct SessionFacts: Equatable, Sendable {
     public let currentWorkspace: Int
     public let displays: [DisplayFact]
     public let windows: [WindowFact]
+    /// DD-02: the focused display's current workspace as a strip, for the
+    /// Overview miniature; nil when no layout was available.
+    public let strip: WorkspaceStripFact?
 
     public init(
         configPath: String, configExists: Bool, configMessages: [String],
         accessibilityGranted: Bool, currentWorkspace: Int,
-        displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false
+        displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
+        strip: WorkspaceStripFact? = nil
     ) {
         self.configPath = configPath
         self.configExists = configExists
@@ -67,6 +71,7 @@ public struct SessionFacts: Equatable, Sendable {
         self.currentWorkspace = currentWorkspace
         self.displays = displays
         self.windows = windows
+        self.strip = strip
     }
 }
 
