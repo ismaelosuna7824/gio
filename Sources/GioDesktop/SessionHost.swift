@@ -110,15 +110,9 @@ final class SessionHost: @unchecked Sendable {
     var overlayAbortForMouseDown: (() -> Bool)?
     /// Wallpaper backdrops, readable from any thread.
     var overlayWallpapers: WallpaperCache?
-    /// PA-04: parking plan of hidden windows, recomputed only when its inputs change.
-    private struct InactiveParkKey: Equatable {
-        var frames: [WindowID: CGRect]
-        var display: CGRect
-        var others: [CGRect]
-    }
-    private var inactiveParking = PlanMemo<InactiveParkKey, [WindowID: ParkedTarget]>()
-    /// NC-06: the pre-hide frames of floating windows.
-    private var hiddenBook = HiddenWindowBook()
+    /// The planning half of a reflow pass; owns the hidden-window book and
+    /// the inactive parking memo (NC-06, PA-04).
+    private var reflowPlanner: ReflowPlanner!
     /// PA-03 / SM-04: refresh rates and capture screens, read on main
     /// (AppKit), read by the session queue behind their lock.
     private let displayParameters = DisplayParameters()
@@ -151,6 +145,11 @@ final class SessionHost: @unchecked Sendable {
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.
     init() {
+        reflowPlanner = ReflowPlanner(context: .init(
+            physicalFrames: { [unowned self] in physicalFrames },
+            readFrame: { [unowned self] in try? actuator?.frame(of: $0) },
+            storePhysicalFrame: { [unowned self] in physicalFrames[$0] = $1 }
+        ))
         focusRing = FocusRingPublisher(context: .init(
             session: { [unowned self] in session },
             physicalFrame: { [unowned self] in physicalFrames[$0] },
@@ -410,7 +409,7 @@ final class SessionHost: @unchecked Sendable {
                 updateDisplayHeight: { [unowned self] in actuator?.updateDisplayHeight($0) },
                 displaysChanged: { [unowned self] in
                     trustedFrames.removeAll()
-                    inactiveParking.invalidate()
+                    reflowPlanner.invalidateParking()
                     focusRing.resetGate()
                 }
             ),
@@ -480,7 +479,7 @@ final class SessionHost: @unchecked Sendable {
                     actuator?.countsCalls = GioLog.minimumLevel <= .debug
                 },
                 invalidateConfigCaches: { [unowned self] in
-                    inactiveParking.invalidate()
+                    reflowPlanner.invalidateParking()
                     focusRing.resetGate()
                 },
                 setFocusFollowsMouse: { [unowned self] in focus.focusFollowsMouse = $0 },
@@ -1004,64 +1003,38 @@ final class SessionHost: @unchecked Sendable {
         )
         syncShownWorkspace()
         let modes = tileableModes()
-        var plans: [ParkingPlan] = []
-        var animations: [WindowAnimation] = []
-        var prepositions: [WindowID: CGRect] = [:]
         let centering = focus.takeCenterRequest()
         let sizingTarget = focus.takeSizingFocus()
-        var hovered: [WindowID: CGRect] = [:]
-        let inactive = planInactiveWorkspaces()
+        let inactive = reflowPlanner.planInactiveWorkspaces(
+            displays: displays.allDisplays(), manager: session.manager, registry: session.registry
+        )
         // Native zoom: windows whose zoom ended since the last pass get their
         // verdict against this pass's layout target.
         var unjudgedZooms = nativeZoom.takeResolved()
-        for (index, display) in displays.allDisplays().enumerated() {
-            guard let workspace = session.manager.workspace(id: display.workspace) else {
-                continue
-            }
-            let visible = visibleFrames[display.id] ?? display.frame
-            guard let planned = try? planDisplayLayout(
-                workspace: workspace, modes: modes, engine: engine(),
-                viewport: visible, display: display.frame,
-                otherDisplays: displays.allDisplays().filter { $0.id != display.id }.map(\.frame),
-                centering: display.workspace == session.manager.currentID ? centering : .none
-            ) else {
-                continue
-            }
-            var displayPlan = planned.plan
+        let pass = reflowPlanner.plan(
+            .init(
+                displays: displays.allDisplays(), visibleFrames: visibleFrames, manager: session.manager,
+                modes: modes, engine: { [unowned self] in engine() }, centering: centering,
+                animating: animating, duration: settings.duration
+            ),
+            inactive: inactive
+        ) { displayPlan, visible in
             nativeZoom.judge(&unjudgedZooms, plan: displayPlan, viewport: visible)
-            displayPlan.visible = nativeZoom.applyAccepted(
+            return nativeZoom.applyAccepted(
                 to: displayPlan.visible, parked: Set(displayPlan.parked.keys).union(inactive.parked.keys)
             )
-            plans.append(displayPlan)
-            hovered.merge(displayPlan.visible) { first, _ in first }
-            if animating {
-                // NC-07: the first display also carries the workspace switch:
-                // hidden windows drop below its bottom edge, revealed ones rise.
-                let carriesSwitch = index == 0
-                let motionFrames = carriesSwitch
-                    ? displayPlan.visible.merging(inactive.visible) { first, _ in first }
-                    : displayPlan.visible
-                learnPhysicalFrames(of: motionFrames.keys)
-                let motion = planWorkspaceSwitchMotion(
-                    current: physicalFrames, visible: motionFrames,
-                    parked: displayPlan.parked, hidden: carriesSwitch ? inactive.parked : [:],
-                    viewport: visible, display: display.frame, duration: settings.duration
-                )
-                animations += motion.animations
-                prepositions.merge(motion.prepositions) { _, new in new }
-            }
-            // Logical state moves at once; only the physical writes animate.
-            session.manager.update(planned.workspace)
-            displays.updateViewport(
-                Viewport(offset: planned.layout.viewportOffset, width: visible.width), for: display.id
-            )
         }
-        plans.append(inactive)
-        focus.setHoverFrames(hovered)
+        // Logical state moves at once; only the physical writes animate.
+        for outcome in pass.displays {
+            session.manager.update(outcome.workspace)
+            displays.updateViewport(outcome.viewport, for: outcome.display)
+        }
+        var plans = pass.plans
+        var animations = pass.animations
+        let prepositions = pass.prepositions
+        focus.setHoverFrames(pass.hovered)
         nativeZoom.dropUnjudged(unjudgedZooms)
-        if settings.curve == .spring {
-            animations = animations.map { $0.springing(settings.spring) }
-        }
+        animations = ReflowPlanner.applyingCurve(animations, settings: settings)
         // Native zoom: a maximize that grows a single-window column presses the
         // app's own zoom instead of writing a size. The zooming window leaves
         // this pass's motion and writes; the zoom starts after the neighbours'
@@ -1077,16 +1050,15 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         // PA-06: growing windows may follow the flight when their app keeps up.
-        let capablePids = Set(animations.map(\.id.pid).filter { resizeCapability.canAnimateSize(resizeKey($0)) })
         // Focused-grow: the window the keyboard is about to raise (FI-06) that
         // grows gets its final size in the first frame. The raise (`focusNow`)
         // runs below, before the session queue serves the first motion tick,
         // so the one size write lands on an already frontmost window. Without
         // a focus intent (passive reflow) the target is nil: FI-03 applies.
-        animations = planSizeSchedules(
-            animations, mode: settings.resize, capablePids: capablePids,
-            focused: focus.pendingIntentTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget,
-            focusedGrow: settings.focusedGrow
+        animations = ReflowPlanner.sizeSchedules(
+            animations, settings: settings,
+            canAnimateSize: { resizeCapability.canAnimateSize(resizeKey($0)) },
+            focused: focus.pendingIntentTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget
         )
         // SM-04: with the snapshot renderer the real windows get one write to
         // their final frames (the instant pass below) under an opaque overlay
@@ -1210,68 +1182,6 @@ final class SessionHost: @unchecked Sendable {
         for display in displays.allDisplays() {
             if let active = session.manager.activeID(on: display.id), active != display.workspace {
                 displays.assign(display.id, workspace: active)
-            }
-        }
-    }
-
-    /// Windows of workspaces no display shows hang off a corner of the first
-    /// display (size kept); floating windows of shown workspaces that were
-    /// hidden return to the frame they had. Minimized windows are untouched.
-    private func planInactiveWorkspaces() -> ParkingPlan {
-        let all = displays.allDisplays()
-        var plan = ParkingPlan(visible: [:], parked: [:])
-        guard let hiddenDisplay = all.first else {
-            return plan
-        }
-        let shown = Set(all.map(\.workspace))
-        let windows = Dictionary(
-            uniqueKeysWithValues: session.registry.managedWindows().map { ($0.id, $0) }
-        )
-        let hidden = session.manager.windows(outside: shown).filter {
-            windows[$0].map { !$0.isMinimized } ?? false
-        }
-        learnPhysicalFrames(of: hidden)
-        var frames: [WindowID: CGRect] = [:]
-        for id in hidden {
-            guard let frame = physicalFrames[id] else {
-                continue
-            }
-            frames[id] = frame
-            if windows[id]?.mode == .floating {
-                hiddenBook.hide(id, from: frame)
-            }
-        }
-        let others = all.filter { $0.id != hiddenDisplay.id }.map(\.frame)
-        plan.parked = inactiveParking.value(
-            for: InactiveParkKey(frames: frames, display: hiddenDisplay.frame, others: others)
-        ) {
-            planHiddenWindows(frames: frames, display: hiddenDisplay.frame, otherDisplays: others)
-        }
-        let active = shown.flatMap { id in
-            (session.manager.workspace(id: id)?.columns ?? []).flatMap(\.windows)
-        }
-        // Keep the memory until the window really sits at its frame: a
-        // retarget mid-flight (or an abandoned animation) must find it again.
-        let floating = active.filter { windows[$0]?.mode == .floating }
-        plan.visible = hiddenBook.frames(of: floating)
-        for (id, frame) in plan.visible {
-            if let physical = physicalFrames[id],
-               abs(physical.minX - frame.minX) <= 1, abs(physical.minY - frame.minY) <= 1
-            {
-                _ = hiddenBook.reveal([id])
-            }
-        }
-        return plan
-    }
-
-    // MARK: - Motion (MO-04)
-
-    /// Windows about to be seen but never placed by us (new ones) have no
-    /// known physical frame; one read each lets them slide in.
-    private func learnPhysicalFrames(of ids: some Sequence<WindowID>) {
-        for id in ids where physicalFrames[id] == nil {
-            if let frame = try? actuator?.frame(of: id) {
-                physicalFrames[id] = frame
             }
         }
     }
