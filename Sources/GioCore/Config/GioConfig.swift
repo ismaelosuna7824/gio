@@ -81,6 +81,9 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var resize: ResizeMode
     /// SM-01: `snapshot` (default) needs Screen Recording; falls back to `ax`.
     public var renderer: RendererKind
+    /// When the focused window that grows gets its final size: `start`
+    /// (default, first frame) or `end` (FI-03, final pass).
+    public var focusedGrow: FocusedGrowMode
 
     public init(
         enabled: Bool = true, durationMilliseconds: Int = 200,
@@ -88,8 +91,10 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .ax
+        renderer: RendererKind = .ax,
+        focusedGrow: FocusedGrowMode = .start
     ) {
+        self.focusedGrow = focusedGrow
         self.resize = resize
         self.renderer = renderer
         self.enabled = enabled

@@ -106,7 +106,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
 public func animationEdits(
     enabled: Bool, durationMilliseconds: Int,
     curve: MotionCurveKind? = nil, springDampingRatio: Double? = nil, springStiffness: Double? = nil,
-    resize: ResizeMode? = nil, renderer: RendererKind? = nil
+    resize: ResizeMode? = nil, renderer: RendererKind? = nil,
+    focusedGrow: FocusedGrowMode? = nil
 ) -> [ConfigEdit] {
     var edits: [ConfigEdit] = [
         .set(table: "animations", key: "enabled", value: .bool(enabled)),
@@ -126,6 +127,9 @@ public func animationEdits(
     }
     if let renderer {
         edits.append(.set(table: "animations", key: "renderer", value: .string(renderer.rawValue)))
+    }
+    if let focusedGrow {
+        edits.append(.set(table: "animations", key: "focused-grow", value: .string(focusedGrow.rawValue)))
     }
     return edits
 }

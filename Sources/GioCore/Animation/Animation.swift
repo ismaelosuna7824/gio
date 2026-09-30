@@ -42,11 +42,24 @@ public func lerp(_ from: CGFloat, _ to: CGFloat, progress: Double) -> CGFloat {
 /// waits for the final pass); `.fromStart` interpolates from the first frame;
 /// `.from(t0)` holds the old size until the fraction `t0` (0..1) of the flight
 /// and reaches the target exactly at the end. Shrinks always land on the first
-/// frame, whatever the schedule.
+/// frame, whatever the schedule. `.atStart` (focused-grow) writes the final
+/// size in the first frame, once, and only the origin flies afterwards: the
+/// size never interpolates, so the app relays out a single time.
 public enum SizeSchedule: Equatable, Sendable {
     case none
     case fromStart
     case from(Double)
+    case atStart
+
+    /// True when the size follows the flight frame by frame (PA-06).
+    public var interpolates: Bool {
+        switch self {
+        case .fromStart, .from:
+            return true
+        case .none, .atStart:
+            return false
+        }
+    }
 }
 
 /// One window's flight from one logical frame to the next. Covers movement,
@@ -217,6 +230,8 @@ public struct WindowAnimation: Equatable, Sendable {
         switch sizeSchedule {
         case .none:
             return 0
+        case .atStart:
+            return elapsed.isFinite && elapsed < 0 ? 0 : 1
         case .fromStart:
             start = 0
         case .from(let fraction):

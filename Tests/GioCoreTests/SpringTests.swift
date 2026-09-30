@@ -201,7 +201,7 @@ final class SpringTests: XCTestCase {
         clock.now = animation.duration + 0.01
         let summary = player.tick().summary
         XCTAssertEqual(summary?.curve, "spring")
-        XCTAssertTrue(summary?.logLine.hasSuffix(" curve=spring sizeAnimated=0 renderer=ax") ?? false)
+        XCTAssertTrue(summary?.logLine.hasSuffix(" curve=spring sizeAnimated=0 renderer=ax grewAtStart=0") ?? false)
     }
 
 

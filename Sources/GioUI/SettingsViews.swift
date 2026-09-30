@@ -149,6 +149,7 @@ struct AnimationsSettingsView: View {
     @State private var stiffness: Double
     @State private var resize: ResizeMode
     @State private var renderer: RendererKind
+    @State private var focusedGrow: FocusedGrowMode
     @State private var feedback: ApplyFeedback?
 
     init(model: DesktopModel) {
@@ -161,6 +162,7 @@ struct AnimationsSettingsView: View {
         _stiffness = State(initialValue: animations.springStiffness)
         _resize = State(initialValue: animations.resize)
         _renderer = State(initialValue: animations.renderer)
+        _focusedGrow = State(initialValue: animations.focusedGrow)
     }
 
     var body: some View {
@@ -210,6 +212,14 @@ struct AnimationsSettingsView: View {
                 .disabled(!enabled)
                 Text("Never (default) grows windows once at the end. Adaptive grows them during the motion when their app keeps up and nothing is in the way; Always ignores how well the app keeps up.")
                     .font(.caption).foregroundStyle(.secondary)
+                Picker("Focused window growth", selection: $focusedGrow) {
+                    Text("At start").tag(FocusedGrowMode.start)
+                    Text("At end").tag(FocusedGrowMode.end)
+                }
+                .pickerStyle(.segmented)
+                .disabled(!enabled)
+                Text("At start (default) gives the focused window its final size in the first frame of maximize, fullscreen and width changes, so it is not cut while the others slide away. At end waits for the final pass. Adaptive or Always resize keep their own timing when they already grow the window during the motion.")
+                    .font(.caption).foregroundStyle(.secondary)
                 Picker("Renderer", selection: $renderer) {
                     Text("Accessibility").tag(RendererKind.ax)
                     Text("Snapshot (experimental)").tag(RendererKind.snapshot)
@@ -235,7 +245,7 @@ struct AnimationsSettingsView: View {
         feedback = model.apply(animationEdits(
             enabled: enabled, durationMilliseconds: Int(duration),
             curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness,
-            resize: resize, renderer: renderer
+            resize: resize, renderer: renderer, focusedGrow: focusedGrow
         ))
     }
 
@@ -248,6 +258,7 @@ struct AnimationsSettingsView: View {
         stiffness = animations.springStiffness
         resize = animations.resize
         renderer = animations.renderer
+        focusedGrow = animations.focusedGrow
         feedback = nil
     }
 }

@@ -151,6 +151,10 @@ final class SessionHost: @unchecked Sendable {
     /// by the next reflow), and whether the cursor should follow that focus.
     private var centerRequest: CenterRequest?
     private var warpAfterFocus = false
+    /// Focused-grow: the window a sizing action (maximize, width preset) just
+    /// resized; already frontmost, so it needs no focus intent. Consumed by the
+    /// next reflow.
+    private var sizingFocus: WindowID?
     /// HD-04 focus-follows-mouse. `hoverLock` guards the flag and the latest
     /// pointer location the main-thread tap hands over; the rest is on `queue`.
     private var hoverFocus = HoverFocus()
@@ -1131,6 +1135,8 @@ final class SessionHost: @unchecked Sendable {
         var prepositions: [WindowID: CGRect] = [:]
         let centering = centerRequest ?? .none
         centerRequest = nil
+        let sizingTarget = sizingFocus
+        sizingFocus = nil
         var hovered: [WindowID: CGRect] = [:]
         let inactive = planInactiveWorkspaces()
         for (index, display) in displays.allDisplays().enumerated() {
@@ -1177,7 +1183,16 @@ final class SessionHost: @unchecked Sendable {
         }
         // PA-06: growing windows may follow the flight when their app keeps up.
         let capablePids = Set(animations.map(\.id.pid).filter { resizeCapability.canAnimateSize(resizeKey($0)) })
-        animations = planSizeSchedules(animations, mode: settings.resize, capablePids: capablePids)
+        // Focused-grow: the window the keyboard is about to raise (FI-06) that
+        // grows gets its final size in the first frame. The raise (`focusNow`)
+        // runs below, before the session queue serves the first motion tick,
+        // so the one size write lands on an already frontmost window. Without
+        // a focus intent (passive reflow) the target is nil: FI-03 applies.
+        animations = planSizeSchedules(
+            animations, mode: settings.resize, capablePids: capablePids,
+            focused: focusIntent.pendingTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget,
+            focusedGrow: settings.focusedGrow
+        )
         // SM-04: with the snapshot renderer the real windows get one write to
         // their final frames (the instant pass below) under an opaque overlay
         // that flies their images on the GPU; the AX motion is the fallback.
@@ -2557,6 +2572,9 @@ final class SessionHost: @unchecked Sendable {
             )
         }
         requestFocusIntent(if: action.carriesFocusIntent, previous: previousFocus)
+        if action.growsFocusedWindow {
+            sizingFocus = session.manager.currentWorkspace().focusedWindow
+        }
         reflowAll()
     }
 

@@ -176,8 +176,8 @@ final class SnapshotFlightPlanningTests: XCTestCase {
 
     func testAnimDoneLineNamesTheRenderer() {
         let ax = MotionSummary(windows: 1, frames: 2, dropped: 0, duration: 0.2, slowest: nil)
-        XCTAssertTrue(ax.logLine.hasSuffix("renderer=ax"))
+        XCTAssertTrue(ax.logLine.hasSuffix("renderer=ax grewAtStart=0"))
         let snap = MotionSummary(windows: 1, frames: 0, dropped: 0, duration: 0.2, slowest: nil, curve: "spring", renderer: "snapshot")
-        XCTAssertTrue(snap.logLine.hasSuffix("curve=spring sizeAnimated=0 renderer=snapshot"))
+        XCTAssertTrue(snap.logLine.hasSuffix("curve=spring sizeAnimated=0 renderer=snapshot grewAtStart=0"))
     }
 }

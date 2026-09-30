@@ -11,6 +11,16 @@ public enum ResizeMode: String, Equatable, Sendable {
     case never
 }
 
+/// `[animations] focused-grow`: when the focused window that grows gets its
+/// final size.
+public enum FocusedGrowMode: String, Equatable, Sendable {
+    /// In the first frame of the motion (default), so it is not cut while the
+    /// neighbours slide away; it may overlap them, being frontmost.
+    case start
+    /// FI-03: at the final pass (the previous behaviour).
+    case end
+}
+
 /// Overlap larger than this on both axes counts as in the way (rounding to
 /// whole points can make touching frames differ by a point).
 private let overlapTolerance: CGFloat = 1
@@ -66,22 +76,32 @@ private func isClear(_ animation: WindowAnimation, of neighbours: [WindowAnimati
 /// decided in id order against the already-decided schedules, so a pair is
 /// checked with the final frames of whoever was decided first. Windows that do
 /// not animate are not obstacles here: the layout never overlaps them.
+///
+/// Focused-grow: the keyboard focus-intent target (`focused`, raised at motion
+/// start) that grows and that the above left on FI-03 gets `.atStart` when
+/// `focusedGrow` is `.start`. A schedule the adaptive planner granted wins, and
+/// with no focus intent (passive reflow, IPC without focus) nothing changes.
 public func planSizeSchedules(
-    _ animations: [WindowAnimation], mode: ResizeMode, capablePids: Set<pid_t>
+    _ animations: [WindowAnimation], mode: ResizeMode, capablePids: Set<pid_t>,
+    focused: WindowID? = nil, focusedGrow: FocusedGrowMode = .end
 ) -> [WindowAnimation] {
-    guard mode != .never else {
-        return animations
-    }
     var result = animations
-    let order = animations.indices.sorted { animations[$0].id < animations[$1].id }
-    for index in order {
-        let animation = result[index]
-        guard growsAtAll(animation), mode == .always || capablePids.contains(animation.id.pid),
-              let start = delayedGrowStart(for: animation, among: result)
-        else {
-            continue
+    if mode != .never {
+        let order = animations.indices.sorted { animations[$0].id < animations[$1].id }
+        for index in order {
+            let animation = result[index]
+            guard growsAtAll(animation), mode == .always || capablePids.contains(animation.id.pid),
+                  let start = delayedGrowStart(for: animation, among: result)
+            else {
+                continue
+            }
+            result[index].sizeSchedule = start == 0 ? .fromStart : .from(start)
         }
-        result[index].sizeSchedule = start == 0 ? .fromStart : .from(start)
+    }
+    if focusedGrow == .start, let focused,
+       let index = result.firstIndex(where: { $0.id == focused }),
+       growsAtAll(result[index]), result[index].sizeSchedule == .none {
+        result[index].sizeSchedule = .atStart
     }
     return result
 }

@@ -41,6 +41,8 @@ public struct MotionSummary: Equatable, Sendable {
     public let curve: String
     /// PA-06: windows whose size followed the flight instead of the final pass.
     public let sizeAnimated: Int
+    /// Focused-grow: windows whose final size was written in the first frame.
+    public let grewAtStart: Int
     /// Per-pid write stats of this run (feeds `ResizeCapability`); not part of equality.
     public let appStats: [pid_t: MotionWriteStats]
     /// SM-04: `ax` (frames written through Accessibility) or `snapshot` (GPU overlay).
@@ -49,8 +51,10 @@ public struct MotionSummary: Equatable, Sendable {
     public init(
         windows: Int, frames: Int, dropped: Int, duration: TimeInterval,
         slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out",
-        sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:], renderer: String = "ax"
+        sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:], renderer: String = "ax",
+        grewAtStart: Int = 0
     ) {
+        self.grewAtStart = grewAtStart
         self.renderer = renderer
         self.curve = curve
         self.sizeAnimated = sizeAnimated
@@ -68,13 +72,13 @@ public struct MotionSummary: Equatable, Sendable {
             && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds
     }
 
-    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|snapshot`
+    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|snapshot grewAtStart=G`
     /// `frames` counts sampled display ticks, `dropped` counts per-app frames
     /// skipped because that app was still writing. IDs and app names only.
     public var logLine: String {
         let slowestText = slowest.map { "\($0.app) \(Int($0.milliseconds.rounded()))ms" } ?? "none"
         return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) "
-            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated) renderer=\(renderer)"
+            + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated) renderer=\(renderer) grewAtStart=\(grewAtStart)"
     }
 }
 
@@ -109,6 +113,7 @@ public final class MotionPlayer {
     private var lastElapsed: TimeInterval = 0
     private var runUsedSpring = false
     private var runSizeAnimated: Set<WindowID> = []
+    private var runGrewAtStart: Set<WindowID> = []
 
     public private(set) var sampledFrames: [WindowID: CGRect] = [:]
 
@@ -144,6 +149,7 @@ public final class MotionPlayer {
             sampledFrames = [:]
             runUsedSpring = false
             runSizeAnimated = []
+            runGrewAtStart = []
         }
         var previous: [WindowID: WindowAnimation] = [:]
         for animation in animations {
@@ -161,8 +167,10 @@ public final class MotionPlayer {
         runUsedSpring = runUsedSpring || animations.contains { $0.spring != nil }
         for animation in next {
             runWindows.insert(animation.id)
-            if animation.sizeSchedule != .none {
+            if animation.sizeSchedule.interpolates {
                 runSizeAnimated.insert(animation.id)
+            } else if animation.sizeSchedule == .atStart, growsAtAll(animation) {
+                runGrewAtStart.insert(animation.id)
             }
             if submitted[animation.id] == nil {
                 submitted[animation.id] = animation.from
@@ -187,7 +195,7 @@ public final class MotionPlayer {
         var perPid: [pid_t: [MotionWrite]] = [:]
         for animation in animations {
             let frame = wholePoints(
-                animation.motionFrame(at: elapsed), size: animation.sizeSchedule != .none
+                animation.motionFrame(at: elapsed), size: animation.sizeSchedule.interpolates
             )
             sampled[animation.id] = frame
             let last = submitted[animation.id] ?? animation.from
@@ -231,7 +239,8 @@ public final class MotionPlayer {
             dropped: dropped + stats.values.reduce(0) { $0 + $1.drops },
             duration: clock() - runStart, slowest: slowest,
             curve: runUsedSpring ? "spring" : "ease-out",
-            sizeAnimated: runSizeAnimated.count, appStats: stats
+            sizeAnimated: runSizeAnimated.count, appStats: stats,
+            grewAtStart: runGrewAtStart.count
         )
         animations = []
         submitted = [:]

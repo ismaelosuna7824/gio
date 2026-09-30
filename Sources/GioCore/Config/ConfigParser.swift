@@ -354,6 +354,18 @@ func applyAnimationsKey(
                 "line \(line): animations.resize '\(text)' is not \"adaptive\", \"always\" or \"never\", using the default"
             )
         }
+    } else if key == "focused-grow" {
+        guard case .string(let text) = value else {
+            errors.append("line \(line): animations.focused-grow expects \"start\" or \"end\"")
+            return
+        }
+        if let mode = FocusedGrowMode(rawValue: text) {
+            config.animations.focusedGrow = mode
+        } else {
+            warnings.append(
+                "line \(line): animations.focused-grow '\(text)' is not \"start\" or \"end\", using the default"
+            )
+        }
     } else if key == "renderer" {
         guard case .string(let text) = value else {
             errors.append("line \(line): animations.renderer expects \"snapshot\" or \"ax\"")

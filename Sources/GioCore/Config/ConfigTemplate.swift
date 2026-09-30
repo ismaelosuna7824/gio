@@ -44,6 +44,11 @@ public func defaultConfigTemplate() -> String {
     # up and nothing is in the way, "always" ignores how well the app keeps
     # up (still never overlaps a neighbour).
     resize = "never"
+    # The focused window that grows (maximize, fullscreen, wider preset):
+    # "start" (default) gives it its final size in the first frame, so it is
+    # not cut while the neighbours slide away (it may overlap them during the
+    # flight); "end" waits for the final pass like every other window.
+    focused-grow = "start"
     # How motion is drawn: "ax" (default) moves the real windows every frame,
     # always showing live content. "snapshot" (experimental) animates window
     # images in an overlay: smoother on slow apps, but it can flicker and needs

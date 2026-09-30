@@ -21,6 +21,21 @@ extension HotkeyAction {
     }
 }
 
+extension HotkeyAction {
+    /// Sizing actions that resize the window the user is already typing into
+    /// (no focus change, so no `FocusIntent`). The session treats that window
+    /// as the focused-grow target: it is already frontmost. Fullscreen carries
+    /// a focus intent instead.
+    public var growsFocusedWindow: Bool {
+        switch self {
+        case .switchPresetColumnWidth, .growColumnWidth, .shrinkColumnWidth, .maximizeColumn:
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 extension CLICommand {
     /// IPC commands that change the logical focus deliberately.
     public var carriesFocusIntent: Bool {
@@ -103,6 +118,16 @@ public struct FocusIntent: Equatable, Sendable {
         expected = target
         expectedUntil = now + Self.settleWindow
         return target
+    }
+
+    /// The target `takeImmediate` would hand out, without consuming it (nil
+    /// when nothing is pending or it is parked). The motion planner uses it to
+    /// know which window the keyboard is about to raise.
+    public func pendingTarget(parked: Set<WindowID>) -> WindowID? {
+        guard let pending, !parked.contains(pending) else {
+            return nil
+        }
+        return pending
     }
 
     /// FI-06: the target for an immediate focus call at motion start (the
