@@ -77,6 +77,14 @@ Spotlight-like non-activating panel (vibrancy, ↑↓⏎⎋ ⌘1-9). RED compile
 written after code — noted). Bundles 158(42 skipped)/7/19/39/1120 all 0 failures (parent
 re-ran); signed build OK. Parent reviewed PNGs (shortcuts, onboarding, launcher): polished;
 launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL DD TASKS DONE.
+- [x] DD-06 (`05b822f`) — Live test: Alt+Space showed nothing; `gio restart` → command not found.
+  No definite root cause (defensive): orderFrontRegardless + makeKey + first responder, 250ms
+  resign-key grace, generation tokens vs stale fade-out, alpha safety deadline, slide pin fix;
+  lifecycle logs `launcher summon source= / shown key= / dismissed reason=`. Diagnostics "Command
+  Line" card symlinks ~/.local/bin/gio -> built GioCLI (dev builds) or shows the command. Bundles
+  174(42 skipped)/7/19/39/1141 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
+  Live round results: #5 menu bar OK, #6 workspaces OK (user), #2 dark/light follows system (no
+  in-app toggle), #9 not run (my table-escaped `\|` broke the command).
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.
