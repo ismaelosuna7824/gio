@@ -89,6 +89,8 @@ final class SessionHost: @unchecked Sendable {
     /// first layout (launch, `gio restart`), Accessibility regained, and a
     /// mouse-abandoned motion (session queue only).
     private var instantPlacement = InstantPlacementGate()
+    /// NA-02: windows registered since the last pass (they enter from below).
+    private var openingWindows = WindowOpenBook()
     /// FI-05: render verification: candidates, settled frames, nudges.
     private var renderVerifier: RenderVerifier!
     /// PA-04: frames Gio placed and verified; the final pass skips their AX
@@ -391,6 +393,7 @@ final class SessionHost: @unchecked Sendable {
                     resizeProbes.forget(id)
                     snapshotRefresher.evict([id])
                     fullscreen.forget(id)
+                    openingWindows.forget(id)
                     actuator?.forget(elementID: id.elementID)
                 },
                 forgetApp: { [unowned self] in reconciler?.forgetApp(pid: $0) },
@@ -411,7 +414,8 @@ final class SessionHost: @unchecked Sendable {
                     trustedFrames.removeAll()
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
-                }
+                },
+                windowOpened: { [unowned self] in openingWindows.mark($0) }
             ),
             scheduler: scheduler
         )
@@ -994,6 +998,8 @@ final class SessionHost: @unchecked Sendable {
             GioLog.record(reason == .mouse ? .debug : .info, instantPlacementLogLine(reason))
         }
         let animating = placement == .animate
+        // NA-02: an instant pass (startup, permission, mouse) just places them.
+        let opening = openingWindows.take(animating: animating)
         // Focusing away from a fullscreen window brings its column back.
         fullscreen.release(
             keeping: Set(displays.allDisplays().compactMap {
@@ -1015,7 +1021,8 @@ final class SessionHost: @unchecked Sendable {
             .init(
                 displays: displays.allDisplays(), visibleFrames: visibleFrames, manager: session.manager,
                 modes: modes, engine: { [unowned self] in engine() }, centering: centering,
-                animating: animating, duration: settings.duration
+                animating: animating, duration: settings.duration,
+                opening: opening, openOffset: windowOpenDefaultOffset
             ),
             inactive: inactive
         ) { displayPlan, visible in

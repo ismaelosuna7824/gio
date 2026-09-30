@@ -53,6 +53,9 @@ public final class DiscoveryService: @unchecked Sendable {
         public var updateDisplayHeight: (CGFloat) -> Void
         /// Topology changed: nothing placed before it is trusted.
         public var displaysChanged: () -> Void
+        /// NA-02: a visible (not minimized) window was registered; the next
+        /// animated pass lets it enter from below its tile.
+        public var windowOpened: (WindowID) -> Void
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -73,7 +76,8 @@ public final class DiscoveryService: @unchecked Sendable {
             displaySnapshots: @escaping () -> [DisplaySnapshot], knownDisplayIDs: @escaping () -> [DisplayID],
             connectDisplay: @escaping (DisplaySnapshot, WorkspaceID) -> Void,
             disconnectDisplay: @escaping (DisplayID) -> Void, mainScreenFrame: @escaping () -> CGRect?,
-            updateDisplayHeight: @escaping (CGFloat) -> Void, displaysChanged: @escaping () -> Void
+            updateDisplayHeight: @escaping (CGFloat) -> Void, displaysChanged: @escaping () -> Void,
+            windowOpened: @escaping (WindowID) -> Void = { _ in }
         ) {
             self.ownPID = ownPID
             self.registry = registry
@@ -102,6 +106,7 @@ public final class DiscoveryService: @unchecked Sendable {
             self.mainScreenFrame = mainScreenFrame
             self.updateDisplayHeight = updateDisplayHeight
             self.displaysChanged = displaysChanged
+            self.windowOpened = windowOpened
         }
     }
 
@@ -285,6 +290,9 @@ public final class DiscoveryService: @unchecked Sendable {
             }
         }
         context.watchWindow(candidate.element, candidate.window.pid)
+        if !minimized {
+            context.windowOpened(id)
+        }
         return id
     }
 

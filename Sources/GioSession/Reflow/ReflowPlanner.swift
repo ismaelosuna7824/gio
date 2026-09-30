@@ -63,11 +63,16 @@ public final class ReflowPlanner: @unchecked Sendable {
         public var centering: CenterRequest
         public var animating: Bool
         public var duration: TimeInterval
+        /// NA-02: windows registered since the last pass (`WindowOpenBook`).
+        public var opening: Set<WindowID>
+        /// NA-02: how far below its tile a new window starts (0: no entry).
+        public var openOffset: CGFloat
 
         public init(
             displays: [DisplayState], visibleFrames: [DisplayID: CGRect], manager: WorkspaceManager,
             modes: [WindowID: WindowMode], engine: @escaping () -> ScrollableLayoutEngine,
-            centering: CenterRequest, animating: Bool, duration: TimeInterval
+            centering: CenterRequest, animating: Bool, duration: TimeInterval,
+            opening: Set<WindowID> = [], openOffset: CGFloat = windowOpenDefaultOffset
         ) {
             self.displays = displays
             self.visibleFrames = visibleFrames
@@ -77,6 +82,8 @@ public final class ReflowPlanner: @unchecked Sendable {
             self.centering = centering
             self.animating = animating
             self.duration = duration
+            self.opening = opening
+            self.openOffset = openOffset
         }
     }
 
@@ -167,10 +174,11 @@ public final class ReflowPlanner: @unchecked Sendable {
                 continue
             }
             let visible = input.visibleFrames[display.id] ?? display.frame
+            let others = input.displays.filter { $0.id != display.id }.map(\.frame)
             guard let planned = try? planDisplayLayout(
                 workspace: workspace, modes: input.modes, engine: input.engine(),
                 viewport: visible, display: display.frame,
-                otherDisplays: input.displays.filter { $0.id != display.id }.map(\.frame),
+                otherDisplays: others,
                 centering: display.workspace == manager.currentID ? input.centering : .none
             ) else {
                 continue
@@ -187,13 +195,27 @@ public final class ReflowPlanner: @unchecked Sendable {
                     ? displayPlan.visible.merging(inactive.visible) { first, _ in first }
                     : displayPlan.visible
                 learnPhysicalFrames(of: motionFrames.keys)
+                var current = context.physicalFrames()
+                // NA-02: a new window is pre-positioned just below its tile
+                // (final size, one write) and rises into it with the others.
+                // Only one whose frame is known: the pre-position writes from it.
+                let entries = planWindowOpenEntries(
+                    opening: input.opening, visible: displayPlan.visible,
+                    parked: Set(displayPlan.parked.keys), modes: input.modes,
+                    viewport: visible, display: display.frame, otherDisplays: others,
+                    offset: input.openOffset
+                ).filter { current[$0.key] != nil }
+                for (id, start) in entries {
+                    current[id] = start
+                }
                 let motion = planWorkspaceSwitchMotion(
-                    current: context.physicalFrames(), visible: motionFrames,
+                    current: current, visible: motionFrames,
                     parked: displayPlan.parked, hidden: carriesSwitch ? inactive.parked : [:],
                     viewport: visible, display: display.frame, duration: input.duration
                 )
                 result.animations += motion.animations
                 result.prepositions.merge(motion.prepositions) { _, new in new }
+                result.prepositions.merge(entries) { _, new in new }
             }
             // Logical state moves at once; only the physical writes animate.
             manager.update(planned.workspace)

@@ -63,6 +63,7 @@ final class EventWorld: @unchecked Sendable {
     var reset: [WindowID] = []
     var forgotten: [WindowID] = []
     var forgottenApps: [pid_t] = []
+    var opened: [WindowID] = []
     var reflows = 0
     var scheduledReflows: [Bool] = []
     var displaySnapshots: [DisplaySnapshot] = []
@@ -141,7 +142,8 @@ final class EventWorld: @unchecked Sendable {
             },
             mainScreenFrame: { Self.screen },
             updateDisplayHeight: { self.displayHeights.append($0) },
-            displaysChanged: { self.displayChanges += 1 }
+            displaysChanged: { self.displayChanges += 1 },
+            windowOpened: { self.opened.append($0) }
         )
     }
 
@@ -386,6 +388,16 @@ final class DiscoveryServiceTests: XCTestCase {
 
         XCTAssertEqual(world.registered.count, 1)
         XCTAssertEqual(world.reflows, 1)
+    }
+
+    func testAppearedWindowIsHandedToTheNextPassAsOpened() {
+        world.classify[7] = [discovered(pid: 7), discovered(pid: 7, minimized: true)]
+        discovery.registerAppeared(AXUIElementCreateApplication(4242), pid: 7)
+        discovery.registerAppeared(AXUIElementCreateApplication(4243), pid: 7)
+
+        let visible = world.registered.filter { !$0.isMinimized }.map(\.id)
+        XCTAssertEqual(world.registered.count, 2)
+        XCTAssertEqual(world.opened, visible, "a minimized arrival has nothing to animate")
     }
 
     func testAppearedWindowGivesUpAfterTheRetries() {
