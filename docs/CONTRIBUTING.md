@@ -115,3 +115,15 @@ A *user-configurable* per-app rule is different: extend `WindowRule` / `evaluate
 - [ ] Core still imports nothing from macOS UI or AX; only `WindowReconciler` writes frames; Gio's own pid is not managed; logs carry no window titles.
 - [ ] Docs updated (template comment, USER_GUIDE, feature document with task ID, commit hash and evidence).
 - [ ] Conventional Commit message, no co-author or AI trailer, stage files by explicit path.
+
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push (any branch) and pull request, on a GitHub-hosted `macos-15` runner (Swift tools 6.0 needs Xcode 16 or newer; on `macos-14` the job would have to select an Xcode 16 first). It prints the toolchain, restores the `.build` cache (keyed on `Package.swift` and `Package.resolved`), runs `swift test --parallel`, then builds the `Gio` app target **unsigned** into its own derived data:
+
+```sh
+xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
+  -destination 'platform=macOS' -derivedDataPath .build/CIUnsigned \
+  CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+```
+
+The runner has no Accessibility or Screen Recording grant, no signing identity and no Gio config, so tests must never depend on them: inject fakes (`SystemProbe`, `ManualScheduler`, stub actuators), use temp paths for config, logs, locks and sockets, and keep snapshot tests opt-in (they skip unless `GIO_SNAPSHOT_DIR` is set). CI does not replace the local checks above: the signed build and live Accessibility behaviour are still verified on a real desktop.
