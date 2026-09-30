@@ -48,8 +48,8 @@ Visual/UX redesign of GioUI + menu bar + launcher presentation; no behavior chan
   (SettingsTile/icon tile, StatusBadge, Keycap, SectionCard, PreviewCanvas), snapshot renderer.
 - [x] DD-02 (`768af38`) — Shell + sidebar + Overview dashboard (live workspace miniature).
 - [x] DD-03 (`a90f92e`) — Settings sections redesign (Layout, Animations, Focus ring, Rules) with previews.
-- [ ] DD-04 — Shortcuts, Logs, Diagnostics redesign.
-- [ ] DD-05 — Onboarding (permissions), menu bar status item, launcher panel.
+- [x] DD-04 (`7d36324`, `fa7867f`) — Shortcuts, Logs, Diagnostics redesign.
+- [x] DD-05 (`29faaa3`) — Onboarding (permissions), menu bar status item, launcher panel.
 
 Evidence DD-01/02 (route: delegated writer, opus): tokens + components (SectionIcon, StatusBadge,
 Keycap, SectionCard, MetricTile, PreviewCanvas), accent contrast; unified-toolbar shell, sidebar
@@ -68,6 +68,16 @@ signed build OK. Parent reviewed PNGs: polished. Follow-ups: stale "ring in full
 under Match gaps, preset widths shown as raw text (use chips), unsaved edits lost on section
 switch without warning. LIVE PENDING.
 
+Evidence DD-03 follow-ups + DD-04 + DD-05 (route: delegated writer, opus): preset chips, per-section
+drafts with sidebar dot, corrected fullscreen/ring copy; Shortcuts (search ⌘F, category chips,
+cheat sheet, config tag), Logs (level pills, ×N grouping, pause/follow), Diagnostics (6 checklist
+cards, toolbar actions, toasts); onboarding sheet (welcome, Accessibility live status, optional
+Screen Recording, keys), menu bar template glyph with workspace badge + redesigned menu, launcher
+Spotlight-like non-activating panel (vibrancy, ↑↓⏎⎋ ⌘1-9). RED compile each (one helper test
+written after code — noted). Bundles 158(42 skipped)/7/19/39/1120 all 0 failures (parent
+re-ran); signed build OK. Parent reviewed PNGs (shortcuts, onboarding, launcher): polished;
+launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL DD TASKS DONE.
+
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.
 - All 5 bundles green; signed build OK.
@@ -83,3 +93,4 @@ DD-01..DD-05 delegated writers, sequential, after the in-flight native-zoom fix 
 - 2026-09-30: document created. Waiting for native zoom fix writer; then DD-01 + DD-02.
 - 2026-09-30: DD-01 + DD-02 done, pushed. Next: DD-03 (after focus-indicator decision).
 - 2026-09-30: DD-03 done, pushed. Next: DD-04 + DD-05 (+ DD-03 follow-ups).
+- 2026-09-30: DD-04 + DD-05 done, pushed. Next: user live review of the redesigned app.
