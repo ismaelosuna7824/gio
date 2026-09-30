@@ -235,6 +235,22 @@ PA-05. Animation frames do not go through the reflow lanes. `WindowReconciler` o
 - Keyboard bursts (FI-06): while a motion is in flight `ReflowCoalescer` defers the retargeting reflow to the next timer tick, so N rapid actions cost one reflow per tick. Focus for keyboard/IPC actions is applied right after the motion starts (`FocusIntent.takeImmediate` and `WindowReconciler.focusNow`); the final exact pass re-asserts it only if focus drifted (`takeReassert`): another app frontmost, or the frontmost app's `AXFocusedWindow` resolves to a different window or cannot be read (once per intent).
 - Workspace switches move vertically through the bottom edge (macOS cannot place windows above the menu bar): outgoing windows drop below the display, incoming hidden windows rise from directly below their target after an invisible pre-position write.
 
+### Transition coverage (NA-01)
+
+Audit of the AX renderer (`renderer = "ax"`, or snapshot without Screen Recording) before NA-02..NA-04. Every row reaches `reflowAll()` and then `performReflow(animate: true)`; only `InstantPlacementGate` (startup, permission regain, mouse abandon) or `[animations] enabled = false` makes a pass instant. With the snapshot renderer the same animations fly as overlay images instead.
+
+| Transition | Path | Before NA-02/NA-03 |
+| --- | --- | --- |
+| Window open (appear, launch) | `registerAppeared` / `appAttached` → `registerNew` (new focused column) → `reflowAll` | Animated. Neighbours slide. The new window is read once (`learnPhysicalFrames`) and flies from wherever the app put it, at the app's size; a grow waits for the final pass (FI-03). A target in a parked column or on a hidden workspace is written in the final pass only. |
+| Window close (destroyed, app quit, vanished on a complete scan) | `purge` → `reflowAll` (destroyed and terminate: immediate, not debounced) | Animated: neighbours glide into the gap; focus follows `stripWindows` (passive, no OS focus call). The closed window itself cannot move (it no longer exists). |
+| Move column, move window, consume/expel | `ActionApplier` → `reflowAll` | Animated (focus intent, FI-06). |
+| Width presets, grow/shrink, maximize, fullscreen | `ActionApplier` → `reflowAll` | Animated; the focused window that grows gets its size in the first frame (`focused-grow = start`); single-window maximize uses native zoom (NZ-01). |
+| Move window to workspace | `ActionApplier` → `reflowAll` | Animated: the window becomes hidden and drops below the display (NC-07); the other windows glide. |
+| Workspace switch | `ActionApplier` → `reflowAll` | Animated vertically (NC-07). |
+| Minimize / restore | `applyMinimized` → `reflowAll` | Animated: neighbours close or open the gap; macOS animates the minimized window itself; a restored window flies from its last known frame. |
+
+Gaps closed by NA-02 (open entry), NA-03 (close ghost) and NA-04 (per-animation tuning).
+
 ### Trusted frames and the lean settle (PA-04)
 
 The final exact pass used to read AX frames (two calls) for every window, parked ones Gio itself placed included. `TrustedFrames` (`GioCore/Reconciliation/TrustedFrames.swift`) remembers the frame Gio wrote and verified, or found correct, for each window. `WindowReconciler.reconcile(..., trusted:)` skips the read and the write of a window whose desired frame equals its trusted frame within 1 pt (parked to parked, hidden, and unchanged visible windows) and counts it `already`; `ReconcileReport.skippedReads` and the debug lines `reconcile ... skippedReads=N` / `settle skippedReads=N` report how many. Trust is recorded after each settle (`recordSettle`: applied, parked and already-correct windows are trusted at their desired frame) and dropped by:
