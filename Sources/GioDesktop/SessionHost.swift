@@ -31,7 +31,6 @@ final class SessionHost: @unchecked Sendable {
     private var reconciler: WindowReconciler<AXWindowActuator>?
     private var server: IPCServer?
     private let instanceLock = SingleInstanceLock()
-    private var eventObserver: SystemWindowObserver?
     /// The tap is created and restarted from the main thread but read from
     /// the session queue (`hotkeyTap == nil` checks), so it has its own lock.
     private var tapStorage: HotkeyTap?
@@ -61,8 +60,6 @@ final class SessionHost: @unchecked Sendable {
     var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
     private var pendingReflow: DispatchWorkItem?
-    private var nextElementID: UInt64 = 0
-    private var observationBook = ObservationBook()
     private var echoGate = WriteEchoGate()
     private var pendingFull = false
     private var tileability = TileabilityCache()
@@ -125,6 +122,10 @@ final class SessionHost: @unchecked Sendable {
     /// PA-03 / SM-04: refresh rates and capture screens, read on main
     /// (AppKit), read by the session queue behind their lock.
     private let displayParameters = DisplayParameters()
+    /// Discovery, registration, purge and display sync; the observers and
+    /// event routing on top of it.
+    private var discovery: DiscoveryService!
+    private var events: WindowEventRouter!
     /// Focus adoption, keyboard intent, centering, cursor warp and
     /// focus-follows-mouse (clicks and pointer handed over under their locks).
     private var focus: FocusCoordinator!
@@ -353,6 +354,95 @@ final class SessionHost: @unchecked Sendable {
             ),
             resizeProbes: resizeProbes, scheduler: scheduler
         )
+        discovery = DiscoveryService(
+            context: .init(
+                registry: { [unowned self] in session.registry },
+                manager: { [unowned self] in session.manager },
+                updateManager: { [unowned self] body in body(&session.manager) },
+                rules: { [unowned self] in session.config.rules },
+                discoverAll: { try? discoverSystemWindows(onlyPID: $0) },
+                discoverOne: { discoverSystemWindow(element: $0, pid: $1) },
+                knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
+                registerHandles: { [unowned self] id, candidate in
+                    actuator?.register(
+                        elementID: id.elementID, pid: id.pid,
+                        element: candidate.element, appElement: candidate.appElement
+                    )
+                },
+                watchWindow: { [unowned self] in events.watch(window: $0, pid: $1) },
+                displayHeight: { [unowned self] in mainHeight() },
+                isRunning: { [unowned self] in probe.isRunning($0) },
+                frontmostPID: { [unowned self] in probe.frontmostPID },
+                currentClick: { [unowned self] in focus.currentClick() },
+                adoptFocus: { [unowned self] in focus.adoptFocus($0, source: $1) },
+                invalidateTrust: { [unowned self] in trustedFrames.invalidate($0) },
+                resetWindowState: { [unowned self] id in
+                    tileability.invalidate(id)
+                    minimumSizes.forget(id)
+                    trustedFrames.invalidate(id)
+                },
+                forgetWindow: { [unowned self] id in
+                    tileability.invalidate(id)
+                    minimumSizes.forget(id)
+                    echoGate.forget(id)
+                    trustedFrames.invalidate(id)
+                    renderVerifier.forget([id])
+                    physicalFrames.removeValue(forKey: id)
+                    nativeZoom.purge(id)
+                    resizeProbes.forget(id)
+                    snapshotRefresher.evict([id])
+                    fullscreen.forget(id)
+                    actuator?.forget(elementID: id.elementID)
+                },
+                forgetApp: { [unowned self] in reconciler?.forgetApp(pid: $0) },
+                reflowAll: { [unowned self] in reflowAll() },
+                displaySnapshots: { snapshotDisplayList() },
+                knownDisplayIDs: { [unowned self] in displays.allDisplays().map(\.id) },
+                connectDisplay: { [unowned self] display, workspace in
+                    visibleFrames[display.id] = display.visibleFrame
+                    displays.connect(display.id, frame: display.frame, workspace: workspace)
+                },
+                disconnectDisplay: { [unowned self] id in
+                    displays.disconnect(id)
+                    visibleFrames.removeValue(forKey: id)
+                },
+                mainScreenFrame: { [unowned self] in probe.mainScreenFrame },
+                updateDisplayHeight: { [unowned self] in actuator?.updateDisplayHeight($0) },
+                displaysChanged: { [unowned self] in
+                    trustedFrames.removeAll()
+                    inactiveParking.invalidate()
+                    focusRing.resetGate()
+                }
+            ),
+            scheduler: scheduler
+        )
+        events = WindowEventRouter(
+            context: .init(
+                makePort: { SystemWindowObserver(onEvent: $0) },
+                runningRegularPIDs: { [unowned self] in probe.runningRegularPIDs() },
+                isRegularApplication: { [unowned self] in probe.isRegularApplication($0) },
+                isTapMissing: { [unowned self] in hotkeyTap == nil },
+                scheduleReflow: { [unowned self] in scheduleReflow(full: $0) },
+                reflowAll: { [unowned self] in reflowAll() },
+                requestFocusAdoption: { [unowned self] in focus.requestAdoption($0, pid: $1, element: $2) },
+                updateDim: { [unowned self] in focusDim.update() },
+                holdDimForDrag: { [unowned self] in focusDim.holdForDrag() },
+                animatingPids: { [unowned self] in motion.animatingPids },
+                knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
+                isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
+                forgetZoom: { [unowned self] in nativeZoom.forget($0) },
+                isEchoSuppressed: { [unowned self] in echoGate.isSuppressed($0, at: $1) },
+                frame: { [unowned self] in try? actuator?.frame(of: $0) },
+                isEcho: { [unowned self] in echoGate.isEcho($0, observed: $1, at: $2) },
+                invalidateTrust: { [unowned self] in trustedFrames.invalidate($0) },
+                invalidateTileability: { [unowned self] in tileability.invalidate($0) },
+                title: { axTitle(of: $0) },
+                registry: { [unowned self] in session.registry },
+                console: { print($0) },
+                log: { GioLog.record($0, $1) }
+            ),
+            discovery: discovery, scheduler: scheduler
+        )
         focus = FocusCoordinator(
             context: .init(
                 isShuttingDown: { [unowned self] in isShuttingDown },
@@ -366,7 +456,7 @@ final class SessionHost: @unchecked Sendable {
                 knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
                 focusedWindowElement: { focusedWindowElement(pid: $0) },
                 frame: { [unowned self] in try? actuator?.frame(of: $0) },
-                registerAppeared: { [unowned self] in registerAppearedWindow($0, pid: $1, attempt: 0) },
+                registerAppeared: { [unowned self] in discovery.registerAppeared($0, pid: $1, attempt: 0) },
                 pendingScroll: { [unowned self] in pendingScroll() },
                 isVisibleInViewport: { [unowned self] in isVisibleInViewport($0) },
                 topWindowOwnerPID: { topWindowOwnerPID(atCocoa: $0) },
@@ -468,7 +558,7 @@ final class SessionHost: @unchecked Sendable {
         }
         watchDisplays()
         queue.sync {
-            self.rebuildEventObservation()
+            self.events.rebuild()
             self.publishSnapshot()
         }
         startTap()
@@ -689,8 +779,8 @@ final class SessionHost: @unchecked Sendable {
             actuator = AXWindowActuator(displayHeight: mainHeight())
         }
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
-        enumerateAndPlace()
-        syncDisplays()
+        discovery.enumerateAndPlace()
+        discovery.syncDisplays()
         // The first layout is instant (`instantPlacement` starts armed for
         // `.startup`): windows land on their tiles instead of flying there.
         // Leftovers of a crashed session: windows that will not be tiled
@@ -705,85 +795,6 @@ final class SessionHost: @unchecked Sendable {
         reflowAll()
     }
 
-    /// Enumerate, register arrivals (rules decide mode and workspace),
-    /// refresh handles. Identity is stable across scans: retained handles
-    /// matched with `CFEqual` reuse their IDs (and refresh metadata);
-    /// only genuinely new windows get fresh IDs and placed columns.
-    /// Add-only: disappearance is handled by reaping dead pids below,
-    /// never by absence alone.
-    ///
-    /// `onlyPID` restricts the scan to one process (a freshly launched app):
-    /// the dead-pid reap is skipped then, since absence from a partial
-    /// scan proves nothing.
-    private func enumerateAndPlace(onlyPID: pid_t? = nil) {
-        guard let found = try? discoverSystemWindows(onlyPID: onlyPID) else {
-            return
-        }
-        let flip = AXVerticalFlip(displayHeight: mainHeight())
-        var liveIDs = Set<WindowID>()
-        var focusCandidates: [FocusCandidate] = []
-        // Minimized windows are candidates too: they stay registered (and
-        // keep their column) but sit out of the layout.
-        for candidate in found.windows + found.floating {
-            if let known = actuator?.id(
-                matching: candidate.element, pid: candidate.window.pid
-            ) {
-                liveIDs.insert(known)
-                if var record = session.registry.find(known) {
-                    if !candidate.window.isMinimized {
-                        record.frame = flip.toCocoa(candidate.window.frame)
-                    }
-                    if let title = candidate.window.title, !title.isEmpty {
-                        record.title = title
-                    }
-                    try? session.registry.update(record)
-                    // A missed minimize/deminimize event heals here.
-                    if record.isMinimized != candidate.window.isMinimized {
-                        applyMinimized(candidate.window.isMinimized, to: known)
-                    }
-                }
-                focusCandidates.append(FocusCandidate(
-                    id: known, isFocused: candidate.window.isFocused,
-                    isMinimized: candidate.window.isMinimized
-                ))
-                continue
-            }
-            liveIDs.insert(registerNew(candidate))
-        }
-        // Clicks change macOS focus behind our back: adopt the observed
-        // focus instead of fighting it on the next reflow. Every app reports
-        // a focused window; only the frontmost app's is the user's.
-        // A click in flight is the focus events' business (they validate
-        // it against the click point), never the rescan's.
-        if focus.currentClick() == nil,
-           let focusedID = adoptableFocus(
-               among: focusCandidates,
-               frontmostPID: probe.frontmostPID
-           )
-        {
-            focus.adoptFocus(focusedID, source: .rescan)
-        }
-        if onlyPID == nil {
-            reapDeadPids(live: liveIDs)
-        }
-        // Fallback for destroyed events whose element match failed: windows
-        // of a fully-read pid that the scan no longer lists are gone.
-        purge(vanishedWindowIDs(
-            registered: session.registry.managedWindows(),
-            scannedPIDs: found.completePIDs,
-            present: liveIDs
-        ))
-    }
-
-    private func applyMinimized(_ minimized: Bool, to id: WindowID) {
-        trustedFrames.invalidate(id)
-        if minimized {
-            minimizeWindow(id, registry: session.registry, manager: &session.manager)
-        } else {
-            restoreWindow(id, registry: session.registry, manager: &session.manager)
-        }
-    }
-
     /// Config reload: rule-owned floats follow the new rules. Workspace
     /// assignment is not re-applied (rules place windows at arrival only).
     private func reapplyRules() {
@@ -796,146 +807,6 @@ final class SessionHost: @unchecked Sendable {
                 tileability.invalidate(id)
             }
         }
-    }
-
-    /// Register a genuinely new window: fresh ID, retained AX handles,
-    /// rules and admission decide mode and workspace, a new column on the
-    /// target workspace, and a per-window observer subscription.
-    @discardableResult
-    private func registerNew(_ candidate: DiscoveredSystemWindow) -> WindowID {
-        nextElementID += 1
-        let id = WindowID(pid: candidate.window.pid, elementID: nextElementID)
-        actuator?.register(
-            elementID: id.elementID, pid: id.pid,
-            element: candidate.element, appElement: candidate.appElement
-        )
-        var window = ManagedWindow(
-            id: id, pid: candidate.window.pid,
-            application: candidate.window.appName,
-            title: candidate.window.title ?? "",
-            frame: AXVerticalFlip(displayHeight: mainHeight()).toCocoa(candidate.window.frame),
-            mode: .tiled,
-            isMinimized: candidate.window.isMinimized
-        )
-        let outcome = evaluateRules(session.config.rules, app: window.application)
-        window.mode = outcome.mode ?? .tiled
-        if outcome.mode == .floating {
-            window.floatReason = .rule
-        } else if let admitted = candidate.floatReason {
-            // Discovery floated it (dialog, panel, fixed size): managed
-            // and visible, never moved by the layout.
-            window.mode = .floating
-            window.floatReason = admitted
-        }
-        tileability.invalidate(id)
-        minimumSizes.forget(id)
-        trustedFrames.invalidate(id)
-        try? session.registry.register(window)
-        if let wanted = outcome.workspace,
-           let destID = session.manager.ruleTarget(wanted),
-           destID != session.manager.currentID
-        {
-            var dest = session.manager.workspace(id: destID)!
-            var column = Column(
-                id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
-                width: 0, windows: [id]
-            )
-            column.focusedWindowIndex = 0
-            dest.columns.append(column)
-            if !window.isMinimized {
-                dest.focusedColumn = dest.columns.count - 1
-                dest.focusedWindow = id
-            }
-            session.manager.update(dest)
-        } else {
-            var current = session.manager.currentWorkspace()
-            var column = Column(
-                id: ColumnID((current.columns.map(\.id.rawValue).max() ?? 0) + 1),
-                width: 0, windows: [id]
-            )
-            column.focusedWindowIndex = 0
-            current.columns.append(column)
-            if !window.isMinimized {
-                current.focusedColumn = current.columns.count - 1
-                current.focusedWindow = id
-            }
-            session.manager.update(current)
-        }
-        eventObserver?.watch(window: candidate.element, pid: candidate.window.pid)
-        return id
-    }
-
-    /// Remove records whose process is gone (proof, not absence) from the
-    /// registry and every workspace. Present-but-unlisted windows survive:
-    /// enumeration gaps must never read as deaths.
-    private func reapDeadPids(live: Set<WindowID>) {
-        let livePIDs = Set(live.map(\.pid))
-        let dead = session.registry.managedWindows()
-            .map(\.id)
-            .filter { !livePIDs.contains($0.pid) && !probe.isRunning($0.pid) }
-        guard !dead.isEmpty else {
-            return
-        }
-        purge(dead)
-    }
-
-    /// Forget windows everywhere: registry, every workspace, tileability
-    /// cache, fullscreen records and the actuator's AX handles.
-    private func purge(_ ids: [WindowID]) {
-        guard !ids.isEmpty else {
-            return
-        }
-        let idSet = Set(ids)
-        for id in ids.sorted() {
-            session.registry.remove(id)
-            tileability.invalidate(id)
-            minimumSizes.forget(id)
-            echoGate.forget(id)
-            trustedFrames.invalidate(id)
-            renderVerifier.forget([id])
-            physicalFrames.removeValue(forKey: id)
-            nativeZoom.purge(id)
-            resizeProbes.forget(id)
-            snapshotRefresher.evict([id])
-            fullscreen.forget(id)
-            actuator?.forget(elementID: id.elementID)
-        }
-        for candidate in session.manager.allWorkspaces {
-            var workspace = candidate
-            let before = workspace
-            workspace.stripWindows(idSet)
-            if workspace != before {
-                session.manager.update(workspace)
-            }
-        }
-    }
-
-    private func syncDisplays() {
-        let snapshot = snapshotDisplayList()
-        let seen = Set(snapshot.map(\.id))
-        // Each display owns a workspace stack: register them first so a
-        // vanished display's windows merge into a survivor before anything
-        // is laid out.
-        session.manager.syncDisplays(snapshot.map(\.id))
-        for display in snapshot {
-            visibleFrames[display.id] = display.visibleFrame
-            displays.connect(
-                display.id, frame: display.frame,
-                workspace: session.manager.activeID(on: display.id) ?? session.manager.currentID
-            )
-        }
-        for known in displays.allDisplays().map(\.id) where !seen.contains(known) {
-            displays.disconnect(known)
-            visibleFrames.removeValue(forKey: known)
-        }
-        if let main = probe.mainScreenFrame {
-            actuator?.updateDisplayHeight(main.height)
-        }
-        // A topology change can move windows behind our back and changes
-        // every parking target: nothing placed before it is trusted.
-        trustedFrames.removeAll()
-        inactiveParking.invalidate()
-        focusRing.resetGate()
     }
 
     // MARK: - Reflow
@@ -1442,215 +1313,13 @@ final class SessionHost: @unchecked Sendable {
                 // without motion like a fresh start.
                 instantPlacement.arm(.permission)
                 tileability.invalidateAll()
-                rebuildEventObservation()
+                events.rebuild()
             }
         }
         // Tileability verdicts are invalidated per window by resize events
         // and on registration, not on every resync.
-        enumerateAndPlace()
-        syncObservers()
-        reflowAll()
-    }
-
-    // MARK: - Observers
-
-    /// Full rebuild: only for startup and permission regain. Everyday app
-    /// churn goes through the incremental attach/detach below.
-    private func rebuildEventObservation() {
-        eventObserver?.stop()
-        observationBook = ObservationBook()
-        eventObserver = SystemWindowObserver { [weak self] event in
-            // Delivered on the main thread; session state lives on `queue`.
-            guard let self else {
-                return
-            }
-            self.queue.async {
-                self.handle(event)
-            }
-        }
-        syncObservers()
-    }
-
-    /// Reconcile observers with the running set: attach new apps, detach
-    /// vanished ones, leave everything else alone. Safety net for missed
-    /// launch/terminate notifications; refused apps wait for activation.
-    private func syncObservers() {
-        guard let observer = eventObserver else {
-            return
-        }
-        let plan = observationBook.reconcile(running: probe.runningRegularPIDs())
-        for pid in plan.detach {
-            observer.detach(pid: pid)
-            observationBook.didDetach(pid)
-        }
-        var refused: [pid_t] = []
-        for pid in plan.attach {
-            if observer.attach(pid: pid) {
-                observationBook.didAttach(pid)
-            } else {
-                observationBook.didRefuse(pid)
-                refused.append(pid)
-            }
-        }
-        if !refused.isEmpty {
-            print("[gio] observation refused: pid \(refused.map(String.init).joined(separator: ", "))")
-            GioLog.record(.warn, "observation refused for \(refused.count) app(s)")
-        }
-    }
-
-    private func handle(_ event: SystemWindowEvent) {
-        switch event.kind {
-        case .appLaunched:
-            attachLaunchedApp(event.pid, attempt: 0)
-        case .appTerminated:
-            handleTerminated(event.pid)
-        case .appActivated:
-            // A previously refused (or missed) app gets another chance now.
-            if observationBook.needsAttach(event.pid), let observer = eventObserver,
-               observer.attach(pid: event.pid)
-            {
-                observationBook.didAttach(event.pid)
-            }
-            if hotkeyTap == nil {
-                // Permission may have arrived late: the one activation-time
-                // full resync (it retries the tap and rebuilds observers).
-                scheduleReflow()
-            }
-            focus.requestAdoption(.activation, pid: event.pid, element: nil)
-            // Another app's windows may now be in front of dimmed ones.
-            focusDim.update()
-        case .window(let kind):
-            handleWindowEvent(kind, pid: event.pid, element: event.element)
-        }
-    }
-
-    private func handleWindowEvent(_ kind: WindowEventKind, pid: pid_t, element: AXUIElement?) {
-        // Our own animation writes: dropped before the handle lookup.
-        if dropsAsMotionEcho(kind, pid: pid, animating: motion.animatingPids) {
-            return
-        }
-        let known = element.flatMap { actuator?.id(matching: $0, pid: pid) }
-        // Native zoom: the app animating its own window raises a burst of frame
-        // and focus events; they are expected until the zoom was judged.
-        if let known, nativeZoomDropsEvent(kind, inFlight: nativeZoom.isBusy(known)) {
-            return
-        }
-        switch windowEventAction(for: kind, isKnownWindow: known != nil) {
-        case .register:
-            if let element {
-                registerAppearedWindow(element, pid: pid, attempt: 0)
-            }
-        case .remove:
-            // Exactly this window: no rescan, no debounce.
-            if let known {
-                purge([known])
-                reflowAll()
-            }
-        case .frameChanged(let invalidate):
-            guard let known else {
-                return
-            }
-            // Animation frames raise a burst of events: skip the AX read.
-            if echoGate.isSuppressed(known, at: ProcessInfo.processInfo.systemUptime) {
-                return
-            }
-            if let observed = try? actuator?.frame(of: known),
-               echoGate.isEcho(known, observed: observed, at: ProcessInfo.processInfo.systemUptime)
-            {
-                return
-            }
-            // Not our echo: the window moved on its own (drag, app resize).
-            // The dim comes down and returns after the snap-back reflow.
-            focusDim.holdForDrag()
-            trustedFrames.invalidate(known)
-            nativeZoom.forget(known)
-            if invalidate {
-                tileability.invalidate(known)
-            }
-            scheduleReflow(full: false)
-        case .reflow:
-            scheduleReflow(full: false)
-        case .minimize:
-            if let known {
-                trustedFrames.invalidate(known)
-                minimizeWindow(known, registry: session.registry, manager: &session.manager)
-                reflowAll()
-            }
-        case .restore:
-            if let known {
-                trustedFrames.invalidate(known)
-                restoreWindow(known, registry: session.registry, manager: &session.manager)
-                reflowAll()
-            }
-        case .updateTitle:
-            if let known, let element, let title = axTitle(of: element), !title.isEmpty,
-               var record = session.registry.find(known)
-            {
-                record.title = title
-                try? session.registry.update(record)
-            }
-        case .adoptFocus:
-            focus.requestAdoption(.focusChanged, pid: pid, element: element)
-        case .resync:
-            scheduleReflow()
-        case .ignore:
-            break
-        }
-    }
-
-    /// A window appeared after startup (created or deminiaturized): classify
-    /// it with the admission rules, register it, reflow at once. Attributes
-    /// of a brand-new window are often unreadable for a moment, so an
-    /// unclassifiable element is retried a few times. Minimized windows
-    /// register too (out of the layout until deminimized).
-    private func registerAppearedWindow(_ element: AXUIElement, pid: pid_t, attempt: Int) {
-        if actuator?.id(matching: element, pid: pid) != nil {
-            return
-        }
-        if let candidate = discoverSystemWindow(element: element, pid: pid) {
-            registerNew(candidate)
-            reflowAll()
-        } else if let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt) {
-            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.registerAppearedWindow(element, pid: pid, attempt: attempt + 1)
-            }
-        }
-    }
-
-    /// Attach one launched app's observer, retrying with backoff while AX
-    /// is not ready, then register its windows and reflow. Windows that
-    /// appear later arrive through the app-level window-created event.
-    private func attachLaunchedApp(_ pid: pid_t, attempt: Int) {
-        guard let observer = eventObserver,
-              probe.isRegularApplication(pid),
-              observationBook.needsAttach(pid)
-        else {
-            return
-        }
-        if observer.attach(pid: pid) {
-            observationBook.didAttach(pid)
-            enumerateAndPlace(onlyPID: pid)
-            reflowAll()
-        } else if let delay = ObservationRetry.delay(afterFailedAttempt: attempt) {
-            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                self?.attachLaunchedApp(pid, attempt: attempt + 1)
-            }
-        } else {
-            observationBook.didRefuse(pid)
-            print("[gio] observation refused: pid \(pid)")
-            GioLog.record(.warn, "observation refused for launched pid \(pid)")
-        }
-    }
-
-    /// Terminate is proof of death: drop the observer, reap the windows,
-    /// reflow now.
-    private func handleTerminated(_ pid: pid_t) {
-        eventObserver?.detach(pid: pid)
-        observationBook.didDetach(pid)
-        let ids = session.registry.managedWindows().map(\.id).filter { $0.pid == pid }
-        // PA-05: tear down the app's persistent write lane and cached name.
-        reconciler?.forgetApp(pid: pid)
-        purge(ids)
+        discovery.enumerateAndPlace()
+        events.syncObservers()
         reflowAll()
     }
 
@@ -1690,7 +1359,7 @@ final class SessionHost: @unchecked Sendable {
             self.queue.async {
                 // Screens changed under the flight: come down, then relayout.
                 self.overlayFlight.abortForDisplayChange()
-                self.syncDisplays()
+                self.discovery.syncDisplays()
                 self.reflowAll()
             }
         }

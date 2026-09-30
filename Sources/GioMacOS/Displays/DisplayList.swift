@@ -11,6 +11,12 @@ public struct DisplaySnapshot: Equatable, Sendable {
     public let id: DisplayID
     public let frame: CGRect
     public let visibleFrame: CGRect
+
+    public init(id: DisplayID, frame: CGRect, visibleFrame: CGRect) {
+        self.id = id
+        self.frame = frame
+        self.visibleFrame = visibleFrame
+    }
 }
 
 public func snapshotDisplayList() -> [DisplaySnapshot] {

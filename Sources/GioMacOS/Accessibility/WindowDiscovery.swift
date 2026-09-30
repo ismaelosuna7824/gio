@@ -16,6 +16,13 @@ public struct DiscoveredSystemWindow {
     public let appElement: AXUIElement
     /// Set when admission floated the window (`.float(reason)`).
     public var floatReason: FloatReason? = nil
+
+    public init(window: SystemWindow, element: AXUIElement, appElement: AXUIElement, floatReason: FloatReason? = nil) {
+        self.window = window
+        self.element = element
+        self.appElement = appElement
+        self.floatReason = floatReason
+    }
 }
 
 /// A window discovery saw but did not hand out as a tile candidate.
@@ -43,6 +50,17 @@ public struct SystemWindowDiscoveryResult {
     /// was classified (none skipped). Only for these is absence from the scan
     /// evidence that a registered window is gone.
     public let completePIDs: Set<pid_t>
+
+    public init(
+        windows: [DiscoveredSystemWindow], floating: [DiscoveredSystemWindow] = [],
+        ignored: [ExcludedSystemWindow] = [], skipped: Int = 0, completePIDs: Set<pid_t>
+    ) {
+        self.windows = windows
+        self.floating = floating
+        self.ignored = ignored
+        self.skipped = skipped
+        self.completePIDs = completePIDs
+    }
 }
 
 /// Gio's own windows (main window, launcher) are never managed, whatever
