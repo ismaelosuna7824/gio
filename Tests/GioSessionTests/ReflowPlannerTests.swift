@@ -115,6 +115,8 @@ struct ReflowOutcome: Equatable {
     var manager: WorkspaceManager
     var displays: DisplayManager
     var physicalFrames: [WindowID: CGRect]
+    /// Sorted: frame reads follow dictionary order, which is arbitrary in
+    /// both paths (each read is independent).
     var reads: [WindowID]
     var hiddenBook: HiddenWindowBook
 }
@@ -189,7 +191,7 @@ final class LegacyReflowReference {
         return ReflowOutcome(
             plans: plans, animations: animations, prepositions: prepositions, hovered: hovered,
             manager: world.session.manager, displays: world.displays,
-            physicalFrames: world.physicalFrames, reads: world.reads, hiddenBook: hiddenBook
+            physicalFrames: world.physicalFrames, reads: world.reads.sorted(), hiddenBook: hiddenBook
         )
     }
 
@@ -285,7 +287,7 @@ final class PlannerHarness {
             ReflowOutcome(
                 plans: pass.plans, animations: animations, prepositions: pass.prepositions, hovered: pass.hovered,
                 manager: world.session.manager, displays: world.displays,
-                physicalFrames: world.physicalFrames, reads: world.reads, hiddenBook: planner.hiddenBook
+                physicalFrames: world.physicalFrames, reads: world.reads.sorted(), hiddenBook: planner.hiddenBook
             ),
             pass
         )

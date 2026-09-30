@@ -1329,157 +1329,29 @@ final class SessionHost: @unchecked Sendable {
 
     private func apply(_ action: HotkeyAction) {
         GioLog.record(.debug, "hotkey \(action)")
-        var workspace = session.manager.currentWorkspace()
-        let previousFocus = workspace.focusedWindow
-        switch action {
-        case .focusLeft:
-            let next = moveFocus(in: workspace, direction: .left)
-            if next != workspace {
-                workspace = next
-                session.manager.update(workspace)
-            }
-        case .focusRight:
-            let next = moveFocus(in: workspace, direction: .right)
-            if next != workspace {
-                workspace = next
-                session.manager.update(workspace)
-            }
-        case .focusUp:
-            let next = moveFocus(in: workspace, direction: .up)
-            if next != workspace {
-                workspace = next
-                session.manager.update(workspace)
-            }
-        case .focusDown:
-            let next = moveFocus(in: workspace, direction: .down)
-            if next != workspace {
-                workspace = next
-                session.manager.update(workspace)
-            }
-        case .moveLeft:
-            narrowMove(in: &workspace, direction: .left)
-        case .moveRight:
-            narrowMove(in: &workspace, direction: .right)
-        case .moveColumnLeft:
-            commit(moveColumn(in: workspace, direction: .left), over: workspace)
-        case .moveColumnRight:
-            commit(moveColumn(in: workspace, direction: .right), over: workspace)
-        case .moveUp:
-            narrowMove(in: &workspace, direction: .up)
-        case .moveDown:
-            narrowMove(in: &workspace, direction: .down)
-        case .workspace(let number):
-            session.manager.switchTo(number)
+        // A copy: the lazy reads below touch `session` while the action runs.
+        var manager = session.manager
+        let effect = ActionApplier.apply(action, manager: &manager, context: .init(
+            registry: session.registry, displays: displays.allDisplays(), visibleFrames: visibleFrames,
+            layout: session.config.layout, engine: { [unowned self] in engine() },
+            modes: { [unowned self] in tileableModes() },
+            fallbackViewport: { [probe] in probe.mainScreenVisibleFrame }
+        ))
+        session.manager = manager
+        if effect.syncsShownWorkspace {
             syncShownWorkspace()
-        case .moveToWorkspace(let number):
-            if let id = workspace.focusedWindow {
-                session.manager.moveWindow(id, to: number)
-            }
-        case .focusWorkspaceDown:
-            session.manager.focusDown()
-            syncShownWorkspace()
-        case .focusWorkspaceUp:
-            session.manager.focusUp()
-            syncShownWorkspace()
-        case .moveWindowToWorkspaceDown:
-            if let id = workspace.focusedWindow {
-                session.manager.moveWindowDown(id)
-                syncShownWorkspace()
-            }
-        case .moveWindowToWorkspaceUp:
-            if let id = workspace.focusedWindow {
-                session.manager.moveWindowUp(id)
-                syncShownWorkspace()
-            }
-        case .toggleFloating:
-            if let id = workspace.focusedWindow {
-                _ = try? session.registry.toggleFloating(for: id)
-            }
-        case .fullscreen:
-            toggleFullscreen()
-        case .switchPresetColumnWidth:
-            let sizing = focusedSizing()
-            let next = switchPresetColumnWidth(
-                in: workspace, presets: session.config.layout.presetColumnWidths,
-                config: sizing.config, viewportWidth: sizing.viewportWidth
-            )
-            commit(next, over: workspace)
-        case .shrinkColumnWidth, .growColumnWidth:
-            let sizing = focusedSizing()
-            let next = stepFocusedColumnWidth(
-                in: workspace, by: action == .growColumnWidth ? 0.1 : -0.1,
-                config: sizing.config, viewportWidth: sizing.viewportWidth
-            )
-            commit(next, over: workspace)
-        case .maximizeColumn:
-            nativeZoom.requestToggle(in: workspace)
-            commit(toggleMaximizeFocusedColumn(in: workspace), over: workspace)
-        case .consumeOrExpelLeft:
-            commit(consumeOrExpelWindow(in: workspace, direction: .left), over: workspace)
-        case .consumeOrExpelRight:
-            commit(consumeOrExpelWindow(in: workspace, direction: .right), over: workspace)
-        case .centerColumn:
-            let viewport = focusedViewport()
-            commit(
-                centerFocusedColumn(in: workspace, modes: tileableModes(), engine: engine(), viewport: viewport),
-                over: workspace
-            )
         }
-        focus.requestIntent(if: action.carriesFocusIntent, previous: previousFocus)
-        if action.growsFocusedWindow {
+        if let workspace = effect.zoomRequest {
+            nativeZoom.requestToggle(in: workspace)
+        }
+        if let toggle = effect.fullscreenToggle {
+            _ = try? fullscreen.toggle(toggle.id, registry: session.registry, frame: toggle.frame)
+        }
+        focus.requestIntent(if: effect.carriesFocusIntent, previous: effect.previousFocus)
+        if effect.growsFocusedWindow {
             focus.noteSizingFocus(session.manager.currentWorkspace().focusedWindow)
         }
         reflowAll()
-    }
-
-    /// Store `next` when an action changed anything.
-    private func commit(_ next: Workspace, over current: Workspace) {
-        if next != current {
-            session.manager.update(next)
-        }
-    }
-
-    /// Usable frame of the display showing the current workspace.
-    private func focusedViewport() -> CGRect {
-        let current = session.manager.currentID
-        let display = displays.allDisplays().first { $0.workspace == current }
-            ?? displays.allDisplays().first
-        return display.map { visibleFrames[$0.id] ?? $0.frame }
-            ?? probe.mainScreenVisibleFrame ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
-    }
-
-    /// Layout config plus the viewport width of the display showing the
-    /// current workspace: what width actions resolve proportions against.
-    private func focusedSizing() -> (config: LayoutConfig, viewportWidth: CGFloat) {
-        (engine().config, focusedViewport().width)
-    }
-
-    private func narrowMove(in workspace: inout Workspace, direction: FocusDirection) {
-        let next = moveWindow(in: workspace, direction: direction)
-        if next != workspace {
-            workspace = next
-            session.manager.update(workspace)
-        }
-    }
-
-    /// Fullscreen is a layout mode: flip it in the registry and let the
-    /// reflow place the window (see `planDisplayLayout`). Never native Spaces.
-    private func toggleFullscreen() {
-        let workspace = session.manager.currentWorkspace()
-        guard let id = workspace.focusedWindow else {
-            return
-        }
-        let current = session.manager.currentID
-        guard let display = displays.allDisplays().first(where: { $0.workspace == current })
-            ?? displays.allDisplays().first
-        else {
-            return
-        }
-        let frame = fullscreenFrame(
-            display: display.frame, usable: visibleFrames[display.id] ?? display.frame,
-            gap: session.config.layout.resolvedFullscreenGap
-        )
-        try? fullscreen.toggle(id, registry: session.registry, frame: frame)
     }
 }
 

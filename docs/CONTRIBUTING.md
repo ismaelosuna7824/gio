@@ -48,7 +48,7 @@ flowchart TD
     C --> D["4. defaultHotkeyBindings - optional default binding"]
     D --> E["5. parseActionName and validActionNames - ConfigParser.swift"]
     E --> F["6. Core use case as a pure function plus tests - GioCore and Tests"]
-    F --> G["7. SessionHost.apply switch - exhaustive, compile error in GioDesktop until added"]
+    F --> G["7. ActionApplier.apply switch - exhaustive, compile error in GioSession until added"]
     G --> H["8. New key name? add it to supportedKeyNames and tapKeyCodes"]
     H --> I["9. Docs: ConfigTemplate comment, USER_GUIDE, feature document"]
     I --> J["10. swift test - all bundles, signed build, git diff --check"]
@@ -60,7 +60,7 @@ flowchart TD
 4. **Default binding (optional).** Append to `defaultHotkeyBindings()` in `HotkeyDispatcher.swift`. Prefer `Alt` combos, avoid collisions with existing ones (`Alt+Space` is the launcher), and update the count asserted in `Tests/GioCoreTests/HotkeyTests.swift` (`bindingCount`, currently 35). Ship it unbound if you are unsure; `fullscreen` and `toggle-floating` shipped unbound first.
 5. **Config name.** Add the string to `parseActionName(_:)` and `validActionNames()` in `Sources/GioCore/Config/ConfigParser.swift`. Aliases are allowed (`fullscreen-window`).
 6. **Core use case, test first.** Implement the behavior as a pure function on `Workspace` (or the registry) in the fitting `GioCore` folder (`Focus`, `Move`, `Resize`, `Layout`, `Workspace`, `Window`), returning the workspace **unchanged** for a no-op so callers can detect `next == workspace`. Model it on `Sources/GioCore/Move/ConsumeExpel.swift` and its `ConsumeExpelTests.swift`. Write the test in `Tests/GioCoreTests` first.
-7. **Apply switch.** Add the case to `SessionHost.apply(_:)` in `Sources/GioDesktop/SessionHost.swift` (it is exhaustive, so the app target fails to compile until you do). Call the Core function, store the result with `commit(_:over:)` (or `session.manager.update`), and let the common `reflowAll()` at the end of `apply` do the rest. Never write windows here.
+7. **Apply switch.** Add the case to `ActionApplier.apply(_:manager:context:)` in `Sources/GioSession/Actions/ActionApplier.swift` (it is exhaustive, so `GioSession` fails to compile until you do) and to `ActionApplierTests.allActions`. Call the Core function and store the result with `commit(_:over:manager:)` (or `manager.update`); session effects (shown-workspace sync, native-zoom request, fullscreen toggle) go into the returned `ActionEffect`, which `SessionHost.apply` applies before the common `reflowAll()`. Never write windows here.
 8. **Key table.** Every ANSI key is already covered. To add a key, add its canonical name to `supportedKeyNames` (`Sources/GioCore/Hotkeys/KeyNames.swift`, plus an alias in `keyAliases` and a glyph in `keycapSymbols` if it has one) and its virtual keycode to `tapKeyCodes` (`Sources/GioMacOS/Hotkeys/HotkeyTap.swift`); `HotkeyKeyTableTests` fails if the two diverge.
 9. **Docs.** Add a line to the comment block in `defaultConfigTemplate()` (`Sources/GioCore/Config/ConfigTemplate.swift`; a test parses the template back with zero warnings), the shortcuts table in [USER_GUIDE](USER_GUIDE.md), and the feature document.
 10. **Optional CLI/IPC equivalent.** Not required (most column actions have none). If you add one, extend `CLICommand`, `parseCLICommand`, `dispatch` and `cliUsage` in `Sources/GioCore/Commands/`, plus the exhaustive `describeAction` in `Sources/GioUI/LauncherModel.swift`, and add `IPC`/dispatcher tests.
