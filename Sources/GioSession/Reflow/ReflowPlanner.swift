@@ -21,6 +21,8 @@ public struct ReflowPlan: Equatable, Sendable {
     public var prepositions: [WindowID: CGRect] = [:]
     /// Visible frames of the shown displays (first display wins).
     public var hovered: [WindowID: CGRect] = [:]
+    /// NA-04: the animation kind of every planned flight.
+    public var kinds: [WindowID: AnimationKind] = [:]
 }
 
 /// The planning half of `performReflow`: lays every display out, parks the
@@ -67,12 +69,15 @@ public final class ReflowPlanner: @unchecked Sendable {
         public var opening: Set<WindowID>
         /// NA-02: how far below its tile a new window starts (0: no entry).
         public var openOffset: CGFloat
+        /// NA-04: what triggered the pass (picks the flights' animation kind).
+        public var cause: MotionCause
 
         public init(
             displays: [DisplayState], visibleFrames: [DisplayID: CGRect], manager: WorkspaceManager,
             modes: [WindowID: WindowMode], engine: @escaping () -> ScrollableLayoutEngine,
             centering: CenterRequest, animating: Bool, duration: TimeInterval,
-            opening: Set<WindowID> = [], openOffset: CGFloat = windowOpenDefaultOffset
+            opening: Set<WindowID> = [], openOffset: CGFloat = windowOpenDefaultOffset,
+            cause: MotionCause = .passive
         ) {
             self.displays = displays
             self.visibleFrames = visibleFrames
@@ -84,6 +89,7 @@ public final class ReflowPlanner: @unchecked Sendable {
             self.duration = duration
             self.opening = opening
             self.openOffset = openOffset
+            self.cause = cause
         }
     }
 
@@ -216,6 +222,16 @@ public final class ReflowPlanner: @unchecked Sendable {
                 result.animations += motion.animations
                 result.prepositions.merge(motion.prepositions) { _, new in new }
                 result.prepositions.merge(entries) { _, new in new }
+                // NA-04: risers (pre-positioned below) and hidden windows that
+                // drop are the workspace switch; entries are window-open.
+                var switching = Set(motion.prepositions.keys)
+                if carriesSwitch {
+                    switching.formUnion(motion.animations.map(\.id).filter { inactive.parked[$0] != nil })
+                }
+                result.kinds.merge(classifyAnimationKinds(
+                    motion.animations.map(\.id), cause: input.cause,
+                    opening: Set(entries.keys), switching: switching
+                )) { _, new in new }
             }
             // Logical state moves at once; only the physical writes animate.
             manager.update(planned.workspace)
@@ -234,6 +250,38 @@ public final class ReflowPlanner: @unchecked Sendable {
     ) -> [WindowAnimation] {
         settings.curve == .spring ? animations.map { $0.springing(settings.spring) } : animations
     }
+
+    /// NA-04: each flight takes the settings of its kind (`kinds`, else
+    /// `fallback`, the pass's kind): its spring, or its ease-out duration. A
+    /// kind that is off inside an animated pass lands on the next frame
+    /// instead of waiting for the final pass behind the others.
+    public static func applyingAnimationSettings(
+        _ animations: [WindowAnimation], settings: AnimationsSectionConfig,
+        kinds: [WindowID: AnimationKind], fallback: AnimationKind
+    ) -> [WindowAnimation] {
+        animations.map { animation in
+            let resolved = settings.resolved(kinds[animation.id] ?? fallback)
+            guard resolved.isActive else {
+                var jump = WindowAnimation(
+                    id: animation.id, from: animation.from, to: animation.to,
+                    duration: disabledKindDuration, easing: .linear
+                )
+                jump.sizeSchedule = animation.sizeSchedule
+                return jump
+            }
+            switch resolved.curve {
+            case .spring:
+                return animation.springing(resolved.spring)
+            case .easeOut:
+                var eased = animation
+                eased.duration = resolved.duration
+                return eased
+            }
+        }
+    }
+
+    /// A disabled kind's flight: done by the second tick.
+    static let disabledKindDuration: TimeInterval = 0.001
 
     /// PA-06 / FI-03: size schedules. Growing windows follow the flight when
     /// their app keeps up; the focused window that grows gets its final size

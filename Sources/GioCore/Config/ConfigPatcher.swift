@@ -154,7 +154,41 @@ private func setKey(table: String, key: String, rendered: String, in lines: inou
         lines.insert("\(key) = \(rendered)", at: insertAt)
         return
     }
-    appendBlock(["[\(table)]", "\(key) = \(rendered)"], to: &lines)
+    let block = ["[\(table)]", "\(key) = \(rendered)"]
+    if let at = familyEnd(of: table, in: lines) {
+        insertBlock(block, at: at, in: &lines)
+        return
+    }
+    appendBlock(block, to: &lines)
+}
+
+/// NA-04: a dotted table (`animations.window-open`) goes right after its
+/// family (`[animations]` and its other sub-tables), before trailing blank
+/// lines; nil when the family is absent.
+private func familyEnd(of table: String, in lines: [String]) -> Int? {
+    guard let dot = table.firstIndex(of: ".") else {
+        return nil
+    }
+    let parent = String(table[..<dot])
+    guard let last = spans(of: lines).last(where: {
+        !$0.isArray && ($0.name == parent || $0.name.hasPrefix(parent + "."))
+    }) else {
+        return nil
+    }
+    var end = last.end
+    while end > last.header + 1, isBlank(lines[end - 1]) {
+        end -= 1
+    }
+    return end
+}
+
+/// A block with one blank line on each side (none added where one is).
+private func insertBlock(_ block: [String], at index: Int, in lines: inout [String]) {
+    var framed = [""] + block
+    if index < lines.count, !isBlank(lines[index]) {
+        framed.append("")
+    }
+    lines.insert(contentsOf: framed, at: index)
 }
 
 /// Same indentation and inline comment, new value.
@@ -177,6 +211,24 @@ private func removeKey(table: String, key: String, from lines: inout [String]) {
     }
     for index in doomed.reversed() {
         lines.remove(at: index)
+    }
+    if table.contains(".") {
+        dropEmptyTables(named: table, from: &lines)
+    }
+}
+
+/// NA-04: a dotted table left without keys or comments goes away (its
+/// header and blank body; the blank line before it stays as the separator),
+/// so resetting to "inherit" leaves no clutter.
+private func dropEmptyTables(named table: String, from lines: inout [String]) {
+    for span in spans(of: lines).reversed() where !span.isArray && span.name == table {
+        guard ((span.header + 1)..<span.end).allSatisfy({ isBlank(lines[$0]) }) else {
+            continue
+        }
+        lines.removeSubrange(span.header..<span.end)
+    }
+    while let last = lines.last, isBlank(last) {
+        lines.removeLast()
     }
 }
 

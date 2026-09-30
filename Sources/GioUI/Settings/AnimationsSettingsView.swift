@@ -1,20 +1,24 @@
 import GioCore
 import SwiftUI
 
-/// DD-03 Animations: motion curve with a playable preview, resizing
-/// behavior and the renderer choice.
+/// DD-03 Animations: motion curve with a playable preview, per-animation
+/// overrides (NA-04), resizing behavior and the renderer choice.
 struct AnimationsSettingsView: View {
     @ObservedObject var model: DesktopModel
     @State private var draft: SettingsDraft<AnimationsForm>
     @State private var toast: ApplyToast?
+    /// NA-04: per-animation rows showing their details.
+    @State private var expandedKinds: Set<AnimationKind>
     private let previewTime: TimeInterval?
     private let drafts: SettingsDraftStore
 
     /// `editing` / `previewTime` seed the view for snapshot tests.
     init(
         model: DesktopModel, drafts: SettingsDraftStore = SettingsDraftStore(),
-        editing: AnimationsForm? = nil, previewTime: TimeInterval? = nil
+        editing: AnimationsForm? = nil, previewTime: TimeInterval? = nil,
+        expandedKinds: Set<AnimationKind> = []
     ) {
+        _expandedKinds = State(initialValue: expandedKinds)
         self.model = model
         self.previewTime = previewTime
         self.drafts = drafts
@@ -37,6 +41,7 @@ struct AnimationsSettingsView: View {
             ResetSectionButton(isDisabled: draft.isAtDefaults(defaults)) { draft.reset(to: defaults) }
         } content: {
             motionCard
+            PerAnimationSettingsCard(form: form, expanded: $expandedKinds, previewTime: previewTime)
             resizingCard
             rendererCard
         }

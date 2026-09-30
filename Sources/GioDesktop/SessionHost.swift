@@ -91,6 +91,8 @@ final class SessionHost: @unchecked Sendable {
     private var instantPlacement = InstantPlacementGate()
     /// NA-02: windows registered since the last pass (they enter from below).
     private var openingWindows = WindowOpenBook()
+    /// NA-04: what triggered the next pass (picks its animation settings).
+    private var motionCauses = MotionCauseLatch()
     /// FI-05: render verification: candidates, settled frames, nudges.
     private var renderVerifier: RenderVerifier!
     /// PA-04: frames Gio placed and verified; the final pass skips their AX
@@ -436,8 +438,14 @@ final class SessionHost: @unchecked Sendable {
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
                 },
-                windowOpened: { [unowned self] in openingWindows.mark($0) },
-                windowsClosing: { [unowned self] in closeGhost.windowsClosing($0) }
+                windowOpened: { [unowned self] in
+                    openingWindows.mark($0)
+                    motionCauses.note(.windowOpen)
+                },
+                windowsClosing: { [unowned self] in
+                    motionCauses.note(.windowClose)
+                    closeGhost.windowsClosing($0)
+                }
             ),
             scheduler: scheduler
         )
@@ -998,7 +1006,7 @@ final class SessionHost: @unchecked Sendable {
     /// NA-03: the close ghost is configured and animations run.
     private func closeGhostEnabled() -> Bool {
         let settings = session.config.animations
-        return settings.closeGhost && settings.isActive
+        return settings.closeGhost && settings.resolved(.windowClose).isActive
     }
 
     private func performReflow(animate: Bool = true) {
@@ -1022,7 +1030,11 @@ final class SessionHost: @unchecked Sendable {
         )
         self.reconciler = reconciler
         let settings = session.config.animations
-        let placement = instantPlacement.decide(requested: animate && settings.isActive)
+        // NA-04: the triggering action picks the pass's animation; a kind
+        // that is off makes its pass instant.
+        let cause = motionCauses.take()
+        let passAnimation = settings.resolved(cause.kind)
+        let placement = instantPlacement.decide(requested: animate && passAnimation.isActive)
         if case .instant(let reason?) = placement {
             GioLog.record(reason == .mouse ? .debug : .info, instantPlacementLogLine(reason))
         }
@@ -1050,8 +1062,10 @@ final class SessionHost: @unchecked Sendable {
             .init(
                 displays: displays.allDisplays(), visibleFrames: visibleFrames, manager: session.manager,
                 modes: modes, engine: { [unowned self] in engine() }, centering: centering,
-                animating: animating, duration: settings.duration,
-                opening: opening, openOffset: windowOpenDefaultOffset
+                animating: animating, duration: passAnimation.duration,
+                opening: opening,
+                openOffset: settings.resolved(.windowOpen).isActive ? CGFloat(settings.openOffset) : 0,
+                cause: cause
             ),
             inactive: inactive
         ) { displayPlan, visible in
@@ -1070,7 +1084,9 @@ final class SessionHost: @unchecked Sendable {
         let prepositions = pass.prepositions
         focus.setHoverFrames(pass.hovered)
         nativeZoom.dropUnjudged(unjudgedZooms)
-        animations = ReflowPlanner.applyingCurve(animations, settings: settings)
+        animations = ReflowPlanner.applyingAnimationSettings(
+            animations, settings: settings, kinds: pass.kinds, fallback: cause.kind
+        )
         // Native zoom: a maximize that grows a single-window column presses the
         // app's own zoom instead of writing a size. The zooming window leaves
         // this pass's motion and writes; the zoom starts after the neighbours'
@@ -1102,7 +1118,7 @@ final class SessionHost: @unchecked Sendable {
         var snapshotFlight = false
         if animating, snapshotRefresher.rendererUsable() {
             if !animations.isEmpty {
-                snapshotFlight = overlayFlight.drive(animations: animations, plans: plans, spring: settings.spring)
+                snapshotFlight = overlayFlight.drive(animations: animations, plans: plans, spring: passAnimation.spring)
             } else {
                 snapshotFlight = overlayFlight.isActive
             }
@@ -1383,6 +1399,7 @@ final class SessionHost: @unchecked Sendable {
         if let toggle = effect.fullscreenToggle {
             _ = try? fullscreen.toggle(toggle.id, registry: session.registry, frame: toggle.frame)
         }
+        motionCauses.note(motionCause(for: action))
         focus.requestIntent(if: effect.carriesFocusIntent, previous: effect.previousFocus)
         if effect.growsFocusedWindow {
             focus.noteSizingFocus(session.manager.currentWorkspace().focusedWindow)

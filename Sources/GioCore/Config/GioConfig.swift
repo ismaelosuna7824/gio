@@ -67,6 +67,8 @@ public enum MotionCurveKind: String, Equatable, Sendable {
 
 public struct AnimationsSectionConfig: Equatable, Sendable {
     public static let durationRange = 0...1000
+    /// NA-04: `[animations.window-open] offset`, in points.
+    public static let openOffsetRange = 0.0...200.0
 
     /// Scroll/focus motion (MO-04). Off means every reflow is instant.
     public var enabled: Bool
@@ -91,6 +93,11 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     /// NA-03: `[animations.window-close] ghost`: a closing window in view
     /// fades out from its cached image (needs Screen Recording). Off by default.
     public var closeGhost: Bool
+    /// NA-04: `[animations.<name>]` tables, keyed by Niri name.
+    public var overrides: [AnimationKind: AnimationOverride]
+    /// NA-02/NA-04: `[animations.window-open] offset`: how far below its tile
+    /// a new window starts (0: no entry flight).
+    public var openOffset: Double
 
     public init(
         enabled: Bool = true, durationMilliseconds: Int = 200,
@@ -101,8 +108,12 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         renderer: RendererKind = .ax,
         focusedGrow: FocusedGrowMode = .start,
         nativeZoom: Bool = true,
-        closeGhost: Bool = false
+        closeGhost: Bool = false,
+        overrides: [AnimationKind: AnimationOverride] = [:],
+        openOffset: Double = 24
     ) {
+        self.overrides = overrides
+        self.openOffset = openOffset
         self.nativeZoom = nativeZoom
         self.closeGhost = closeGhost
         self.focusedGrow = focusedGrow

@@ -177,7 +177,58 @@ final class SettingsPresentationTests: XCTestCase {
             enabled: true, durationMilliseconds: 250, curve: .easeOut, springDampingRatio: 0.7,
             springStiffness: 900, resize: .never, renderer: .ax, focusedGrow: .start, nativeZoom: true
         )
-        XCTAssertEqual(form.edits, expected)
+        XCTAssertEqual(Array(form.edits.prefix(expected.count)), expected)
+    }
+
+    // MARK: - Per-animation (NA-04)
+
+    func testPerAnimationFormInheritsByDefault() {
+        let form = AnimationsForm(config: AnimationsSectionConfig())
+        XCTAssertEqual(form.kinds.count, AnimationKind.allCases.count)
+        for kind in AnimationKind.allCases {
+            let row = form.kinds[kind]!
+            XCTAssertTrue(row.enabled)
+            XCTAssertFalse(row.custom, "\(kind) inherits global")
+        }
+        XCTAssertEqual(form.openOffset, 24)
+        XCTAssertFalse(form.closeGhost)
+    }
+
+    func testPerAnimationFormRoundTripsThroughTheConfigFile() throws {
+        var config = AnimationsSectionConfig()
+        config.overrides[.windowMovement] = AnimationOverride(curve: .easeOut, durationMilliseconds: 120)
+        config.overrides[.workspaceSwitch] = AnimationOverride(curve: .spring, springDampingRatio: 0.6, springStiffness: 500)
+        config.overrides[.windowClose] = AnimationOverride(enabled: false)
+        config.openOffset = 40
+        config.closeGhost = true
+        let form = AnimationsForm(config: config)
+        XCTAssertTrue(form.kinds[.windowMovement]!.custom)
+        XCTAssertEqual(form.kinds[.windowMovement]!.durationMilliseconds, 120)
+        XCTAssertFalse(form.kinds[.windowClose]!.enabled)
+
+        let patched = try patchGioConfig("[animations]\nenabled = true\n", edits: form.edits).get()
+
+        XCTAssertEqual(patched.config.animations, config)
+        XCTAssertEqual(patched.warnings, [])
+    }
+
+    func testTurningCustomOnStartsFromTheGlobalValuesAndOffRemovesTheKeys() throws {
+        var form = AnimationsForm(config: AnimationsSectionConfig())
+        form.curve = .easeOut
+        form.durationMilliseconds = 300
+        form.setCustom(.windowResize, true)
+        XCTAssertEqual(form.kinds[.windowResize]!.curve, .easeOut)
+        XCTAssertEqual(form.kinds[.windowResize]!.durationMilliseconds, 300)
+        XCTAssertEqual(form.preview(for: .windowResize).durationMilliseconds, 300)
+
+        form.kinds[.windowResize]!.durationMilliseconds = 90
+        let custom = try patchGioConfig("", edits: form.edits).get()
+        XCTAssertEqual(custom.config.animations.overrides[.windowResize], AnimationOverride(curve: .easeOut, durationMilliseconds: 90))
+
+        form.setCustom(.windowResize, false)
+        let inherited = try patchGioConfig(custom.text, edits: form.edits).get()
+        XCTAssertNil(inherited.config.animations.overrides[.windowResize])
+        XCTAssertFalse(inherited.text.contains("[animations.window-resize]"))
     }
 
     // MARK: - Draft and apply bar

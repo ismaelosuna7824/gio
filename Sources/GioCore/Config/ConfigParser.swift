@@ -31,6 +31,7 @@ private enum ConfigSection: Equatable {
     case layout
     case behavior
     case animations
+    case animationKind(AnimationKind)
     case focusRing
     case focus
     case logging
@@ -97,6 +98,14 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "focus": section = .focus
             case "logging": section = .logging
             case "keybindings": section = .keybindings
+            case let name where name.hasPrefix("animations."):
+                // NA-04: `[animations.<niri name>]`.
+                if let kind = AnimationKind(rawValue: String(name.dropFirst("animations.".count))) {
+                    section = .animationKind(kind)
+                } else {
+                    warnings.append("line \(line): unknown table [\(name)], ignored")
+                    section = .ignored(name)
+                }
             case let name:
                 warnings.append("line \(line): unknown table [\(name)], ignored")
                 section = .ignored(name)
@@ -128,6 +137,10 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyBehaviorKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .animations:
             applyAnimationsKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
+        case .animationKind(let kind):
+            applyAnimationKindKey(
+                kind, key: key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config
+            )
         case .focusRing:
             applyFocusRingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .focus:
@@ -401,18 +414,81 @@ func applyAnimationsKey(
     }
 }
 
+/// NA-04: one `[animations.<name>]` key. Same keys and validation as the
+/// global table (enabled, curve, duration-ms, spring-*), plus `offset` for
+/// window-open and `ghost` for window-close.
+func applyAnimationKindKey(
+    _ kind: AnimationKind, key: String, value: ConfigValue, line: Int,
+    errors: inout [String], warnings: inout [String], config: inout GioConfig
+) {
+    let table = kind.tableName
+    var custom = config.animations.overrides[kind] ?? AnimationOverride()
+    defer { config.animations.overrides[kind] = custom.isEmpty ? nil : custom }
+    switch key {
+    case "enabled":
+        applyBoolKey(key, expected: key, value: value, line: line, table: table, errors: &errors) {
+            custom.enabled = $0
+        }
+    case "duration-ms":
+        guard let number = value.number, number.isFinite else {
+            errors.append("line \(line): \(table).duration-ms expects a number of milliseconds")
+            return
+        }
+        let range = AnimationsSectionConfig.durationRange
+        let rounded = Int(min(max(number.rounded(), Double(range.lowerBound)), Double(range.upperBound)))
+        if Double(rounded) != number.rounded() {
+            warnings.append(
+                "line \(line): \(table).duration-ms clamped to \(rounded) (valid \(range.lowerBound)-\(range.upperBound))"
+            )
+        }
+        custom.durationMilliseconds = rounded
+    case "curve":
+        guard case .string(let text) = value else {
+            errors.append("line \(line): \(table).curve expects \"spring\" or \"ease-out\"")
+            return
+        }
+        if let curve = MotionCurveKind(rawValue: text) {
+            custom.curve = curve
+        } else {
+            warnings.append("line \(line): \(table).curve '\(text)' is not \"spring\" or \"ease-out\", inheriting")
+        }
+    case "spring-damping-ratio":
+        applySpringNumber(
+            key, value: value, line: line, range: SpringParameters.dampingRatioRange, table: table,
+            errors: &errors, warnings: &warnings
+        ) { custom.springDampingRatio = $0 }
+    case "spring-stiffness":
+        applySpringNumber(
+            key, value: value, line: line, range: SpringParameters.stiffnessRange, table: table,
+            errors: &errors, warnings: &warnings
+        ) { custom.springStiffness = $0 }
+    case "offset" where kind == .windowOpen:
+        applySpringNumber(
+            key, value: value, line: line, range: AnimationsSectionConfig.openOffsetRange, table: table,
+            errors: &errors, warnings: &warnings
+        ) { config.animations.openOffset = $0 }
+    case "ghost" where kind == .windowClose:
+        applyBoolKey(key, expected: key, value: value, line: line, table: table, errors: &errors) {
+            config.animations.closeGhost = $0
+        }
+    default:
+        warnings.append("line \(line): unknown \(table) key '\(key)', ignored")
+    }
+}
+
+/// A number clamped into `range` (a warning when clamped).
 private func applySpringNumber(
-    _ key: String, value: ConfigValue, line: Int, range: ClosedRange<Double>,
+    _ key: String, value: ConfigValue, line: Int, range: ClosedRange<Double>, table: String = "animations",
     errors: inout [String], warnings: inout [String], set: (Double) -> Void
 ) {
     guard let number = value.number, number.isFinite else {
-        errors.append("line \(line): animations.\(key) expects a number")
+        errors.append("line \(line): \(table).\(key) expects a number")
         return
     }
     let clamped = min(max(number, range.lowerBound), range.upperBound)
     if clamped != number {
         warnings.append(
-            "line \(line): animations.\(key) clamped to \(clamped) (valid \(range.lowerBound)-\(range.upperBound))"
+            "line \(line): \(table).\(key) clamped to \(clamped) (valid \(range.lowerBound)-\(range.upperBound))"
         )
     }
     set(clamped)

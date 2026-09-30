@@ -62,6 +62,34 @@ public func defaultConfigTemplate() -> String {
     # the Screen Recording permission (Gio falls back to "ax" while missing).
     renderer = "ax"
 
+    # Per-animation tuning, with Niri's names. Each table inherits every key
+    # of [animations] and may set its own: enabled, curve, duration-ms,
+    # spring-damping-ratio, spring-stiffness. [animations] enabled = false
+    # still turns everything off. A pass uses the animation of the action
+    # that triggered it; new windows always use window-open and windows
+    # crossing the bottom edge always use workspace-switch.
+    [animations.horizontal-view-movement]
+    # Scrolling the view: focus changes, centering.
+
+    [animations.window-movement]
+    # Moving windows and columns, consume/expel, and passive relayouts.
+
+    [animations.workspace-switch]
+    # Windows leaving or entering through the bottom edge.
+
+    [animations.window-open]
+    # A new window rises into its column from this many points below (0-200;
+    # 0 places it without a flight), while the others make room.
+    # offset = 24
+
+    [animations.window-close]
+    # The neighbours close the gap. ghost = true also fades out an image of
+    # the closed window (needs Screen Recording; off by default).
+    # ghost = false
+
+    [animations.window-resize]
+    # Maximize, fullscreen and width changes (native zoom neighbours too).
+
     [focus]
     # How the focused window stands out: "dim" (default) darkens the other
     # visible tiled windows while nothing moves; "ring" draws the outline set

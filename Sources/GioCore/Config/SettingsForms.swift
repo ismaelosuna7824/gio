@@ -137,6 +137,23 @@ public func animationEdits(
     return edits
 }
 
+/// NA-04: one `[animations.<name>]` table: every key the override sets is
+/// written, every other one removed (inherits). `offset` and `ghost` are
+/// written by the caller for their own kinds.
+public func animationOverrideEdits(_ kind: AnimationKind, override: AnimationOverride) -> [ConfigEdit] {
+    let table = kind.tableName
+    func edit(_ key: String, _ value: ConfigEditValue?) -> ConfigEdit {
+        value.map { .set(table: table, key: key, value: $0) } ?? .remove(table: table, key: key)
+    }
+    return [
+        edit("enabled", override.enabled.map { .bool($0) }),
+        edit("curve", override.curve.map { .string($0.rawValue) }),
+        edit("spring-damping-ratio", override.springDampingRatio.map { .number($0) }),
+        edit("spring-stiffness", override.springStiffness.map { .number($0) }),
+        edit("duration-ms", override.durationMilliseconds.map { .int($0) }),
+    ]
+}
+
 public func focusRingEdits(
     enabled: Bool, width: Int, colorHex: String, hideWhenMaximized: Bool = true
 ) -> [ConfigEdit] {

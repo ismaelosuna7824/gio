@@ -63,6 +63,32 @@ final class SettingsSnapshotTests: XCTestCase {
         }
     }
 
+    func testPerAnimationInheriting() throws {
+        try SnapshotHarness.render("na04-animations-per-animation", size: CGSize(width: 820, height: 1340)) {
+            page(AnimationsSettingsView(model: model(), previewTime: 0.09))
+        }
+    }
+
+    func testPerAnimationCustomExpanded() throws {
+        var form = AnimationsForm(config: SettingsFixture.config.animations)
+        form.setCustom(.windowOpen, true)
+        form.kinds[.windowOpen]?.dampingRatio = 0.7
+        form.kinds[.windowOpen]?.stiffness = 500
+        form.openOffset = 32
+        form.setCustom(.windowMovement, true)
+        form.kinds[.windowMovement]?.curve = .easeOut
+        form.kinds[.windowMovement]?.durationMilliseconds = 140
+        form.kinds[.workspaceSwitch]?.enabled = false
+        form.closeGhost = true
+        try SnapshotHarness.render("na04-animations-per-animation-custom", size: CGSize(width: 820, height: 1880)) {
+            page(
+                AnimationsSettingsView(
+                    model: model(), editing: form, previewTime: 0.12, expandedKinds: [.windowOpen, .windowClose]
+                )
+            )
+        }
+    }
+
     func testAnimationsReduceMotion() throws {
         try SnapshotHarness.render("dd03-animations-reduce-motion", size: CGSize(width: 820, height: 420)) {
             page(

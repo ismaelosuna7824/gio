@@ -281,6 +281,12 @@ public struct AnimationsForm: Equatable, Sendable {
     public var renderer: RendererKind
     public var focusedGrow: FocusedGrowMode
     public var nativeZoom: Bool
+    /// NA-04: one row per Niri animation.
+    public var kinds: [AnimationKind: AnimationKindForm]
+    /// NA-04: `[animations.window-open] offset`.
+    public var openOffset: Double
+    /// NA-03: `[animations.window-close] ghost`.
+    public var closeGhost: Bool
 
     public init(config: AnimationsSectionConfig) {
         enabled = config.enabled
@@ -292,6 +298,40 @@ public struct AnimationsForm: Equatable, Sendable {
         renderer = config.renderer
         focusedGrow = config.focusedGrow
         nativeZoom = config.nativeZoom
+        kinds = Dictionary(uniqueKeysWithValues: AnimationKind.allCases.map {
+            ($0, AnimationKindForm(kind: $0, config: config))
+        })
+        openOffset = config.openOffset
+        closeGhost = config.closeGhost
+    }
+
+    /// Custom on: the kind starts from the global values shown above it;
+    /// custom off: it inherits again (its keys are removed on Apply).
+    public mutating func setCustom(_ kind: AnimationKind, _ custom: Bool) {
+        guard var row = kinds[kind] else {
+            return
+        }
+        if custom, !row.custom {
+            row.curve = curve
+            row.dampingRatio = dampingRatio
+            row.stiffness = stiffness
+            row.durationMilliseconds = durationMilliseconds
+        }
+        row.custom = custom
+        kinds[kind] = row
+    }
+
+    /// The motion a kind would play: its own when custom, else the global one.
+    public func preview(for kind: AnimationKind) -> MotionPreviewParameters {
+        guard let row = kinds[kind], row.custom else {
+            var inherited = preview
+            inherited.enabled = enabled && (kinds[kind]?.enabled ?? true)
+            return inherited
+        }
+        return MotionPreviewParameters(
+            enabled: enabled && row.enabled, curve: row.curve, dampingRatio: row.dampingRatio,
+            stiffness: row.stiffness, durationMilliseconds: Int(row.durationMilliseconds.rounded())
+        )
     }
 
     public var preview: MotionPreviewParameters {
@@ -306,7 +346,66 @@ public struct AnimationsForm: Equatable, Sendable {
             enabled: enabled, durationMilliseconds: Int(durationMilliseconds.rounded()),
             curve: curve, springDampingRatio: dampingRatio, springStiffness: stiffness,
             resize: resize, renderer: renderer, focusedGrow: focusedGrow, nativeZoom: nativeZoom
+        ) + perAnimationEdits
+    }
+
+    /// NA-04: every kind's table, then the window-open offset and the
+    /// window-close ghost (written only when they differ from the default).
+    private var perAnimationEdits: [ConfigEdit] {
+        var edits: [ConfigEdit] = []
+        for kind in AnimationKind.allCases {
+            edits += animationOverrideEdits(kind, override: kinds[kind]?.override ?? AnimationOverride())
+        }
+        let open = AnimationKind.windowOpen.tableName
+        let defaults = AnimationsSectionConfig()
+        edits.append(
+            openOffset == defaults.openOffset
+                ? .remove(table: open, key: "offset")
+                : .set(table: open, key: "offset", value: .number(openOffset.rounded()))
         )
+        let close = AnimationKind.windowClose.tableName
+        edits.append(closeGhost ? .set(table: close, key: "ghost", value: .bool(true)) : .remove(table: close, key: "ghost"))
+        return edits
+    }
+}
+
+/// NA-04: one animation's row: on/off, and its own curve when custom.
+public struct AnimationKindForm: Equatable, Sendable {
+    public var enabled: Bool
+    public var custom: Bool
+    public var curve: MotionCurveKind
+    public var dampingRatio: Double
+    public var stiffness: Double
+    public var durationMilliseconds: Double
+
+    public init(kind: AnimationKind, config: AnimationsSectionConfig) {
+        let own = config.overrides[kind] ?? AnimationOverride()
+        let resolved = config.resolved(kind)
+        enabled = own.enabled ?? true
+        custom = own.hasCustomTiming
+        curve = resolved.curve
+        dampingRatio = resolved.spring.dampingRatio
+        stiffness = resolved.spring.stiffness
+        durationMilliseconds = Double(resolved.durationMilliseconds)
+    }
+
+    /// Only what this row changes: `enabled = false`, and when custom the
+    /// curve with the parameters it uses (spring: damping and stiffness;
+    /// ease-out: duration).
+    public var override: AnimationOverride {
+        var result = AnimationOverride(enabled: enabled ? nil : false)
+        guard custom else {
+            return result
+        }
+        result.curve = curve
+        switch curve {
+        case .spring:
+            result.springDampingRatio = dampingRatio
+            result.springStiffness = stiffness
+        case .easeOut:
+            result.durationMilliseconds = Int(durationMilliseconds.rounded())
+        }
+        return result
     }
 }
 
