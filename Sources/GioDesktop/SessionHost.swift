@@ -91,6 +91,8 @@ final class SessionHost: @unchecked Sendable {
     private var instantPlacement = InstantPlacementGate()
     /// NA-02: windows registered since the last pass (they enter from below).
     private var openingWindows = WindowOpenBook()
+    /// PF-02: per-window open timings, one log line when each settles.
+    private var openTimeline = WindowOpenTimeline()
     /// NA-04: what triggered the next pass (picks its animation settings).
     private var motionCauses = MotionCauseLatch()
     /// FI-05: render verification: candidates, settled frames, nudges.
@@ -145,7 +147,8 @@ final class SessionHost: @unchecked Sendable {
     /// Dim overlay hook, always invoked on the main thread.
     var onFocusDim: ((FocusDimState) -> Void)?
     /// UI hook, always invoked on the main thread.
-    var onSummonLauncher: (() -> Void)?
+    /// Argument: when the hotkey fired (uptime seconds), for `summon→shown`.
+    var onSummonLauncher: ((TimeInterval) -> Void)?
     /// `gio restart` (HD-05): invoked on the main thread shortly after the
     /// IPC reply left; the app shuts the session down and relaunches itself.
     var onRestart: (() -> Void)?
@@ -417,6 +420,7 @@ final class SessionHost: @unchecked Sendable {
                     snapshotRefresher.evict([id])
                     fullscreen.forget(id)
                     openingWindows.forget(id)
+                    openTimeline.forget(id)
                     actuator?.forget(elementID: id.elementID)
                 },
                 forgetApp: { [unowned self] in reconciler?.forgetApp(pid: $0) },
@@ -449,9 +453,13 @@ final class SessionHost: @unchecked Sendable {
                 followArrival: { [unowned self] previous in
                     // NW-02: the config asked to follow this arrival to its
                     // named workspace; the following reflow focuses it.
+                    // PF-02: that reflow is the switch (no separate entry).
                     syncShownWorkspace()
+                    motionCauses.note(.workspaceSwitch)
                     focus.requestIntent(if: true, previous: previous)
-                }
+                },
+                discoverAttempt: { discoverSystemWindowAttempt(element: $0, pid: $1) },
+                windowRegistered: { [unowned self] in openTimeline.registered($0) }
             ),
             scheduler: scheduler
         )
@@ -1135,8 +1143,25 @@ final class SessionHost: @unchecked Sendable {
             overlayFlight.end(fadeOut: false)
         }
         if !animations.isEmpty && !snapshotFlight {
-            motion.applyPrepositions(prepositions) { reconciler.preposition(frames: $0, from: physicalFrames) }
+            // PF-02: entries (new windows) are written at once and merge into
+            // a running motion; only switch pre-positions wait for its lanes.
+            let writes = planPrepositionWrites(
+                prepositions, entries: pass.entries, motionInFlight: reconciler.hasMotionWritesInFlight
+            )
+            motion.applyPrepositions(writes.immediate) {
+                reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
+            }
+            var waitedForMotion: TimeInterval = 0
+            if writes.waitsForMotion {
+                let waitStarted = ProcessInfo.processInfo.systemUptime
+                reconciler.waitForMotionIdle(timeout: 0.3)
+                waitedForMotion = ProcessInfo.processInfo.systemUptime - waitStarted
+                motion.applyPrepositions(writes.afterMotionIdle) {
+                    reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
+                }
+            }
             motion.start(animations, sink: reconciler)
+            openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
             // FI-06: the keyboard follows the logical focus right away instead
             // of after the animation; the final pass only re-asserts a drift.
             focus.focusAtMotionStart(parked: Set(plans.flatMap { $0.parked.keys }), plans: plans) {
@@ -1160,6 +1185,7 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         var zoomWriteFailures: Set<WindowID> = []
+        openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: 0)
         for (planIndex, plan) in plans.enumerated() {
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
@@ -1201,6 +1227,10 @@ final class SessionHost: @unchecked Sendable {
             }
             renderVerifier.recordSettled(from: report.settledFrames)
             GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
+        }
+        // PF-02: every window is on its final frame: one line per opened window.
+        for line in openTimeline.settled(at: ProcessInfo.processInfo.systemUptime) {
+            GioLog.record(.info, line)
         }
         if let zoomJob {
             nativeZoom.start(zoomJob)
@@ -1373,8 +1403,9 @@ final class SessionHost: @unchecked Sendable {
 
     private func handleCombo(_ combo: HotkeyCombo) -> Bool {
         if combo == HotkeyCombo(modifiers: [.alt], key: "Space") {
+            let firedAt = ProcessInfo.processInfo.systemUptime
             DispatchQueue.main.async { [weak self] in
-                self?.onSummonLauncher?()
+                self?.onSummonLauncher?(firedAt)
             }
             return true
         }

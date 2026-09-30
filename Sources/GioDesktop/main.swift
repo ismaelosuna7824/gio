@@ -23,8 +23,11 @@ func activateGio() {
 final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
-    private lazy var launcher = LauncherPanelController(focusWindow: { [host] in host.focusWindow($0) })
-    private lazy var launcherApps = scanApplications(directories: defaultApplicationDirectories())
+    /// PF-01: apps and icons scanned in the background at startup.
+    private let launcherCatalog = LauncherAppCatalog()
+    private lazy var launcher = LauncherPanelController(
+        focusWindow: { [host] in host.focusWindow($0) }, catalog: launcherCatalog
+    )
     private lazy var mainWindow = MainWindowController(
         model: DesktopModel(
             fetch: { [host] in host.snapshot() },
@@ -43,6 +46,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        launcherCatalog.start()
+        _ = launcher
         focusRing.start()
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
@@ -61,7 +66,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.start()
         host.requestBarState()
         self.bar = bar
-        host.onSummonLauncher = { [weak self] in self?.showLauncher(source: .hotkey) }
+        host.onSummonLauncher = { [weak self] firedAt in self?.showLauncher(source: .hotkey, requestedAt: firedAt) }
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it
@@ -163,12 +168,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     /// DD-05: a Spotlight-like panel that takes key without activating
     /// Gio, so the main window never jumps forward. Alt+Space again closes it
     /// (FI-09: the toggle reads the panel itself and every step is logged).
-    private func showLauncher(source: LauncherSummonSource) {
+    private func showLauncher(source: LauncherSummonSource, requestedAt: TimeInterval? = nil) {
+        // One published snapshot read (never a wait on the session queue).
+        let facts = host.snapshot().facts
         launcher.summon(
-            source: source,
-            windows: { [host] in host.snapshot().facts?.windows ?? [] },
-            workspaces: { [host] in launcherWorkspaceEntries(from: host.snapshot().facts) },
-            apps: { [unowned self] in launcherApps }
+            source: source, requestedAt: requestedAt,
+            windows: { facts?.windows ?? [] },
+            workspaces: { launcherWorkspaceEntries(from: facts) },
+            apps: { [launcherCatalog] in launcherCatalog.apps }
         )
     }
 }

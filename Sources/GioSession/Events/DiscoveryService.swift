@@ -63,6 +63,16 @@ public final class DiscoveryService: @unchecked Sendable {
         /// host requests the keyboard focus intent (argument: the window
         /// focused before the switch).
         public var followArrival: (WindowID?) -> Void
+        /// PF-02: classify one appeared element and say why it failed (an
+        /// unreadable frame retries sooner). Nil: `discoverOne` decides and
+        /// a failure keeps the original retry schedule.
+        public var discoverAttempt: ((AXUIElement, pid_t) -> SingleWindowDiscovery)?
+        /// PF-02: session uptime, for the open timeline.
+        public var now: () -> TimeInterval
+        /// PF-02: a window was registered; its timings start the host's
+        /// open timeline (`WindowOpenTimeline`).
+        public var windowRegistered: (WindowOpenTiming) -> Void
+        public var log: (LogLevel, String) -> Void
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -86,9 +96,17 @@ public final class DiscoveryService: @unchecked Sendable {
             updateDisplayHeight: @escaping (CGFloat) -> Void, displaysChanged: @escaping () -> Void,
             windowOpened: @escaping (WindowID) -> Void = { _ in },
             windowsClosing: @escaping ([WindowID]) -> Void = { _ in },
-            followArrival: @escaping (WindowID?) -> Void = { _ in }
+            followArrival: @escaping (WindowID?) -> Void = { _ in },
+            discoverAttempt: ((AXUIElement, pid_t) -> SingleWindowDiscovery)? = nil,
+            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+            windowRegistered: @escaping (WindowOpenTiming) -> Void = { _ in },
+            log: @escaping (LogLevel, String) -> Void = { GioLog.record($0, $1) }
         ) {
             self.followArrival = followArrival
+            self.discoverAttempt = discoverAttempt
+            self.now = now
+            self.windowRegistered = windowRegistered
+            self.log = log
             self.ownPID = ownPID
             self.registry = registry
             self.manager = manager
@@ -240,17 +258,44 @@ public final class DiscoveryService: @unchecked Sendable {
     /// of a brand-new window are often unreadable for a moment, so an
     /// unclassifiable element is retried a few times. Minimized windows
     /// register too (out of the layout until deminimized).
-    public func registerAppeared(_ element: AXUIElement, pid: pid_t, attempt: Int = 0) {
+    /// PF-02: `createdAt` is the first attempt's time (the created event);
+    /// an element whose frame alone is unreadable retries sooner, and every
+    /// retry is logged.
+    public func registerAppeared(
+        _ element: AXUIElement, pid: pid_t, attempt: Int = 0, createdAt: TimeInterval? = nil
+    ) {
         if context.knownWindow(element, pid) != nil {
             return
         }
-        if let candidate = context.discoverOne(element, pid) {
-            registerNew(candidate, mayFollow: true)
+        let created = createdAt ?? context.now()
+        let outcome: SingleWindowDiscovery
+        if let discoverAttempt = context.discoverAttempt {
+            outcome = discoverAttempt(element, pid)
+        } else {
+            outcome = context.discoverOne(element, pid).map { .found($0) } ?? .unclassified
+        }
+        let reason: WindowRegistrationFailure
+        switch outcome {
+        case .found(let candidate):
+            registerNew(candidate, mayFollow: true, createdAt: created, retries: attempt)
             context.reflowAll()
-        } else if let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt) {
-            scheduler.asyncAfter(delay) { [weak self] in
-                self?.registerAppeared(element, pid: pid, attempt: attempt + 1)
-            }
+            return
+        case .frameUnreadable:
+            reason = .frameUnreadable
+        case .unclassified:
+            reason = .unclassified
+        }
+        guard let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt, reason: reason) else {
+            context.log(.info, "window register gave up pid=\(pid) attempts=\(attempt + 1) reason=\(reason.rawValue)")
+            return
+        }
+        context.log(
+            .info,
+            "window register retry pid=\(pid) attempt=\(attempt + 1) reason=\(reason.rawValue)"
+                + " delay ms=\(Int((delay * 1000).rounded()))"
+        )
+        scheduler.asyncAfter(delay) { [weak self] in
+            self?.registerAppeared(element, pid: pid, attempt: attempt + 1, createdAt: created)
         }
     }
 
@@ -261,7 +306,10 @@ public final class DiscoveryService: @unchecked Sendable {
     /// rule sends it to that named workspace; when `mayFollow` (a live
     /// arrival) and the rule's follow policy agrees, the user goes there too.
     @discardableResult
-    func registerNew(_ candidate: DiscoveredSystemWindow, mayFollow: Bool = false) -> WindowID? {
+    func registerNew(
+        _ candidate: DiscoveredSystemWindow, mayFollow: Bool = false,
+        createdAt: TimeInterval? = nil, retries: Int = 0
+    ) -> WindowID? {
         // Discovery already filters Gio's own pid; never trust that alone.
         guard candidate.window.pid != context.ownPID else {
             return nil
@@ -295,9 +343,13 @@ public final class DiscoveryService: @unchecked Sendable {
             && shouldFollowArrival(outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID())
         var previousFocus: WindowID?
         var followed = false
+        var destinationShown = false
+        var workspaceLabel = ""
         context.updateManager { manager in
             let destID = manager.arrivalDestination(outcome)
+            destinationShown = manager.activeIDs.contains(destID)
             var dest = manager.workspace(id: destID)!
+            workspaceLabel = dest.name ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
             Self.appendColumn(id, to: &dest, focus: !minimized)
             manager.update(dest)
             if follows, manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID {
@@ -306,12 +358,26 @@ public final class DiscoveryService: @unchecked Sendable {
             }
         }
         if followed {
+            // PF-02: the switch starts in the pass this registration runs.
             context.followArrival(previousFocus)
         }
         context.watchWindow(candidate.element, candidate.window.pid)
-        if !minimized {
+        // PF-02: only an arrival on the shown workspace enters from below; a
+        // hidden one is parked, a followed one rides the workspace switch.
+        if planWindowOpenArrival(
+            destinationShown: destinationShown, followed: followed, minimized: minimized
+        ) == .enter {
             context.windowOpened(id)
         }
+        // A live arrival only; a full scan (startup, resync) is not an open.
+        guard mayFollow else {
+            return id
+        }
+        let registeredAt = context.now()
+        context.windowRegistered(WindowOpenTiming(
+            id: id, app: window.application, createdAt: createdAt ?? registeredAt, registeredAt: registeredAt,
+            retries: retries, workspace: workspaceLabel, follow: followed
+        ))
         return id
     }
 

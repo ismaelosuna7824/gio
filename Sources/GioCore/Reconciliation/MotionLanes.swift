@@ -183,6 +183,13 @@ final class MotionLanes: @unchecked Sendable {
     /// Bounded wait until every lane is idle. On timeout the frames still
     /// waiting are discarded: the final pass supersedes them and a stuck app
     /// must not receive stale frames after it.
+    /// PF-02: some lane still has a queued or running motion write.
+    var isBusy: Bool {
+        idle.lock()
+        defer { idle.unlock() }
+        return busy > 0
+    }
+
     func waitForIdle(timeout: TimeInterval) {
         idle.lock()
         let deadline = Date(timeIntervalSinceNow: timeout)

@@ -144,16 +144,29 @@ public struct WriteEchoGate: Sendable {
     }
 }
 
+/// PF-02: why a new window could not be classified yet.
+public enum WindowRegistrationFailure: String, Equatable, Sendable {
+    /// Only its frame is not readable yet: it is a window a moment away.
+    case frameUnreadable
+    /// Ignored by admission, untrusted, or unknown (the original schedule).
+    case unclassified
+}
+
 /// A new window's attributes are often not readable in the very first
 /// moments; classification is retried a few times with short delays.
+/// PF-02: an element whose frame alone is unreadable retries sooner.
 public enum WindowRegistrationRetry {
     public static let delays: [TimeInterval] = [0.1, 0.3, 0.8]
+    public static let frameUnreadableDelays: [TimeInterval] = [0.03, 0.08, 0.2, 0.5]
     public static var maxRetries: Int { delays.count }
 
-    public static func delay(afterFailedAttempt attempt: Int) -> TimeInterval? {
-        guard attempt >= 0, attempt < delays.count else {
+    public static func delay(
+        afterFailedAttempt attempt: Int, reason: WindowRegistrationFailure = .unclassified
+    ) -> TimeInterval? {
+        let schedule = reason == .frameUnreadable ? frameUnreadableDelays : delays
+        guard attempt >= 0, attempt < schedule.count else {
             return nil
         }
-        return delays[attempt]
+        return schedule[attempt]
     }
 }

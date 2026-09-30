@@ -219,6 +219,41 @@ private func classifyElement(
     return .tile(discovered)
 }
 
+/// PF-02: one appeared element's classification, with why it failed: a
+/// brand-new window whose frame is not readable yet is retried sooner.
+public enum SingleWindowDiscovery {
+    case found(DiscoveredSystemWindow)
+    /// Its frame (position/size) is not readable yet.
+    case frameUnreadable
+    /// Ignored by admission, untrusted, or not a manageable process.
+    case unclassified
+
+}
+
+/// PF-02: `discoverSystemWindow` with the failure reason.
+public func discoverSystemWindowAttempt(element: AXUIElement, pid: pid_t) -> SingleWindowDiscovery {
+    guard isManageableProcess(pid: pid, ownPID: ProcessInfo.processInfo.processIdentifier, onlyPID: nil),
+          AXIsProcessTrusted()
+    else {
+        return .unclassified
+    }
+    let appElement = AXUIElementCreateApplication(pid)
+    let app = NSRunningApplication(processIdentifier: pid)
+    let appName = app?.localizedName ?? "unknown"
+    switch classifyElement(
+        element, pid: pid, appName: appName, bundleID: app?.bundleIdentifier, appElement: appElement,
+        focused: axFocusedWindow(of: appElement), index: 0
+    ) {
+    case .tile(let discovered), .float(let discovered):
+        return .found(discovered)
+    case .skipped:
+        return .frameUnreadable
+    case .ignored:
+        // A brand-new window often reads no frame at all yet.
+        return axFrame(of: element) == nil ? .frameUnreadable : .unclassified
+    }
+}
+
 /// Classify one window that appeared after the initial scan. Nil when the
 /// classifier ignores it or its geometry is not readable yet (the caller
 /// may retry). Tile and float outcomes are both returned; minimized and

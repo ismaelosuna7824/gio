@@ -81,6 +81,34 @@ final class WindowOpenPlanningTests: XCTestCase {
         XCTAssertFalse(pass.animations.contains { $0.id == new && $0.to.minY > 0 })
     }
 
+    func testEntriesAreReportedSoTheirWritesNeverWaitForMotion() {
+        let world = ReflowWorld()
+        world.addColumns(1)
+        let new = world.addColumns(1, pidBase: 200, placed: false)[0]
+
+        let pass = plan(world, opening: [new])
+
+        XCTAssertEqual(pass.entries, [new])
+    }
+
+    /// PF-02: a followed arrival is not an entry; the switch that the
+    /// registration started brings it in, in the same pass as the windows
+    /// leaving the old workspace.
+    func testFollowedArrivalRidesTheSwitchInOnePass() {
+        let world = ReflowWorld()
+        let outgoing = world.addColumns(1)
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        let new = world.addColumns(1, pidBase: 300, placed: false)[0]
+
+        let pass = plan(world, opening: [])
+
+        XCTAssertTrue(pass.entries.isEmpty)
+        XCTAssertTrue(pass.animations.contains { $0.id == new }, "flies to its tile in the switch")
+        XCTAssertTrue(pass.animations.contains { $0.id == outgoing[0] }, "the old workspace leaves in the same pass")
+        XCTAssertNotEqual(pass.prepositions[new]?.minY, pass.plans[0].visible[new].map { $0.minY - 24 })
+    }
+
     func testInstantPassPlacesTheNewWindowWithoutEntry() {
         let world = ReflowWorld()
         let new = world.addColumns(1, pidBase: 200, placed: false)[0]

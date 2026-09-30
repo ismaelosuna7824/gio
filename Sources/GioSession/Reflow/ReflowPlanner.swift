@@ -23,6 +23,9 @@ public struct ReflowPlan: Equatable, Sendable {
     public var hovered: [WindowID: CGRect] = [:]
     /// NA-04: the animation kind of every planned flight.
     public var kinds: [WindowID: AnimationKind] = [:]
+    /// PF-02: the pre-positions that are NA-02 entries (new windows): their
+    /// writes never wait for an in-flight motion.
+    public var entries: Set<WindowID> = []
 }
 
 /// The planning half of `performReflow`: lays every display out, parks the
@@ -222,6 +225,7 @@ public final class ReflowPlanner: @unchecked Sendable {
                 result.animations += motion.animations
                 result.prepositions.merge(motion.prepositions) { _, new in new }
                 result.prepositions.merge(entries) { _, new in new }
+                result.entries.formUnion(entries.keys)
                 // NA-04: risers (pre-positioned below) and hidden windows that
                 // drop are the workspace switch; entries are window-open.
                 var switching = Set(motion.prepositions.keys)

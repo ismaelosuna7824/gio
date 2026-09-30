@@ -68,7 +68,8 @@ public final class LauncherViewModel: ObservableObject {
     @Published public private(set) var results: [LauncherEntry] = []
     @Published public private(set) var selection = LauncherSelection(count: 0)
     @Published public private(set) var status: String?
-    private let entries: [LauncherEntry]
+    private var entries: [LauncherEntry]
+    private let leading: [LauncherEntry]
     private let focusWindow: (String) -> Bool
     var dismiss: (LauncherDismissReason) -> Void = { _ in }
 
@@ -76,9 +77,21 @@ public final class LauncherViewModel: ObservableObject {
         windows: [WindowFact] = [], workspaces: [LauncherEntry] = [], apps: [LauncherEntry] = [],
         focusWindow: @escaping (String) -> Bool = { _ in false }
     ) {
-        entries = launcherWindowEntries(from: windows) + workspaces + apps
+        leading = launcherWindowEntries(from: windows) + workspaces
+        entries = leading + apps
         self.focusWindow = focusWindow
         refreshResults()
+    }
+
+    /// PF-01: the background app scan landed while the panel is up. Keeps
+    /// the query; the selection resets only when the results change.
+    public func updateApps(_ apps: [LauncherEntry]) {
+        let updated = leading + apps
+        guard updated != entries else {
+            return
+        }
+        entries = updated
+        refreshResults(keepingStatus: true)
     }
 
     /// `> …` and `! …` are commands: no list, Enter routes them.
@@ -93,7 +106,7 @@ public final class LauncherViewModel: ObservableObject {
         return nil
     }
 
-    private func refreshResults() {
+    private func refreshResults(keepingStatus: Bool = false) {
         let trimmed = text.trimmingCharacters(in: .whitespaces)
         if trimmed.isEmpty {
             results = Array(entries.prefix(8))
@@ -103,7 +116,9 @@ public final class LauncherViewModel: ObservableObject {
             results = Array(searchLauncherEntries(trimmed, in: entries).prefix(8))
         }
         selection.reset(count: results.count)
-        status = nil
+        if !keepingStatus {
+            status = nil
+        }
     }
 
     public func select(_ index: Int) {
@@ -482,14 +497,28 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
     private let focusWindow: (String) -> Bool
     private let now: () -> TimeInterval
     private var lifecycle = LauncherLifecycle()
+    /// PF-01: cached apps and icons, scanned in the background.
+    private let catalog: LauncherAppCatalog?
+    private weak var model: LauncherViewModel?
 
     public init(
         focusWindow: @escaping (String) -> Bool,
-        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        catalog: LauncherAppCatalog? = nil
     ) {
         self.focusWindow = focusWindow
         self.now = now
+        self.catalog = catalog
         super.init()
+        catalog?.onChange = { [weak self] in self?.appsChanged() }
+    }
+
+    /// A scan landed while the panel is up: the list updates in place.
+    private func appsChanged() {
+        guard let catalog, let model, lifecycle.isPresented else {
+            return
+        }
+        model.updateApps(catalog.apps)
     }
 
     /// What a summon does now: derived from the panel and the lifecycle.
@@ -500,14 +529,25 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
     public var isVisible: Bool { summonAction == .dismiss }
 
     /// Show when hidden (or fading out), dismiss when presented.
+    /// `requestedAt` is when the hotkey fired (uptime seconds); the log's
+    /// `summon→shown` spans from it to the panel ordered front and key.
     public func summon(
-        source: LauncherSummonSource, windows: () -> [WindowFact],
+        source: LauncherSummonSource, requestedAt: TimeInterval? = nil, windows: () -> [WindowFact],
         workspaces: () -> [LauncherEntry] = { [] }, apps: () -> [LauncherEntry]
     ) {
+        let requested = requestedAt ?? now()
         GioLog.record(.info, "launcher summon source=\(source.rawValue)")
         switch summonAction {
-        case .dismiss: dismiss(reason: .toggle)
-        case .show: show(windows: windows(), workspaces: workspaces(), apps: apps())
+        case .dismiss:
+            dismiss(reason: .toggle)
+        case .show:
+            show(windows: windows(), workspaces: workspaces(), apps: apps())
+            GioLog.record(
+                .info,
+                "launcher summon→shown ms=\(Int(((now() - requested) * 1000).rounded())) source=\(source.rawValue)"
+                    + " apps=\(apps().count) cached=\(catalog != nil)"
+            )
+            catalog?.refreshIfStale()
         }
     }
 
@@ -515,7 +555,16 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
     public func show(windows: [WindowFact], workspaces: [LauncherEntry] = [], apps: [LauncherEntry]) {
         let model = LauncherViewModel(windows: windows, workspaces: workspaces, apps: apps, focusWindow: focusWindow)
         model.dismiss = { [weak self] reason in self?.dismiss(reason: reason) }
-        let hosting = NSHostingController(rootView: GioLauncherView(model: model))
+        self.model = model
+        // PF-01: icons come from the catalog's cache; never a bundle icon
+        // lookup per row render.
+        let view: GioLauncherView
+        if let catalog {
+            view = GioLauncherView(model: model, icon: { catalog.icon(for: $0) })
+        } else {
+            view = GioLauncherView(model: model)
+        }
+        let hosting = NSHostingController(rootView: view)
         hosting.sizingOptions = [.preferredContentSize]
         let panel = self.panel ?? makePanel()
         self.panel = panel

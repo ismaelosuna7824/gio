@@ -401,12 +401,18 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// actually written, sorted, so the caller can record them for echo
     /// suppression and update its physical-frame memory.
     @discardableResult
-    public func preposition(frames: [WindowID: CGRect], from: [WindowID: CGRect]) -> [WindowID] {
+    /// PF-02: `waitForMotion: false` when the caller already waited, or
+    /// writes only entries (new windows no motion lane holds a frame for).
+    public func preposition(
+        frames: [WindowID: CGRect], from: [WindowID: CGRect], waitForMotion: Bool = true
+    ) -> [WindowID] {
         let known = frames.filter { from[$0.key] != nil }
         guard !known.isEmpty else {
             return []
         }
-        waitForMotionIdle(timeout: 0.3)
+        if waitForMotion {
+            waitForMotionIdle(timeout: 0.3)
+        }
         let lanes = planWriteLanes(frames: known, parked: [:])
         let actuator = actuator
         let writer = PrepositionWriter(actuator: actuator)
@@ -499,6 +505,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// after the timeout are discarded (see `MotionLanes.waitForIdle`).
     public func waitForMotionIdle(timeout: TimeInterval) {
         motionLanes.waitForIdle(timeout: timeout)
+    }
+
+    /// PF-02: a motion write is queued or running on some app's lane.
+    public var hasMotionWritesInFlight: Bool {
+        motionLanes.isBusy
     }
 
     var motionLaneCount: Int { motionLanes.count }
