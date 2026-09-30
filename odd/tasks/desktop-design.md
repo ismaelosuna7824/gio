@@ -47,7 +47,7 @@ Visual/UX redesign of GioUI + menu bar + launcher presentation; no behavior chan
 - [x] DD-01 (`f32b592`) — Design system: tokens (spacing, radii, typography, semantic colors), components
   (SettingsTile/icon tile, StatusBadge, Keycap, SectionCard, PreviewCanvas), snapshot renderer.
 - [x] DD-02 (`768af38`) — Shell + sidebar + Overview dashboard (live workspace miniature).
-- [ ] DD-03 — Settings sections redesign (Layout, Animations, Focus ring, Rules) with previews.
+- [x] DD-03 (`a90f92e`) — Settings sections redesign (Layout, Animations, Focus ring, Rules) with previews.
 - [ ] DD-04 — Shortcuts, Logs, Diagnostics redesign.
 - [ ] DD-05 — Onboarding (permissions), menu bar status item, launcher panel.
 
@@ -58,6 +58,15 @@ layout, status card, workspace pills, windows by workspace). RED compile -> GREE
 45/7/19/39/1088 all 0 failures (parent re-ran); signed build OK. Parent reviewed light/dark PNGs:
 polished; follow-up: dark-mode active workspace pill (white text on light accent) low contrast.
 ImageRenderer can't render sidebar material/ScrollView (stand-ins). LIVE PENDING.
+
+Evidence DD-03 (route: delegated writer, opus): settings split into Layout / Focus (new sidebar
+entry) / Animations / Rules with live previews (layout mini display + preset ticks, motion tile +
+spring curve from Spring math, focus indicator samples, rules with app icons), Apply bar with
+dirty state + ⌘S/⎋, toasts, Reset Section; accent text contrast >=4.5:1 (729-colour sweep).
+RED compile -> GREEN; bundles 91(20 skipped)/7/19/39/1120 all 0 failures (parent re-ran);
+signed build OK. Parent reviewed PNGs: polished. Follow-ups: stale "ring in fullscreen" footer
+under Match gaps, preset widths shown as raw text (use chips), unsaved edits lost on section
+switch without warning. LIVE PENDING.
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.
@@ -73,3 +82,4 @@ DD-01..DD-05 delegated writers, sequential, after the in-flight native-zoom fix 
 ## Progress
 - 2026-09-30: document created. Waiting for native zoom fix writer; then DD-01 + DD-02.
 - 2026-09-30: DD-01 + DD-02 done, pushed. Next: DD-03 (after focus-indicator decision).
+- 2026-09-30: DD-03 done, pushed. Next: DD-04 + DD-05 (+ DD-03 follow-ups).
