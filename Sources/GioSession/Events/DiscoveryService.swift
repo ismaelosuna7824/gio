@@ -260,12 +260,29 @@ public final class DiscoveryService: @unchecked Sendable {
     /// of a brand-new window are often unreadable for a moment, so an
     /// unclassifiable element is retried a few times. Minimized windows
     /// register too (out of the layout until deminimized).
-    /// PF-02: `createdAt` is the first attempt's time (the created event);
-    /// an element whose frame alone is unreadable retries sooner, and every
-    /// retry is logged.
-    public func registerAppeared(
-        _ element: AXUIElement, pid: pid_t, attempt: Int = 0, createdAt: TimeInterval? = nil
-    ) {
+    /// PF-02: `deliveredAt` is when the created event reached the main
+    /// thread (nil: unknown, e.g. focus adoption); the open timeline starts
+    /// there, and the wait for the session queue and the classification
+    /// time are measured apart. An element whose frame alone is unreadable
+    /// retries sooner, and every retry is logged.
+    public func registerAppeared(_ element: AXUIElement, pid: pid_t, deliveredAt: TimeInterval? = nil) {
+        let start = context.now()
+        let clock = RegistrationClock(
+            createdAt: deliveredAt ?? start,
+            queueWait: deliveredAt.map { max(0, start - $0) } ?? 0,
+            classify: 0
+        )
+        attemptRegistration(element, pid: pid, attempt: 0, clock: clock)
+    }
+
+    /// PF-02: the open timeline of one appeared element across its attempts.
+    private struct RegistrationClock: Sendable {
+        var createdAt: TimeInterval
+        var queueWait: TimeInterval
+        var classify: TimeInterval
+    }
+
+    private func attemptRegistration(_ element: AXUIElement, pid: pid_t, attempt: Int, clock: RegistrationClock) {
         // Gio's own windows are never classified, registered or retried.
         guard pid != context.ownPID else {
             return
@@ -273,17 +290,22 @@ public final class DiscoveryService: @unchecked Sendable {
         if context.knownWindow(element, pid) != nil {
             return
         }
-        let created = createdAt ?? context.now()
+        var clock = clock
+        let classifyStarted = context.now()
         let outcome: SingleWindowDiscovery
         if let discoverAttempt = context.discoverAttempt {
             outcome = discoverAttempt(element, pid)
         } else {
             outcome = context.discoverOne(element, pid).map { .found($0) } ?? .unclassified
         }
+        clock.classify += max(0, context.now() - classifyStarted)
         let reason: WindowRegistrationFailure
         switch outcome {
         case .found(let candidate):
-            registerNew(candidate, mayFollow: true, createdAt: created, retries: attempt)
+            registerNew(
+                candidate, mayFollow: true, createdAt: clock.createdAt, retries: attempt,
+                queueWait: clock.queueWait, classify: clock.classify
+            )
             context.reflowAll()
             return
         case .frameUnreadable:
@@ -306,8 +328,8 @@ public final class DiscoveryService: @unchecked Sendable {
             "window register retry pid=\(pid) attempt=\(attempt + 1) reason=\(reason.rawValue)"
                 + " delay ms=\(Int((delay * 1000).rounded()))"
         )
-        scheduler.asyncAfter(delay) { [weak self] in
-            self?.registerAppeared(element, pid: pid, attempt: attempt + 1, createdAt: created)
+        scheduler.asyncAfter(delay) { [weak self, clock] in
+            self?.attemptRegistration(element, pid: pid, attempt: attempt + 1, clock: clock)
         }
     }
 
@@ -320,7 +342,8 @@ public final class DiscoveryService: @unchecked Sendable {
     @discardableResult
     func registerNew(
         _ candidate: DiscoveredSystemWindow, mayFollow: Bool = false,
-        createdAt: TimeInterval? = nil, retries: Int = 0
+        createdAt: TimeInterval? = nil, retries: Int = 0,
+        queueWait: TimeInterval = 0, classify: TimeInterval = 0
     ) -> WindowID? {
         // Discovery already filters Gio's own pid; never trust that alone.
         guard candidate.window.pid != context.ownPID else {
@@ -386,10 +409,13 @@ public final class DiscoveryService: @unchecked Sendable {
             return id
         }
         let registeredAt = context.now()
-        context.windowRegistered(WindowOpenTiming(
+        var timing = WindowOpenTiming(
             id: id, app: window.application, createdAt: createdAt ?? registeredAt, registeredAt: registeredAt,
             retries: retries, workspace: workspaceLabel, follow: followed
-        ))
+        )
+        timing.queueWait = queueWait
+        timing.classify = classify
+        context.windowRegistered(timing)
         return id
     }
 

@@ -76,6 +76,7 @@ final class WindowOpenArrivalTests: XCTestCase {
         XCTAssertEqual(timing.createdAt, 0, accuracy: 1e-9, "the created event, not the retry")
         XCTAssertEqual(timing.registeredAt, 0.1, accuracy: 1e-9)
         XCTAssertEqual(timing.retries, 1)
+        XCTAssertEqual(timing.queueWait, 0, "no delivery time known: nothing is attributed to the queue")
         XCTAssertEqual(timing.workspace, "Web")
         XCTAssertTrue(timing.follow)
         XCTAssertTrue(logs.contains { $0.hasPrefix("window register retry pid=7 attempt=1") }, "\(logs)")
@@ -93,5 +94,43 @@ final class WindowOpenArrivalTests: XCTestCase {
         scheduler.advance(by: 0.03)
 
         XCTAssertEqual(world.registered.count, 1, "30 ms, not 100 ms")
+    }
+
+    /// The created event is stamped where it is delivered (main), so the
+    /// open line splits the time before the session queue took it up
+    /// (`queueWait`) from the AX classification of every attempt
+    /// (`classify`); retry delays make up the rest of `createdEvent→registered`.
+    func testCreatedEventSplitsQueueWaitAndClassification() throws {
+        var clock: TimeInterval = 1.0
+        var context = world.discoveryContext()
+        context.now = { clock }
+        context.windowRegistered = { [unowned self] in timings.append($0) }
+        var attempts: [SingleWindowDiscovery] = [.frameUnreadable, .found(discovered(pid: 7))]
+        context.discoverAttempt = { _, _ in
+            clock += 0.020
+            return attempts.removeFirst()
+        }
+        discovery = DiscoveryService(context: context, scheduler: scheduler)
+        let router = WindowEventRouter(
+            context: world.routerContext(now: { clock }), discovery: discovery, scheduler: scheduler
+        )
+        world.regular = [7]
+        world.running = [7]
+        router.rebuild()
+
+        world.port!.deliver(SystemWindowEvent(
+            kind: .window(.windowCreated), pid: 7, label: "App", element: AXUIElementCreateApplication(4242)
+        ))
+        clock = 1.050
+        scheduler.runPending()
+        clock += 0.030
+        scheduler.advance(by: 0.03)
+
+        let timing = try XCTUnwrap(timings.first)
+        XCTAssertEqual(timing.createdAt, 1.0, accuracy: 1e-9, "stamped at delivery, not when the queue got to it")
+        XCTAssertEqual(timing.queueWait, 0.050, accuracy: 1e-9)
+        XCTAssertEqual(timing.classify, 0.040, accuracy: 1e-9, "both attempts")
+        XCTAssertEqual(timing.retries, 1)
+        XCTAssertEqual(timing.registeredAt, 1.120, accuracy: 1e-9)
     }
 }

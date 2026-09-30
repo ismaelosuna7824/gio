@@ -65,6 +65,13 @@ public struct WindowOpenTiming: Equatable, Sendable {
     public var createdAt: TimeInterval
     public var registeredAt: TimeInterval
     public var retries: Int
+    /// From the created event's delivery (main thread) until the session
+    /// queue started the first registration attempt: time spent behind
+    /// whatever the queue was running (a settle pass, a motion wait). Zero
+    /// when the delivery time is unknown (focus-adoption registration).
+    public var queueWait: TimeInterval = 0
+    /// AX reads and admission classification, summed over every attempt.
+    public var classify: TimeInterval = 0
     /// The destination workspace's name, else its 1-based index.
     public var workspace: String
     public var follow: Bool
@@ -130,8 +137,9 @@ public struct WindowOpenTimeline: Sendable {
     }
 }
 
-/// PF-02: `window open id= app= createdEvent→registered ms= registered→firstWrite ms=
-/// →settled ms= total ms= workspace= follow= retries= waitedForMotion ms=`.
+/// PF-02: `window open id= app= createdEvent→registered ms= queueWait ms= classify ms=
+/// registered→firstWrite ms= →settled ms= total ms= workspace= follow= retries= waitedForMotion ms=`.
+/// `createdEvent→registered` = `queueWait` + `classify` + retry delays + registration bookkeeping.
 public func windowOpenTimelineLine(_ timing: WindowOpenTiming, settledAt: TimeInterval) -> String {
     func ms(_ seconds: TimeInterval) -> Int {
         Int((max(0, seconds) * 1000).rounded())
@@ -139,6 +147,7 @@ public func windowOpenTimelineLine(_ timing: WindowOpenTiming, settledAt: TimeIn
     let firstWrite = timing.firstWriteAt ?? settledAt
     return "window open id=\(timing.id.pid):\(timing.id.elementID) app=\(timing.app)"
         + " createdEvent→registered ms=\(ms(timing.registeredAt - timing.createdAt))"
+        + " queueWait ms=\(ms(timing.queueWait)) classify ms=\(ms(timing.classify))"
         + " registered→firstWrite ms=\(ms(firstWrite - timing.registeredAt))"
         + " →settled ms=\(ms(settledAt - firstWrite))"
         + " total ms=\(ms(settledAt - timing.createdAt))"

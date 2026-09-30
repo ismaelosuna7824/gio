@@ -504,7 +504,7 @@ final class SessionHost: @unchecked Sendable {
                 knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
                 focusedWindowElement: { focusedWindowElement(pid: $0) },
                 frame: { [unowned self] in try? actuator?.frame(of: $0) },
-                registerAppeared: { [unowned self] in discovery.registerAppeared($0, pid: $1, attempt: 0) },
+                registerAppeared: { [unowned self] in discovery.registerAppeared($0, pid: $1) },
                 pendingScroll: { [unowned self] in pendingScroll() },
                 isVisibleInViewport: { [unowned self] in isVisibleInViewport($0) },
                 topWindowOwnerPID: { topWindowOwnerPID(atCocoa: $0) },

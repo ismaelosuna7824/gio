@@ -82,12 +82,16 @@ final class WindowOpenLatencyTests: XCTestCase {
 
     func testTimelineLineCarriesEveryStageInMilliseconds() {
         var timeline = WindowOpenTimeline()
-        timeline.registered(timing(a))
+        var split = timing(a)
+        split.queueWait = 0.012
+        split.classify = 0.020
+        timeline.registered(split)
         timeline.wrote(at: 1.052, waitedForMotion: 0.003)
         let lines = timeline.settled(at: 1.400)
         XCTAssertEqual(lines, [
-            "window open id=7:1 app=Firefox createdEvent→registered ms=40 registered→firstWrite ms=12"
-                + " →settled ms=348 total ms=400 workspace=Web follow=true retries=1 waitedForMotion ms=3",
+            "window open id=7:1 app=Firefox createdEvent→registered ms=40 queueWait ms=12 classify ms=20"
+                + " registered→firstWrite ms=12 →settled ms=348 total ms=400 workspace=Web follow=true retries=1"
+                + " waitedForMotion ms=3",
         ])
         XCTAssertTrue(timeline.settled(at: 2).isEmpty, "one line per window")
     }

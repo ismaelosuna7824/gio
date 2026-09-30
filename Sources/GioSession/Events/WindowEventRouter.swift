@@ -129,8 +129,11 @@ public final class WindowEventRouter: @unchecked Sendable {
             guard let self else {
                 return
             }
+            // PF-02: stamped at delivery, so the open line can tell the
+            // wait for the queue apart from the registration work.
+            let deliveredAt = self.context.now()
             self.scheduler.async {
-                self.handle(event)
+                self.handle(event, deliveredAt: deliveredAt)
             }
         }
         syncObservers()
@@ -170,7 +173,8 @@ public final class WindowEventRouter: @unchecked Sendable {
 
     // MARK: Events
 
-    public func handle(_ event: SystemWindowEvent) {
+    /// `deliveredAt`: when the event reached the main thread (nil: unknown).
+    public func handle(_ event: SystemWindowEvent, deliveredAt: TimeInterval? = nil) {
         switch event.kind {
         case .appLaunched:
             attachLaunchedApp(event.pid, attempt: 0)
@@ -194,11 +198,13 @@ public final class WindowEventRouter: @unchecked Sendable {
             // Another app's windows may now be in front of dimmed ones.
             context.updateDim()
         case .window(let kind):
-            handleWindowEvent(kind, pid: event.pid, element: event.element)
+            handleWindowEvent(kind, pid: event.pid, element: event.element, deliveredAt: deliveredAt)
         }
     }
 
-    private func handleWindowEvent(_ kind: WindowEventKind, pid: pid_t, element: AXUIElement?) {
+    private func handleWindowEvent(
+        _ kind: WindowEventKind, pid: pid_t, element: AXUIElement?, deliveredAt: TimeInterval?
+    ) {
         // Our own animation writes: dropped before the handle lookup.
         if dropsAsMotionEcho(kind, pid: pid, animating: context.animatingPids()) {
             return
@@ -212,7 +218,7 @@ public final class WindowEventRouter: @unchecked Sendable {
         switch windowEventAction(for: kind, isKnownWindow: known != nil) {
         case .register:
             if let element {
-                discovery.registerAppeared(element, pid: pid, attempt: 0)
+                discovery.registerAppeared(element, pid: pid, deliveredAt: deliveredAt)
             }
         case .remove:
             // Exactly this window: no rescan, no debounce.
