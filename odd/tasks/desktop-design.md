@@ -44,12 +44,20 @@ Visual/UX redesign of GioUI + menu bar + launcher presentation; no behavior chan
 - Conventional Commits, NO Co-Authored-By; push after verified batches; no PR.
 
 ## Tasks
-- [ ] DD-01 — Design system: tokens (spacing, radii, typography, semantic colors), components
+- [x] DD-01 (`f32b592`) — Design system: tokens (spacing, radii, typography, semantic colors), components
   (SettingsTile/icon tile, StatusBadge, Keycap, SectionCard, PreviewCanvas), snapshot renderer.
-- [ ] DD-02 — Shell + sidebar + Overview dashboard (live workspace miniature).
+- [x] DD-02 (`768af38`) — Shell + sidebar + Overview dashboard (live workspace miniature).
 - [ ] DD-03 — Settings sections redesign (Layout, Animations, Focus ring, Rules) with previews.
 - [ ] DD-04 — Shortcuts, Logs, Diagnostics redesign.
 - [ ] DD-05 — Onboarding (permissions), menu bar status item, launcher panel.
+
+Evidence DD-01/02 (route: delegated writer, opus): tokens + components (SectionIcon, StatusBadge,
+Keycap, SectionCard, MetricTile, PreviewCanvas), accent contrast; unified-toolbar shell, sidebar
+groups with icon tiles, Overview dashboard (metric tiles, live strip miniature from session
+layout, status card, workspace pills, windows by workspace). RED compile -> GREEN; bundles
+45/7/19/39/1088 all 0 failures (parent re-ran); signed build OK. Parent reviewed light/dark PNGs:
+polished; follow-up: dark-mode active workspace pill (white text on light accent) low contrast.
+ImageRenderer can't render sidebar material/ScrollView (stand-ins). LIVE PENDING.
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.
@@ -64,3 +72,4 @@ DD-01..DD-05 delegated writers, sequential, after the in-flight native-zoom fix 
 
 ## Progress
 - 2026-09-30: document created. Waiting for native zoom fix writer; then DD-01 + DD-02.
+- 2026-09-30: DD-01 + DD-02 done, pushed. Next: DD-03 (after focus-indicator decision).
