@@ -93,6 +93,12 @@ build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TAS
   focus intent and to maximize/presets via new `growsFocusedWindow` sizing target. `anim done ...
   grewAtStart=N`. Bundles 25/7/19/33/1000 all 0 failures (parent re-ran); signed build OK. LIVE
   PENDING. Gap: same-app z-order during flight.
+- [x] PA-08 (`f0d03e3`) — Diagnostic: user reports first maximize of a window still "waits then
+  expands", second is fluid, although `grewAtStart=1` and size writes are fast. Hypothesis: app
+  repaints late the first time it reaches a new size. Probe: per grown window, CGWindowList
+  (.optionIncludingWindow) polled per frame until bounds match (<=1.5s); log `resize latency id=
+  app= requestedSize= wsMs= first=`. Bundles 25/7/19/33/1008 all 0 failures (parent re-ran).
+  LIVE PENDING: user measurement.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
