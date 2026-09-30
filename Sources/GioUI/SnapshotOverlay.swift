@@ -103,9 +103,6 @@ final class SnapshotOverlay {
     private var fadeGeneration = 0
     var spring: SpringParameters
 
-    /// Called (main) when the springs of the latest begin/retarget finished.
-    var onFinished: (() -> Void)?
-
     var ids: Set<WindowID> { Set(layers.keys) }
 
     init(displayFrame: CGRect, spring: SpringParameters) {
@@ -141,7 +138,9 @@ final class SnapshotOverlay {
 
     /// Show the overlay: wallpaper, then one layer per item flying from its
     /// start frame to its target.
-    func begin(backdropImage: CGImage?, items: [SnapshotOverlayItem]) {
+    /// Returns the largest travel (points) of any layer, for the deadline.
+    @discardableResult
+    func begin(backdropImage: CGImage?, items: [SnapshotOverlayItem]) -> Double {
         fadeGeneration += 1
         panel.alphaValue = 1
         panel.setFrame(displayFrame, display: false)
@@ -153,14 +152,16 @@ final class SnapshotOverlay {
         CATransaction.commit()
         removeAllLayers()
         panel.orderFrontRegardless()
-        fly(targets: [:], adding: items)
+        return fly(targets: [:], adding: items, prime: true)
     }
 
     /// Retarget layers already flying (from their presentation values) and
-    /// add layers for windows that were not part of the flight, in one
-    /// transaction so completion means every spring finished.
-    func retarget(targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem]) {
-        fly(targets: targets, adding: items)
+    /// add layers for windows that were not part of the flight. Returns the
+    /// largest travel. The end of the flight is the controller's deadline,
+    /// not Core Animation completion.
+    @discardableResult
+    func retarget(targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem]) -> Double {
+        fly(targets: targets, adding: items, prime: false)
     }
 
     /// Remove the overlay, fading it out (~60 ms) or at once.
@@ -194,12 +195,18 @@ final class SnapshotOverlay {
 
     // MARK: Flight
 
-    private func fly(targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem]) {
+    /// `prime`: a fresh overlay. The layers are first attached at their start
+    /// frames and the panel is displayed and flushed to the render server, so
+    /// the first frame shows the start positions; only then the springs are
+    /// added (animations on layers that are not rendered yet complete at once,
+    /// the cause of the 6-83 ms flights).
+    private func fly(targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem], prime: Bool) -> Double {
         generation += 1
-        let token = generation
         let mapping = overlaySpring(spring)
-        var animated = 0
+        var travel = 0.0
+        var starts: [(CALayer, WindowID, LayerGeometry, LayerGeometry)] = []
         CATransaction.begin()
+        CATransaction.setDisableActions(true)
         for (id, frame) in targets.sorted(by: { $0.key < $1.key }) {
             guard let layer = layers[id], let model = models[id] else {
                 continue
@@ -209,35 +216,33 @@ final class SnapshotOverlay {
                 presentation: (layer.presentation()).map { LayerGeometry(position: $0.position, bounds: $0.bounds) },
                 model: model
             )
-            animated += animate(layer, from: start, to: next, spring: mapping)
-            models[id] = next
+            starts.append((layer, id, start, next))
         }
         for item in items {
             let layer = makeLayer(item.image)
             let start = overlayLayerGeometry(frame: item.from, in: displayFrame, flipped: root.isFlipped)
             let end = overlayLayerGeometry(frame: item.to, in: displayFrame, flipped: root.isFlipped)
             layers[item.id]?.removeFromSuperlayer()
+            layer.position = start.position
+            layer.bounds = start.bounds
             root.layer?.addSublayer(layer)
             layers[item.id] = layer
-            animated += animate(layer, from: start, to: end, spring: mapping)
-            models[item.id] = end
-        }
-        let finish: @Sendable () -> Void = { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.generation == token else {
-                    return
-                }
-                self.onFinished?()
-            }
-        }
-        if animated > 0 {
-            CATransaction.setCompletionBlock(finish)
+            starts.append((layer, item.id, start, end))
         }
         CATransaction.commit()
-        if animated == 0 {
-            // Nothing moves (targets equal the starts): finished right away.
-            DispatchQueue.main.async(execute: finish)
+        if prime {
+            panel.orderFrontRegardless()
+            root.displayIfNeeded()
+            panel.displayIfNeeded()
+            CATransaction.flush()
         }
+        CATransaction.begin()
+        for (layer, id, start, end) in starts {
+            travel = max(travel, animate(layer, from: start, to: end, spring: mapping))
+            models[id] = end
+        }
+        CATransaction.commit()
+        return travel
     }
 
     private func makeLayer(_ image: CGImage) -> CALayer {
@@ -260,40 +265,43 @@ final class SnapshotOverlay {
     /// back; a retarget replaces them under the same key. Initial velocity is
     /// not carried over on retarget: the new spring starts from rest at the
     /// presentation value.
-    @discardableResult
+    /// Returns the travel of the layer in points.
     private func animate(
         _ layer: CALayer, from start: LayerGeometry, to end: LayerGeometry, spring: OverlaySpring
-    ) -> Int {
-        var count = 0
+    ) -> Double {
         layer.position = end.position
         layer.bounds = end.bounds
         if start.position != end.position {
             layer.add(
                 springAnimation(
-                    "position", from: NSValue(point: start.position), to: NSValue(point: end.position), spring: spring
+                    "position", from: NSValue(point: start.position), to: NSValue(point: end.position),
+                    spring: spring, layer: layer
                 ),
                 forKey: "gio.position"
             )
-            count += 1
         } else {
             layer.removeAnimation(forKey: "gio.position")
         }
         if start.bounds != end.bounds {
             layer.add(
                 springAnimation(
-                    "bounds", from: NSValue(rect: start.bounds), to: NSValue(rect: end.bounds), spring: spring
+                    "bounds", from: NSValue(rect: start.bounds), to: NSValue(rect: end.bounds),
+                    spring: spring, layer: layer
                 ),
                 forKey: "gio.bounds"
             )
-            count += 1
         } else {
             layer.removeAnimation(forKey: "gio.bounds")
         }
-        return count
+        let moved = flightTravel(
+            from: CGRect(origin: CGPoint(x: start.position.x - start.bounds.width / 2, y: start.position.y - start.bounds.height / 2), size: start.bounds.size),
+            to: CGRect(origin: CGPoint(x: end.position.x - end.bounds.width / 2, y: end.position.y - end.bounds.height / 2), size: end.bounds.size)
+        )
+        return moved
     }
 
     private func springAnimation(
-        _ keyPath: String, from: NSValue, to: NSValue, spring: OverlaySpring
+        _ keyPath: String, from: NSValue, to: NSValue, spring: OverlaySpring, layer: CALayer
     ) -> CASpringAnimation {
         let animation = CASpringAnimation(keyPath: keyPath)
         animation.mass = CGFloat(spring.mass)
@@ -302,6 +310,7 @@ final class SnapshotOverlay {
         animation.fromValue = from
         animation.toValue = to
         animation.duration = min(animation.settlingDuration, SpringParameters.maxDuration)
+        animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil)
         animation.isRemovedOnCompletion = false
         animation.fillMode = .both
         return animation
@@ -337,7 +346,6 @@ public final class SnapshotOverlayController {
     /// starts without creating a window; `active` are the ones showing.
     private var overlays: [String: SnapshotOverlay] = [:]
     private var active: Set<String> = []
-    private var pending: Set<String> = []
     private var token = 0
     private var observers: [(center: NotificationCenter, object: NSObjectProtocol)] = []
     private var spring = SpringParameters.niri
@@ -350,6 +358,10 @@ public final class SnapshotOverlayController {
     /// SM-05: independent of the session queue, so a stalled queue or a lost
     /// completion callback can never leave the opaque overlay up.
     private var watchdog = FlightWatchdog()
+    /// Landing time from Gio's own spring (not Core Animation completion).
+    private var deadline = FlightDeadline()
+    private var flightStartedAt: TimeInterval = 0
+    private var flightTravel = 0.0
 
     public nonisolated init() {}
 
@@ -381,7 +393,7 @@ public final class SnapshotOverlayController {
         }
         overlays = [:]
         active = []
-        pending = []
+        deadline.abort()
     }
 
     /// Load the desktop image of every screen once (aspect-fill downsampled to
@@ -418,35 +430,44 @@ public final class SnapshotOverlayController {
         }
         self.token = token
         endAll(fadeOut: false)
-        pending = []
         armWatchdog()
+        flightTravel = 0
+        flightStartedAt = ProcessInfo.processInfo.systemUptime
+        var travel = 0.0
         for flight in flights {
             let key = WallpaperCache.key(flight.displayFrame)
             let overlay = overlays[key] ?? SnapshotOverlay(displayFrame: flight.displayFrame, spring: spring)
             overlay.spring = spring
             overlays[key] = overlay
             active.insert(key)
-            pending.insert(key)
-            overlay.onFinished = { [weak self] in self?.finished(key, token: token) }
-            overlay.begin(backdropImage: wallpapers.image(for: flight.displayFrame), items: flight.items)
+            travel = max(
+                travel, overlay.begin(backdropImage: wallpapers.image(for: flight.displayFrame), items: flight.items)
+            )
         }
+        flightTravel = travel
+        scheduleDeadline(
+            deadline.begin(now: ProcessInfo.processInfo.systemUptime, settle: flightSettleTime(spring: spring, travel: travel))
+        )
         return true
     }
 
     /// Retarget layers and add new ones for the same flight `token`.
     public func retarget(token: Int, targets: [WindowID: CGRect], adding flights: [SnapshotDisplayFlight]) {
         self.token = token
-        pending = active
         armWatchdog()
+        var travel = 0.0
         for key in active.sorted() {
             guard let overlay = overlays[key] else {
                 continue
             }
             let mine = targets.filter { overlay.ids.contains($0.key) }
             let added = flights.first { WallpaperCache.key($0.displayFrame) == key }?.items ?? []
-            overlay.onFinished = { [weak self] in self?.finished(key, token: token) }
-            overlay.retarget(targets: mine, adding: added)
+            travel = max(travel, overlay.retarget(targets: mine, adding: added))
         }
+        flightTravel = max(flightTravel, travel)
+        scheduleDeadline(
+            deadline.retarget(now: ProcessInfo.processInfo.systemUptime, settle: flightSettleTime(spring: spring, travel: travel))
+        )
     }
 
     /// Remove every overlay (fade ~60 ms, or at once).
@@ -486,23 +507,34 @@ public final class SnapshotOverlayController {
 
     private func endAll(fadeOut: Bool) {
         watchdog.disarm()
+        deadline.abort()
         for key in active {
-            overlays[key]?.onFinished = nil
             overlays[key]?.end(fadeOut: fadeOut)
         }
         active = []
-        pending = []
     }
 
-    private func finished(_ key: String, token: Int) {
-        guard token == self.token else {
+    /// One main-thread timer at the deadline; a retarget re-arms it and the
+    /// stale timer sees a superseded token and does nothing.
+    private func scheduleDeadline(_ armed: (token: Int, deadline: TimeInterval)) {
+        let flightToken = token
+        let delay = max(armed.deadline - ProcessInfo.processInfo.systemUptime, 0)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            MainActor.assumeIsolated { self?.deadlineFired(armed.token, flightToken: flightToken) }
+        }
+    }
+
+    private func deadlineFired(_ generationToken: Int, flightToken: Int) {
+        let now = ProcessInfo.processInfo.systemUptime
+        guard flightToken == token, deadline.finish(generationToken, now: now) else {
             return
         }
-        pending.remove(key)
-        if pending.isEmpty {
-            watchdog.disarm()
-            onFlightFinished?(token)
+        watchdog.disarm()
+        let elapsed = now - flightStartedAt
+        if flightTooShort(duration: elapsed, travel: flightTravel) {
+            GioLog.record(.warn, "snapshot flight too short ms=\(Int((elapsed * 1000).rounded()))")
         }
+        onFlightFinished?(flightToken)
     }
 }
 

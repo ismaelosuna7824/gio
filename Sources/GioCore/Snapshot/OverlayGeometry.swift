@@ -133,3 +133,80 @@ public struct FlightWatchdog: Equatable, Sendable {
         return now - armedAt >= limit
     }
 }
+
+// MARK: flight deadline
+
+/// The landing time of an overlay flight, owned by Gio instead of Core
+/// Animation: CA completion fires at once for layers that are not attached to
+/// a render context yet (seen live: 6-83 ms flights). The deadline is
+/// `now + settle time of the spring`; a retarget extends it (never shortens)
+/// and supersedes the previous timer token.
+public struct FlightDeadline: Equatable, Sendable {
+    public private(set) var deadline: TimeInterval?
+    private var generation = 0
+
+    public init() {}
+
+    @discardableResult
+    public mutating func begin(now: TimeInterval, settle: TimeInterval) -> (token: Int, deadline: TimeInterval) {
+        deadline = nil
+        return arm(now: now, settle: settle)
+    }
+
+    @discardableResult
+    public mutating func retarget(now: TimeInterval, settle: TimeInterval) -> (token: Int, deadline: TimeInterval) {
+        arm(now: now, settle: settle)
+    }
+
+    public mutating func abort() {
+        generation += 1
+        deadline = nil
+    }
+
+    public func isCurrent(_ token: Int) -> Bool {
+        token == generation && deadline != nil
+    }
+
+    public func isDue(_ token: Int, now: TimeInterval) -> Bool {
+        guard isCurrent(token), let deadline else {
+            return false
+        }
+        return now >= deadline
+    }
+
+    /// True once, when `token` is current and due: the flight is over.
+    public mutating func finish(_ token: Int, now: TimeInterval) -> Bool {
+        guard isDue(token, now: now) else {
+            return false
+        }
+        deadline = nil
+        return true
+    }
+
+    private mutating func arm(now: TimeInterval, settle: TimeInterval) -> (token: Int, deadline: TimeInterval) {
+        generation += 1
+        let next = max(deadline ?? 0, now + max(settle, 0))
+        deadline = next
+        return (generation, next)
+    }
+}
+
+/// Seconds a critically/under/over damped spring needs to travel `travel`
+/// points from rest, capped like the Core Animation duration.
+public func flightSettleTime(spring: SpringParameters, travel: Double) -> TimeInterval {
+    min(spring.settleTime(axes: [(displacement: travel, velocity: 0)]), SpringParameters.maxDuration)
+}
+
+/// Largest movement of any edge/size component between two frames.
+public func flightTravel(from: CGRect, to: CGRect) -> Double {
+    Double(max(
+        abs(to.minX - from.minX), abs(to.minY - from.minY),
+        abs(to.width - from.width), abs(to.height - from.height)
+    ))
+}
+
+/// Diagnostic: a flight shorter than 50 ms that moved a layer by more than
+/// 1 pt means the animation did not run (the regression this deadline fixes).
+public func flightTooShort(duration: TimeInterval, travel: Double) -> Bool {
+    duration < 0.05 && travel > 1
+}
