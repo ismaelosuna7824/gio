@@ -40,9 +40,9 @@ User (2026-09-30): "dale con el session host" — refactor before new Niri featu
 - [x] RF-04 (`7a5fbf0`) — ConfigCoordinator + IPCRouter.
 - [x] RF-05 (`18e7b4a`) — SnapshotFlightController + SnapshotCacheRefresher (OverlayPort).
 - [x] RF-06 (`938839c`) — NativeZoomController.
-- [ ] RF-07 — MotionDriver + ResizeProbeRunner (tick benchmark before/after).
-- [ ] RF-08 — FocusCoordinator (adoption, settle, intent, warp, hover).
-- [ ] RF-09 — WindowEventRouter + DiscoveryService.
+- [x] RF-07 (`5f76242`) — MotionDriver + ResizeProbeRunner (tick benchmark before/after).
+- [x] RF-08 (`9ec80c0`) — FocusCoordinator (adoption, settle, intent, warp, hover).
+- [x] RF-09 (`53f8381`) — WindowEventRouter + DiscoveryService.
 - [ ] RF-10 — ReflowPlanner (value-returning performReflow core).
 - [ ] RF-11 — ActionApplier (`apply(_:)` → ActionEffect).
 - [ ] RF-12 — GitHub Actions CI: `swift test` + unsigned `xcodebuild` on macOS runner.
@@ -61,6 +61,15 @@ unlocked capture-screen read), NativeZoomController (settle poller on scheduler 
 SessionHost 2986 -> 2426. GioSessionTests 92; all bundles 0 failures (parent re-ran); signed build
 OK. Characterization only (no behavioural RED). NOT run live.
 
+Evidence RF-07..09 (route: delegated writer, opus): MotionDriver + ResizeProbeRunner +
+DisplayParameters (lock moved with data); tick benchmark 10 windows x1000 ticks: before 0.015s
+(copy of old body), after 0.015s (~15µs/tick, no difference). FocusCoordinator (click/hover locks
+moved). WindowEventRouter (EventPort) + DiscoveryService (extra own-pid guard in registerNew;
+own-pid test per entry point). SessionHost 2426 -> 1611. GioSessionTests 164; all bundles 0
+failures (parent re-ran); signed build OK. Characterization only. Noted: resize-probe timer keeps
+firing (no-op) after shutdown as before; DiscoveryService edits session via inout closure
+(exclusive-access caution). NOT run live.
+
 ## Acceptance criteria
 - SessionHost < 800 lines; GioSession components covered by GioSessionTests; all bundles green;
   signed build OK; docs (ARCHITECTURE, AGENTS, CONTRIBUTING) updated; CI green on push.
@@ -77,3 +86,4 @@ Map: delegated Explore (done). RF-00..RF-12: delegated writers in batches (RF-00
 - 2026-09-30: map done, document created. Next: RF-00..RF-03.
 - 2026-09-30: RF-00..RF-03 done, pushed. Next: RF-04..RF-06.
 - 2026-09-30: RF-04..RF-06 done, pushed. Next: RF-07..RF-09.
+- 2026-09-30: RF-07..RF-09 done, pushed. Next: RF-10..RF-12.
