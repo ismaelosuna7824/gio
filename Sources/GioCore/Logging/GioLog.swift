@@ -41,6 +41,12 @@ public struct LogEntry: Equatable, Sendable {
     public var level: LogLevel
     public var message: String
 
+    public init(timestamp: String, level: LogLevel, message: String) {
+        self.timestamp = timestamp
+        self.level = level
+        self.message = message
+    }
+
     public func line() -> String {
         "[\(timestamp)] [\(level.name.uppercased())] \(message)"
     }

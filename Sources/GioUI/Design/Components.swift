@@ -352,22 +352,28 @@ public struct GioPage<Content: View, Accessory: View>: View {
     let subtitle: String?
     let accessory: Accessory
     let content: Content
+    let scrolls: Bool
     @Environment(\.gioStaticPage) private var isStatic
 
+    /// `scrolls: false` pins the header and lets the content fill the rest
+    /// (pages with their own scrolling list, like Logs).
     public init(
-        _ title: String, subtitle: String? = nil,
+        _ title: String, subtitle: String? = nil, scrolls: Bool = true,
         @ViewBuilder accessory: () -> Accessory,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.scrolls = scrolls
         self.accessory = accessory()
         self.content = content()
     }
 
     public var body: some View {
         Group {
-            if isStatic {
+            if !scrolls {
+                column.frame(maxHeight: .infinity, alignment: .top)
+            } else if isStatic {
                 column
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxHeight: .infinity, alignment: .top)
@@ -400,7 +406,7 @@ public struct GioPage<Content: View, Accessory: View>: View {
 }
 
 extension GioPage where Accessory == EmptyView {
-    public init(_ title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
-        self.init(title, subtitle: subtitle, accessory: { EmptyView() }, content: content)
+    public init(_ title: String, subtitle: String? = nil, scrolls: Bool = true, @ViewBuilder content: () -> Content) {
+        self.init(title, subtitle: subtitle, scrolls: scrolls, accessory: { EmptyView() }, content: content)
     }
 }

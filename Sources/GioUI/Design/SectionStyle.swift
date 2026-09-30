@@ -68,6 +68,6 @@ public func keycapGlyphs(for combo: HotkeyCombo) -> [KeycapGlyph] {
     let modifiers = order.filter(combo.modifiers.contains).map {
         KeycapGlyph(text: modifierGlyph($0), role: .modifier)
     }
-    let text = keycapSymbols[combo.key] ?? combo.key
+    let text = keycapSymbols[combo.key] ?? (combo.key.count == 1 ? combo.key.uppercased() : combo.key)
     return modifiers + [KeycapGlyph(text: text, role: text.count > 1 ? .wideKey : .key)]
 }

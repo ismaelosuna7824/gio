@@ -110,6 +110,10 @@ final class DesignSystemTests: XCTestCase {
         XCTAssertEqual(keycapGlyphs(for: combo).map(\.role), [.modifier, .modifier, .modifier, .modifier, .key])
     }
 
+    func testLetterKeysPrintUppercaseLikeTheKeyboard() {
+        XCTAssertEqual(keycapGlyphs(for: HotkeyCombo(modifiers: [.ctrl, .alt], key: "h")).last?.text, "H")
+    }
+
     func testNamedKeysAreWideAndSymbolKeysAreNot() {
         XCTAssertEqual(keycapGlyphs(for: HotkeyCombo(modifiers: [.alt], key: "Space")).last?.role, .wideKey)
         XCTAssertEqual(keycapGlyphs(for: HotkeyCombo(modifiers: [.alt], key: "Left")).last?.text, "←")
