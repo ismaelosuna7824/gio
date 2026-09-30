@@ -127,12 +127,20 @@ public struct AccentPalette {
     public let fill: Color
     /// Legible as text and strokes on the page background.
     public let ink: Color
-    /// Text on top of `fill`.
+    /// Text on top of `fill`: opaque black or white, ≥ 4.5:1 on any accent.
+    /// Use it at full opacity; de-emphasize with weight or size instead.
     public let onFill: Color
+    /// A vertical gradient of the accent for marks, and the glyph that reads
+    /// on both of its ends.
+    public let gradient: LinearGradient
+    public let onGradient: Color
 
     public init(accent: ThemeColor, colorScheme: ColorScheme) {
         fill = Color(theme: accent)
         ink = Color(theme: accentInk(accent, scheme: colorScheme == .dark ? .dark : .light))
-        onFill = foregroundOnAccent(accent) == .dark ? Color.black.opacity(0.85) : .white
+        onFill = Color(theme: accentForegroundColor(accent))
+        let stops = accentGradientStops(accent)
+        gradient = LinearGradient(colors: stops.map { Color(theme: $0) }, startPoint: .top, endPoint: .bottom)
+        onGradient = Color(theme: accentForegroundColor(onFills: stops))
     }
 }

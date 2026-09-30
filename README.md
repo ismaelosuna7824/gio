@@ -14,7 +14,7 @@ Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges 
 - **Parking of off-viewport columns.** macOS will not place a window fully off-screen, so hidden columns keep a 1 pt sliver inside the display edge.
 - **Animation.** Scroll, focus and workspace moves are animated by writing interpolated frames through Accessibility, with a configurable duration.
 - **Multi-display aware** layout state (one workspace stack and viewport per display).
-- **Desktop app.** One main window (Overview, Shortcuts, Layout, Animations, Rules, Logs, Diagnostics), a menu bar item, and an `Alt+Space` launcher panel. Closing the window keeps Gio running from the menu bar.
+- **Desktop app.** One main window (Overview, Shortcuts, Layout, Focus, Animations, Rules, Logs, Diagnostics), a menu bar item, and an `Alt+Space` launcher panel. Closing the window keeps Gio running from the menu bar.
 - **Config with live reload.** `~/.config/gio/config.toml` is a strict subset of TOML. Invalid config never breaks the window manager; it falls back to defaults and reports the problems.
 - **Command line.** A `gio` client controls the running app over a Unix socket. A separate `gio-poc` tool exercises Accessibility directly and can restore windows after a crash.
 - **Recovery.** Quitting Gio (menu, Cmd+Q, SIGTERM/SIGINT/SIGHUP) brings every parked window back on screen.

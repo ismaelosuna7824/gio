@@ -17,6 +17,7 @@ public func sectionStyle(_ section: MainSection) -> SectionStyle {
     case .overview: return SectionStyle(symbol: "square.grid.2x2.fill", tint: .blue)
     case .shortcuts: return SectionStyle(symbol: "command", tint: .gray)
     case .layout: return SectionStyle(symbol: "rectangle.split.3x1.fill", tint: .indigo)
+    case .focus: return SectionStyle(symbol: "viewfinder", tint: .purple)
     case .animations: return SectionStyle(symbol: "wand.and.stars", tint: .pink)
     case .rules: return SectionStyle(symbol: "checklist", tint: .orange)
     case .logs: return SectionStyle(symbol: "doc.text.fill", tint: .teal)
@@ -35,7 +36,7 @@ public struct SidebarGroup: Equatable, Sendable, Identifiable {
 public let sidebarGroups: [SidebarGroup] = [
     SidebarGroup(title: "General", sections: [.overview]),
     SidebarGroup(title: "Keyboard", sections: [.shortcuts]),
-    SidebarGroup(title: "Tiling", sections: [.layout, .animations, .rules]),
+    SidebarGroup(title: "Tiling", sections: [.layout, .focus, .animations, .rules]),
     SidebarGroup(title: "Advanced", sections: [.logs, .diagnostics]),
 ]
 

@@ -345,16 +345,23 @@ extension EnvironmentValues {
     }
 }
 
-/// Standard detail page: large title, optional subtitle, scrolling content.
-public struct GioPage<Content: View>: View {
+/// Standard detail page: large title, optional subtitle and trailing
+/// accessory (e.g. "Reset section"), scrolling content.
+public struct GioPage<Content: View, Accessory: View>: View {
     let title: String
     let subtitle: String?
+    let accessory: Accessory
     let content: Content
     @Environment(\.gioStaticPage) private var isStatic
 
-    public init(_ title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+    public init(
+        _ title: String, subtitle: String? = nil,
+        @ViewBuilder accessory: () -> Accessory,
+        @ViewBuilder content: () -> Content
+    ) {
         self.title = title
         self.subtitle = subtitle
+        self.accessory = accessory()
         self.content = content()
     }
 
@@ -373,11 +380,15 @@ public struct GioPage<Content: View>: View {
 
     private var column: some View {
         VStack(alignment: .leading, spacing: GioSpacing.xl) {
-            VStack(alignment: .leading, spacing: GioSpacing.xxs) {
-                Text(title).font(GioFont.pageTitle)
-                if let subtitle {
-                    Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
+            HStack(alignment: .firstTextBaseline, spacing: GioSpacing.m) {
+                VStack(alignment: .leading, spacing: GioSpacing.xxs) {
+                    Text(title).font(GioFont.pageTitle)
+                    if let subtitle {
+                        Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
+                    }
                 }
+                Spacer(minLength: 0)
+                accessory
             }
             content
         }
@@ -385,5 +396,11 @@ public struct GioPage<Content: View>: View {
         .padding(.vertical, GioSpacing.l)
         .frame(maxWidth: 860, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .top)
+    }
+}
+
+extension GioPage where Accessory == EmptyView {
+    public init(_ title: String, subtitle: String? = nil, @ViewBuilder content: () -> Content) {
+        self.init(title, subtitle: subtitle, accessory: { EmptyView() }, content: content)
     }
 }

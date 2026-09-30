@@ -361,15 +361,15 @@ struct WorkspacePill: View {
                 .monospacedDigit()
                 .foregroundStyle(entry.isActive ? palette.fill : GioColor.secondaryText)
                 .frame(width: 20, height: 20)
-                .background(Circle().fill(entry.isActive ? palette.onFill.opacity(0.9) : GioColor.card))
+                .background(Circle().fill(entry.isActive ? palette.onFill : GioColor.card))
             Text(entry.windows == 0 ? "Empty" : (entry.windows == 1 ? "1 window" : "\(entry.windows) windows"))
-                .font(GioFont.callout)
+                .font(entry.isActive ? GioFont.callout.weight(.medium) : GioFont.callout)
                 .foregroundStyle(entry.isActive ? palette.onFill : (entry.windows == 0 ? GioColor.tertiaryText : GioColor.primaryText))
             Spacer(minLength: 0)
             if entry.isActive {
                 Text("Active")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(palette.onFill.opacity(0.8))
+                    .foregroundStyle(palette.onFill)
             }
         }
         .padding(.leading, 4)

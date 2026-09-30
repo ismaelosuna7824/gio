@@ -62,3 +62,33 @@ public func accentInk(_ accent: ThemeColor, scheme: AppearanceScheme) -> ThemeCo
     }
     return ink
 }
+
+private let pureBlack = ThemeColor(red: 0, green: 0, blue: 0)
+private let pureWhite = ThemeColor(red: 1, green: 1, blue: 1)
+
+/// Opaque black or white text for an accent fill. The better of the two
+/// always reaches at least 4.58:1 (WCAG AA) for any fill, so it must be used
+/// at full opacity: fading it toward the fill gives that margin away.
+public func accentForegroundColor(_ accent: ThemeColor) -> ThemeColor {
+    foregroundOnAccent(accent) == .dark ? pureBlack : pureWhite
+}
+
+/// Black or white, whichever keeps the higher worst-case contrast across
+/// every fill (a glyph drawn over a gradient).
+public func accentForegroundColor(onFills fills: [ThemeColor]) -> ThemeColor {
+    func worst(_ ink: ThemeColor) -> Double {
+        fills.map { contrastRatio($0, ink) }.min() ?? 21
+    }
+    return worst(pureBlack) >= worst(pureWhite) ? pureBlack : pureWhite
+}
+
+/// Top and bottom of an accent-filled mark: the accent, then the accent a
+/// little deeper, so the hue stays the user's and the glyph color can be
+/// computed for both ends.
+public func accentGradientStops(_ accent: ThemeColor) -> [ThemeColor] {
+    let depth = 0.22
+    return [
+        accent,
+        ThemeColor(red: accent.red * (1 - depth), green: accent.green * (1 - depth), blue: accent.blue * (1 - depth)),
+    ]
+}

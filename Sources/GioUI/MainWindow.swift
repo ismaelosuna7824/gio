@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Sidebar sections of the unified Gio window.
 public enum MainSection: String, CaseIterable, Identifiable, Sendable {
-    case overview, shortcuts, layout, animations, rules, logs, diagnostics
+    case overview, shortcuts, layout, focus, animations, rules, logs, diagnostics
 
     public var id: String { rawValue }
 
@@ -14,6 +14,7 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
         case .overview: return "Overview"
         case .shortcuts: return "Shortcuts"
         case .layout: return "Layout"
+        case .focus: return "Focus"
         case .animations: return "Animations"
         case .rules: return "Rules"
         case .logs: return "Logs"
@@ -77,6 +78,7 @@ public struct GioMainView: View {
         case .overview: OverviewView(model: model)
         case .shortcuts: ShortcutsView(model: model)
         case .layout: LayoutSettingsView(model: model)
+        case .focus: FocusSettingsView(model: model)
         case .animations: AnimationsSettingsView(model: model)
         case .rules: RulesSettingsView(model: model)
         case .logs: LogsView(model: model)
@@ -113,18 +115,17 @@ struct SidebarHeader: View {
     let status: SessionStatus
     let version: String
     @Environment(\.gioAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
+        let palette = AccentPalette(accent: accent, colorScheme: colorScheme)
         HStack(spacing: GioSpacing.s - 2) {
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(LinearGradient(
-                    colors: [Color(theme: accent), Color(nsColor: .systemIndigo)],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ))
+                .fill(palette.gradient)
                 .overlay(
                     Image(systemName: "rectangle.split.3x1.fill")
                         .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(palette.onGradient)
                 )
                 .frame(width: 34, height: 34)
                 .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)

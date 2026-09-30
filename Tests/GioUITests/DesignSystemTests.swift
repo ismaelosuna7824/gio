@@ -41,6 +41,37 @@ final class DesignSystemTests: XCTestCase {
         }
     }
 
+    /// Any accent, light or dark: text on an accent fill reaches WCAG AA.
+    func testTextOnAnyAccentFillReachesFourAndAHalfToOne() {
+        let steps = stride(from: 0.0, through: 1.0, by: 0.125).map { $0 }
+        for r in steps {
+            for g in steps {
+                for b in steps {
+                    let accent = ThemeColor(red: r, green: g, blue: b)
+                    let text = accentForegroundColor(accent)
+                    XCTAssertGreaterThanOrEqual(contrastRatio(accent, text), 4.5, "\(accent.lowercaseHex)")
+                }
+            }
+        }
+        XCTAssertEqual(accentForegroundColor(FocusRingSectionConfig.defaultColor), ThemeColor(red: 0, green: 0, blue: 0))
+        XCTAssertEqual(accentForegroundColor(ThemeColor(hex: "#0a3d91")!), ThemeColor(red: 1, green: 1, blue: 1))
+    }
+
+    /// The sidebar mark is a gradient: its glyph must read (3:1, non-text)
+    /// on both ends.
+    func testGlyphOnAnAccentGradientReadsOnBothStops() {
+        for hex in ["#7fc8ff", "#ffd60a", "#0a3d91", "#ffffff", "#000000", "#30d158", "#ff453a", "#8e8e93"] {
+            let accent = ThemeColor(hex: hex)!
+            let stops = accentGradientStops(accent)
+            XCTAssertEqual(stops.count, 2)
+            XCTAssertEqual(stops.first, accent)
+            let glyph = accentForegroundColor(onFills: stops)
+            for stop in stops {
+                XCTAssertGreaterThanOrEqual(contrastRatio(stop, glyph), 3, "\(hex)")
+            }
+        }
+    }
+
     func testAccentInkKeepsAnAlreadyReadableAccent() {
         let deep = ThemeColor(hex: "#0a3d91")!
         XCTAssertEqual(accentInk(deep, scheme: .light), deep)
@@ -63,7 +94,12 @@ final class DesignSystemTests: XCTestCase {
         let grouped = sidebarGroups.flatMap(\.sections)
         XCTAssertEqual(grouped, MainSection.allCases)
         XCTAssertEqual(sidebarGroups.map(\.title), ["General", "Keyboard", "Tiling", "Advanced"])
-        XCTAssertEqual(sidebarGroups[2].sections, [.layout, .animations, .rules])
+        XCTAssertEqual(sidebarGroups[2].sections, [.layout, .focus, .animations, .rules])
+    }
+
+    func testFocusSectionHasItsOwnTile() {
+        XCTAssertEqual(sectionStyle(.focus), SectionStyle(symbol: "viewfinder", tint: .purple))
+        XCTAssertEqual(MainSection.focus.title, "Focus")
     }
 
     // MARK: - Keycaps

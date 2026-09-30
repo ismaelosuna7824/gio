@@ -7,7 +7,7 @@ final class MainWindowModelTests: XCTestCase {
     func testSectionsAreInSidebarOrder() {
         XCTAssertEqual(
             MainSection.allCases.map(\.title),
-            ["Overview", "Shortcuts", "Layout", "Animations", "Rules", "Logs", "Diagnostics"]
+            ["Overview", "Shortcuts", "Layout", "Focus", "Animations", "Rules", "Logs", "Diagnostics"]
         )
     }
 
