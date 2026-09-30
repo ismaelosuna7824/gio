@@ -12,6 +12,7 @@
 		A00000000000000000000051 /* SessionHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000043 /* SessionHost.swift */; };
 		A00000000000000000000059 /* GioMacOS in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000057 /* GioMacOS */; };
 		A00000000000000000000060 /* GioUI in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000058 /* GioUI */; };
+		A00000000000000000000073 /* GioSession in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000072 /* GioSession */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -34,6 +35,7 @@
 				A00000000000000000000025 /* GioCore in Frameworks */,
 				A00000000000000000000059 /* GioMacOS in Frameworks */,
 				A00000000000000000000060 /* GioUI in Frameworks */,
+				A00000000000000000000073 /* GioSession in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -106,6 +108,7 @@
 				A00000000000000000000023 /* GioCore */,
 				A00000000000000000000057 /* GioMacOS */,
 				A00000000000000000000058 /* GioUI */,
+				A00000000000000000000072 /* GioSession */,
 			);
 			productName = Gio;
 			productReference = A00000000000000000000006 /* Gio.app */;
@@ -242,6 +245,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = A00000000000000000000020 /* XCLocalSwiftPackageReference "." */;
 			productName = GioUI;
+		};
+		A00000000000000000000072 /* GioSession */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = A00000000000000000000020 /* XCLocalSwiftPackageReference "." */;
+			productName = GioSession;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
