@@ -102,6 +102,67 @@ final class LogSinkTests: XCTestCase {
         XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8), "[t] [INFO] second\n")
     }
 
+    /// Two sinks on one path stand in for Gio and its guardian (two
+    /// processes, two descriptors): every line must survive whole.
+    func testTwoWritersOnOnePathNeverSpliceOrLoseLines() throws {
+        let path = directory.appendingPathComponent("shared.log").path
+        let main = LogFileSink(path: path, maxBatch: 7, flushDelay: 60)
+        let guardian = LogFileSink(path: path, maxBatch: 1, flushDelay: 60, rotates: false)
+        let count = 400
+        DispatchQueue.concurrentPerform(iterations: 2) { writer in
+            let sink = writer == 0 ? main : guardian
+            for index in 0..<count {
+                sink.append("[2026-09-30T02:20:07Z] [INFO] writer=\(writer) line=\(index) " + String(repeating: "x", count: 60))
+            }
+            sink.flush()
+        }
+        main.flush()
+        guardian.flush()
+        let lines = try String(contentsOfFile: path, encoding: .utf8).split(separator: "\n").map(String.init)
+        XCTAssertEqual(lines.count, 2 * count)
+        for line in lines {
+            XCTAssertNotNil(LogEntry.parse(line), line)
+            XCTAssertTrue(line.hasSuffix(String(repeating: "x", count: 60)), line)
+        }
+        for writer in 0..<2 {
+            XCTAssertEqual(lines.filter { $0.contains("writer=\(writer) ") }.count, count)
+        }
+    }
+
+    /// Only the main process rotates; the guardian's sink follows the rename
+    /// to the fresh file instead of writing into the backup.
+    func testNonRotatingWriterFollowsTheRotationOfTheOther() throws {
+        let path = directory.appendingPathComponent("follow.log").path
+        let main = LogFileSink(path: path, maxBytes: 150, maxBatch: 1, flushDelay: 60)
+        let guardian = LogFileSink(path: path, maxBytes: 10, maxBatch: 1, flushDelay: 60, rotates: false)
+        let line = "[t] [INFO] " + String(repeating: "m", count: 88)
+        guardian.append("[t] [INFO] guardian-before")
+        guardian.flush()
+        main.append(line)
+        main.flush()
+        main.append(line) // over maxBytes: main renames to .1 and starts fresh
+        main.flush()
+        guardian.append("[t] [INFO] guardian-after")
+        guardian.flush()
+        let current = try String(contentsOfFile: path, encoding: .utf8)
+        let backup = try String(contentsOfFile: path + ".1", encoding: .utf8)
+        XCTAssertTrue(current.contains("guardian-after"), current)
+        XCTAssertFalse(backup.contains("guardian-after"), backup)
+        XCTAssertTrue(backup.contains("guardian-before"), backup)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".2"))
+    }
+
+    func testNonRotatingWriterNeverRenames() throws {
+        let path = directory.appendingPathComponent("norotate.log").path
+        let sink = LogFileSink(path: path, maxBytes: 10, maxBatch: 1, flushDelay: 60, rotates: false)
+        for index in 0..<3 {
+            sink.append("[t] [INFO] line \(index)")
+            sink.flush()
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: path + ".1"))
+        XCTAssertEqual(try String(contentsOfFile: path, encoding: .utf8).split(separator: "\n").count, 3)
+    }
+
     func testConfigLoggingLevel() throws {
         let (config, warnings) = try parseGioConfig("[logging]\nlevel = \"Debug\"\n").get()
         XCTAssertEqual(config.logging.level, .debug)

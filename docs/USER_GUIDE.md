@@ -113,7 +113,7 @@ An invalid config never stops the window manager.
 | --- | --- | --- | --- |
 | `level` | string | `"info"` | Minimum severity written to `~/.config/gio/gio.log`: `trace`, `debug`, `info`, `warn`, `error`. Lines below it cost nothing. Use `"debug"` while troubleshooting (per-event hotkey/focus/reconcile lines), then go back. Applies on `gio reload`. |
 
-The file is written in batches and rotates at about 1 MB to `gio.log.1` (one backup kept); `gio logs` and the Logs section read the current file only.
+The file is written in batches and rotates at about 1 MB to `gio.log.1` (one backup kept); `gio logs` and the Logs section read the current file only. Gio and its guardian helper share the file: each batch is appended as whole lines in one write, so their lines never interleave mid-line, and only Gio rotates it.
 
 ### `[focus]`
 

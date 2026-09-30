@@ -10,6 +10,9 @@ public func runGuardianProcess(parentPID: Int32) -> Int32 {
     for descriptor in 3..<256 {
         close(Int32(descriptor))
     }
+    // Gio owns rotation of the shared gio.log; the guardian only appends
+    // whole lines (O_APPEND, one write per batch) and follows a rename.
+    GioLog.rotatesLogFile = false
     let result = runGuardianLoop(
         parentPID: parentPID,
         read: {

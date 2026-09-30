@@ -105,6 +105,9 @@ public enum GioLog {
     private static let store = LogStore()
     public nonisolated(unsafe) static var logFilePath: String =
         FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/gio.log"
+    /// Gio and its guardian append to the same file; only Gio rotates it.
+    /// The guardian sets this to false before its first line.
+    public nonisolated(unsafe) static var rotatesLogFile = true
 
     private struct State {
         var minimumLevel: LogLevel = .info
@@ -182,7 +185,7 @@ public enum GioLog {
             return sink
         }
         state.sink?.close()
-        let sink = LogFileSink(path: logFilePath)
+        let sink = LogFileSink(path: logFilePath, rotates: rotatesLogFile)
         state.sink = sink
         return sink
     }
