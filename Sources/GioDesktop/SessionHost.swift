@@ -445,6 +445,12 @@ final class SessionHost: @unchecked Sendable {
                 windowsClosing: { [unowned self] in
                     motionCauses.note(.windowClose)
                     closeGhost.windowsClosing($0)
+                },
+                followArrival: { [unowned self] previous in
+                    // NW-02: the config asked to follow this arrival to its
+                    // named workspace; the following reflow focuses it.
+                    syncShownWorkspace()
+                    focus.requestIntent(if: true, previous: previous)
                 }
             ),
             scheduler: scheduler
@@ -830,7 +836,9 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// Config reload: rule-owned floats follow the new rules. Workspace
-    /// assignment is not re-applied (rules place windows at arrival only).
+    /// assignment is not re-applied (rules place windows at arrival only);
+    /// named workspaces were already re-applied when `session.config` was
+    /// assigned (`CommandSession.config` didSet, NW-02).
     private func reapplyRules() {
         for change in reevaluateRules(session.config.rules, windows: session.registry.managedWindows()) {
             switch change {

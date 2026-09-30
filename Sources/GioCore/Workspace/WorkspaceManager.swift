@@ -17,6 +17,12 @@ import Foundation
 /// - windows are never lost: removal only ever drops empty workspaces, and a
 ///   disconnected display's windows merge into a surviving stack.
 ///
+/// NW-02 named workspaces (`[[workspace]]`, `applyNamedWorkspaces`) are
+/// always present, even empty, never pruned, and come first in their
+/// display's stack in config order; dynamic workspaces follow them under the
+/// rules above (the trailing spare is always dynamic). Without named
+/// workspaces nothing here changes.
+///
 /// `current` is the focused display's active workspace. Its *index* is what
 /// hotkeys, `gio workspace N` and status use; `currentID` is the stable
 /// identity. The hosting session mirrors each display's `activeID` into
@@ -41,6 +47,11 @@ public struct WorkspaceManager: Equatable, Sendable {
     private var order: [DisplayID]
     private var nextID: UInt64
     public private(set) var focusedDisplay: DisplayID
+    /// NW-02: the `[[workspace]]` entries in config order.
+    public private(set) var namedDefinitions: [WorkspaceDefinition] = []
+    /// The display `display = "main"` (and a missing display) resolves to;
+    /// nil uses the first registered display.
+    public private(set) var mainDisplay: DisplayID?
 
     public init() {
         let first = WorkspaceID(1)
@@ -124,9 +135,14 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// new displays get a single empty workspace; a removed display's
     /// non-empty workspaces merge into the first surviving stack, above its
     /// trailing spare. An empty list changes nothing (a transient probe).
-    public mutating func syncDisplays(_ ids: [DisplayID]) {
+    /// `main` (NW-02) is the display named workspaces default to; named
+    /// workspaces are then re-placed on the displays they ask for.
+    public mutating func syncDisplays(_ ids: [DisplayID], main: DisplayID? = nil) {
         guard !ids.isEmpty else {
             return
+        }
+        if let main {
+            mainDisplay = main
         }
         var wanted: [DisplayID] = []
         for id in ids where !wanted.contains(id) {
@@ -150,7 +166,7 @@ public struct WorkspaceManager: Equatable, Sendable {
             var host = stacks[target]!
             let hostActive = host.ids[host.active]
             for id in removed.ids {
-                if workspaces[id]?.columns.isEmpty ?? true {
+                if workspaces[id]?.columns.isEmpty ?? true, workspaces[id]?.name == nil {
                     workspaces.removeValue(forKey: id)
                 } else {
                     host.ids.append(id)
@@ -164,6 +180,119 @@ public struct WorkspaceManager: Equatable, Sendable {
         }
         order = order.filter { wanted.contains($0) }
         focusedDisplay = wanted.contains(focusedDisplay) ? focusedDisplay : target
+        for display in order {
+            normalize(display)
+        }
+        arrangeNamed()
+    }
+
+    // MARK: - Named workspaces (NW-02)
+
+    /// The workspace named `name`, wherever it lives.
+    public func namedWorkspaceID(_ name: String) -> WorkspaceID? {
+        workspaces.values.first { $0.name == name }?.id
+    }
+
+    /// Make the stacks match the `[[workspace]]` list (startup and every
+    /// config reload). Matching an existing named workspace: by name first;
+    /// otherwise, when the name that held the same position disappeared from
+    /// the list, the workspace at that position is renamed (it keeps its
+    /// windows); otherwise a new empty one is created. A named workspace no
+    /// longer listed becomes dynamic in place: it keeps its windows and, if
+    /// empty and not shown, is pruned like any dynamic workspace. An
+    /// unchanged list is a no-op.
+    public mutating func applyNamedWorkspaces(_ definitions: [WorkspaceDefinition]) {
+        var unique: [WorkspaceDefinition] = []
+        for definition in definitions where !unique.contains(where: { $0.name == definition.name }) {
+            unique.append(definition)
+        }
+        guard unique != namedDefinitions else {
+            return
+        }
+        let oldNames = namedDefinitions.map(\.name)
+        let newNames = Set(unique.map(\.name))
+        var existing: [String: WorkspaceID] = [:]
+        for workspace in workspaces.values {
+            if let name = workspace.name {
+                existing[name] = workspace.id
+            }
+        }
+        var claimed = Set<WorkspaceID>()
+        var assigned: [(WorkspaceID, String)] = []
+        for (position, definition) in unique.enumerated() {
+            let id: WorkspaceID
+            if let match = existing[definition.name] {
+                id = match
+            } else if position < oldNames.count, !newNames.contains(oldNames[position]),
+                      let renamed = existing[oldNames[position]], !claimed.contains(renamed)
+            {
+                id = renamed
+            } else {
+                id = spawnWorkspace()
+            }
+            claimed.insert(id)
+            assigned.append((id, definition.name))
+        }
+        for id in existing.values where !claimed.contains(id) {
+            workspaces[id]?.name = nil
+        }
+        for (id, name) in assigned {
+            workspaces[id]?.name = name
+        }
+        namedDefinitions = unique
+        arrangeNamed()
+        // Workspaces that lost their name are pruned like any dynamic one
+        // (arrangeNamed returns early when no name is left).
+        for display in order {
+            normalize(display)
+        }
+    }
+
+    /// Display a definition lives on: its index in main-first order when
+    /// connected, else the main display.
+    private func resolveDisplay(_ assignment: WorkspaceDisplayAssignment?) -> DisplayID {
+        let main = mainDisplay.flatMap { order.contains($0) ? $0 : nil } ?? order[0]
+        guard case .index(let number)? = assignment else {
+            return main
+        }
+        let ranked = [main] + order.filter { $0 != main }
+        return number <= ranked.count ? ranked[number - 1] : main
+    }
+
+    /// Named workspaces first on their display, in config order; dynamic
+    /// ones keep their relative order after them. The active workspace of
+    /// each display is kept when it stays there, except an empty dynamic one
+    /// on a display that had no named workspace yet.
+    private mutating func arrangeNamed() {
+        let hasNamed = !namedDefinitions.isEmpty || workspaces.values.contains { $0.name != nil }
+        guard hasNamed else {
+            return
+        }
+        var namedOn: [DisplayID: [WorkspaceID]] = [:]
+        for definition in namedDefinitions {
+            if let id = namedWorkspaceID(definition.name) {
+                namedOn[resolveDisplay(definition.display), default: []].append(id)
+            }
+        }
+        for display in order {
+            let stack = stacks[display]!
+            let active = stack.ids[stack.active]
+            let dynamic = stack.ids.filter { workspaces[$0]?.name == nil }
+            var ids = (namedOn[display] ?? []) + dynamic
+            if ids.isEmpty {
+                ids = [spawnWorkspace()]
+            }
+            var position = ids.firstIndex(of: active) ?? min(stack.active, ids.count - 1)
+            // A display that gains its first named workspaces while showing
+            // an empty dynamic one (startup) opens on the first named one.
+            let hadNamed = stack.ids.contains { workspaces[$0]?.name != nil }
+            if !hadNamed, namedOn[display] != nil, workspaces[active]?.name == nil,
+               workspaces[active]?.columns.isEmpty ?? true
+            {
+                position = 0
+            }
+            stacks[display] = Stack(ids: ids, active: position)
+        }
         for display in order {
             normalize(display)
         }
@@ -225,10 +354,12 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// stack invariants (a filled spare grows a new spare; an emptied
     /// inactive workspace disappears).
     public mutating func update(_ workspace: Workspace) {
-        guard workspaces[workspace.id] != nil, let place = location(of: workspace.id) else {
+        guard let stored = workspaces[workspace.id], let place = location(of: workspace.id) else {
             return
         }
-        workspaces[workspace.id] = workspace
+        var written = workspace
+        written.name = stored.name
+        workspaces[workspace.id] = written
         normalize(place.display)
     }
 
@@ -297,7 +428,8 @@ public struct WorkspaceManager: Equatable, Sendable {
         normalize(display)
     }
 
-    /// Drop empty inactive workspaces, then make sure a spare ends the stack.
+    /// Drop empty inactive dynamic workspaces, then make sure a dynamic
+    /// spare ends the stack (named workspaces are never dropped).
     private mutating func normalize(_ display: DisplayID) {
         guard var stack = stacks[display] else {
             return
@@ -305,13 +437,13 @@ public struct WorkspaceManager: Equatable, Sendable {
         let active = stack.ids[stack.active]
         var kept: [WorkspaceID] = []
         for id in stack.ids {
-            if id == active || !(workspaces[id]?.columns.isEmpty ?? true) {
+            if id == active || !(workspaces[id]?.columns.isEmpty ?? true) || workspaces[id]?.name != nil {
                 kept.append(id)
             } else {
                 workspaces.removeValue(forKey: id)
             }
         }
-        if let last = kept.last, !(workspaces[last]?.columns.isEmpty ?? true) {
+        if let last = kept.last, !(workspaces[last]?.columns.isEmpty ?? true) || workspaces[last]?.name != nil {
             kept.append(spawnWorkspace())
         }
         stack.ids = kept

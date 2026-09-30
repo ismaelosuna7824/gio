@@ -64,6 +64,8 @@ final class EventWorld: @unchecked Sendable {
     var forgotten: [WindowID] = []
     var forgottenApps: [pid_t] = []
     var opened: [WindowID] = []
+    /// NW-02: follow requests (the focus before the switch).
+    var follows: [WindowID?] = []
     /// NA-03: (ids, still registered when reported).
     var closing: [([WindowID], Bool)] = []
     var reflows = 0
@@ -148,7 +150,8 @@ final class EventWorld: @unchecked Sendable {
             windowOpened: { self.opened.append($0) },
             windowsClosing: { ids in
                 self.closing.append((ids, ids.allSatisfy { self.session.registry.find($0) != nil }))
-            }
+            },
+            followArrival: { self.follows.append($0) }
         )
     }
 
@@ -198,12 +201,13 @@ nonisolated(unsafe) private var nextFakeElement: pid_t = 50_000
 /// A discovered window of `pid` with a fresh opaque element.
 func discovered(
     pid: pid_t, title: String = "secret title", frame: CGRect = CGRect(x: 0, y: 69, width: 800, height: 600),
-    focused: Bool = false, minimized: Bool = false, app: String = "Code", floatReason: FloatReason? = nil
+    focused: Bool = false, minimized: Bool = false, app: String = "Code", floatReason: FloatReason? = nil,
+    bundleID: String? = nil
 ) -> DiscoveredSystemWindow {
     DiscoveredSystemWindow(
         window: SystemWindow(
             index: 0, pid: pid, appName: app, title: title, frame: frame,
-            isFocused: focused, isMinimized: minimized, isFullscreen: false
+            isFocused: focused, isMinimized: minimized, isFullscreen: false, bundleID: bundleID
         ),
         element: {
             nextFakeElement += 1

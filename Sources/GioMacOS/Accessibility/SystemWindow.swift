@@ -17,6 +17,8 @@ public struct SystemWindow: Equatable, Sendable {
     public let isFocused: Bool
     public let isMinimized: Bool
     public let isFullscreen: Bool?
+    /// NW-02: the app's bundle identifier (`NSRunningApplication`), when known.
+    public let bundleID: String?
 
     public init(
         index: Int,
@@ -26,8 +28,10 @@ public struct SystemWindow: Equatable, Sendable {
         frame: CGRect,
         isFocused: Bool,
         isMinimized: Bool,
-        isFullscreen: Bool?
+        isFullscreen: Bool?,
+        bundleID: String? = nil
     ) {
+        self.bundleID = bundleID
         self.index = index
         self.pid = pid
         self.appName = appName

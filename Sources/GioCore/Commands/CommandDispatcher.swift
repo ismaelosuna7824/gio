@@ -9,7 +9,13 @@ import Foundation
 public struct CommandSession {
     public var registry: WindowRegistry
     public var manager: WorkspaceManager
-    public var config: GioConfig
+    /// NW-02: every assignment re-applies the named workspaces (a no-op
+    /// when they did not change).
+    public var config: GioConfig {
+        didSet {
+            manager.applyNamedWorkspaces(config.workspaces)
+        }
+    }
     public var permissionGranted: Bool?
     public var displayCount: Int?
     public var recentErrors: [String]
@@ -31,6 +37,7 @@ public struct CommandSession {
         self.displayCount = displayCount
         self.recentErrors = recentErrors
         self.configPath = configPath
+        self.manager.applyNamedWorkspaces(config.workspaces)
     }
 }
 
@@ -81,7 +88,8 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             }
             for entry in summary.workspaces {
                 let mark = entry.isActive && summary.isFocused ? "*" : (entry.isActive ? "+" : " ")
-                lines.append("\(mark)\(entry.index) columns=\(entry.columns) windows=\(entry.windows)")
+                let name = entry.name.map { " name=\($0)" } ?? ""
+                lines.append("\(mark)\(entry.index) columns=\(entry.columns) windows=\(entry.windows)\(name)")
             }
         }
         return lines.joined(separator: "\n")

@@ -8,6 +8,7 @@ Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#
 
 - **Strip and viewport.** Each workspace is a horizontal strip of **columns**. A column stacks one or more windows vertically. The display is a viewport onto the strip and scrolls to keep the focused column visible.
 - **Workspaces.** Niri-style dynamic vertical stack, one per display. You start with one empty workspace. Putting a window in the last (empty) workspace opens a new empty one below it, so there is always exactly one empty workspace at the bottom. An empty workspace you are not on is removed: leave it and it disappears, and the indices below it shift up. Windows are never lost when a workspace disappears (it only ever disappears when it is empty), and a display that is unplugged hands its windows to a remaining display's stack. `Alt+1` to `Alt+9` address the workspace at that position in the focused display's stack; a number past the end of the stack goes to the empty workspace at the bottom. Windows of workspaces that no display shows are hidden off the bottom corner of the display. Every switch, up or down, animates vertically through the bottom edge because macOS cannot place windows above the menu bar.
+- **Named workspaces.** Each `[[workspace]]` in the config is a named workspace. It always exists, even empty (it is never removed when you leave it), and named workspaces come first in their display's stack in config order, so `Alt+1` is the first one; dynamic workspaces follow them with the rules above (the empty one at the bottom is always dynamic). On a display that shows an empty dynamic workspace when named ones first appear (at startup), Gio opens on the first named one. Window rules with `open-on-workspace` send an app's new windows there (see [Window rules](#window-rules)). Without `[[workspace]]` nothing changes.
 - **Modes.** A window is `tiled` (in the strip), `floating` (managed but outside the strip, keeps its own frame) or `fullscreen` (Gio's layout mode filling the display under the menu bar with a small gap around it, see `fullscreen-gap`; not a native macOS fullscreen Space).
 - **Alt** means the **Option** key.
 
@@ -158,9 +159,11 @@ A named workspace (Niri's named workspaces). Each block declares one; order in t
 | `name` | yes | non-empty string, unique | Shown in the Overview, menu bar and launcher; the target of a rule's `open-on-workspace`. |
 | `icon` | no | SF Symbol name, e.g. `"globe"` | Shown next to the name by the desktop app. |
 | `color` | no | hex color `"#RGB"` or `"#RRGGBB"` | Accent for the workspace in the desktop app. |
-| `display` | no | `"main"` (default) or a display number `1`, `2`, ... | The display whose stack holds it, counting displays in the order Gio registers them (1 is the main one). A number with no such display connected falls back to the main display. |
+| `display` | no | `"main"` (default) or a display number `1`, `2`, ... | The display whose stack holds it. `1` is the main display (the one at the origin, with the menu bar in System Settings > Displays), the others follow in the order Gio registered them. A number with no such display connected falls back to the main display, and the workspace moves back when that display returns. |
 
 An empty or duplicate `name`, a bad `color` or a bad `display` is a config error. Unknown keys warn.
+
+On a config reload (or **Apply** in the app) named workspaces are matched by name, so reordering keeps each one's windows. A new name is created empty. A name that disappears turns its workspace into an ordinary dynamic one in place: its windows stay, and it is removed once empty and not shown. Renaming is recognised by position: when the name at position N disappears and a new name appears at the same position N, the workspace is renamed and keeps its windows.
 
 ### `[[window-rules]]`
 
@@ -237,7 +240,8 @@ A rule is a `[[window-rules]]` block:
 Behavior:
 
 - **First matching rule wins, entirely.** Later rules never merge, so one app has one verdict, readable top to bottom.
-- Rules apply **when a window first appears**. Workspace assignment is not re-applied after a config reload.
+- Rules apply **when a window first appears** (and to the windows found when Gio starts). Workspace assignment is not re-applied after a config reload.
+- `open-on-workspace` sends the window to that named workspace, on whichever display holds it. Following (`follow`) only happens for windows that appear while Gio runs (a new window, or the windows of an app you just launched), never for the windows Gio finds at startup or on a rescan. A minimized window never takes you anywhere. `floating` and the other rule keys still apply.
 - On reload, float rules are re-evaluated: a newly matching `floating` rule floats the window (reason `rule`), and a window whose rule no longer matches goes back to tiled. Windows floated by admission (dialog, panel, not resizable) or by the user are never promoted or relabeled.
 - A `tiled` rule does not override admission: a fixed-size window still floats.
 - An invalid rule (neither `app` nor `bundle-id`, bad `mode`, workspace outside 1 to 9, bad `follow`) is a config error and rejects the whole file.
@@ -290,12 +294,12 @@ swift run GioCLI status
 | `gio reload` | Re-read `config.toml`; prints messages if any. |
 | `gio restart` | Replies `restarting Gio session`, then Gio restores every window, releases its socket and lock, starts a fresh instance of itself (the app bundle, or the bare executable under `swift run`) and exits. The new instance waits up to about five seconds for the lock. Under `swift run` the new process is a child of the old one, so run it from a shell you keep open. |
 | `gio list-windows` | One line per managed window: pid, app, title, frame, mode, reason, minimized. |
-| `gio list-workspaces` | The workspace stack with column and window counts; the current one is marked `*` (with several displays each stack is headed `display=<id>`, other displays' active workspace is marked `+`). |
+| `gio list-workspaces` | The workspace stack with column and window counts; the current one is marked `*` (with several displays each stack is headed `display=<id>`, other displays' active workspace is marked `+`). Named workspaces end with `name=<name>`. |
 | `gio focus left\|right\|up\|down` | Move focus like `Alt+H/L/K/J`. |
 | `gio move left\|right\|up\|down` | Move the focused column (left/right) or window (up/down) like `Alt+Shift+H/L/K/J`. (The built-in usage text prints `up/down`; the parser wants `up` or `down`.) |
 | `gio workspace 1...9` | Focus the workspace at this position of the focused display's stack (past the end: the empty one at the bottom). |
 | `gio layout info` | Current workspace columns, viewport offset, focused column and column widths. |
-| `gio status` | JSON snapshot: `workspace` (index of the current workspace in its stack), `stacks` (per display: `display`, `focused`, `active`, and `workspaces` with `index`, `windows`, `columns`, `active`), `focusedWindow`, `columns`, `windows`, `modes`, `floatingWindows`, `minimizedWindows`. Used by scripts and the menu bar. |
+| `gio status` | JSON snapshot: `workspace` (index of the current workspace in its stack), `stacks` (per display: `display`, `focused`, `active`, and `workspaces` with `index`, `windows`, `columns`, `active`, plus `name`, `icon` and `color` for named workspaces), `focusedWindow`, `columns`, `windows`, `modes`, `floatingWindows`, `minimizedWindows`. Used by scripts and the menu bar. |
 | `gio setup` | Checks permission, writes the config template if none exists, reports bindings and themes. |
 | `gio doctor` | Health report: Accessibility, config, version, IPC, displays, recent errors. |
 | `gio update` | Reports that updates are not published yet. |

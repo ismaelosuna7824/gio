@@ -20,15 +20,20 @@ public struct Workspace: Equatable, Sendable {
     public var focusedColumn: Int
     public var focusedWindow: WindowID?
     public var viewportOffset: CGFloat
+    /// NW-02: set for a `[[workspace]]` (persistent, never pruned); nil for
+    /// a dynamic workspace. Owned by `WorkspaceManager`: `update` keeps it.
+    public var name: String?
 
     public init(
         id: WorkspaceID,
         columns: [Column] = [],
         focusedColumn: Int = 0,
         focusedWindow: WindowID? = nil,
-        viewportOffset: CGFloat = 0
+        viewportOffset: CGFloat = 0,
+        name: String? = nil
     ) {
         self.id = id
+        self.name = name
         self.columns = columns
         self.focusedColumn = focusedColumn
         self.focusedWindow = focusedWindow

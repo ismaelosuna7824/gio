@@ -32,6 +32,8 @@ public struct ManagedWindow: Equatable, Sendable {
     public let id: WindowID
     public let pid: pid_t
     public let application: String
+    /// NW-02: the app's bundle identifier when known (rules prefer it).
+    public let bundleID: String?
     public var title: String
     public var frame: CGRect
     public var mode: WindowMode
@@ -45,6 +47,7 @@ public struct ManagedWindow: Equatable, Sendable {
         id: WindowID,
         pid: pid_t,
         application: String,
+        bundleID: String? = nil,
         title: String,
         frame: CGRect,
         mode: WindowMode,
@@ -54,6 +57,7 @@ public struct ManagedWindow: Equatable, Sendable {
         self.id = id
         self.pid = pid
         self.application = application
+        self.bundleID = bundleID
         self.title = title
         self.frame = frame
         self.mode = mode

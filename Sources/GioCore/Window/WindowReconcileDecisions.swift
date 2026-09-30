@@ -18,7 +18,7 @@ public enum RuleReevaluation: Equatable, Sendable {
 public func reevaluateRules(_ rules: [WindowRule], windows: [ManagedWindow]) -> [RuleReevaluation] {
     var changes: [RuleReevaluation] = []
     for window in windows {
-        let wantsFloat = evaluateRules(rules, app: window.application).mode == .floating
+        let wantsFloat = evaluateRules(rules, app: window.application, bundleID: window.bundleID).mode == .floating
         switch window.mode {
         case .tiled where wantsFloat:
             changes.append(.float(window.id))

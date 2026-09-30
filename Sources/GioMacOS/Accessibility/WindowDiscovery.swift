@@ -109,7 +109,7 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
         for element in elements {
             let appName = app.localizedName ?? "unknown"
             switch classifyElement(
-                element, pid: app.processIdentifier, appName: appName,
+                element, pid: app.processIdentifier, appName: appName, bundleID: app.bundleIdentifier,
                 appElement: appElement, focused: focusedElement,
                 index: found.count + floating.count
             ) {
@@ -169,6 +169,7 @@ private func classifyElement(
     _ element: AXUIElement,
     pid: pid_t,
     appName: String,
+    bundleID: String?,
     appElement: AXUIElement,
     focused focusedElement: AXUIElement?,
     index: Int
@@ -202,7 +203,8 @@ private func classifyElement(
         frame: frame,
         isFocused: focusedElement.map { CFEqual($0, element) } ?? false,
         isMinimized: minimized,
-        isFullscreen: fullscreen
+        isFullscreen: fullscreen,
+        bundleID: bundleID
     )
     var discovered = DiscoveredSystemWindow(
         window: window, element: element, appElement: appElement
@@ -228,9 +230,10 @@ public func discoverSystemWindow(element: AXUIElement, pid: pid_t) -> Discovered
         return nil
     }
     let appElement = AXUIElementCreateApplication(pid)
-    let appName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "unknown"
+    let app = NSRunningApplication(processIdentifier: pid)
+    let appName = app?.localizedName ?? "unknown"
     switch classifyElement(
-        element, pid: pid, appName: appName, appElement: appElement,
+        element, pid: pid, appName: appName, bundleID: app?.bundleIdentifier, appElement: appElement,
         focused: axFocusedWindow(of: appElement), index: 0
     ) {
     case .tile(let discovered), .float(let discovered):

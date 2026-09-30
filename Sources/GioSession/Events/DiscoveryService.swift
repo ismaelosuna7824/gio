@@ -59,6 +59,10 @@ public final class DiscoveryService: @unchecked Sendable {
         /// NA-03: windows about to be purged, while their record, frame and
         /// cached image still exist (the optional close ghost).
         public var windowsClosing: ([WindowID]) -> Void
+        /// NW-02: an arrival switched the user to its named workspace; the
+        /// host requests the keyboard focus intent (argument: the window
+        /// focused before the switch).
+        public var followArrival: (WindowID?) -> Void
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -81,8 +85,10 @@ public final class DiscoveryService: @unchecked Sendable {
             disconnectDisplay: @escaping (DisplayID) -> Void, mainScreenFrame: @escaping () -> CGRect?,
             updateDisplayHeight: @escaping (CGFloat) -> Void, displaysChanged: @escaping () -> Void,
             windowOpened: @escaping (WindowID) -> Void = { _ in },
-            windowsClosing: @escaping ([WindowID]) -> Void = { _ in }
+            windowsClosing: @escaping ([WindowID]) -> Void = { _ in },
+            followArrival: @escaping (WindowID?) -> Void = { _ in }
         ) {
+            self.followArrival = followArrival
             self.ownPID = ownPID
             self.registry = registry
             self.manager = manager
@@ -168,7 +174,9 @@ public final class DiscoveryService: @unchecked Sendable {
                 ))
                 continue
             }
-            if let id = registerNew(candidate) {
+            // NW-02: a launched app's windows may take the user to their
+            // workspace; a full scan (startup, resync) only places them.
+            if let id = registerNew(candidate, mayFollow: onlyPID != nil) {
                 liveIDs.insert(id)
             }
         }
@@ -237,7 +245,7 @@ public final class DiscoveryService: @unchecked Sendable {
             return
         }
         if let candidate = context.discoverOne(element, pid) {
-            registerNew(candidate)
+            registerNew(candidate, mayFollow: true)
             context.reflowAll()
         } else if let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt) {
             scheduler.asyncAfter(delay) { [weak self] in
@@ -249,9 +257,11 @@ public final class DiscoveryService: @unchecked Sendable {
     /// Register a genuinely new window: fresh ID, retained AX handles,
     /// rules and admission decide mode and workspace, a new column on the
     /// target workspace, and a per-window observer subscription. Nil (and
-    /// nothing registered) for Gio's own pid.
+    /// nothing registered) for Gio's own pid. NW-02: an `open-on-workspace`
+    /// rule sends it to that named workspace; when `mayFollow` (a live
+    /// arrival) and the rule's follow policy agrees, the user goes there too.
     @discardableResult
-    func registerNew(_ candidate: DiscoveredSystemWindow) -> WindowID? {
+    func registerNew(_ candidate: DiscoveredSystemWindow, mayFollow: Bool = false) -> WindowID? {
         // Discovery already filters Gio's own pid; never trust that alone.
         guard candidate.window.pid != context.ownPID else {
             return nil
@@ -262,12 +272,13 @@ public final class DiscoveryService: @unchecked Sendable {
         var window = ManagedWindow(
             id: id, pid: candidate.window.pid,
             application: candidate.window.appName,
+            bundleID: candidate.window.bundleID,
             title: candidate.window.title ?? "",
             frame: AXVerticalFlip(displayHeight: context.displayHeight()).toCocoa(candidate.window.frame),
             mode: .tiled,
             isMinimized: candidate.window.isMinimized
         )
-        let outcome = evaluateRules(context.rules(), app: window.application)
+        let outcome = evaluateRules(context.rules(), app: window.application, bundleID: window.bundleID)
         window.mode = outcome.mode ?? .tiled
         if outcome.mode == .floating {
             window.floatReason = .rule
@@ -280,19 +291,22 @@ public final class DiscoveryService: @unchecked Sendable {
         context.resetWindowState(id)
         try? context.registry().register(window)
         let minimized = window.isMinimized
+        let follows = mayFollow && !minimized && outcome.openOnWorkspace != nil
+            && shouldFollowArrival(outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID())
+        var previousFocus: WindowID?
+        var followed = false
         context.updateManager { manager in
-            if let wanted = outcome.workspace,
-               let destID = manager.ruleTarget(wanted),
-               destID != manager.currentID
-            {
-                var dest = manager.workspace(id: destID)!
-                Self.appendColumn(id, to: &dest, focus: !minimized)
-                manager.update(dest)
-            } else {
-                var current = manager.currentWorkspace()
-                Self.appendColumn(id, to: &current, focus: !minimized)
-                manager.update(current)
+            let destID = manager.arrivalDestination(outcome)
+            var dest = manager.workspace(id: destID)!
+            Self.appendColumn(id, to: &dest, focus: !minimized)
+            manager.update(dest)
+            if follows, manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID {
+                previousFocus = manager.currentWorkspace().focusedWindow
+                followed = manager.focus(destID)
             }
+        }
+        if followed {
+            context.followArrival(previousFocus)
         }
         context.watchWindow(candidate.element, candidate.window.pid)
         if !minimized {
@@ -364,7 +378,9 @@ public final class DiscoveryService: @unchecked Sendable {
     public func syncDisplays() {
         let snapshot = context.displaySnapshots()
         let seen = Set(snapshot.map(\.id))
-        context.updateManager { $0.syncDisplays(snapshot.map(\.id)) }
+        // NW-02: the main display sits at the Cocoa origin.
+        let main = snapshot.first { $0.frame.origin == .zero }?.id
+        context.updateManager { $0.syncDisplays(snapshot.map(\.id), main: main) }
         for display in snapshot {
             let manager = context.manager()
             context.connectDisplay(display, manager.activeID(on: display.id) ?? manager.currentID)

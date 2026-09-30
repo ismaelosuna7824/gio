@@ -39,10 +39,21 @@ public func queryStatus(session: CommandSession) -> String {
             "focused": summary.isFocused,
             "active": summary.activeIndex,
             "workspaces": summary.workspaces.map { entry -> [String: Any] in
-                [
+                var fields: [String: Any] = [
                     "index": entry.index, "windows": entry.windows,
                     "columns": entry.columns, "active": entry.isActive,
                 ]
+                // NW-02: only named workspaces carry `name` (and icon/color).
+                if let name = entry.name {
+                    fields["name"] = name
+                }
+                if let icon = entry.icon {
+                    fields["icon"] = icon
+                }
+                if let color = entry.color {
+                    fields["color"] = color
+                }
+                return fields
             },
         ]
     }

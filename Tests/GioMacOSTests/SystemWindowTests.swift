@@ -89,4 +89,18 @@ final class DiscoveryScopeTests: XCTestCase {
         XCTAssertTrue(isManageableProcess(pid: 7, ownPID: 42, onlyPID: 7))
         XCTAssertFalse(isManageableProcess(pid: 7, ownPID: 42, onlyPID: 8))
     }
+
+    func testBundleIDIsCarriedAndOptional() {
+        let plain = SystemWindow(
+            index: 0, pid: 1, appName: "A", title: nil, frame: .zero,
+            isFocused: false, isMinimized: false, isFullscreen: nil
+        )
+        XCTAssertNil(plain.bundleID)
+        let tagged = SystemWindow(
+            index: 0, pid: 1, appName: "A", title: nil, frame: .zero,
+            isFocused: false, isMinimized: false, isFullscreen: nil, bundleID: "com.a"
+        )
+        XCTAssertEqual(tagged.bundleID, "com.a")
+        XCTAssertFalse(tagged.describe().contains("com.a"), "describe stays as it was")
+    }
 }
