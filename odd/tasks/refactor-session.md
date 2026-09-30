@@ -43,9 +43,9 @@ User (2026-09-30): "dale con el session host" — refactor before new Niri featu
 - [x] RF-07 (`5f76242`) — MotionDriver + ResizeProbeRunner (tick benchmark before/after).
 - [x] RF-08 (`9ec80c0`) — FocusCoordinator (adoption, settle, intent, warp, hover).
 - [x] RF-09 (`53f8381`) — WindowEventRouter + DiscoveryService.
-- [ ] RF-10 — ReflowPlanner (value-returning performReflow core).
-- [ ] RF-11 — ActionApplier (`apply(_:)` → ActionEffect).
-- [ ] RF-12 — GitHub Actions CI: `swift test` + unsigned `xcodebuild` on macOS runner.
+- [x] RF-10 (`6f40c9a`) — ReflowPlanner (value-returning performReflow core).
+- [x] RF-11 (`2122a63`) — ActionApplier (`apply(_:)` → ActionEffect).
+- [x] RF-12 (`089fb61`) — GitHub Actions CI: `swift test` + unsigned `xcodebuild` on macOS runner.
 
 Evidence RF-00..03 (route: delegated writer, opus): GioSession target + product linked (4 pbxproj
 entries, plutil OK); SystemProbe/LiveSystemProbe, SessionScheduler (QueueScheduler/ManualScheduler),
@@ -70,6 +70,15 @@ failures (parent re-ran); signed build OK. Characterization only. Noted: resize-
 firing (no-op) after shutdown as before; DiscoveryService edits session via inout closure
 (exclusive-access caution). NOT run live.
 
+Evidence RF-10..12 (route: delegated writer, opus): ReflowPlanner (plan value; equivalence harness
+runs a verbatim copy of the old planning code vs planner on 14 scenarios, 5/14 fail when planner is
+deliberately broken); ActionApplier -> ActionEffect (exhaustive action list; found+avoided an
+exclusive-access crash by copying manager); CI `.github/workflows/ci.yml` (macos-15, swift test
+--parallel + unsigned xcodebuild), README badge. SessionHost 1611 -> 1393 (target <800 NOT met:
+wiring ~365 + lifecycle/IPC/tap/display ~260 + reflow execution ~180; further reduction needs
+moving reflow execution/session state into GioSession). GioSessionTests 192; all bundles 0 failures
+(parent re-ran); signed + unsigned builds OK. CI not yet run on GitHub. NOT run live.
+
 ## Acceptance criteria
 - SessionHost < 800 lines; GioSession components covered by GioSessionTests; all bundles green;
   signed build OK; docs (ARCHITECTURE, AGENTS, CONTRIBUTING) updated; CI green on push.
@@ -87,3 +96,4 @@ Map: delegated Explore (done). RF-00..RF-12: delegated writers in batches (RF-00
 - 2026-09-30: RF-00..RF-03 done, pushed. Next: RF-04..RF-06.
 - 2026-09-30: RF-04..RF-06 done, pushed. Next: RF-07..RF-09.
 - 2026-09-30: RF-07..RF-09 done, pushed. Next: RF-10..RF-12.
+- 2026-09-30: RF-10..RF-12 done, pushed (first CI run pending). SessionHost 3260 -> 1393.
