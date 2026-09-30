@@ -11,3 +11,6 @@ DerivedData/
 
 # macOS
 .DS_Store
+
+# Local signing override (see Config/Signing.local.xcconfig.example)
+Config/Signing.local.xcconfig

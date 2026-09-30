@@ -92,13 +92,14 @@ Do not lower the bar by testing through the live desktop. If something can only 
 
 ## Signed build
 
-Compile the real app the way Xcode does. Use your own team ID; the feature documents use the original author's (`2CAK428VHF`), which will not sign for you:
+Compile the real app the way Xcode does. Signing comes from `Config/Signing.xcconfig`, plus your git-ignored `Config/Signing.local.xcconfig` when it exists (see the README). No `DEVELOPMENT_TEAM` argument is needed; without the local file the build is ad-hoc signed:
 
 ```sh
 xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
-  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' \
-  DEVELOPMENT_TEAM=<YOUR_TEAM_ID> build
+  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' build
 ```
+
+A command-line `DEVELOPMENT_TEAM=<TEAM_ID>` argument still overrides the xcconfig files.
 
 A green signed build confirms the `Gio` target still compiles and links `GioCore`, `GioMacOS` and `GioUI`. It says nothing about live behavior.
 

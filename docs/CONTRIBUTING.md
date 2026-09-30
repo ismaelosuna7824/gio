@@ -109,7 +109,8 @@ A *user-configurable* per-app rule is different: extend `WindowRule` / `evaluate
 
 - [ ] Failing test written first; RED and GREEN observed.
 - [ ] `swift test` passes and **every** bundle line shows 0 failures.
-- [ ] Signed `xcodebuild` passes if adapters, UI or the app changed (your own `DEVELOPMENT_TEAM`).
+- [ ] Signed `xcodebuild` passes if adapters, UI or the app changed (personal signing goes in the git-ignored `Config/Signing.local.xcconfig`).
+- [ ] No signing changes are committed: never edit `project.pbxproj` or `Config/Signing.xcconfig` for your team; use `Config/Signing.local.xcconfig`.
 - [ ] `git diff --check` is clean.
 - [ ] Core still imports nothing from macOS UI or AX; only `WindowReconciler` writes frames; Gio's own pid is not managed; logs carry no window titles.
 - [ ] Docs updated (template comment, USER_GUIDE, feature document with task ID, commit hash and evidence).

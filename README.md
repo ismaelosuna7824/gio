@@ -35,18 +35,19 @@ See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 
 Live Accessibility validation must use the **signed `Gio.app`**. macOS ties the Accessibility grant to the app's code-signing identity, and an unsigned or re-signed executable loses the grant on every rebuild.
 
-1. Open `Gio.xcworkspace` (or `Gio.xcodeproj`) in Xcode.
+1. Clone the repository and run `open Gio.xcworkspace`. Open the workspace, not the folder: opening the folder shows a Swift package and hides the Xcode project.
 2. Select the shared **Gio** scheme.
-3. In the **Gio** target > Signing & Capabilities, choose **your own development team**. The checked-in project references the original author's team ID (`DEVELOPMENT_TEAM` in `Gio.xcodeproj/project.pbxproj`); change it locally and do not commit that change. Keep the same team and bundle identifier (`dev.gio.windowmanager`) across builds so the Accessibility grant survives.
+3. Optional but recommended: sign with your own team. Copy `Config/Signing.local.xcconfig.example` to `Config/Signing.local.xcconfig` (git-ignored) and set your `DEVELOPMENT_TEAM` and a unique `PRODUCT_BUNDLE_IDENTIFIER`. Without it the app builds with ad-hoc "Sign to Run Locally" signing, and macOS may ask you to re-grant Accessibility after every build. A stable team and bundle identifier keep the grant across rebuilds. Never edit `project.pbxproj` for signing.
 4. Build and run. Grant Accessibility when prompted (or use **Overview > Request Access** in the app).
 
-Command-line build of the signed app (replace the team ID with yours):
+Command-line build of the signed app (uses `Config/Signing.local.xcconfig` when present):
 
 ```sh
 xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
-  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' \
-  DEVELOPMENT_TEAM=<YOUR_TEAM_ID> build
+  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' build
 ```
+
+A command-line `DEVELOPMENT_TEAM=<YOUR_TEAM_ID>` argument still overrides the xcconfig files.
 
 Swift Package Manager (libraries, tests and the helper executables):
 

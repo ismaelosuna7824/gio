@@ -26,10 +26,9 @@ swift test                  # all bundles (see pitfall: one "Executed" line per 
 swift test --filter GioCoreTests.WriteLaneTests     # one class
 git diff --check            # whitespace check
 
-# Signed app build (use your own team ID):
+# Signed app build (signing comes from Config/Signing.xcconfig + optional Config/Signing.local.xcconfig):
 xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
-  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' \
-  DEVELOPMENT_TEAM=<YOUR_TEAM_ID> build
+  -derivedDataPath .build/GioAutoTeam -destination 'platform=macOS,arch=arm64' build
 ```
 
 ## Hard rules (invariants)
@@ -59,7 +58,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **Never run `gio-poc tile` against a live desktop** while Gio runs (or at all on a desktop you care about): it rewrites window frames and fights the session. Recovery: `swift run gio-poc restore`.
 - **Never write the user's real config or files in tests.** `applyConfigEdits(_:toFileAt:)` defaults to `~/.config/gio/config.toml`, `loadGioConfig(at:)` and `GioLog.logFilePath` read the real paths by default, and `dispatch(.reload, ...)` re-reads the real config. Pass temp paths (see `ConfigPatcherTests`, `GioLogTests`, `CommandDispatcherTests`). Socket tests must use temp sockets.
 - **The Xcode `Gio` target lists the `GioDesktop` files explicitly** in `Gio.xcodeproj/project.pbxproj` (`main.swift`, `SessionHost.swift`). A new file in `Sources/GioDesktop` will not be compiled by Xcode unless the pbxproj is edited. Put new UI and logic in `Sources/GioUI` or `Sources/GioCore`, which the app links as package products.
-- **Do not validate Accessibility behavior with `swift run GioDesktop`/`GioApp`.** They are not the signed app; the Accessibility grant is tied to code-signing identity. Use the Xcode `Gio` scheme. The checked-in `DEVELOPMENT_TEAM` is the original author's; do not commit a change to it.
+- **Do not validate Accessibility behavior with `swift run GioDesktop`/`GioApp`.** They are not the signed app; the Accessibility grant is tied to code-signing identity. Use the Xcode `Gio` scheme. Signing lives in `Config/*.xcconfig` (`Signing.xcconfig` tracked defaults, `Signing.local.xcconfig` git-ignored personal override). Never edit `project.pbxproj` for signing and never commit signing changes.
 - **The app re-executes itself as a guardian** (`Gio --guardian <pid>`, HD-07). Detect the flag before any `NSApplication` setup; the guardian must never take the lock, serve IPC or show UI. Protocol and decision logic: `GioCore/Commands/Guardian.swift`.
 - **`SessionHost` and the views have no unit tests.** Extract the decision into Core so it can be tested.
 - **Exhaustive switches are guardrails:** adding a `HotkeyAction` case breaks `actionInfo` (ShortcutCatalog) and `SessionHost.apply`; adding a `CLICommand` case breaks `dispatch` and the launcher's `describeAction`; adding a `MainSection` case breaks `title`, `symbol` and `detail(for:)`. Follow the recipes in `docs/CONTRIBUTING.md`.

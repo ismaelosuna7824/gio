@@ -1,0 +1,12 @@
+// Copy this file to Config/Signing.local.xcconfig (git-ignored) and adjust the values.
+//
+// Why: macOS ties the Accessibility / Screen Recording grants to the app's code-signing
+// identity. A stable team + bundle identifier keeps the grants across rebuilds. The default
+// ad-hoc build ("Sign to Run Locally") may require re-granting after every build.
+//
+// If dev.gio.windowmanager is already registered to another team, use a unique bundle id.
+
+CODE_SIGN_STYLE = Automatic
+CODE_SIGN_IDENTITY = Apple Development
+DEVELOPMENT_TEAM = YOURTEAMID
+PRODUCT_BUNDLE_IDENTIFIER = dev.gio.windowmanager.yourname
