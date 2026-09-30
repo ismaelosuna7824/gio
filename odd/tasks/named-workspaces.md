@@ -52,6 +52,15 @@ existing per-app rule); names in Overview pills/strip/groups, menu bar rows + he
 "Go to workspace". RED compile -> GREEN; bundles 228(53 skipped)/225/7/19/40/1217 all 0 failures
 (parent re-ran); signed build OK. Parent reviewed PNGs (workspaces list, app picker): polished.
 LIVE PENDING (persistence across restart, routing + follow, picker scan, real NSMenu).
+- [x] NW-05 (`089b28d`) — Live: named workspaces work but launcher opens slowly and apps open slower
+  than before. By code: launcher scanned /Applications on main at first summon + per-row full-size
+  icons; registration retries 100/300/800ms; extra entry write for followed windows could wait
+  0.3s. Fix: background app catalog + icon cache (refresh 0.5s after launches / >2min old), entry
+  skipped for hidden target workspace, followed window enters with the switch in the same pass,
+  entry writes never wait, frame-unreadable retries 30/80/200/500ms; timing lines `launcher
+  summon→shown ms=`, `launcher appsReady`, `window register retry`, `window open ... total ms=`.
+  Bundles 232(53 skipped)/232/7/19/40/1231 all 0 failures (parent re-ran); signed build OK.
+  LIVE PENDING (needs timing sample).
 
 ## Acceptance criteria
 - Creating a workspace + assigning an app in the app persists in config.toml and survives restart;
