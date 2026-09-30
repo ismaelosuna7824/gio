@@ -7,10 +7,12 @@ struct FocusSettingsView: View {
     @ObservedObject var model: DesktopModel
     @State private var draft: SettingsDraft<FocusSectionDraft>
     @State private var toast: ApplyToast?
+    private let drafts: SettingsDraftStore
 
-    init(model: DesktopModel, editing: FocusSectionDraft? = nil) {
+    init(model: DesktopModel, drafts: SettingsDraftStore = SettingsDraftStore(), editing: FocusSectionDraft? = nil) {
         self.model = model
-        var draft = SettingsDraft(saved: FocusSectionDraft(config: model.snapshot.config))
+        self.drafts = drafts
+        var draft = drafts.restore(for: .focus, saved: FocusSectionDraft(config: model.snapshot.config))
         if let editing {
             draft.current = editing
         }
@@ -38,6 +40,7 @@ struct FocusSettingsView: View {
         .onReceive(model.$snapshot) { snapshot in
             draft.adopt(saved: FocusSectionDraft(config: snapshot.config))
         }
+        .onChange(of: draft) { drafts.store($0, for: .focus) }
     }
 
     private var indicatorFooter: String {
@@ -95,7 +98,7 @@ struct FocusSettingsView: View {
             CardRow(divider: false) {
                 ToggleRow(
                     "Hide on maximized windows",
-                    caption: "Also hides it in fullscreen unless the fullscreen gap fits the ring.",
+                    caption: "Also hides it on fullscreen windows. With this off, fullscreen shows the ring only when the fullscreen gap fits it.",
                     isOn: current.ring.hideWhenMaximized
                 )
             }

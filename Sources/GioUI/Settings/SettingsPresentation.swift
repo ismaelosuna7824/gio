@@ -170,7 +170,7 @@ public func layoutPreviewGeometry(
     return LayoutPreviewGeometry(
         display: display, columns: [left, focused, right], focusedIndex: 1, padding: padding,
         presetWidths: specs.map(resolve),
-        presetLabels: specs.map { $0 <= 1 ? "\(Int(($0 * 100).rounded()))%" : "\(Int($0.rounded())) pt" }
+        presetLabels: specs.map(presetWidthLabel)
     )
 }
 

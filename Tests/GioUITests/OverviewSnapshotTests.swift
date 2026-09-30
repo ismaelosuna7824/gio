@@ -56,9 +56,10 @@ private struct ComposedWindow: View {
     }
 }
 
-private struct SidebarReplica: View {
+struct SidebarReplica: View {
     let status: SessionStatus
     let selected: MainSection
+    var dirty: Set<MainSection> = []
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
@@ -73,7 +74,7 @@ private struct SidebarReplica: View {
                     .padding(.top, 10)
                     .padding(.bottom, 3)
                 ForEach(group.sections) { section in
-                    SidebarRow(section: section)
+                    SidebarRow(section: section, hasUnsavedEdits: dirty.contains(section))
                         .font(.system(size: 13))
                         .padding(.horizontal, 8)
                         .padding(.vertical, 4)

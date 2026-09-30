@@ -8,12 +8,17 @@ struct AnimationsSettingsView: View {
     @State private var draft: SettingsDraft<AnimationsForm>
     @State private var toast: ApplyToast?
     private let previewTime: TimeInterval?
+    private let drafts: SettingsDraftStore
 
     /// `editing` / `previewTime` seed the view for snapshot tests.
-    init(model: DesktopModel, editing: AnimationsForm? = nil, previewTime: TimeInterval? = nil) {
+    init(
+        model: DesktopModel, drafts: SettingsDraftStore = SettingsDraftStore(),
+        editing: AnimationsForm? = nil, previewTime: TimeInterval? = nil
+    ) {
         self.model = model
         self.previewTime = previewTime
-        var draft = SettingsDraft(saved: AnimationsForm(config: model.snapshot.config.animations))
+        self.drafts = drafts
+        var draft = drafts.restore(for: .animations, saved: AnimationsForm(config: model.snapshot.config.animations))
         if let editing {
             draft.current = editing
         }
@@ -38,6 +43,7 @@ struct AnimationsSettingsView: View {
         .onReceive(model.$snapshot) { snapshot in
             draft.adopt(saved: AnimationsForm(config: snapshot.config.animations))
         }
+        .onChange(of: draft) { drafts.store($0, for: .animations) }
     }
 
     private var motionFooter: String {

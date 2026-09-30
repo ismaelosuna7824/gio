@@ -8,11 +8,17 @@ struct LayoutSettingsView: View {
     @State private var draft: SettingsDraft<LayoutSettingsForm>
     @State private var previewMode: LayoutPreviewMode
     @State private var toast: ApplyToast?
+    private let drafts: SettingsDraftStore
 
-    /// `editing` / `previewMode` seed the view for snapshot tests.
-    init(model: DesktopModel, editing: LayoutSettingsForm? = nil, previewMode: LayoutPreviewMode = .columns) {
+    /// `editing` / `previewMode` seed the view for snapshot tests; unsaved
+    /// edits come back from `drafts` when the section is shown again.
+    init(
+        model: DesktopModel, drafts: SettingsDraftStore = SettingsDraftStore(),
+        editing: LayoutSettingsForm? = nil, previewMode: LayoutPreviewMode = .columns
+    ) {
         self.model = model
-        var draft = SettingsDraft(saved: LayoutSettingsForm(config: model.snapshot.config.layout))
+        self.drafts = drafts
+        var draft = drafts.restore(for: .layout, saved: LayoutSettingsForm(config: model.snapshot.config.layout))
         if let editing {
             draft.current = editing
         }
@@ -39,6 +45,7 @@ struct LayoutSettingsView: View {
         .onReceive(model.$snapshot) { snapshot in
             draft.adopt(saved: LayoutSettingsForm(config: snapshot.config.layout))
         }
+        .onChange(of: draft) { drafts.store($0, for: .layout) }
     }
 
     // MARK: Cards
@@ -73,7 +80,7 @@ struct LayoutSettingsView: View {
     private var widthCard: some View {
         SectionCard(
             "Column Width",
-            footer: "New columns open at the default width. Presets are comma-separated: values up to 1 are fractions of the screen, larger ones points."
+            footer: "New columns open at the default width. Alt+R cycles the focused column through the presets from left to right; click one to change or remove it."
         ) {
             CardRow {
                 SegmentedRow(
@@ -94,11 +101,8 @@ struct LayoutSettingsView: View {
                 }
             }
             CardRow(divider: false) {
-                SettingRow("Preset widths", caption: "Alt+R cycles the focused column through these.") {
-                    GioTextField(
-                        title: "Preset widths", text: form.presetsText, prompt: "0.333, 0.5, 0.667",
-                        width: 200, alignment: .trailing
-                    )
+                SettingRow("Preset widths", caption: "Percent of the screen, or a fixed width in points.") {
+                    PresetWidthChips(text: form.presetsText)
                 }
             }
             problems(matching: ["Default width", "Preset"])
@@ -108,7 +112,7 @@ struct LayoutSettingsView: View {
     private var fullscreenCard: some View {
         SectionCard(
             "Fullscreen",
-            footer: "Space kept around a fullscreen window (Alt+Shift+F); 0 is edge to edge. The focus ring shows in fullscreen when the gap is at least its width."
+            footer: "Space kept around a fullscreen window (Alt+Shift+F); 0 is edge to edge. Fullscreen windows show no focus ring unless \"Hide on maximized windows\" is off in Focus and this gap is at least the ring's width."
         ) {
             CardRow(divider: !draft.current.fullscreenGapFollowsGaps) {
                 ToggleRow("Match gaps", caption: "Use the column gap around fullscreen windows.", isOn: form.fullscreenGapFollowsGaps)
@@ -155,7 +159,7 @@ struct LayoutPreviewView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let rulerHeight: CGFloat = 26
+    private let rulerHeight: CGFloat = 37
 
     var body: some View {
         PreviewCanvas(height: 300) {
@@ -228,10 +232,12 @@ struct LayoutPreviewView: View {
                 .frame(width: max(focused.width * scale, 2), height: 3)
                 .offset(x: start, y: 3)
                 .opacity(mode == .columns ? 1 : 0)
-            ForEach(Array(zip(geometry.presetWidths, geometry.presetLabels).enumerated()), id: \.offset) { _, preset in
-                let x = min(max(start + preset.0 * scale, 0), width)
+            let xs = geometry.presetWidths.map { min(max(start + $0 * scale, 0), width) }
+            let lanes = rulerLabelLanes(xs, minimumSpacing: 40)
+            ForEach(Array(zip(geometry.presetWidths, geometry.presetLabels).enumerated()), id: \.offset) { index, preset in
+                let x = xs[index]
                 VStack(spacing: 2) {
-                    Rectangle().fill(GioColor.secondaryText).frame(width: 1, height: 9)
+                    Rectangle().fill(GioColor.secondaryText).frame(width: 1, height: 9 + CGFloat(lanes[index]) * 11)
                     Text(preset.1)
                         .font(.system(size: 9, weight: .medium).monospacedDigit())
                         .foregroundStyle(GioColor.secondaryText)

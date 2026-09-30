@@ -37,6 +37,9 @@ public func desiredActivationPolicy(windowVisible: Bool) -> NSApplication.Activa
 public struct GioMainView: View {
     @State private var selection: MainSection? = .overview
     @ObservedObject private var model: DesktopModel
+    /// Unsaved settings edits per section, kept across section switches
+    /// and window closes (the hosting view lives as long as the app).
+    @StateObject private var drafts = SettingsDraftStore()
     private let onSectionChange: (MainSection) -> Void
 
     public init(model: DesktopModel, onSectionChange: @escaping (MainSection) -> Void = { _ in }) {
@@ -50,7 +53,8 @@ public struct GioMainView: View {
                 ForEach(sidebarGroups) { group in
                     Section(group.title) {
                         ForEach(group.sections) { section in
-                            SidebarRow(section: section).tag(section)
+                            SidebarRow(section: section, hasUnsavedEdits: drafts.dirtySections.contains(section))
+                                .tag(section)
                         }
                     }
                 }
@@ -77,9 +81,9 @@ public struct GioMainView: View {
         switch section {
         case .overview: OverviewView(model: model)
         case .shortcuts: ShortcutsView(model: model)
-        case .layout: LayoutSettingsView(model: model)
-        case .focus: FocusSettingsView(model: model)
-        case .animations: AnimationsSettingsView(model: model)
+        case .layout: LayoutSettingsView(model: model, drafts: drafts)
+        case .focus: FocusSettingsView(model: model, drafts: drafts)
+        case .animations: AnimationsSettingsView(model: model, drafts: drafts)
         case .rules: RulesSettingsView(model: model)
         case .logs: LogsView(model: model)
         case .diagnostics: DiagnosticsView(model: model)
@@ -96,17 +100,32 @@ func appVersionLabel() -> String {
     (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? gioVersion
 }
 
-/// One sidebar row: colored symbol tile and title, System Settings style.
+/// One sidebar row: colored symbol tile and title, System Settings style,
+/// with a dot while the section holds unsaved edits.
 struct SidebarRow: View {
     let section: MainSection
+    var hasUnsavedEdits = false
+    @Environment(\.gioAccent) private var accent
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         Label {
-            Text(section.title)
+            HStack(spacing: GioSpacing.xs) {
+                Text(section.title)
+                Spacer(minLength: 0)
+                if hasUnsavedEdits {
+                    Circle()
+                        .fill(AccentPalette(accent: accent, colorScheme: colorScheme).ink)
+                        .frame(width: 7, height: 7)
+                        .help("Unsaved changes")
+                        .transition(.scale.combined(with: .opacity))
+                }
+            }
         } icon: {
             SectionIcon(section, size: 20)
         }
         .padding(.vertical, 1)
+        .accessibilityValue(hasUnsavedEdits ? "Unsaved changes" : "")
     }
 }
 
