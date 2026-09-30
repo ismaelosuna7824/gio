@@ -26,20 +26,29 @@ las animaciones". Refactor live-validated ("parece que va bien").
 - Conventional Commits, NO Co-Authored-By; push after verified batches; no PR.
 
 ## Tasks
-- [ ] NA-01 — Audit: which transitions animate today (open, close, move column, consume/expel,
+- [x] NA-01 (`4f721e0`) — Audit: which transitions animate today (open, close, move column, consume/expel,
   width presets, workspace move, minimize/restore) and gaps; record findings.
-- [ ] NA-02 — Window open: new window's column inserted with neighbours sliding to make room; the
+- [x] NA-02 (`5203832`) — Window open: new window's column inserted with neighbours sliding to make room; the
   window itself enters from a short offset (e.g. rises ~24pt / slides from its side) with the spring
   into its slot instead of jumping from the app's initial frame; first placement write hides the
   app's initial position as fast as possible.
-- [ ] NA-03 — Window close: neighbours glide to close the gap (spring), focus moves smoothly;
+- [x] NA-03 (`1dc1c3c`) — Window close: neighbours glide to close the gap (spring), focus moves smoothly;
   optional "close ghost" (cached snapshot of the closing window fading/shrinking ~150ms in a tiny
   window-sized click-through layer) only when Screen Recording is granted and enabled.
-- [ ] NA-04 — Per-animation config (Niri names): `[animations.horizontal-view-movement]`,
+- [x] NA-04 (`9b92741`) — Per-animation config (Niri names): `[animations.horizontal-view-movement]`,
   `[animations.window-movement]`, `[animations.workspace-switch]`, `[animations.window-open]`,
   `[animations.window-close]`, `[animations.window-resize]` each with `enabled`, `curve`, spring
   params / duration, inheriting the global `[animations]` defaults; Animations settings UI with an
   expandable per-animation list and preview.
+
+Evidence (route: delegated writer, opus): audit — all transitions already animated via reflowAll;
+open used to fly from the app's frame at app size. NA-02 entry from below at final size (rise <=
+1/4 height, may hang past bottom edge), skipped for parked/hidden/instant. NA-03 neighbours glide
+(already true) + opt-in close ghost (cached image <=120s at current frame, max 4, 150ms fade+6%
+shrink, no backdrop; light post-settle cache when ghost on). NA-04 per-animation sections with Niri
+names, dominant-cause classification, UI card. Bundles 179(44 skipped)/216/7/19/39/1172 all 0
+failures (parent re-ran); signed build OK. Risk: entry pre-position write may block session queue
+up to 0.3s mid-motion. LIVE PENDING.
 
 ## Acceptance criteria
 - Opening and closing windows animate smoothly live; per-animation settings apply live.
@@ -54,3 +63,4 @@ NA-01..NA-04: one delegated writer (audit first, then implementation commits).
 
 ## Progress
 - 2026-09-30: document created. Next: NA-01..NA-04.
+- 2026-09-30: NA-01..NA-04 done, pushed. Next: named workspaces.
