@@ -64,7 +64,7 @@ public final class LauncherViewModel: ObservableObject {
     @Published public private(set) var status: String?
     private let entries: [LauncherEntry]
     private let focusWindow: (String) -> Bool
-    var dismiss: () -> Void = {}
+    var dismiss: (LauncherDismissReason) -> Void = { _ in }
 
     public init(
         windows: [WindowFact] = [], apps: [LauncherEntry] = [], focusWindow: @escaping (String) -> Bool = { _ in false }
@@ -115,7 +115,7 @@ public final class LauncherViewModel: ObservableObject {
             commit()
         case .escape:
             if text.isEmpty {
-                dismiss()
+                dismiss(.escape)
             } else {
                 text = ""
             }
@@ -134,7 +134,7 @@ public final class LauncherViewModel: ObservableObject {
             return
         }
         switch routeLauncherInput(text, apps: entries) {
-        case .empty: dismiss()
+        case .empty: dismiss(.escape)
         case .runEntry(let entry): run(entry)
         case .noMatch: status = "No app or window matches."
         case .invalid(let message): status = message
@@ -145,7 +145,7 @@ public final class LauncherViewModel: ObservableObject {
         let outcome = runLauncherEntry(entry, focusWindow: focusWindow)
         switch entry {
         case .app, .window:
-            dismiss()
+            dismiss(.action)
         default:
             status = outcome
         }
@@ -447,23 +447,52 @@ final class LauncherPanel: NSPanel {
 /// Owns the launcher panel: shows it centered near the top of the screen
 /// with the pointer, animates it in (a fade only with Reduce Motion) and
 /// dismisses it when it loses focus.
+///
+/// FI-09 presentation: Gio is usually an inactive `.accessory` app when the
+/// hotkey fires, so the panel is ordered in with `orderFrontRegardless()`
+/// and then made key (a non-activating panel takes key without activating
+/// Gio) and the search field is made first responder explicitly. A
+/// resign-key within `LauncherLifecycle.resignGrace` of showing reclaims key
+/// instead of dismissing; the appear end state (alpha 1, anchored frame) is
+/// applied by the animation completion and again by a safety deadline; and
+/// generation tokens keep a stale fade-out from ordering out a new show.
+/// The toggle reads the real panel (`isVisible`), not a flag alone.
 @MainActor
 public final class LauncherPanelController: NSObject, NSWindowDelegate {
     private var panel: LauncherPanel?
     private let focusWindow: (String) -> Bool
-    private var dismissing = false
+    private let now: () -> TimeInterval
+    private var lifecycle = LauncherLifecycle()
 
-    public init(focusWindow: @escaping (String) -> Bool) {
+    public init(
+        focusWindow: @escaping (String) -> Bool,
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) {
         self.focusWindow = focusWindow
+        self.now = now
         super.init()
     }
 
-    public var isVisible: Bool { panel?.isVisible ?? false }
+    /// What a summon does now: derived from the panel and the lifecycle.
+    public var summonAction: LauncherToggle {
+        lifecycle.toggle(panelVisible: panel?.isVisible ?? false)
+    }
+
+    public var isVisible: Bool { summonAction == .dismiss }
+
+    /// Show when hidden (or fading out), dismiss when presented.
+    public func summon(source: LauncherSummonSource, windows: () -> [WindowFact], apps: () -> [LauncherEntry]) {
+        GioLog.record(.info, "launcher summon source=\(source.rawValue)")
+        switch summonAction {
+        case .dismiss: dismiss(reason: .toggle)
+        case .show: show(windows: windows(), apps: apps())
+        }
+    }
 
     /// A fresh model per summon: the window list is current, the query empty.
     public func show(windows: [WindowFact], apps: [LauncherEntry]) {
         let model = LauncherViewModel(windows: windows, apps: apps, focusWindow: focusWindow)
-        model.dismiss = { [weak self] in self?.dismiss() }
+        model.dismiss = { [weak self] reason in self?.dismiss(reason: reason) }
         let hosting = NSHostingController(rootView: GioLauncherView(model: model))
         hosting.sizingOptions = [.preferredContentSize]
         let panel = self.panel ?? makePanel()
@@ -476,47 +505,117 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
         let screen = NSScreen.screens.first { NSMouseInRect(NSEvent.mouseLocation, $0.frame, false) } ?? NSScreen.main
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
         let top = visible.maxY - visible.height * 0.18
-        panel.anchoredTop = top
-        panel.setFrame(NSRect(x: visible.midX - size.width / 2, y: top - size.height, width: size.width, height: size.height), display: false)
-        dismissing = false
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let final = NSRect(x: visible.midX - size.width / 2, y: top - size.height, width: size.width, height: size.height)
+        let plan = LauncherLifecycle.appearPlan(reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        let token = lifecycle.beginShow(at: now())
+        // Unanchored while it slides; the end state re-anchors the top edge.
         panel.alphaValue = 0
-        let final = panel.frame
-        if !reduceMotion {
-            panel.anchoredTop = top + 8
-            panel.setFrame(final.offsetBy(dx: 0, dy: 8), display: false)
-        }
-        panel.makeKeyAndOrderFront(nil)
+        panel.setFrame(final.offsetBy(dx: 0, dy: plan.offset), display: false)
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        focusSearchField(in: panel)
+        GioLog.record(
+            .info,
+            "launcher shown frame=\(Int(final.minX)),\(Int(final.minY)),\(Int(final.width))x\(Int(final.height))"
+                + " key=\(panel.isKeyWindow) active=\(NSApplication.shared.isActive) level=\(panel.level.rawValue)"
+        )
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = reduceMotion ? 0.12 : 0.18
+            context.duration = plan.duration
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
-            if !reduceMotion {
+            if plan.offset != 0 {
                 panel.animator().setFrame(final, display: true)
             }
-        } completionHandler: {
-            MainActor.assumeIsolated { panel.anchoredTop = top }
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated { self?.settleAppear(token, top: top) }
+        }
+        // The completion may never run (interrupted, window hidden): the end
+        // state is applied again once the animation must be over.
+        DispatchQueue.main.asyncAfter(deadline: .now() + plan.safetyDeadline) { [weak self] in
+            MainActor.assumeIsolated { self?.settleAppear(token, top: top) }
         }
     }
 
-    public func dismiss() {
-        guard let panel, panel.isVisible, !dismissing else {
+    public func dismiss(reason: LauncherDismissReason) {
+        guard let panel, panel.isVisible, let token = lifecycle.beginDismiss() else {
             return
         }
-        dismissing = true
+        GioLog.record(.info, "launcher dismissed reason=\(reason.rawValue)")
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.1
             panel.animator().alphaValue = 0
-        } completionHandler: {
-            MainActor.assumeIsolated {
-                panel.orderOut(nil)
-                panel.contentViewController = nil
-            }
+        } completionHandler: { [weak self] in
+            MainActor.assumeIsolated { self?.completeDismiss(token) }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            MainActor.assumeIsolated { self?.completeDismiss(token) }
         }
     }
 
     public func windowDidResignKey(_ notification: Notification) {
-        dismiss()
+        switch lifecycle.resignDecision(now: now()) {
+        case .ignore:
+            return
+        case .dismiss:
+            dismiss(reason: .resignKey)
+        case .reclaimKey:
+            GioLog.record(.info, "launcher resignKey within grace; reclaiming key")
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, let panel = self.panel, self.lifecycle.isPresented,
+                          panel.isVisible, !panel.isKeyWindow
+                    else {
+                        return
+                    }
+                    panel.makeKey()
+                    self.focusSearchField(in: panel)
+                    GioLog.record(.info, "launcher reclaimed key=\(panel.isKeyWindow)")
+                }
+            }
+        }
+    }
+
+    /// Alpha 1 and the final, top-anchored frame for the current show only.
+    private func settleAppear(_ token: Int, top: CGFloat) {
+        guard let panel, lifecycle.finishAppear(token) else {
+            return
+        }
+        if panel.alphaValue < 1 {
+            panel.alphaValue = 1
+        }
+        if panel.anchoredTop != top {
+            panel.anchoredTop = top
+            panel.setFrame(panel.frame, display: true)
+        }
+    }
+
+    private func completeDismiss(_ token: Int) {
+        guard let panel, lifecycle.finishDismiss(token) else {
+            return
+        }
+        panel.orderOut(nil)
+        panel.contentViewController = nil
+    }
+
+    /// SwiftUI's `@FocusState` only lands when the window is already key;
+    /// make the field first responder directly after taking key.
+    private func focusSearchField(in panel: NSPanel) {
+        guard let root = panel.contentView, let field = firstTextField(in: root) else {
+            return
+        }
+        panel.makeFirstResponder(field)
+    }
+
+    private func firstTextField(in view: NSView) -> NSTextField? {
+        if let field = view as? NSTextField, field.isEditable {
+            return field
+        }
+        for subview in view.subviews {
+            if let field = firstTextField(in: subview) {
+                return field
+            }
+        }
+        return nil
     }
 
     private func makePanel() -> LauncherPanel {
@@ -528,10 +627,14 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
+        // Above app windows, the overlays (.normal + 1) and the focus ring
+        // (.floating); below menus, so the status menu still opens over it.
         panel.level = .modalPanel
         panel.isFloatingPanel = true
+        panel.becomesKeyOnlyIfNeeded = false
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = false
+        panel.animationBehavior = .none
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
         panel.delegate = self

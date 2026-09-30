@@ -53,14 +53,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         }
         installSignalHandlers()
         let bar = MenuBarController()
-        bar.onOpenLauncher = { [weak self] in self?.showLauncher() }
+        bar.onOpenLauncher = { [weak self] in self?.showLauncher(source: .menu) }
         bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
         bar.stateProvider = { [host] in host.barState() }
         host.onBarState = { [weak bar] state in bar?.apply(state) }
         bar.start()
         host.requestBarState()
         self.bar = bar
-        host.onSummonLauncher = { [weak self] in self?.showLauncher() }
+        host.onSummonLauncher = { [weak self] in self?.showLauncher(source: .hotkey) }
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it
@@ -144,13 +144,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// DD-05: a Spotlight-like panel that takes key without activating
-    /// Gio, so the main window never jumps forward. Alt+Space again closes it.
-    private func showLauncher() {
-        if launcher.isVisible {
-            launcher.dismiss()
-            return
-        }
-        launcher.show(windows: host.snapshot().facts?.windows ?? [], apps: launcherApps)
+    /// Gio, so the main window never jumps forward. Alt+Space again closes it
+    /// (FI-09: the toggle reads the panel itself and every step is logged).
+    private func showLauncher(source: LauncherSummonSource) {
+        launcher.summon(
+            source: source,
+            windows: { [host] in host.snapshot().facts?.windows ?? [] },
+            apps: { [unowned self] in launcherApps }
+        )
     }
 }
 

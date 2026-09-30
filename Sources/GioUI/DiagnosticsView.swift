@@ -105,6 +105,7 @@ struct DiagnosticsPage: View {
             if let measurement, !measurement.isEmpty {
                 measurementCard(measurement)
             }
+            commandCard
             Color.clear.frame(height: 60)
         }
         .overlay(alignment: .bottom) {
@@ -184,6 +185,43 @@ struct DiagnosticsPage: View {
             .textSelection(.enabled)
             .padding(GioSpacing.m - 2)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// FI-09: the Xcode app does not ship the SwiftPM `GioCLI`; link a built
+    /// one from this checkout into ~/.local/bin/gio, or copy the command.
+    private var commandCard: some View {
+        let plan = planGioCommandInstall(
+            sourceRoot: gioSourceRoot(fromSourceFile: #filePath), home: NSHomeDirectory(),
+            fileExists: { FileManager.default.fileExists(atPath: $0) }
+        )
+        return SectionCard(
+            "Command Line",
+            footer: plan.binary == nil
+                ? "No built GioCLI found. Run this in Terminal to build it and link it as gio."
+                : "Links the built GioCLI as ~/.local/bin/gio. Rebuild it with swift build --product GioCLI."
+        ) {
+            HStack(spacing: GioSpacing.xs) {
+                GioButton(title: "Copy", systemImage: "doc.on.doc", role: .borderless) {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(plan.shellCommand, forType: .string)
+                    toast = ApplyToast(kind: .success, title: "Command copied", details: [])
+                }
+                if plan.binary != nil {
+                    GioButton(title: "Install gio Command", systemImage: "terminal") {
+                        toast = installGioCommand(plan)
+                    }
+                    .help("Symlink ~/.local/bin/gio to the built GioCLI")
+                }
+            }
+        } content: {
+            Text(plan.shellCommand)
+                .font(GioFont.mono)
+                .foregroundStyle(GioColor.secondaryText)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(GioSpacing.m - 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -292,4 +330,34 @@ private struct DiagnosticCard: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(check.title): \(check.badge)")
     }
+}
+
+/// Symlink `plan.linkPath` to the built GioCLI. Replaces an existing symlink,
+/// never a regular file.
+@MainActor
+func installGioCommand(_ plan: GioCommandInstallPlan) -> ApplyToast {
+    guard let binary = plan.binary else {
+        return ApplyToast(kind: .warning, title: "Build GioCLI first", details: [plan.shellCommand])
+    }
+    let files = FileManager.default
+    let link = plan.linkPath
+    do {
+        try files.createDirectory(
+            atPath: (link as NSString).deletingLastPathComponent, withIntermediateDirectories: true
+        )
+        if (try? files.destinationOfSymbolicLink(atPath: link)) != nil {
+            try files.removeItem(atPath: link)
+        } else if files.fileExists(atPath: link) {
+            return ApplyToast(kind: .failure, title: "\(link) exists and is not a link", details: ["Remove it, then try again."])
+        }
+        try files.createSymbolicLink(atPath: link, withDestinationPath: binary)
+    } catch {
+        return ApplyToast(kind: .failure, title: "Could not install gio", details: [error.localizedDescription])
+    }
+    GioLog.record(.info, "cli installed link=\(link)")
+    let path = ProcessInfo.processInfo.environment["PATH"] ?? ""
+    let details = localBinOnPath(path, home: NSHomeDirectory())
+        ? []
+        : ["If gio is not found, add ~/.local/bin to PATH in your shell profile."]
+    return ApplyToast(kind: .success, title: "Installed gio at ~/.local/bin/gio", details: details)
 }
