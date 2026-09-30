@@ -31,10 +31,10 @@ tests use temp files; Conventional Commits, NO Co-Authored-By; push after verifi
 - [x] NW-02 (`39455ff`) — Core: named workspaces persistent in stacks, ordering, rule routing to named
   workspace on window arrival, follow policy, rename/delete semantics (windows fall back to a
   dynamic workspace), display assignment.
-- [ ] NW-03 — Desktop app "Workspaces" section: create/rename/reorder/delete, icon + color,
+- [x] NW-03 (`9a117a6`) — Desktop app "Workspaces" section: create/rename/reorder/delete, icon + color,
   assign apps (installed + running app picker with icons, bundle ids), follow policy per app,
   preview; applies via ConfigPatcher live.
-- [ ] NW-04 — Names everywhere: Overview strip/pills, menu bar, launcher (jump to workspace by name).
+- [x] NW-04 (`278a602`) — Names everywhere: Overview strip/pills, menu bar, launcher (jump to workspace by name).
 
 Evidence NW-01/02 (route: delegated writer, opus): [[workspace]] name/icon/color/display; rules
 bundle-id, open-on-workspace (unknown name = warning), follow when-active|always|never; named
@@ -44,6 +44,14 @@ while running (never at startup/rescan); status adds name/icon/color. Randomised
 fixed a real bug (stale empty workspace after removing all names). Seeded equivalence test for
 configs without named workspaces. Bundles 179(44 skipped)/225/7/19/40/1217 all 0 failures (parent
 re-ran); signed build OK. Gap: when-active timing for freshly launched apps unverified live.
+
+Evidence NW-03/04 (route: delegated writer, opus): Workspaces section (cards with icon/color/name/
+display, reorder, app chips with follow menu, running+installed app picker with move-from-other
+confirmation, templates, delete confirmation, drafts + Apply via ConfigPatcher; rules reuse
+existing per-app rule); names in Overview pills/strip/groups, menu bar rows + header, launcher
+"Go to workspace". RED compile -> GREEN; bundles 228(53 skipped)/225/7/19/40/1217 all 0 failures
+(parent re-ran); signed build OK. Parent reviewed PNGs (workspaces list, app picker): polished.
+LIVE PENDING (persistence across restart, routing + follow, picker scan, real NSMenu).
 
 ## Acceptance criteria
 - Creating a workspace + assigning an app in the app persists in config.toml and survives restart;
@@ -57,3 +65,4 @@ writer; NW-03..04 one writer.
 ## Progress
 - 2026-09-30: document created. Waiting for NA-01..NA-04.
 - 2026-09-30: NW-01 + NW-02 done, pushed. Next: NW-03 + NW-04.
+- 2026-09-30: NW-03 + NW-04 done, pushed. Next: user live test.
