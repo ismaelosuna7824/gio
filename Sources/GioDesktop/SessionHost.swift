@@ -93,7 +93,10 @@ final class SessionHost: @unchecked Sendable {
     /// Post-correction checks of native zooms (session queue only).
     private var zoomVerifications: [WindowID: ZoomVerification] = [:]
     private var zoomWindowServerIDs: [WindowID: UInt32] = [:]
-    private var skipAnimationOnce = false
+    /// The next pass is written without motion: armed for the session's
+    /// first layout (launch, `gio restart`), Accessibility regained, and a
+    /// mouse-abandoned motion (session queue only).
+    private var instantPlacement = InstantPlacementGate()
     /// FI-05: render verification bookkeeping (session queue only).
     private var renderChecks = RenderCheckBook()
     /// PA-04: windows written or animated since the last render check, and
@@ -812,6 +815,8 @@ final class SessionHost: @unchecked Sendable {
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
         enumerateAndPlace()
         syncDisplays()
+        // The first layout is instant (`instantPlacement` starts armed for
+        // `.startup`): windows land on their tiles instead of flying there.
         // Leftovers of a crashed session: windows that will not be tiled
         // (floating, excluded) may still sit parked off-screen. Tiled ones
         // are re-placed by the first reflow.
@@ -1270,9 +1275,11 @@ final class SessionHost: @unchecked Sendable {
         )
         self.reconciler = reconciler
         let settings = session.config.animations
-        let skip = skipAnimationOnce
-        skipAnimationOnce = false
-        let animating = animate && !skip && settings.isActive
+        let placement = instantPlacement.decide(requested: animate && settings.isActive)
+        if case .instant(let reason?) = placement {
+            GioLog.record(reason == .mouse ? .debug : .info, instantPlacementLogLine(reason))
+        }
+        let animating = placement == .animate
         // Focusing away from a fullscreen window brings its column back.
         fullscreen.release(
             keeping: Set(displays.allDisplays().compactMap {
@@ -2425,7 +2432,7 @@ final class SessionHost: @unchecked Sendable {
             // Nothing moves under the cursor: abandon the flight, and let
             // the deferred reflow finish instantly after release.
             stopMotion()
-            skipAnimationOnce = true
+            instantPlacement.arm(.mouse)
             reflowAll()
             return
         }
@@ -2494,7 +2501,9 @@ final class SessionHost: @unchecked Sendable {
             startTap()
             if hotkeyTap != nil {
                 // Permission regained: observers built without it are dead,
-                // and every verdict is stale. The one full rebuild.
+                // and every verdict is stale. The one full rebuild, placed
+                // without motion like a fresh start.
+                instantPlacement.arm(.permission)
                 tileability.invalidateAll()
                 rebuildEventObservation()
             }
