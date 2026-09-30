@@ -475,9 +475,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
 
     /// Native zoom: trigger `id`'s own zoom on the app's lane. The only path
     /// for this AX action; it writes no frame, so the caller marks the window
-    /// mid-zoom and never writes it until the zoom settled.
+    /// mid-zoom and never writes it until the zoom settled. A lane abandoned
+    /// for stalling (the action blocks while the app runs its own animation)
+    /// is `pending`, not a failure: the press may still land.
     public func pressZoom(_ id: WindowID) -> ZoomPressResult {
-        runZoomOperation(on: id, timedOut: .unavailable("timeout")) { $0.pressZoom(id: id) }
+        runZoomOperation(on: id, timedOut: .pending(code: nil)) { $0.pressZoom(id: id) }
     }
 
     private func runZoomOperation<Value: Sendable>(

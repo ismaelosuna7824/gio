@@ -93,7 +93,8 @@ struct LayoutSettingsView: View {
                 Toggle("Draw a ring around the focused window", isOn: $ring.enabled)
                 numberField("Width (0-20 points)", $ring.width)
                 FocusRingColorRow(form: $ring)
-                Text("A click-through outline that follows the focused window, including while it animates. Hidden for minimized, off-screen and fullscreen windows and while Gio itself is active.")
+                Toggle("Hide the ring on maximized and fullscreen windows", isOn: $ring.hideWhenMaximized)
+                Text("A click-through outline that follows the focused window, including while it animates. Hidden for minimized and off-screen windows, for maximized and fullscreen windows unless the option above is off, and while Gio itself is active.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

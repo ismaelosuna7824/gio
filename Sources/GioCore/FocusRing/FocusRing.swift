@@ -12,11 +12,17 @@ public struct FocusRingSectionConfig: Equatable, Sendable {
     public var width: Int
     /// Explicit color; nil defers to the theme, then to `defaultColor`.
     public var activeColor: ThemeColor?
+    /// No ring on a maximized column or a fullscreen window (default). Off
+    /// restores the fullscreen ring when the fullscreen gap fits it.
+    public var hideWhenMaximized: Bool
 
-    public init(enabled: Bool = true, width: Int = 4, activeColor: ThemeColor? = nil) {
+    public init(
+        enabled: Bool = true, width: Int = 4, activeColor: ThemeColor? = nil, hideWhenMaximized: Bool = true
+    ) {
         self.enabled = enabled
         self.width = width
         self.activeColor = activeColor
+        self.hideWhenMaximized = hideWhenMaximized
     }
 
     /// Explicit color, else the theme's active border, else Niri's blue.
@@ -36,11 +42,14 @@ public struct FocusRingWindow: Equatable, Sendable {
     public var frame: CGRect?
     public var isMinimized: Bool
     public var isFullscreen: Bool
+    /// The focused column is maximized (NC-02 maximize-column).
+    public var isMaximized: Bool
 
-    public init(frame: CGRect?, isMinimized: Bool = false, isFullscreen: Bool = false) {
+    public init(frame: CGRect?, isMinimized: Bool = false, isFullscreen: Bool = false, isMaximized: Bool = false) {
         self.frame = frame
         self.isMinimized = isMinimized
         self.isFullscreen = isFullscreen
+        self.isMaximized = isMaximized
     }
 }
 
@@ -85,7 +94,8 @@ public enum FocusRingState: Equatable, Sendable {
 private let minimumVisibleExtent: CGFloat = 24
 
 /// Pure decision: the ring for the focused window, or hidden when the feature
-/// is off, nothing is focused, or the window is minimized, fullscreen without
+/// is off, nothing is focused, the window is minimized, maximized or
+/// fullscreen while `hideWhenMaximized` is on, fullscreen without
 /// room for it (the ring would be clipped by the display edge and menu bar
 /// unless `fullscreenGap` is at least the ring width) or off-viewport
 /// (parked, or on a workspace no display shows).
@@ -95,6 +105,7 @@ public func focusRingState(
 ) -> FocusRingState {
     guard config.enabled, config.width > 0, let focused, let frame = focused.frame,
           !focused.isMinimized,
+          !(config.hideWhenMaximized && (focused.isMaximized || focused.isFullscreen)),
           !focused.isFullscreen || fullscreenGap >= CGFloat(config.width)
     else {
         return .hidden

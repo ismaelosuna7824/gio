@@ -45,20 +45,61 @@ final class FocusRingTests: XCTestCase {
         XCTAssertEqual(state(focused: FocusRingWindow(frame: window, isMinimized: true)), .hidden)
     }
 
-    func testFullscreenRingShownWhenTheGapFitsIt() {
+    func testFullscreenRingShownWhenTheGapFitsItAndHidingIsOff() {
         let fullscreen = FocusRingWindow(frame: window, isFullscreen: true)
+        let config = FocusRingSectionConfig(hideWhenMaximized: false)
         for gap in [CGFloat(4), 8] {
             guard case .shown(let ring) = focusRingState(
-                config: FocusRingSectionConfig(), focused: fullscreen, displays: [display], fullscreenGap: gap
+                config: config, focused: fullscreen, displays: [display], fullscreenGap: gap
             ) else {
                 return XCTFail("expected a ring with gap \(gap)")
             }
             XCTAssertEqual(ring.frame, window.insetBy(dx: -4, dy: -4))
         }
         XCTAssertEqual(
-            focusRingState(config: FocusRingSectionConfig(), focused: fullscreen, displays: [display], fullscreenGap: 3),
+            focusRingState(config: config, focused: fullscreen, displays: [display], fullscreenGap: 3),
             .hidden
         )
+    }
+
+    func testRingHiddenForMaximizedAndFullscreenWindowsByDefault() {
+        XCTAssertTrue(FocusRingSectionConfig().hideWhenMaximized)
+        let maximized = FocusRingWindow(frame: window, isMaximized: true)
+        XCTAssertEqual(state(focused: maximized), .hidden)
+        // Even with a gap that would fit the ring in fullscreen.
+        let fullscreen = FocusRingWindow(frame: window, isFullscreen: true)
+        XCTAssertEqual(
+            focusRingState(config: FocusRingSectionConfig(), focused: fullscreen, displays: [display], fullscreenGap: 8),
+            .hidden
+        )
+    }
+
+    func testMaximizedRingShownWhenHidingIsOff() {
+        let config = FocusRingSectionConfig(hideWhenMaximized: false)
+        let maximized = FocusRingWindow(frame: window, isMaximized: true)
+        guard case .shown(let ring) = focusRingState(config: config, focused: maximized, displays: [display]) else {
+            return XCTFail("expected a ring")
+        }
+        XCTAssertEqual(ring.frame, window.insetBy(dx: -4, dy: -4))
+    }
+
+    func testTiledWindowKeepsItsRingWhenHidingIsOn() {
+        guard case .shown = state(focused: FocusRingWindow(frame: window, isMaximized: false)) else {
+            return XCTFail("expected a ring")
+        }
+    }
+
+    func testHideWhenMaximizedParsesAndRoundTrips() throws {
+        let (off, _) = try parseGioConfig("[focus-ring]\nhide-when-maximized = false\n").get()
+        XCTAssertFalse(off.focusRing.hideWhenMaximized)
+        let (on, _) = try parseGioConfig("[focus-ring]\nhide-when-maximized = true\n").get()
+        XCTAssertTrue(on.focusRing.hideWhenMaximized)
+        XCTAssertTrue(defaultConfigTemplate().contains("hide-when-maximized = true"))
+        var form = FocusRingSettingsForm(config: FocusRingSectionConfig())
+        XCTAssertTrue(form.hideWhenMaximized)
+        form.hideWhenMaximized = false
+        let result = try patchGioConfig(defaultConfigTemplate(), edits: form.edits).get()
+        XCTAssertFalse(result.config.focusRing.hideWhenMaximized)
     }
 
     func testHiddenWhenFullscreen() {

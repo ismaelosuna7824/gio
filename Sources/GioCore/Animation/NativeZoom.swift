@@ -18,12 +18,20 @@ public enum NativeZoomAction: String, Equatable, Sendable {
 
 public enum NativeZoomLimits {
     /// Every edge of the zoomed frame within this many points of the layout
-    /// target (and inside the visible frame): keep the app's frame as is.
-    public static let acceptTolerance: CGFloat = 32
-    /// Within this many points: one correcting write to the exact target.
+    /// target (and inside the visible frame): the frame is exact, no write.
+    /// Anything else gets one correcting write, so the maximized window keeps
+    /// the tiling gaps instead of covering the whole screen.
+    public static let acceptTolerance: CGFloat = 2
+    /// Only for the log: within this many points the correction is a small
+    /// inset (`corrected`); farther it is `fallback(mismatch)`. Both write once.
     public static let correctTolerance: CGFloat = 96
-    /// Give up waiting for the zoom to settle after this many seconds.
-    public static let settleTimeout: TimeInterval = 1.2
+    /// Give up waiting for the zoom to settle after this many seconds. The app
+    /// animates its zoom for about 250 ms and may start late.
+    public static let settleTimeout: TimeInterval = 1.5
+    /// Accessibility messaging timeout for the zoom button while the action is
+    /// performed: the call blocks while the app runs its animation, so the
+    /// short per-window timeout (PA-03) would report a false failure.
+    public static let zoomMessagingTimeout: Float = 1.0
     /// Consecutive polls with the same bounds that count as settled.
     public static let stableFrames = 2
     /// Bounds within this many points are "the same" (rounding, jitter).
@@ -138,8 +146,9 @@ public enum NativeZoomSettle: Equatable, Sendable {
     case unchanged(milliseconds: Int)
     /// The bounds changed but never held still before the timeout.
     case timedOut(milliseconds: Int)
-    /// The zoom could not be pressed (button gone, disabled, app hung).
-    case pressFailed
+    /// The zoom could not be pressed (button gone, disabled, definitive AX
+    /// error); `code` is the AXError raw value when there was one.
+    case pressFailed(code: Int32?)
 
     public var milliseconds: Int {
         switch self {
@@ -147,12 +156,21 @@ public enum NativeZoomSettle: Equatable, Sendable {
         case .pressFailed: return 0
         }
     }
+
+    /// The AXError of a failed press, for the log.
+    public var errorCode: Int32? {
+        if case .pressFailed(let code) = self {
+            return code
+        }
+        return nil
+    }
 }
 
 public enum NativeZoomOutcome: Equatable, Sendable {
-    /// Keep the app's own frame; no correcting write.
-    case accepted
-    /// One write to the exact layout target.
+    /// The app's frame is the layout target within 2 pt; no write.
+    case exact
+    /// One write to the exact layout target (the app's frame differs by a
+    /// small inset, typically the tiling gaps).
     case corrected
     /// Ordinary write to the target (the PA-07 behavior).
     case fallback(NativeZoomFallbackReason)
@@ -173,7 +191,7 @@ public func nativeZoomOutcome(settle: NativeZoomSettle, target: CGRect, visible:
         let inside = visible.insetBy(dx: -NativeZoomLimits.frameTolerance, dy: -NativeZoomLimits.frameTolerance)
             .contains(frame)
         if worst <= NativeZoomLimits.acceptTolerance, inside {
-            return .accepted
+            return .exact
         }
         return worst <= NativeZoomLimits.correctTolerance ? .corrected : .fallback(.mismatch)
     }
@@ -186,16 +204,22 @@ private func worstEdgeDistance(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
     )
 }
 
-/// `native zoom id=<pid:elem> app=<name> action=maximize|restore result=accepted|corrected|fallback(reason) ms=<n>`
+/// `native zoom id=<pid:elem> app=<name> action=maximize|restore result=exact|corrected|fallback(reason[:axerror]) ms=<n>`
 /// IDs and app names only, never titles.
 public func nativeZoomLogLine(
-    id: WindowID, app: String, action: NativeZoomAction, outcome: NativeZoomOutcome, milliseconds: Int
+    id: WindowID, app: String, action: NativeZoomAction, outcome: NativeZoomOutcome, milliseconds: Int,
+    errorCode: Int32? = nil
 ) -> String {
     let result: String
     switch outcome {
-    case .accepted: result = "accepted"
+    case .exact: result = "exact"
     case .corrected: result = "corrected"
-    case .fallback(let reason): result = "fallback(\(reason.rawValue))"
+    case .fallback(let reason):
+        if reason == .pressFailed, let errorCode {
+            result = "fallback(\(reason.rawValue):\(errorCode))"
+        } else {
+            result = "fallback(\(reason.rawValue))"
+        }
     }
     return "native zoom id=\(id.pid):\(id.elementID) app=\(app) action=\(action.rawValue) result=\(result) ms=\(milliseconds)"
 }
@@ -384,5 +408,51 @@ public enum ZoomAvailability: Equatable, Sendable {
 
 public enum ZoomPressResult: Equatable, Sendable {
     case pressed
+    /// The action errored the way a busy app does (timeout class): the zoom
+    /// may still be running or about to run. Watch the window, never write it.
+    case pending(code: Int32?)
+    /// A definitive AX error (unsupported action, invalid element...).
+    case failed(code: Int32)
     case unavailable(String)
+}
+
+public enum NativeZoomActionErrorClass: Equatable, Sendable {
+    /// The zoom may still happen; wait for the window to settle.
+    case pending
+    /// The action can never work now; write the target immediately.
+    case definitive
+}
+
+/// `kAXErrorCannotComplete` (-25204) is what a messaging timeout or a busy
+/// app returns, and the app can still zoom afterwards. Every other error
+/// (failure, illegal argument, invalid element, unsupported action, not
+/// implemented, API disabled...) is definitive.
+public func nativeZoomActionErrorClass(_ code: Int32) -> NativeZoomActionErrorClass {
+    code == -25204 ? .pending : .definitive
+}
+
+/// The press result of one `AXUIElementPerformAction` status (0 is success).
+public func zoomPressResult(forActionStatus code: Int32) -> ZoomPressResult {
+    if code == 0 {
+        return .pressed
+    }
+    switch nativeZoomActionErrorClass(code) {
+    case .pending: return .pending(code: code)
+    case .definitive: return .failed(code: code)
+    }
+}
+
+public enum NativeZoomPressDisposition: Equatable, Sendable {
+    /// Poll the WindowServer bounds until they settle or time out.
+    case watch
+    /// Stop now; the window is written to the target by the ordinary pass.
+    case fallbackNow(NativeZoomSettle)
+}
+
+public func nativeZoomPressDisposition(_ result: ZoomPressResult) -> NativeZoomPressDisposition {
+    switch result {
+    case .pressed, .pending: return .watch
+    case .failed(let code): return .fallbackNow(.pressFailed(code: code))
+    case .unavailable: return .fallbackNow(.pressFailed(code: nil))
+    }
 }

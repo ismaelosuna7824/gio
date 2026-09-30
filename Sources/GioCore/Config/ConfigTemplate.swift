@@ -67,6 +67,8 @@ public func defaultConfigTemplate() -> String {
     enabled = true
     # Thickness in points (0-20; 0 hides it).
     width = 4
+    # No ring on a maximized column or a fullscreen window.
+    hide-when-maximized = true
     # Hex color; leave commented to use the Niri blue.
     # active-color = "#7fc8ff"
 

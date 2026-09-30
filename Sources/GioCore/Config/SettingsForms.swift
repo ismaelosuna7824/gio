@@ -137,10 +137,13 @@ public func animationEdits(
     return edits
 }
 
-public func focusRingEdits(enabled: Bool, width: Int, colorHex: String) -> [ConfigEdit] {
+public func focusRingEdits(
+    enabled: Bool, width: Int, colorHex: String, hideWhenMaximized: Bool = true
+) -> [ConfigEdit] {
     [
         .set(table: "focus-ring", key: "enabled", value: .bool(enabled)),
         .set(table: "focus-ring", key: "width", value: .int(width)),
+        .set(table: "focus-ring", key: "hide-when-maximized", value: .bool(hideWhenMaximized)),
         .set(table: "focus-ring", key: "active-color", value: .string(colorHex)),
     ]
 }
@@ -149,9 +152,11 @@ public struct FocusRingSettingsForm: Equatable, Sendable {
     public var enabled: Bool
     public var width: Double
     public var colorText: String
+    public var hideWhenMaximized: Bool
 
     public init(config: FocusRingSectionConfig, theme: GioTheme? = nil) {
         enabled = config.enabled
+        hideWhenMaximized = config.hideWhenMaximized
         width = Double(config.width)
         colorText = config.resolvedColor(theme: theme).hex
     }
@@ -170,7 +175,9 @@ public struct FocusRingSettingsForm: Equatable, Sendable {
 
     public var edits: [ConfigEdit] {
         let color = ThemeColor(hex: colorText)?.lowercaseHex ?? colorText
-        return focusRingEdits(enabled: enabled, width: Int(width.rounded()), colorHex: color)
+        return focusRingEdits(
+            enabled: enabled, width: Int(width.rounded()), colorHex: color, hideWhenMaximized: hideWhenMaximized
+        )
     }
 
     /// The parsed color, nil while the text is not a valid hex color.

@@ -193,8 +193,16 @@ public final class AXWindowActuator: WindowActuator {
         case .unusable(let reason):
             return .unavailable(reason)
         case .usable(let button, let action):
+            // The action returns only after the app started (often ran) its
+            // zoom animation: give the button a longer timeout than the short
+            // per-window one, and classify a timeout-class error as pending.
+            _ = AXUIElementSetMessagingTimeout(button, NativeZoomLimits.zoomMessagingTimeout)
             let status = AXUIElementPerformAction(button, action as CFString)
-            return status == .success ? .pressed : .unavailable("actionFailed(\(status.rawValue))")
+            let result = zoomPressResult(forActionStatus: status.rawValue)
+            if result != .pressed {
+                GioLog.record(.debug, "native zoom action \(action) id=\(id.pid):\(id.elementID) axerror=\(status.rawValue)")
+            }
+            return result
         }
     }
 

@@ -127,23 +127,28 @@ final class NativeZoomTests: XCTestCase {
         nativeZoomOutcome(settle: settle, target: target ?? self.target, visible: visible)
     }
 
-    func testFrameWithinThirtyTwoPointsInsideTheDisplayIsAccepted() {
-        XCTAssertEqual(outcome(.settled(target, milliseconds: 300)), .accepted)
-        // The macOS zoom usually fills the visible frame: 8 pt off on every edge.
-        XCTAssertEqual(outcome(.settled(visible, milliseconds: 300)), .accepted)
-        // Exactly 32 pt on the worst edge still counts.
-        let edge = CGRect(x: 8, y: 8, width: 1584, height: 884).insetBy(dx: 0, dy: 0)
-        XCTAssertEqual(
-            outcome(.settled(CGRect(x: 40, y: 8, width: 1552, height: 884), milliseconds: 1), target: edge), .accepted
-        )
+    func testFrameWithinTwoPointsInsideTheDisplayIsExact() {
+        XCTAssertEqual(outcome(.settled(target, milliseconds: 300)), .exact)
+        // Exactly 2 pt on the worst edge still counts.
+        XCTAssertEqual(outcome(.settled(target.offsetBy(dx: 2, dy: -2), milliseconds: 300)), .exact)
     }
 
-    func testFrameSpillingOutsideTheVisibleFrameIsNotAcceptedEvenWhenClose() {
+    func testTheFullVisibleFrameIsCorrectedToTheGappedTarget() {
+        // The macOS zoom fills the visible frame: the tiling gaps are gone, so
+        // one correcting write insets it back to the layout target.
+        XCTAssertEqual(outcome(.settled(visible, milliseconds: 300)), .corrected)
+        XCTAssertEqual(outcome(.settled(target.offsetBy(dx: 2.5, dy: 0), milliseconds: 300)), .corrected)
+        // Formerly accepted as-is (up to 32 pt).
+        let edge = CGRect(x: 40, y: 8, width: 1552, height: 884)
+        XCTAssertEqual(outcome(.settled(edge, milliseconds: 1)), .corrected)
+    }
+
+    func testFrameSpillingOutsideTheVisibleFrameIsNotExactEvenWhenClose() {
         let spilling = CGRect(x: -20, y: 8, width: 1620, height: 884)
         XCTAssertEqual(outcome(.settled(spilling, milliseconds: 300)), .corrected)
     }
 
-    func testFrameBeyondThirtyTwoButWithinNinetySixIsCorrected() {
+    func testFrameWithinNinetySixPointsIsCorrected() {
         let off = CGRect(x: 8 + 60, y: 8, width: 1584 - 60, height: 884)
         XCTAssertEqual(outcome(.settled(off, milliseconds: 300)), .corrected)
         let exactly = CGRect(x: 8 + 96, y: 8, width: 1584 - 96, height: 884)
@@ -159,16 +164,62 @@ final class NativeZoomTests: XCTestCase {
     }
 
     func testNoChangeTimeoutAndFailedPressFallBackWithTheirReason() {
-        XCTAssertEqual(outcome(.unchanged(milliseconds: 1200)), .fallback(.unchanged))
-        XCTAssertEqual(outcome(.timedOut(milliseconds: 1200)), .fallback(.timeout))
-        XCTAssertEqual(outcome(.pressFailed), .fallback(.pressFailed))
+        XCTAssertEqual(outcome(.unchanged(milliseconds: 1500)), .fallback(.unchanged))
+        XCTAssertEqual(outcome(.timedOut(milliseconds: 1500)), .fallback(.timeout))
+        XCTAssertEqual(outcome(.pressFailed(code: -25206)), .fallback(.pressFailed))
+        XCTAssertEqual(outcome(.pressFailed(code: nil)), .fallback(.pressFailed))
     }
 
     func testRestoreUsesTheSameTableAgainstTheTiledTarget() {
         let tiled = CGRect(x: 8, y: 8, width: 780, height: 884)
-        XCTAssertEqual(outcome(.settled(tiled.offsetBy(dx: 10, dy: 0), milliseconds: 200), target: tiled), .accepted)
+        XCTAssertEqual(outcome(.settled(tiled.offsetBy(dx: 1, dy: 0), milliseconds: 200), target: tiled), .exact)
+        XCTAssertEqual(outcome(.settled(tiled.offsetBy(dx: 10, dy: 0), milliseconds: 200), target: tiled), .corrected)
         XCTAssertEqual(outcome(.settled(tiled.offsetBy(dx: 70, dy: 0), milliseconds: 200), target: tiled), .corrected)
         XCTAssertEqual(outcome(.settled(target, milliseconds: 200), target: tiled), .fallback(.mismatch))
+    }
+
+    func testLimitsWaitLongEnoughForTheAppsZoomAnimation() {
+        XCTAssertEqual(NativeZoomLimits.acceptTolerance, 2)
+        XCTAssertEqual(NativeZoomLimits.settleTimeout, 1.5)
+        XCTAssertEqual(NativeZoomLimits.zoomMessagingTimeout, 1.0)
+    }
+
+    // MARK: zoom action errors: pending vs definitive
+
+    func testTimeoutClassErrorsArePendingAndTheRestAreDefinitive() {
+        // kAXErrorCannotComplete is what a messaging timeout reports while the
+        // app is busy running its own zoom animation.
+        XCTAssertEqual(nativeZoomActionErrorClass(-25204), .pending)
+        for code in [Int32(-25200), -25201, -25202, -25206, -25208, -25211, -25212] {
+            XCTAssertEqual(nativeZoomActionErrorClass(code), .definitive, "code \(code)")
+        }
+    }
+
+    func testActionStatusMapsToPressedPendingOrFailed() {
+        XCTAssertEqual(zoomPressResult(forActionStatus: 0), .pressed)
+        XCTAssertEqual(zoomPressResult(forActionStatus: -25204), .pending(code: -25204))
+        XCTAssertEqual(zoomPressResult(forActionStatus: -25206), .failed(code: -25206))
+    }
+
+    func testPendingPressKeepsWatchingWhileDefinitiveFailuresFallBackNow() {
+        XCTAssertEqual(nativeZoomPressDisposition(.pressed), .watch)
+        XCTAssertEqual(nativeZoomPressDisposition(.pending(code: -25204)), .watch)
+        XCTAssertEqual(nativeZoomPressDisposition(.pending(code: nil)), .watch)
+        XCTAssertEqual(nativeZoomPressDisposition(.failed(code: -25206)), .fallbackNow(.pressFailed(code: -25206)))
+        XCTAssertEqual(nativeZoomPressDisposition(.unavailable("noWindow")), .fallbackNow(.pressFailed(code: nil)))
+    }
+
+    func testAPendingZoomIsNeverWrittenUntilItIsJudged() {
+        var book = NativeZoomBook()
+        book.begin(id(1), action: .maximize)
+        let frames = [id(1): target, id(2): visible]
+        // The press is pending (no finish yet): the zoomed window is left alone.
+        XCTAssertEqual(book.withoutInFlight(frames), [id(2): visible])
+        XCTAssertTrue(book.isBusy(id(1)))
+        // The settle ended: it is out of flight but waits for its single verdict.
+        book.finish(id(1), settle: .settled(visible, milliseconds: 400))
+        XCTAssertEqual(book.withoutInFlight(frames), frames)
+        XCTAssertTrue(book.hasResolved)
     }
 
     func testLogLineNamesEveryFallbackReason() {
@@ -182,8 +233,8 @@ final class NativeZoomTests: XCTestCase {
 
     func testLogLineHasIdsAppActionResultAndMillisecondsButNoTitle() {
         XCTAssertEqual(
-            nativeZoomLogLine(id: id(42, 7), app: "Code", action: .maximize, outcome: .accepted, milliseconds: 412),
-            "native zoom id=42:7 app=Code action=maximize result=accepted ms=412"
+            nativeZoomLogLine(id: id(42, 7), app: "Code", action: .maximize, outcome: .exact, milliseconds: 412),
+            "native zoom id=42:7 app=Code action=maximize result=exact ms=412"
         )
         XCTAssertEqual(
             nativeZoomLogLine(id: id(42, 7), app: "Code", action: .restore, outcome: .corrected, milliseconds: 90),
@@ -192,6 +243,13 @@ final class NativeZoomTests: XCTestCase {
         XCTAssertEqual(
             nativeZoomLogLine(id: id(42, 7), app: "Code", action: .maximize, outcome: .fallback(.timeout), milliseconds: 1200),
             "native zoom id=42:7 app=Code action=maximize result=fallback(timeout) ms=1200"
+        )
+        XCTAssertEqual(
+            nativeZoomLogLine(
+                id: id(42, 7), app: "Code", action: .maximize, outcome: .fallback(.pressFailed), milliseconds: 0,
+                errorCode: -25206
+            ),
+            "native zoom id=42:7 app=Code action=maximize result=fallback(pressFailed:-25206) ms=0"
         )
     }
 
@@ -237,22 +295,22 @@ final class NativeZoomTests: XCTestCase {
 
     func testTimesOutUnchangedWhenTheWindowNeverMoved() {
         var tracker = NativeZoomSettleTracker(start: start)
-        XCTAssertNil(tracker.observe(start, elapsed: 1.19))
-        XCTAssertEqual(tracker.observe(start, elapsed: 1.2), .unchanged(milliseconds: 1200))
+        XCTAssertNil(tracker.observe(start, elapsed: 1.49))
+        XCTAssertEqual(tracker.observe(start, elapsed: 1.5), .unchanged(milliseconds: 1500))
     }
 
     func testTimesOutWhenItChangedButNeverSettled() {
         var tracker = NativeZoomSettleTracker(start: start)
         XCTAssertNil(tracker.observe(CGRect(x: 8, y: 8, width: 900, height: 884), elapsed: 1.0))
         XCTAssertEqual(
-            tracker.observe(CGRect(x: 8, y: 8, width: 1000, height: 884), elapsed: 1.21), .timedOut(milliseconds: 1210)
+            tracker.observe(CGRect(x: 8, y: 8, width: 1000, height: 884), elapsed: 1.51), .timedOut(milliseconds: 1510)
         )
     }
 
     func testMissingWindowServerEntryOnlyEndsAtTheTimeout() {
         var tracker = NativeZoomSettleTracker(start: start)
         XCTAssertNil(tracker.observe(nil, elapsed: 0.5))
-        XCTAssertEqual(tracker.observe(nil, elapsed: 1.3), .unchanged(milliseconds: 1300))
+        XCTAssertEqual(tracker.observe(nil, elapsed: 1.6), .unchanged(milliseconds: 1600))
     }
 
     // MARK: book: in flight, resolved, accepted
@@ -294,7 +352,7 @@ final class NativeZoomTests: XCTestCase {
 
     func testFinishIgnoresAWindowThatIsNotInFlight() {
         var book = NativeZoomBook()
-        book.finish(id(9), settle: .pressFailed)
+        book.finish(id(9), settle: .pressFailed(code: nil))
         XCTAssertTrue(book.takeResolved().isEmpty)
     }
 

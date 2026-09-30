@@ -619,7 +619,8 @@ final class SessionHost: @unchecked Sendable {
             config: config,
             focused: FocusRingWindow(
                 frame: physicalFrames[id], isMinimized: window.isMinimized,
-                isFullscreen: window.mode == .fullscreen || fullscreen.isFullscreen(id)
+                isFullscreen: window.mode == .fullscreen || fullscreen.isFullscreen(id),
+                isMaximized: session.manager.currentWorkspace().focusedColumnRef?.savedWidthSpec != nil
             ),
             displays: displays.allDisplays().map(\.frame),
             fullscreenGap: session.config.layout.resolvedFullscreenGap
@@ -1982,11 +1983,15 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func logNativeZoom(
-        _ id: WindowID, action: NativeZoomAction, outcome: NativeZoomOutcome, milliseconds: Int
+        _ id: WindowID, action: NativeZoomAction, outcome: NativeZoomOutcome, milliseconds: Int,
+        errorCode: Int32? = nil
     ) {
         GioLog.record(
             .info,
-            nativeZoomLogLine(id: id, app: appName(id.pid), action: action, outcome: outcome, milliseconds: milliseconds)
+            nativeZoomLogLine(
+                id: id, app: appName(id.pid), action: action, outcome: outcome, milliseconds: milliseconds,
+                errorCode: errorCode
+            )
         )
     }
 
@@ -2004,7 +2009,10 @@ final class SessionHost: @unchecked Sendable {
                 continue
             }
             let outcome = nativeZoomOutcome(settle: resolution.settle, target: target, visible: viewport)
-            logNativeZoom(id, action: resolution.action, outcome: outcome, milliseconds: resolution.settle.milliseconds)
+            logNativeZoom(
+                id, action: resolution.action, outcome: outcome, milliseconds: resolution.settle.milliseconds,
+                errorCode: resolution.settle.errorCode
+            )
             trustedFrames.invalidate(id)
             guard case .settled(let actual, _) = resolution.settle else {
                 // Unknown frame: the pass reads it from the window itself.
@@ -2014,7 +2022,7 @@ final class SessionHost: @unchecked Sendable {
             physicalFrames[id] = actual
             // Late frame events of the zoom are echoes of where it landed.
             echoGate.recordApplied(id, frame: actual, at: now)
-            if outcome == .accepted {
+            if outcome == .exact {
                 nativeZoom.accept(id, target: target, actual: actual)
                 trustedFrames.trust(id, frame: actual)
             }
@@ -2089,15 +2097,25 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// Press the zoom (on the app's lane, through the reconciler) and watch
-    /// the WindowServer bounds until they settle or 1.2 s pass.
+    /// the WindowServer bounds until they settle or the settle timeout passes.
     private func startNativeZoom(_ job: NativeZoomJob, reconciler: WindowReconciler<AXWindowActuator>) {
         let pressed = reconciler.pressZoom(job.id)
-        guard case .pressed = pressed else {
-            if case .unavailable(let why) = pressed {
-                GioLog.record(.debug, "native zoom press failed id=\(job.id.pid):\(job.id.elementID) why=\(why)")
-            }
-            finishNativeZoom(job.id, settle: .pressFailed)
+        switch nativeZoomPressDisposition(pressed) {
+        case .fallbackNow(let settle):
+            GioLog.record(
+                .debug, "native zoom press failed id=\(job.id.pid):\(job.id.elementID) result=\(pressed)"
+            )
+            finishNativeZoom(job.id, settle: settle)
             return
+        case .watch:
+            // A timeout-class error means the app is busy zooming: keep the
+            // window out of Gio's writes and let the settle detection decide.
+            if case .pending(let code) = pressed {
+                GioLog.record(
+                    .debug,
+                    "native zoom press pending id=\(job.id.pid):\(job.id.elementID) axerror=\(code.map(String.init) ?? "laneTimeout")"
+                )
+            }
         }
         let began = ProcessInfo.processInfo.systemUptime
         var tracker = NativeZoomSettleTracker(start: job.start)
