@@ -167,6 +167,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         launcher.summon(
             source: source,
             windows: { [host] in host.snapshot().facts?.windows ?? [] },
+            workspaces: { [host] in launcherWorkspaceEntries(from: host.snapshot().facts) },
             apps: { [unowned self] in launcherApps }
         )
     }

@@ -116,6 +116,9 @@ public struct BarMenuRow: Equatable, Sendable {
     public let detail: String
     public let isChecked: Bool
     public let isEnabled: Bool
+    /// NW-04: a named workspace's SF Symbol and hex color.
+    public var symbol: String? = nil
+    public var color: String? = nil
 }
 
 public struct BarMenuSection: Equatable, Sendable {
@@ -138,16 +141,26 @@ public func barMenuModel(_ state: BarSessionState?) -> BarMenuModel {
         return BarMenuModel(title: "Gio", subtitle: "Starting…", sections: [])
     }
     let focusedStack = state.stacks.first(where: \.focused)?.workspaces ?? []
-    let position = focusedStack.isEmpty ? "Workspace \(state.workspace)" : "Workspace \(state.workspace) of \(focusedStack.count)"
+    let position: String
+    if let active = focusedStack.first(where: { $0.index == state.workspace }), let name = active.name {
+        position = "\(name) (\(state.workspace) of \(focusedStack.count))"
+    } else {
+        position = focusedStack.isEmpty ? "Workspace \(state.workspace)" : "Workspace \(state.workspace) of \(focusedStack.count)"
+    }
+    let named = state.stacks.contains { $0.workspaces.contains { $0.name != nil } }
     // Only the focused display's rows switch; other stacks are information.
     let sections = state.stacks.enumerated().map { position, stack in
         BarMenuSection(
             title: state.stacks.count > 1 ? "Display \(position + 1)" : "Workspaces",
-            rows: stack.workspaces.map { entry in
-                BarMenuRow(
-                    index: entry.index, title: "Workspace \(entry.index)",
-                    detail: entry.windows == 0 ? "Empty" : windowCount(entry.windows),
-                    isChecked: entry.isActive, isEnabled: stack.focused
+            rows: stack.workspaces.map { entry -> BarMenuRow in
+                let count = entry.windows == 0 ? "Empty" : windowCount(entry.windows)
+                // With named workspaces the title is the name, so the
+                // detail carries the index (its Alt shortcut).
+                return BarMenuRow(
+                    index: entry.index, title: workspaceShortName(entry),
+                    detail: named && entry.index <= 9 ? "⌥\(entry.index) · \(count)" : count,
+                    isChecked: entry.isActive, isEnabled: stack.focused,
+                    symbol: entry.icon, color: entry.color
                 )
             }
         )

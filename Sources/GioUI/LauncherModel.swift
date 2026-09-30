@@ -12,6 +12,8 @@ public enum LauncherEntry: Equatable, Sendable {
     case window(id: String, application: String, windowTitle: String, workspace: Int?)
     case gioCommand(argv: [String], label: String)
     case shellCommand(String)
+    /// NW-04: a named workspace of the focused display, by stack index.
+    case workspace(index: Int, name: String, icon: String?, color: String?)
 
     public var title: String {
         switch self {
@@ -23,6 +25,8 @@ public enum LauncherEntry: Equatable, Sendable {
             return label
         case .shellCommand(let command):
             return "!\(command)"
+        case .workspace(_, let name, _, _):
+            return "Go to workspace \(name)"
         }
     }
 
@@ -31,6 +35,8 @@ public enum LauncherEntry: Equatable, Sendable {
         switch self {
         case .window(let id, _, _, _):
             return "window:\(id)"
+        case .workspace(let index, _, _, _):
+            return "workspace:\(index)"
         default:
             return title
         }
@@ -47,6 +53,8 @@ public enum LauncherEntry: Equatable, Sendable {
             return "Gio command"
         case .shellCommand:
             return "Shell"
+        case .workspace:
+            return "Workspace"
         }
     }
 
@@ -57,17 +65,20 @@ public enum LauncherEntry: Equatable, Sendable {
         case .window: return "macwindow"
         case .gioCommand: return "command"
         case .shellCommand: return "terminal"
+        case .workspace(_, _, let icon, _): return icon ?? "square.stack.3d.up.fill"
         }
     }
 
-    /// Windows first on an equal rank: an app that is already running is
+    /// Named workspaces first on an equal rank (typing a workspace's name
+    /// means going there), then windows: an app that is already running is
     /// better reached through its window than launched again.
     fileprivate var kindOrder: Int {
         switch self {
-        case .window: return 0
-        case .app: return 1
-        case .gioCommand: return 2
-        case .shellCommand: return 3
+        case .workspace: return 0
+        case .window: return 1
+        case .app: return 2
+        case .gioCommand: return 3
+        case .shellCommand: return 4
         }
     }
 
@@ -83,6 +94,8 @@ public enum LauncherEntry: Equatable, Sendable {
                 rankMatch(query: query, candidate: "\(application) \(windowTitle)"),
             ]
             return candidates.compactMap { $0 }.min()
+        case .workspace(_, let name, _, _):
+            return rankMatch(query: query, candidate: name)
         default:
             return rankMatch(query: query, candidate: title)
         }
@@ -97,6 +110,28 @@ public func launcherWindowEntries(from facts: [WindowFact]) -> [LauncherEntry] {
         .map {
             .window(id: $0.id, application: $0.application, windowTitle: $0.title, workspace: $0.workspace)
         }
+}
+
+/// NW-04: launcher rows for the named workspaces of the focused display's
+/// stack (dynamic workspaces have no name to type).
+public func launcherWorkspaceEntries(from facts: SessionFacts?) -> [LauncherEntry] {
+    guard let facts else {
+        return []
+    }
+    return focusedStack(facts).compactMap { entry in
+        entry.name.map { .workspace(index: entry.index, name: $0, icon: entry.icon, color: entry.color) }
+    }
+}
+
+/// The IPC verb an entry runs through the session, if any: Gio commands
+/// as typed, a workspace as `workspace N` (the keyboard action path, so it
+/// carries the focus intent).
+public func launcherIPCArguments(_ entry: LauncherEntry) -> [String]? {
+    switch entry {
+    case .gioCommand(let argv, _): return argv
+    case .workspace(let index, _, _, _): return ["workspace", "\(index)"]
+    case .app, .window, .shellCommand: return nil
+    }
 }
 
 /// Rank a query against a candidate name (both lowered by caller contract —

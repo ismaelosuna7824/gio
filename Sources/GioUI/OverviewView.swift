@@ -155,7 +155,7 @@ struct OverviewDashboard: View {
         let strip = facts.strip
         let columns = strip?.columns.count ?? 0
         return SectionCard(
-            "Workspace \(strip?.workspace ?? facts.currentWorkspace)",
+            stripTitle(facts),
             footer: "A live map of the focused display. The frame is what is on screen; faded columns are parked off screen until you scroll to them.",
             accessory: {
                 Text(columns == 1 ? "1 column" : "\(columns) columns")
@@ -312,7 +312,7 @@ struct OverviewDashboard: View {
                 }
                 ForEach(Array(groups.enumerated()), id: \.element.id) { groupIndex, group in
                     HStack(spacing: GioSpacing.xs) {
-                        Text(group.title.uppercased())
+                        Text(windowGroupTitle(workspace: group.workspace, facts: facts).uppercased())
                             .font(.system(size: 10, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(GioColor.secondaryText)
@@ -355,25 +355,54 @@ struct OverviewDashboard: View {
     }
 }
 
-/// One workspace of a display's stack: index, window count, active state.
+/// One workspace of a display's stack: index (or a named workspace's
+/// glyph and "1 · Code"), window count, active state.
 struct WorkspacePill: View {
     let entry: WorkspaceEntry
     @Environment(\.gioAccent) private var accent
     @Environment(\.colorScheme) private var colorScheme
 
+    private var count: String {
+        entry.windows == 0 ? "Empty" : (entry.windows == 1 ? "1 window" : "\(entry.windows) windows")
+    }
+
     var body: some View {
         let palette = AccentPalette(accent: accent, colorScheme: colorScheme)
         HStack(spacing: GioSpacing.xs) {
-            Text("\(entry.index)")
-                .font(.system(size: 11, weight: .bold, design: .rounded))
-                .monospacedDigit()
-                .foregroundStyle(entry.isActive ? palette.fill : GioColor.secondaryText)
-                .frame(width: 20, height: 20)
-                .background(Circle().fill(entry.isActive ? palette.onFill : GioColor.card))
-            Text(entry.windows == 0 ? "Empty" : (entry.windows == 1 ? "1 window" : "\(entry.windows) windows"))
-                .font(entry.isActive ? GioFont.callout.weight(.medium) : GioFont.callout)
-                .foregroundStyle(entry.isActive ? palette.onFill : (entry.windows == 0 ? GioColor.tertiaryText : GioColor.primaryText))
-            Spacer(minLength: 0)
+            if entry.name != nil {
+                WorkspaceGlyph(icon: entry.icon, color: entry.color, size: 20, fallback: "\(entry.index)")
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20 * 0.26, style: .continuous)
+                            .strokeBorder(palette.onFill.opacity(entry.isActive ? 0.55 : 0), lineWidth: 1)
+                    )
+                Text(workspaceTitle(entry))
+                    .font(GioFont.callout.weight(entry.isActive ? .semibold : .medium))
+                    .foregroundStyle(entry.isActive ? palette.onFill : GioColor.primaryText)
+                    .lineLimit(1)
+                    .layoutPriority(1)
+                Spacer(minLength: GioSpacing.xxs)
+                HStack(spacing: 3) {
+                    if entry.windows > 0 {
+                        Image(systemName: "macwindow").font(.system(size: 9, weight: .semibold))
+                    }
+                    Text(compactWindowCount(entry.windows)).font(GioFont.caption.monospacedDigit())
+                }
+                .foregroundStyle(entry.isActive ? palette.onFill : GioColor.secondaryText)
+                .fixedSize()
+                .help(count)
+                .accessibilityLabel(count)
+            } else {
+                Text("\(entry.index)")
+                    .font(.system(size: 11, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(entry.isActive ? palette.fill : GioColor.secondaryText)
+                    .frame(width: 20, height: 20)
+                    .background(Circle().fill(entry.isActive ? palette.onFill : GioColor.card))
+                Text(count)
+                    .font(entry.isActive ? GioFont.callout.weight(.medium) : GioFont.callout)
+                    .foregroundStyle(entry.isActive ? palette.onFill : (entry.windows == 0 ? GioColor.tertiaryText : GioColor.primaryText))
+                Spacer(minLength: 0)
+            }
             if entry.isActive {
                 Text("Active")
                     .font(.system(size: 10, weight: .semibold))

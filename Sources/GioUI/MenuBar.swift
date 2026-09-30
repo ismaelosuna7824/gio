@@ -71,6 +71,9 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
                 item.target = self
                 item.state = row.isChecked ? .on : .off
                 item.isEnabled = row.isEnabled
+                if row.symbol != nil || row.color != nil {
+                    item.image = workspaceMenuImage(symbol: row.symbol, color: row.color, index: row.index)
+                }
                 menu.addItem(item)
             }
         }
@@ -201,6 +204,39 @@ public func statusItemImage(badge: String?) -> NSImage {
     }
     image.isTemplate = true
     image.accessibilityDescription = badge.map { "Gio, workspace \($0)" } ?? "Gio"
+    return image
+}
+
+/// NW-04: a named workspace's mark for menus: its symbol on a rounded
+/// tile of its color (gray without one), like the app's workspace glyph.
+public func workspaceMenuImage(symbol: String?, color: String?, index: Int) -> NSImage {
+    let theme = color.flatMap(ThemeColor.init(hex:)) ?? ThemeColor(red: 0.56, green: 0.56, blue: 0.58)
+    let fill = NSColor(srgbRed: theme.red, green: theme.green, blue: theme.blue, alpha: 1)
+    let ink = workspaceGlyphForeground(theme)
+    let inkColor = NSColor(srgbRed: ink.red, green: ink.green, blue: ink.blue, alpha: 1)
+    let size = NSSize(width: 16, height: 16)
+    let image = NSImage(size: size, flipped: false) { rect in
+        fill.setFill()
+        NSBezierPath(roundedRect: rect.insetBy(dx: 0.5, dy: 0.5), xRadius: 4, yRadius: 4).fill()
+        let configuration = NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [inkColor]))
+        if let symbol, let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(configuration) {
+            let glyphSize = glyph.size
+            glyph.draw(in: NSRect(
+                x: rect.midX - glyphSize.width / 2, y: rect.midY - glyphSize.height / 2,
+                width: glyphSize.width, height: glyphSize.height
+            ))
+        } else {
+            let text = NSAttributedString(string: "\(index)", attributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold), .foregroundColor: inkColor,
+            ])
+            let textSize = text.size()
+            text.draw(at: NSPoint(x: rect.midX - textSize.width / 2, y: rect.midY - textSize.height / 2))
+        }
+        return true
+    }
+    image.isTemplate = false
     return image
 }
 

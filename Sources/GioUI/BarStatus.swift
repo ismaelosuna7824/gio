@@ -59,7 +59,8 @@ public func parseBarStatus(_ json: String) -> BarSessionState? {
             }
             return WorkspaceEntry(
                 index: index, windows: entry["windows"] as? Int ?? 0,
-                columns: entry["columns"] as? Int ?? 0, isActive: entry["active"] as? Bool ?? false
+                columns: entry["columns"] as? Int ?? 0, isActive: entry["active"] as? Bool ?? false,
+                name: entry["name"] as? String, icon: entry["icon"] as? String, color: entry["color"] as? String
             )
         }
         return BarStack(

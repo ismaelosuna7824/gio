@@ -81,3 +81,50 @@ public func workspaceTotals(_ facts: SessionFacts) -> String {
     }
     return "\(facts.currentWorkspace) / \(stack.count)"
 }
+
+// MARK: - NW-04 workspace names
+
+/// "1 · Code" for a named workspace, "Workspace 3" for a dynamic one.
+public func workspaceTitle(_ entry: WorkspaceEntry) -> String {
+    entry.name.map { "\(entry.index) · \($0)" } ?? "Workspace \(entry.index)"
+}
+
+/// "Code", or "Workspace 3" without a name.
+public func workspaceShortName(_ entry: WorkspaceEntry) -> String {
+    entry.name ?? "Workspace \(entry.index)"
+}
+
+/// The focused display's stack: the strip's display, else the only one.
+func focusedStack(_ facts: SessionFacts) -> [WorkspaceEntry] {
+    let display = facts.displays.first { $0.id == facts.strip?.displayID }
+        ?? (facts.displays.count == 1 ? facts.displays.first : nil)
+    return display?.stack ?? []
+}
+
+/// Header of the Overview's live strip: the shown workspace's title.
+public func stripTitle(_ facts: SessionFacts) -> String {
+    let index = facts.strip?.workspace ?? facts.currentWorkspace
+    let entry = focusedStack(facts).first { $0.index == index }
+        ?? WorkspaceEntry(index: index, windows: 0, columns: 0, isActive: true)
+    return workspaceTitle(entry)
+}
+
+/// Overview window-list header: "1 · Code" when the single display's stack
+/// names that index. Window indices are per display, so with several
+/// displays the plain "Workspace N" stays.
+public func windowGroupTitle(workspace: Int?, facts: SessionFacts) -> String {
+    guard let workspace else {
+        return "Other windows"
+    }
+    guard facts.displays.count == 1,
+          let entry = facts.displays[0].stack.first(where: { $0.index == workspace })
+    else {
+        return "Workspace \(workspace)"
+    }
+    return workspaceTitle(entry)
+}
+
+/// A named pill's trailing count: "Empty", or just the number.
+public func compactWindowCount(_ count: Int) -> String {
+    count == 0 ? "Empty" : "\(count)"
+}

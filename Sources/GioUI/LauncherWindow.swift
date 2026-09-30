@@ -23,10 +23,16 @@ func runLauncherEntry(_ entry: LauncherEntry, focusWindow: (String) -> Bool = { 
         }
         let opened = url.map { NSWorkspace.shared.open($0) } ?? false
         return opened ? "opened \(name)" : "could not open \(name)"
-    case .gioCommand(let argv, _):
+    case .gioCommand, .workspace:
+        guard let argv = launcherIPCArguments(entry) else {
+            return "nothing to run"
+        }
         do {
             let response = try sendIPCRequest(argv, socketPath: defaultSocketPath())
             if response.ok {
+                if case .workspace(_, let name, _, _) = entry {
+                    return "switched to \(name)"
+                }
                 return response.output ?? "ok"
             }
             return "gio failed: \(response.error ?? "unknown")"
@@ -67,9 +73,10 @@ public final class LauncherViewModel: ObservableObject {
     var dismiss: (LauncherDismissReason) -> Void = { _ in }
 
     public init(
-        windows: [WindowFact] = [], apps: [LauncherEntry] = [], focusWindow: @escaping (String) -> Bool = { _ in false }
+        windows: [WindowFact] = [], workspaces: [LauncherEntry] = [], apps: [LauncherEntry] = [],
+        focusWindow: @escaping (String) -> Bool = { _ in false }
     ) {
-        entries = launcherWindowEntries(from: windows) + apps
+        entries = launcherWindowEntries(from: windows) + workspaces + apps
         self.focusWindow = focusWindow
         refreshResults()
     }
@@ -136,7 +143,7 @@ public final class LauncherViewModel: ObservableObject {
         switch routeLauncherInput(text, apps: entries) {
         case .empty: dismiss(.escape)
         case .runEntry(let entry): run(entry)
-        case .noMatch: status = "No app or window matches."
+        case .noMatch: status = "No app, window or workspace matches."
         case .invalid(let message): status = message
         }
     }
@@ -146,6 +153,12 @@ public final class LauncherViewModel: ObservableObject {
         switch entry {
         case .app, .window:
             dismiss(.action)
+        case .workspace:
+            if outcome.hasPrefix("switched") {
+                dismiss(.action)
+            } else {
+                status = outcome
+            }
         default:
             status = outcome
         }
@@ -212,11 +225,11 @@ public struct GioLauncherView: View {
                 .foregroundStyle(GioColor.secondaryText)
             Group {
                 if isStatic {
-                    Text(model.text.isEmpty ? "Search apps and windows" : model.text)
+                    Text(model.text.isEmpty ? "Search apps, windows and workspaces" : model.text)
                         .foregroundStyle(model.text.isEmpty ? GioColor.tertiaryText : GioColor.primaryText)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 } else {
-                    TextField("Search apps and windows", text: $model.text)
+                    TextField("Search apps, windows and workspaces", text: $model.text)
                         .textFieldStyle(.plain)
                         .focused($searchFocused)
                         .onSubmit { model.commit() }
@@ -274,7 +287,9 @@ private struct LauncherRow: View {
     var body: some View {
         HStack(spacing: GioSpacing.s) {
             Group {
-                if let icon {
+                if case .workspace(let number, _, let symbol, let color) = entry {
+                    WorkspaceGlyph(icon: symbol, color: color, size: 28, fallback: "\(number)")
+                } else if let icon {
                     Image(nsImage: icon).resizable().interpolation(.high)
                 } else {
                     SectionIcon(symbol: fallbackSymbol, tint: fallbackTint, size: 28)
@@ -327,6 +342,7 @@ private struct LauncherRow: View {
     private var secondary: String? {
         switch entry {
         case .window(_, let application, let title, _): return title.isEmpty ? nil : application
+        case .workspace(let number, _, _, _): return number <= 9 ? "Workspace \(number) · ⌥\(number)" : "Workspace \(number)"
         default: return nil
         }
     }
@@ -337,6 +353,7 @@ private struct LauncherRow: View {
         case .window(_, _, _, let workspace): return workspace.map { "Window · WS \($0)" } ?? "Window"
         case .gioCommand: return "Gio"
         case .shellCommand: return "Shell"
+        case .workspace: return "Workspace"
         }
     }
 
@@ -346,6 +363,7 @@ private struct LauncherRow: View {
         case .window: return "macwindow"
         case .gioCommand: return "command"
         case .shellCommand: return "terminal.fill"
+        case .workspace: return "square.stack.3d.up.fill"
         }
     }
 
@@ -355,6 +373,7 @@ private struct LauncherRow: View {
         case .window: return .indigo
         case .gioCommand: return .gray
         case .shellCommand: return .gray
+        case .workspace: return .cyan
         }
     }
 }
@@ -397,7 +416,7 @@ public func launcherIcon(_ entry: LauncherEntry) -> NSImage? {
         return NSWorkspace.shared.icon(forFile: path)
     case .window(_, let application, _, _):
         return NSWorkspace.shared.runningApplications.first { $0.localizedName == application }?.icon
-    case .gioCommand, .shellCommand:
+    case .gioCommand, .shellCommand, .workspace:
         return nil
     }
 }
@@ -481,17 +500,20 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
     public var isVisible: Bool { summonAction == .dismiss }
 
     /// Show when hidden (or fading out), dismiss when presented.
-    public func summon(source: LauncherSummonSource, windows: () -> [WindowFact], apps: () -> [LauncherEntry]) {
+    public func summon(
+        source: LauncherSummonSource, windows: () -> [WindowFact],
+        workspaces: () -> [LauncherEntry] = { [] }, apps: () -> [LauncherEntry]
+    ) {
         GioLog.record(.info, "launcher summon source=\(source.rawValue)")
         switch summonAction {
         case .dismiss: dismiss(reason: .toggle)
-        case .show: show(windows: windows(), apps: apps())
+        case .show: show(windows: windows(), workspaces: workspaces(), apps: apps())
         }
     }
 
     /// A fresh model per summon: the window list is current, the query empty.
-    public func show(windows: [WindowFact], apps: [LauncherEntry]) {
-        let model = LauncherViewModel(windows: windows, apps: apps, focusWindow: focusWindow)
+    public func show(windows: [WindowFact], workspaces: [LauncherEntry] = [], apps: [LauncherEntry]) {
+        let model = LauncherViewModel(windows: windows, workspaces: workspaces, apps: apps, focusWindow: focusWindow)
         model.dismiss = { [weak self] reason in self?.dismiss(reason: reason) }
         let hosting = NSHostingController(rootView: GioLauncherView(model: model))
         hosting.sizingOptions = [.preferredContentSize]
