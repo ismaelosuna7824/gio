@@ -99,6 +99,15 @@ build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TAS
   (.optionIncludingWindow) polled per frame until bounds match (<=1.5s); log `resize latency id=
   app= requestedSize= wsMs= first=`. Bundles 25/7/19/33/1008 all 0 failures (parent re-ran).
   LIVE PENDING: user measurement.
+- [x] PA-09 (`e2aabcf`, `a778d80`) — Live probe confirmed first-time-size repaint 330-750ms
+  (Code/Slack/Pen/Xcode/WhatsApp/Figma), later 9-49ms. Native double-click zoom is smooth because
+  the app animates in-process. Alt+F now performs the window's native zoom (`AXZoomWindow` on the
+  zoom button — `AXPress` there enters full screen, verified read-only on live windows), neighbours
+  spring as usual, settle via CGWindowList stable 2 polls (<=1.2s); accept if every edge within
+  32pt (no correcting write), correct once within 96pt, else fallback; restore presses zoom again
+  when the maximize was native; `[animations] native-zoom` (default true); log `native zoom ...
+  result=`. Probe skips non-resizable/unchanged windows. Bundles 25/7/19/39/1054 all 0 failures
+  (parent re-ran); signed build OK. LIVE PENDING.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
