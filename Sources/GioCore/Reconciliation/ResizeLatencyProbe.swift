@@ -74,6 +74,52 @@ public struct ResizeSizeHistory: Sendable {
     }
 }
 
+/// Which windows the latency probe should watch. A probe is pointless for a
+/// window whose size cannot be set, for one whose current size already is the
+/// request, and for one that ignored an earlier probe entirely (System
+/// Settings keeps its width): those would only log `wsMs=timeout` noise.
+public struct ResizeProbeGate: Sendable {
+    private var fixed: Set<WindowID> = []
+
+    public init() {}
+
+    public func shouldStart(
+        _ id: WindowID, current: CGSize?, requested: CGSize, sizeSettable: Bool,
+        tolerance: CGFloat = ResizeProbeLimits.tolerance
+    ) -> Bool {
+        guard sizeSettable, !fixed.contains(id) else {
+            return false
+        }
+        if let current,
+           abs(current.width - requested.width) <= tolerance,
+           abs(current.height - requested.height) <= tolerance {
+            return false
+        }
+        return true
+    }
+
+    /// A probe hit its deadline. When the window never left the size it
+    /// started at, it is not slow to repaint, it does not resize: remember
+    /// that and tell the caller not to log a latency (true).
+    public mutating func recordTimeout(
+        _ id: WindowID, started: CGSize?, observed: CGSize?,
+        tolerance: CGFloat = ResizeProbeLimits.tolerance
+    ) -> Bool {
+        guard let started, let observed,
+              abs(started.width - observed.width) <= tolerance,
+              abs(started.height - observed.height) <= tolerance
+        else {
+            return false
+        }
+        fixed.insert(id)
+        return true
+    }
+
+    public mutating func forget(_ id: WindowID) {
+        fixed.remove(id)
+    }
+}
+
 /// `resize latency id=<pid:elem> app=<name> requestedSize=WxH wsMs=<ms|timeout> first=<bool>`
 public func resizeLatencyLine(
     id: WindowID, app: String, size: CGSize, result: ResizeProbeDecision, first: Bool

@@ -81,7 +81,9 @@ final class SessionHost: @unchecked Sendable {
     /// resize-latency probes, one short-lived timer each (session queue only).
     private var lastMotionAnimations: [WindowAnimation] = []
     private var resizeHistory = ResizeSizeHistory()
-    private var resizeProbes: [WindowID: (size: CGSize, timer: DispatchSourceTimer)] = [:]
+    private var resizeProbes: [WindowID: (size: CGSize, started: CGSize?, timer: DispatchSourceTimer)] = [:]
+    /// Windows the resize probe learned to ignore (fixed size, not settable).
+    private var resizeProbeGate = ResizeProbeGate()
     private var skipAnimationOnce = false
     /// FI-05: render verification bookkeeping (session queue only).
     private var renderChecks = RenderCheckBook()
@@ -872,6 +874,7 @@ final class SessionHost: @unchecked Sendable {
             echoGate.forget(id)
             trustedFrames.invalidate(id)
             physicalFrames.removeValue(forKey: id)
+            resizeProbeGate.forget(id)
             snapshotCache.evict([id])
             fullscreen.forget(id)
             actuator?.forget(elementID: id.elementID)
@@ -1882,11 +1885,20 @@ final class SessionHost: @unchecked Sendable {
             if let live = resizeProbes[animation.id], live.size == animation.to.size {
                 continue
             }
-            startResizeProbe(id: animation.id, requested: animation.to.size, windowID: windowID)
+            // Only windows that can be resized and are not already that size:
+            // anything else could only log a `wsMs=timeout` that says nothing.
+            let current = windowServerSize(windowID: windowID)
+            let settable = actuator?.element(for: animation.id).map(axIsSizeSettable) ?? false
+            guard resizeProbeGate.shouldStart(
+                animation.id, current: current, requested: animation.to.size, sizeSettable: settable
+            ) else {
+                continue
+            }
+            startResizeProbe(id: animation.id, requested: animation.to.size, windowID: windowID, started: current)
         }
     }
 
-    private func startResizeProbe(id: WindowID, requested: CGSize, windowID: UInt32) {
+    private func startResizeProbe(id: WindowID, requested: CGSize, windowID: UInt32, started: CGSize?) {
         resizeProbes[id]?.timer.cancel()
         let began = ProcessInfo.processInfo.systemUptime
         let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
@@ -1904,13 +1916,20 @@ final class SessionHost: @unchecked Sendable {
             }
             self.resizeProbes[id]?.timer.cancel()
             self.resizeProbes[id] = nil
+            // A window that never left its size is not slow to repaint, it
+            // does not resize: remember that and stay quiet.
+            if decision == .timeout,
+               self.resizeProbeGate.recordTimeout(id, started: started, observed: windowServerSize(windowID: windowID))
+            {
+                return
+            }
             let first = self.resizeHistory.recordIsFirst(id, size: requested)
             GioLog.record(
                 .info,
                 resizeLatencyLine(id: id, app: self.appName(id.pid), size: requested, result: decision, first: first)
             )
         }
-        resizeProbes[id] = (requested, timer)
+        resizeProbes[id] = (requested, started, timer)
         timer.resume()
     }
 

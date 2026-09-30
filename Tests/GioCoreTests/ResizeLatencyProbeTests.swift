@@ -81,3 +81,54 @@ final class ResizeLatencyProbeTests: XCTestCase {
         )
     }
 }
+
+/// Resize latency probe: skip windows that cannot be resized, and never log a
+/// request that is already the current size.
+final class ResizeProbeGateTests: XCTestCase {
+    private func id(_ element: UInt64) -> WindowID {
+        WindowID(pid: 5, elementID: element)
+    }
+
+    private let requested = CGSize(width: 1200, height: 800)
+
+    func testProbesAGrowingResizableWindow() {
+        let gate = ResizeProbeGate()
+        XCTAssertTrue(gate.shouldStart(id(1), current: CGSize(width: 800, height: 800), requested: requested, sizeSettable: true))
+        XCTAssertTrue(gate.shouldStart(id(1), current: nil, requested: requested, sizeSettable: true))
+    }
+
+    func testSkipsWindowsWhoseSizeIsNotSettable() {
+        let gate = ResizeProbeGate()
+        XCTAssertFalse(gate.shouldStart(id(1), current: CGSize(width: 800, height: 800), requested: requested, sizeSettable: false))
+    }
+
+    func testSkipsWhenTheRequestedSizeIsTheCurrentSize() {
+        let gate = ResizeProbeGate()
+        XCTAssertFalse(gate.shouldStart(id(1), current: CGSize(width: 1201.5, height: 799), requested: requested, sizeSettable: true))
+        XCTAssertTrue(gate.shouldStart(id(1), current: CGSize(width: 1210, height: 800), requested: requested, sizeSettable: true))
+    }
+
+    func testATimeoutThatNeverMovedTheWindowMarksItFixedAndStopsProbing() {
+        var gate = ResizeProbeGate()
+        let started = CGSize(width: 800, height: 800)
+        XCTAssertTrue(gate.recordTimeout(id(1), started: started, observed: CGSize(width: 800.5, height: 800)))
+        XCTAssertFalse(gate.shouldStart(id(1), current: started, requested: requested, sizeSettable: true))
+        XCTAssertTrue(gate.shouldStart(id(2), current: started, requested: requested, sizeSettable: true))
+    }
+
+    func testATimeoutAfterTheWindowMovedIsARealLatencyAndKeepsProbing() {
+        var gate = ResizeProbeGate()
+        XCTAssertFalse(gate.recordTimeout(
+            id(1), started: CGSize(width: 800, height: 800), observed: CGSize(width: 1000, height: 800)
+        ))
+        XCTAssertTrue(gate.shouldStart(id(1), current: CGSize(width: 800, height: 800), requested: requested, sizeSettable: true))
+        XCTAssertFalse(gate.recordTimeout(id(1), started: nil, observed: nil))
+    }
+
+    func testForgetLiftsAFixedMark() {
+        var gate = ResizeProbeGate()
+        _ = gate.recordTimeout(id(1), started: CGSize(width: 800, height: 800), observed: CGSize(width: 800, height: 800))
+        gate.forget(id(1))
+        XCTAssertTrue(gate.shouldStart(id(1), current: CGSize(width: 800, height: 800), requested: requested, sizeSettable: true))
+    }
+}

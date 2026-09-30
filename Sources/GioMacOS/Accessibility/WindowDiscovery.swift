@@ -249,6 +249,12 @@ public func axIsTileable(_ element: AXUIElement) -> Bool {
     return true
 }
 
+/// Whether the window's size attribute is settable (the latency probe skips
+/// windows that cannot be resized). Live-only.
+public func axIsSizeSettable(_ element: AXUIElement) -> Bool {
+    axIsSettable(element, attribute: kAXSizeAttribute as String)
+}
+
 func axIsStandardWindow(_ element: AXUIElement) -> Bool {
     var rawRole: CFTypeRef?
     var rawSubrole: CFTypeRef?
