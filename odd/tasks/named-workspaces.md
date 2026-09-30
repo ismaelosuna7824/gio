@@ -61,6 +61,14 @@ LIVE PENDING (persistence across restart, routing + follow, picker scan, real NS
   summon→shown ms=`, `launcher appsReady`, `window register retry`, `window open ... total ms=`.
   Bundles 232(53 skipped)/232/7/19/40/1231 all 0 failures (parent re-ran); signed build OK.
   LIVE PENDING (needs timing sample).
+- [x] NW-06 (`995fb98`, `297da3e`, `bdcdc68`) — Live timing: Chrome 368ms total (switch anim),
+  Brave follow=false (not frontmost at registration), Zen 304ms before registration, bogus `pid=7`
+  retries. Findings: pid=7 lines came from `swift test` writing to the REAL ~/.config/gio/gio.log
+  (fixture lacked a log closure; timestamps while Gio was stopped) — Context.log now required, full
+  test run leaves the user log unchanged (commit title "use the real pid" is misleading; body
+  explains). Registration drops non-running pids. `window open` adds queueWait/classify. Deferred
+  follow: launched <3s or activated <1.5s after placement (cancelled if user moved). Bundles
+  232(53)/247/7/19/40/1241 all 0 failures (parent re-ran; log line count unchanged). LIVE PENDING.
 
 ## Acceptance criteria
 - Creating a workspace + assigning an app in the app persists in config.toml and survives restart;
