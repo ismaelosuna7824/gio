@@ -26,15 +26,24 @@ Pure logic in GioCore/GioSession with tests; UI in GioUI; ConfigPatcher preserve
 tests use temp files; Conventional Commits, NO Co-Authored-By; push after verified batches.
 
 ## Tasks
-- [ ] NW-01 — Config model + parser/patcher: `[[workspace]]`, rule `bundle-id`,
+- [x] NW-01 (`df82cae`) — Config model + parser/patcher: `[[workspace]]`, rule `bundle-id`,
   `open-on-workspace`, `follow`; validation (unknown workspace name → message).
-- [ ] NW-02 — Core: named workspaces persistent in stacks, ordering, rule routing to named
+- [x] NW-02 (`39455ff`) — Core: named workspaces persistent in stacks, ordering, rule routing to named
   workspace on window arrival, follow policy, rename/delete semantics (windows fall back to a
   dynamic workspace), display assignment.
 - [ ] NW-03 — Desktop app "Workspaces" section: create/rename/reorder/delete, icon + color,
   assign apps (installed + running app picker with icons, bundle ids), follow policy per app,
   preview; applies via ConfigPatcher live.
 - [ ] NW-04 — Names everywhere: Overview strip/pills, menu bar, launcher (jump to workspace by name).
+
+Evidence NW-01/02 (route: delegated writer, opus): [[workspace]] name/icon/color/display; rules
+bundle-id, open-on-workspace (unknown name = warning), follow when-active|always|never; named
+workspaces persistent, first in stack, reload matches by name then position (rename), dropped name
+becomes dynamic (no window loss); main display = frame at origin; follow only for windows appearing
+while running (never at startup/rescan); status adds name/icon/color. Randomised test found and
+fixed a real bug (stale empty workspace after removing all names). Seeded equivalence test for
+configs without named workspaces. Bundles 179(44 skipped)/225/7/19/40/1217 all 0 failures (parent
+re-ran); signed build OK. Gap: when-active timing for freshly launched apps unverified live.
 
 ## Acceptance criteria
 - Creating a workspace + assigning an app in the app persists in config.toml and survives restart;
@@ -47,3 +56,4 @@ writer; NW-03..04 one writer.
 
 ## Progress
 - 2026-09-30: document created. Waiting for NA-01..NA-04.
+- 2026-09-30: NW-01 + NW-02 done, pushed. Next: NW-03 + NW-04.
