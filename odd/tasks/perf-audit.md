@@ -86,6 +86,13 @@ overlap check 5-95% vs neighbours' motionFrames (1pt tolerance), delayed grow fr
 step, spring progress on dominant origin axis, `[animations] resize = adaptive|always|never`,
 `anim done ... sizeAnimated=N`. Bundles 25/7/19/32/890 all 0 failures (parent re-ran); signed
 build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TASKS CODE-COMPLETE.
+- [x] PA-07 (`2b1fc67`) — Live (ax renderer): Alt+H/J now fluid, maximize still looks cut (grow
+  at final pass). Focused growing window gets `.atStart` size schedule: one size write in the first
+  frame on the already-raised window, origin animates; overlap with retreating neighbours accepted
+  (frontmost). `[animations] focused-grow = start|end` (default start); applies to fullscreen via
+  focus intent and to maximize/presets via new `growsFocusedWindow` sizing target. `anim done ...
+  grewAtStart=N`. Bundles 25/7/19/33/1000 all 0 failures (parent re-ran); signed build OK. LIVE
+  PENDING. Gap: same-app z-order during flight.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
