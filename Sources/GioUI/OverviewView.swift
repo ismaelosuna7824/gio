@@ -6,11 +6,13 @@ import SwiftUI
 /// hands plain values to the dashboard.
 struct OverviewView: View {
     @ObservedObject var model: DesktopModel
+    @Environment(\.onboardingPresenter) private var onboarding
 
     var body: some View {
         OverviewDashboard(
             facts: model.snapshot.facts,
             config: model.snapshot.config,
+            showGuide: onboarding.map { presenter in { presenter.present() } },
             requestAccessibility: {
                 _ = requestAXPermission()
                 model.refresh()
@@ -30,11 +32,17 @@ struct OverviewView: View {
 struct OverviewDashboard: View {
     let facts: SessionFacts?
     let config: GioConfig
+    var showGuide: (() -> Void)?
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
 
     var body: some View {
         GioPage("Overview", subtitle: subtitle) {
+            if let showGuide {
+                GioButton(title: "Setup Guide", systemImage: "sparkles", role: .borderless, action: showGuide)
+                    .help("Permissions and the keys to know")
+            }
+        } content: {
             if let facts {
                 let overview = makeOverview(facts)
                 if !facts.accessibilityGranted {

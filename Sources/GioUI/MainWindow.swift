@@ -40,6 +40,7 @@ public struct GioMainView: View {
     /// Unsaved settings edits per section, kept across section switches
     /// and window closes (the hosting view lives as long as the app).
     @StateObject private var drafts = SettingsDraftStore()
+    @StateObject private var onboarding = OnboardingPresenter()
     private let onSectionChange: (MainSection) -> Void
 
     public init(model: DesktopModel, onSectionChange: @escaping (MainSection) -> Void = { _ in }) {
@@ -69,6 +70,12 @@ public struct GioMainView: View {
                 .navigationTitle((selection ?? .overview).title)
         }
         .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
+        .environment(\.onboardingPresenter, onboarding)
+        .sheet(isPresented: $onboarding.isPresented) {
+            OnboardingSheet(model: model, onFinish: { onboarding.finish() }, onLater: { onboarding.later() })
+                .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
+        }
+        .onReceive(model.$snapshot) { onboarding.evaluate($0.facts) }
         .frame(minWidth: mainWindowMinSize.width, minHeight: mainWindowMinSize.height)
         .onAppear { onSectionChange(selection ?? .overview) }
         .onChange(of: selection) { section in

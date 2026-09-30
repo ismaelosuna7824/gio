@@ -23,7 +23,7 @@ func activateGio() {
 final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
-    private var launcherWindow: NSWindow?
+    private lazy var launcher = LauncherPanelController(focusWindow: { [host] in host.focusWindow($0) })
     private lazy var launcherApps = scanApplications(directories: defaultApplicationDirectories())
     private lazy var mainWindow = MainWindowController(
         model: DesktopModel(
@@ -143,28 +143,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// DD-05: a Spotlight-like panel that takes key without activating
+    /// Gio, so the main window never jumps forward. Alt+Space again closes it.
     private func showLauncher() {
-        // A fresh view per summon: the window list is current and the query empty.
-        let view = GioLauncherView(
-            windows: host.snapshot().facts?.windows ?? [],
-            focusWindow: { [host] in host.focusWindow($0) },
-            apps: launcherApps,
-            dismiss: { [weak self] in self?.launcherWindow?.close() }
-        )
-        if launcherWindow == nil {
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 520, height: 380),
-                styleMask: [.titled, .closable],
-                backing: .buffered,
-                defer: false
-            )
-            window.title = "Gio Launcher"
-            window.center()
-            launcherWindow = window
+        if launcher.isVisible {
+            launcher.dismiss()
+            return
         }
-        launcherWindow?.contentView = NSHostingView(rootView: view)
-        activateGio()
-        launcherWindow?.makeKeyAndOrderFront(nil)
+        launcher.show(windows: host.snapshot().facts?.windows ?? [], apps: launcherApps)
     }
 }
 
