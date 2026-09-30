@@ -64,6 +64,13 @@ LIVE PENDING. Review: UNAVAILABLE.
   focus ring shown in fullscreen when gap >= ring width; settings toggle + slider. Route:
   delegated writer. Bundles 22/7/19/32/779 all 0 failures (parent re-ran); signed build OK.
   LIVE PENDING. Review: UNAVAILABLE.
+- [ ] NF-06 — Focus indicator: dim inactive windows (user chose option A 2026-09-30: the ring
+  "chases" windows during motion and looks non-native). At rest only: visible unfocused tiled
+  windows dim ~15% (fade in at settle, fade out at motion start), computed from Gio's frames minus
+  anything in front (CGWindowList on-screen order); click-through overlay; ring off by default;
+  `[focus] indicator = dim|ring|none`, `dim-strength`. Plus: startup layout instant (no fly-in
+  animation; live screenshot caught the first layout mid-flight) and atomic cross-process log
+  lines (guardian line split a main-process line). Route: delegated writer.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
