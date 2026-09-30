@@ -4,6 +4,7 @@ import CoreGraphics
 import Foundation
 import GioCore
 import GioMacOS
+import GioSession
 import GioUI
 
 /// The unified Gio session: persistent registry, workspaces, displays and
@@ -17,6 +18,9 @@ import GioUI
 /// on this discipline — review before adding shared state.
 final class SessionHost: @unchecked Sendable {
     private let queue = DispatchQueue(label: "gio.session")
+    /// Mouse, frontmost app, main screen, running apps and the on-screen
+    /// window list, read through one seam (concrete type: static dispatch).
+    private let probe = LiveSystemProbe()
     private var session = CommandSession()
     private var displays = DisplayManager()
     private var actuator: AXWindowActuator?
@@ -669,7 +673,7 @@ final class SessionHost: @unchecked Sendable {
         FocusDimActivity(
             motion: player?.isActive == true, flight: flightGate.isActive,
             nativeZoom: nativeZoom.hasInFlight || nativeZoom.hasResolved || !zoomVerifications.isEmpty,
-            mouseDown: NSEvent.pressedMouseButtons != 0, dragHeld: dimDragHeld
+            mouseDown: probe.isMouseDown, dragHeld: dimDragHeld
         )
     }
 
@@ -741,7 +745,7 @@ final class SessionHost: @unchecked Sendable {
         }
         let regions = focusDimRegions(
             focused: DimWindow(pid: focusedID.pid, frame: focusedFrame), windows: windows,
-            frontToBack: windowServerWindows(displayHeight: mainHeight()),
+            frontToBack: probe.windowServerWindows(displayHeight: mainHeight()),
             displays: displays.allDisplays().map(\.frame)
         )
         return regions.isEmpty ? .hidden(.noFocus) : .shown(regions: regions, strength: session.config.focus.dimStrength)
@@ -805,7 +809,7 @@ final class SessionHost: @unchecked Sendable {
     // MARK: - Sync
 
     private func mainHeight() -> CGFloat {
-        NSScreen.main?.frame.height ?? 1169
+        probe.mainScreenHeight
     }
 
     private func initialSync() {
@@ -882,7 +886,7 @@ final class SessionHost: @unchecked Sendable {
         if currentClick() == nil,
            let focusedID = adoptableFocus(
                among: focusCandidates,
-               frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier
+               frontmostPID: probe.frontmostPID
            )
         {
             adoptFocus(focusedID, source: .rescan)
@@ -996,7 +1000,7 @@ final class SessionHost: @unchecked Sendable {
         let livePIDs = Set(live.map(\.pid))
         let dead = session.registry.managedWindows()
             .map(\.id)
-            .filter { !livePIDs.contains($0.pid) && NSRunningApplication(processIdentifier: $0.pid) == nil }
+            .filter { !livePIDs.contains($0.pid) && !probe.isRunning($0.pid) }
         guard !dead.isEmpty else {
             return
         }
@@ -1054,8 +1058,8 @@ final class SessionHost: @unchecked Sendable {
             displays.disconnect(known)
             visibleFrames.removeValue(forKey: known)
         }
-        if let main = NSScreen.main {
-            actuator?.updateDisplayHeight(main.frame.height)
+        if let main = probe.mainScreenFrame {
+            actuator?.updateDisplayHeight(main.height)
         }
         // A topology change can move windows behind our back and changes
         // every parking target: nothing placed before it is trusted.
@@ -1070,7 +1074,7 @@ final class SessionHost: @unchecked Sendable {
         // Rebuilt per pass so config reloads apply instantly.
         ScrollableLayoutEngine(
             config: session.config.makeLayoutConfig(
-                viewportWidth: NSScreen.main?.visibleFrame.width ?? 1800
+                viewportWidth: probe.mainScreenVisibleFrame?.width ?? 1800
             ),
             minimumSizes: minimumSizes.sizes
         )
@@ -1098,7 +1102,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func resizeKey(_ pid: pid_t) -> String {
-        NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid\(pid)"
+        probe.applicationLabel(pid)
     }
 
     private func logResizeCapability(_ key: String) {
@@ -1221,7 +1225,7 @@ final class SessionHost: @unchecked Sendable {
         guard !isShuttingDown else {
             return
         }
-        switch reflowDeferral.request(mouseDown: NSEvent.pressedMouseButtons != 0) {
+        switch reflowDeferral.request(mouseDown: probe.isMouseDown) {
         case .apply:
             // FI-06: during a motion the retargeting reflow waits for the next
             // tick, so a burst of keys costs one reflow, not one per key.
@@ -1244,7 +1248,7 @@ final class SessionHost: @unchecked Sendable {
             guard let self, !self.isShuttingDown else {
                 return
             }
-            switch self.reflowDeferral.poll(mouseDown: NSEvent.pressedMouseButtons != 0) {
+            switch self.reflowDeferral.poll(mouseDown: probe.isMouseDown) {
             case .apply:
                 self.performReflow()
             case .poll(let next):
@@ -1272,7 +1276,7 @@ final class SessionHost: @unchecked Sendable {
         // is still stuck so a hung app is never written twice at once.
         let reconciler = self.reconciler ?? WindowReconciler(
             actuator: actuator,
-            appName: { NSRunningApplication(processIdentifier: $0)?.localizedName }
+            appName: { [probe] in probe.applicationName($0) }
         )
         self.reconciler = reconciler
         let settings = session.config.animations
@@ -1427,10 +1431,10 @@ final class SessionHost: @unchecked Sendable {
         if focusTarget == nil,
            let reassert = focusIntent.takeReassert(
             logicalFocus: session.manager.currentWorkspace().focusedWindow,
-            frontmostPID: NSWorkspace.shared.frontmostApplication?.processIdentifier,
+            frontmostPID: probe.frontmostPID,
             frontmostFocusedWindow: { [actuator] in
                 // Never reads Gio's own pid: a target is never Gio's.
-                guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier,
+                guard let pid = probe.frontmostPID,
                       pid != ProcessInfo.processInfo.processIdentifier,
                       let element = focusedWindowElement(pid: pid) else {
                     return nil
@@ -1833,7 +1837,7 @@ final class SessionHost: @unchecked Sendable {
     /// flight, a mouse button is down or Gio is leaving.
     private func renderCheckMayRun(_ token: Int) -> Bool {
         !isShuttingDown && renderChecks.isCurrent(token) && player?.isActive != true
-            && !flightGate.isActive && NSEvent.pressedMouseButtons == 0
+            && !flightGate.isActive && !probe.isMouseDown
     }
 
     private func renderViewports() -> [CGRect] {
@@ -1849,7 +1853,7 @@ final class SessionHost: @unchecked Sendable {
 
     private func renderVerdict(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> RenderVerdict {
         evaluateRender(
-            axFrames: axFrames, server: windowServerWindows(displayHeight: mainHeight()),
+            axFrames: axFrames, server: probe.windowServerWindows(displayHeight: mainHeight()),
             targets: targets, viewports: renderViewports()
         )
     }
@@ -1933,7 +1937,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func appName(_ pid: pid_t) -> String {
-        NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid\(pid)"
+        probe.applicationLabel(pid)
     }
 
     // MARK: - Workspace visibility (NC-06)
@@ -2027,7 +2031,7 @@ final class SessionHost: @unchecked Sendable {
     private func startMotion(_ animations: [WindowAnimation], reconciler: WindowReconciler<AXWindowActuator>) {
         let player = self.player ?? MotionPlayer(
             sink: reconciler,
-            appName: { NSRunningApplication(processIdentifier: $0)?.localizedName }
+            appName: { [probe] in probe.applicationName($0) }
         )
         self.player = player
         player.start(animations)
@@ -2447,7 +2451,7 @@ final class SessionHost: @unchecked Sendable {
             stopMotion()
             return
         }
-        if NSEvent.pressedMouseButtons != 0 {
+        if probe.isMouseDown {
             // Nothing moves under the cursor: abandon the flight, and let
             // the deferred reflow finish instantly after release.
             stopMotion()
@@ -2510,8 +2514,8 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func resyncAndReflow() {
-        if let main = NSScreen.main {
-            actuator?.updateDisplayHeight(main.frame.height)
+        if let main = probe.mainScreenFrame {
+            actuator?.updateDisplayHeight(main.height)
         }
         // The tap starts once at launch; if permission arrived later it
         // stayed deaf — retry here so granting + any window event heals it
@@ -2532,14 +2536,6 @@ final class SessionHost: @unchecked Sendable {
         enumerateAndPlace()
         syncObservers()
         reflowAll()
-    }
-
-    private func runningRegularPIDs() -> Set<pid_t> {
-        Set(
-            NSWorkspace.shared.runningApplications
-                .filter { $0.activationPolicy == .regular }
-                .map(\.processIdentifier)
-        )
     }
 
     // MARK: - Observers
@@ -2568,7 +2564,7 @@ final class SessionHost: @unchecked Sendable {
         guard let observer = eventObserver else {
             return
         }
-        let plan = observationBook.reconcile(running: runningRegularPIDs())
+        let plan = observationBook.reconcile(running: probe.runningRegularPIDs())
         for pid in plan.detach {
             observer.detach(pid: pid)
             observationBook.didDetach(pid)
@@ -2696,8 +2692,8 @@ final class SessionHost: @unchecked Sendable {
         let tapped = tappedClick
         clickLock.unlock()
         let click = recentClick(
-            pressed: NSEvent.pressedMouseButtons != 0,
-            currentLocation: NSEvent.mouseLocation,
+            pressed: probe.isMouseDown,
+            currentLocation: probe.mouseLocation,
             now: ProcessInfo.processInfo.systemUptime,
             lastTapped: tapped
         )
@@ -2717,7 +2713,7 @@ final class SessionHost: @unchecked Sendable {
         }
         // A background app changing its own key window is not the user's focus.
         if source == .focusChanged,
-           pid != NSWorkspace.shared.frontmostApplication?.processIdentifier
+           pid != probe.frontmostPID
         {
             return
         }
@@ -2740,7 +2736,7 @@ final class SessionHost: @unchecked Sendable {
                 return
             }
             let poll = self.focusSettle.poll(
-                mouseDown: NSEvent.pressedMouseButtons != 0,
+                mouseDown: probe.isMouseDown,
                 now: ProcessInfo.processInfo.systemUptime
             )
             switch poll {
@@ -2764,7 +2760,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func validateClickFocus(_ event: FocusEvent, click: MouseClick, fresh: Bool) {
-        let element = NSWorkspace.shared.frontmostApplication?.processIdentifier == event.pid
+        let element = probe.frontmostPID == event.pid
             ? focusedElement(for: event, fresh: fresh) : nil
         let known = element.flatMap { actuator?.id(matching: $0, pid: event.pid) }
         var matches = false
@@ -2807,7 +2803,7 @@ final class SessionHost: @unchecked Sendable {
     /// window goes through single-window admission; a reflow follows only
     /// when the viewport has to scroll to show the focused column.
     private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
-        guard event.pid == NSWorkspace.shared.frontmostApplication?.processIdentifier else {
+        guard event.pid == probe.frontmostPID else {
             return
         }
         guard let id = actuator?.id(matching: element, pid: event.pid) else {
@@ -2853,8 +2849,7 @@ final class SessionHost: @unchecked Sendable {
     /// appear later arrive through the app-level window-created event.
     private func attachLaunchedApp(_ pid: pid_t, attempt: Int) {
         guard let observer = eventObserver,
-              let app = NSRunningApplication(processIdentifier: pid),
-              app.activationPolicy == .regular,
+              probe.isRegularApplication(pid),
               observationBook.needsAttach(pid)
         else {
             return
@@ -2941,7 +2936,7 @@ final class SessionHost: @unchecked Sendable {
         guard let frame = plans.lazy.compactMap({ $0.visible[id] }).first,
               let target = mouseFollowsFocusTarget(
                   enabled: session.config.behavior.mouseFollowsFocus, frame: frame,
-                  pointer: NSEvent.mouseLocation
+                  pointer: probe.mouseLocation
               )
         else {
             return
@@ -3005,13 +3000,13 @@ final class SessionHost: @unchecked Sendable {
         guard !isShuttingDown else {
             return
         }
-        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let frontPID = probe.frontmostPID
         let logical = session.manager.currentWorkspace().focusedWindow
         let focused = logical.flatMap { $0.pid == frontPID ? $0 : nil }
         guard let id = hoverFocus.due(
             now: ProcessInfo.processInfo.systemUptime,
-            buttonDown: NSEvent.pressedMouseButtons != 0, focused: focused
-        ), hoveredWindow(at: NSEvent.mouseLocation) == id else {
+            buttonDown: probe.isMouseDown, focused: focused
+        ), hoveredWindow(at: probe.mouseLocation) == id else {
             return
         }
         adoptFocus(id, source: .hover)
@@ -3212,7 +3207,7 @@ final class SessionHost: @unchecked Sendable {
         let display = displays.allDisplays().first { $0.workspace == current }
             ?? displays.allDisplays().first
         return display.map { visibleFrames[$0.id] ?? $0.frame }
-            ?? NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
+            ?? probe.mainScreenVisibleFrame ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
     }
 
     /// Layout config plus the viewport width of the display showing the
