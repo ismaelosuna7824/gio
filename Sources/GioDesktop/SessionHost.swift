@@ -17,7 +17,11 @@ import GioUI
 /// run once on the main thread. Weak captures in `@Sendable` closures rely
 /// on this discipline — review before adding shared state.
 final class SessionHost: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "gio.session")
+    /// The session queue, reached through the scheduler seam components use.
+    private let scheduler = QueueScheduler(queue: DispatchQueue(label: "gio.session"))
+    private var queue: DispatchQueue {
+        scheduler.queue
+    }
     /// Mouse, frontmost app, main screen, running apps and the on-screen
     /// window list, read through one seam (concrete type: static dispatch).
     private let probe = LiveSystemProbe()
@@ -50,8 +54,9 @@ final class SessionHost: @unchecked Sendable {
     private let snapshotCell = PublishedValue(SessionSnapshot())
     /// PA-02: menu bar state, pushed (deduplicated) after reflows and IPC
     /// commands instead of being polled over IPC.
-    private let barStateCell = PublishedValue<BarSessionState?>(nil)
-    private var barGate = BarStateGate()
+    private var barPublisher: GatedStatePublisher<BarStateGate>!
+    /// Overview facts (windows, displays, permissions) for the snapshot.
+    private var factsBuilder: SessionFactsBuilder!
     /// Menu bar hook, always invoked on the main thread.
     var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
@@ -111,10 +116,6 @@ final class SessionHost: @unchecked Sendable {
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
     private var trustedFrames = TrustedFrames()
-    /// PA-04: publishes the focus ring only when its drawing changed.
-    private var ringGate = FocusRingPublishGate()
-    /// SM-01: logs the effective renderer only when it changes (session queue).
-    private var rendererLog = RendererLogGate()
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
     /// SM-02b: managed set the shareable content was last prefetched for, and
@@ -201,19 +202,14 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// NF-01: the focus ring state. The session queue posts (reflow, focus
-    /// adoption, every motion frame); the mailbox keeps only the newest value
-    /// and at most one main-queue block pending, so frames never back up main.
-    private let focusRingMailbox = LatestValueMailbox<FocusRingState>()
+    /// NF-01: the focus ring. The session queue posts (reflow, focus
+    /// adoption, every motion frame); at most one main-queue block pending.
+    private var focusRing: FocusRingPublisher!
     /// Focus ring hook, always invoked on the main thread.
     var onFocusRing: ((FocusRingState) -> Void)?
-    /// NF-06: the dim overlay state, same hand-off as the ring. The one-shot
-    /// recompute (one on-screen CGWindowList query, session queue) is
-    /// coalesced by `dimRecomputeScheduled`; no timer runs at rest.
-    private let focusDimMailbox = LatestValueMailbox<FocusDimState>()
-    private var dimRecomputeScheduled = false
-    /// Set by a non-echo frame event, cleared by the next reflow.
-    private var dimDragHeld = false
+    /// NF-06: the dim overlay, same hand-off as the ring; one coalesced
+    /// recompute (one on-screen CGWindowList query), no timer at rest.
+    private var focusDim: FocusDimPublisher!
     /// Dim overlay hook, always invoked on the main thread.
     var onFocusDim: ((FocusDimState) -> Void)?
     /// UI hook, always invoked on the main thread.
@@ -221,6 +217,60 @@ final class SessionHost: @unchecked Sendable {
     /// `gio restart` (HD-05): invoked on the main thread shortly after the
     /// IPC reply left; the app shuts the session down and relaunches itself.
     var onRestart: (() -> Void)?
+
+    /// Builds the components. Their contexts read host state on the session
+    /// queue; `unowned` is safe because the host owns them and lives as long
+    /// as the app.
+    init() {
+        focusRing = FocusRingPublisher(context: .init(
+            session: { [unowned self] in session },
+            physicalFrame: { [unowned self] in physicalFrames[$0] },
+            displayFrames: { [unowned self] in displays.allDisplays().map(\.frame) },
+            isFlightActive: { [unowned self] in flightGate.isActive },
+            isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
+            isFullscreen: { [unowned self] in fullscreen.isFullscreen($0) },
+            mainHop: mainQueueHop,
+            deliver: { [unowned self] in onFocusRing?($0) }
+        ))
+        focusDim = FocusDimPublisher(
+            context: .init(
+                session: { [unowned self] in session },
+                physicalFrame: { [unowned self] in physicalFrames[$0] },
+                displays: { [unowned self] in displays.allDisplays() },
+                isMotionActive: { [unowned self] in player?.isActive == true },
+                isFlightActive: { [unowned self] in flightGate.isActive },
+                isNativeZoomActive: { [unowned self] in
+                    nativeZoom.hasInFlight || nativeZoom.hasResolved || !zoomVerifications.isEmpty
+                },
+                isMouseDown: { [unowned self] in probe.isMouseDown },
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                frontToBack: { [unowned self] in probe.windowServerWindows(displayHeight: mainHeight()) },
+                mainHop: mainQueueHop,
+                deliver: { [unowned self] in onFocusDim?($0) }
+            ),
+            scheduler: scheduler
+        )
+        barPublisher = GatedStatePublisher(gate: BarStateGate(), initial: nil, context: .init(
+            isObserved: { [unowned self] in onBarState != nil },
+            makeValue: { [unowned self] in parseBarStatus(queryStatus(session: session)) },
+            mainHop: mainQueueHop,
+            deliver: { [unowned self] in onBarState?($0) }
+        ))
+        factsBuilder = SessionFactsBuilder(context: .init(
+            session: { [unowned self] in session },
+            displays: { [unowned self] in displays.allDisplays() },
+            visibleFrame: { [unowned self] in visibleFrames[$0] },
+            configMessages: { [unowned self] in configMessages },
+            engine: { [unowned self] in engine() },
+            tileableModes: { [unowned self] in tileableModes() },
+            screenRecordingGranted: { hasScreenRecordingPermission() },
+            accessibilityGranted: { hasAXPermission() },
+            configFileExists: { FileManager.default.fileExists(atPath: $0) },
+            homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
+            prefetchSnapshotContent: { [unowned self] in prefetchSnapshotContentIfNeeded(permissionGranted: $0) },
+            log: { GioLog.record($0, $1) }
+        ))
+    }
 
     // MARK: - Lifecycle
 
@@ -501,28 +551,13 @@ final class SessionHost: @unchecked Sendable {
 
     /// Last published menu bar state; never waits on the session queue.
     func barState() -> BarSessionState? {
-        barStateCell.read()
+        barPublisher.read()
     }
 
     /// Ask the session for one initial publication (after the hook is set).
     func requestBarState() {
         queue.async { [weak self] in
-            self?.publishBarState()
-        }
-    }
-
-    /// Must run on `queue`. Cheap no-op when nothing the bar shows changed.
-    private func publishBarState() {
-        guard onBarState != nil else {
-            return
-        }
-        let state = parseBarStatus(queryStatus(session: session))
-        guard barGate.accept(state) else {
-            return
-        }
-        barStateCell.publish(state)
-        DispatchQueue.main.async { [weak self] in
-            self?.onBarState?(state)
+            self?.barPublisher.publish()
         }
     }
 
@@ -530,79 +565,8 @@ final class SessionHost: @unchecked Sendable {
     private func publishSnapshot() {
         snapshotCell.publish(
             SessionSnapshot(
-                keybindings: session.config.keybindings, facts: sessionFacts(), config: session.config
+                keybindings: session.config.keybindings, facts: factsBuilder.facts(), config: session.config
             )
-        )
-    }
-
-    /// Must run on `queue`.
-    private func sessionFacts() -> SessionFacts {
-        let displayStates = displays.allDisplays()
-        let shown = session.manager.activeIDs
-        var owner: [WindowID: (index: Int, id: WorkspaceID)] = [:]
-        for display in session.manager.displayIDs {
-            for (offset, workspace) in session.manager.stack(on: display).enumerated() {
-                for column in workspace.columns {
-                    for id in column.windows {
-                        owner[id] = (offset + 1, workspace.id)
-                    }
-                }
-            }
-        }
-        let summaries = Dictionary(
-            uniqueKeysWithValues: session.manager.stackSummaries().map { ($0.display, $0) }
-        )
-        let windows = session.registry.managedWindows().map { window -> WindowFact in
-            let workspace = owner[window.id]?.index
-            return WindowFact(
-                id: "\(window.id.pid):\(window.id.elementID)",
-                application: window.application, title: window.title, workspace: workspace,
-                mode: window.mode, floatReason: window.floatReason,
-                isMinimized: window.isMinimized,
-                workspaceIsShown: owner[window.id].map { shown.contains($0.id) } ?? true
-            )
-        }
-        let path = session.configPath
-            ?? (FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml")
-        let screenRecording = hasScreenRecordingPermission()
-        if let line = rendererLog.line(config: session.config.animations, permission: screenRecording) {
-            GioLog.record(.info, line)
-        }
-        prefetchSnapshotContentIfNeeded(
-            permissionGranted: effectiveRenderer(config: session.config.animations, permission: screenRecording) == .snapshot
-        )
-        return SessionFacts(
-            configPath: path, configExists: FileManager.default.fileExists(atPath: path),
-            configMessages: configMessages, accessibilityGranted: hasAXPermission(),
-            currentWorkspace: session.manager.current,
-            displays: displayStates.map {
-                DisplayFact(
-                    id: $0.id.rawValue,
-                    workspace: summaries[$0.id]?.activeIndex ?? 1,
-                    stack: summaries[$0.id]?.workspaces ?? []
-                )
-            },
-            windows: windows, screenRecordingGranted: screenRecording,
-            strip: currentWorkspaceStrip()
-        )
-    }
-
-    /// DD-02: the focused display's current workspace laid out as a strip
-    /// for the Overview miniature. Pure layout math on session state; no AX.
-    private func currentWorkspaceStrip() -> WorkspaceStripFact? {
-        let focused = session.manager.focusedDisplay
-        guard let display = displays.allDisplays().first(where: { $0.id == focused }) else {
-            return nil
-        }
-        let viewport = visibleFrames[display.id] ?? display.frame
-        let workspace = tilingWorkspace(from: session.manager.currentWorkspace(), modes: tileableModes())
-        guard let layout = try? engine().calculate(workspace: workspace, viewport: viewport) else {
-            return nil
-        }
-        return makeWorkspaceStrip(
-            workspace: workspace, layout: layout, viewport: viewport, displayID: display.id.rawValue,
-            index: session.manager.current,
-            application: { session.registry.find($0)?.application ?? "" }
         )
     }
 
@@ -626,141 +590,11 @@ final class SessionHost: @unchecked Sendable {
         return result
     }
 
-    /// Post the focus ring for the focused window of the current workspace.
-    /// Uses only session bookkeeping (registry, `physicalFrames`, display
-    /// frames): no AX call, cheap enough for every motion frame. Session queue.
+    /// Post the focus ring (and refresh the dim) for the focused window of
+    /// the current workspace. Session queue; cheap enough for every frame.
     private func publishFocusRing() {
-        updateFocusDim()
-        let state = focusRingSnapshot()
-        guard ringGate.shouldPublish(state), focusRingMailbox.post(state) else {
-            return
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let next = self.focusRingMailbox.take() else {
-                return
-            }
-            self.onFocusRing?(next)
-        }
-    }
-
-    private func focusRingSnapshot() -> FocusRingState {
-        let config = session.config.focusRing
-        // SM-04: the ring stays hidden while an overlay flight is in the air
-        // (the real window is already at its final frame, the image is not)
-        // and returns at the settle, so it never sits apart from its window.
-        // Native zoom: hidden while the app animates its own window (it follows
-        // physical frames), shown again once the zoom settled and was judged.
-        guard config.enabled, session.config.focus.showsRing, !flightGate.isActive, let id = session.manager.currentWorkspace().focusedWindow,
-              !nativeZoom.isBusy(id), let window = session.registry.find(id)
-        else {
-            return .hidden
-        }
-        return focusRingState(
-            config: config,
-            focused: FocusRingWindow(
-                frame: physicalFrames[id], isMinimized: window.isMinimized,
-                isFullscreen: window.mode == .fullscreen || fullscreen.isFullscreen(id),
-                isMaximized: session.manager.currentWorkspace().focusedColumnRef?.savedWidthSpec != nil
-            ),
-            displays: displays.allDisplays().map(\.frame),
-            fullscreenGap: session.config.layout.resolvedFullscreenGap
-        )
-    }
-
-    // MARK: - Focus dim (NF-06)
-
-    private func focusDimActivity() -> FocusDimActivity {
-        FocusDimActivity(
-            motion: player?.isActive == true, flight: flightGate.isActive,
-            nativeZoom: nativeZoom.hasInFlight || nativeZoom.hasResolved || !zoomVerifications.isEmpty,
-            mouseDown: probe.isMouseDown, dragHeld: dimDragHeld
-        )
-    }
-
-    /// Runs with every ring publication (reflow exits, adoption, flights,
-    /// motion ticks): hides at once while anything moves, otherwise asks for
-    /// one coalesced recompute. Session queue.
-    private func updateFocusDim() {
-        switch focusDimDecision(indicator: session.config.focus.indicator, activity: focusDimActivity()) {
-        case .hide(let reason):
-            postFocusDim(.hidden(reason))
-        case .compute, .retryAfterRelease:
-            scheduleFocusDimRecompute(after: 0.05)
-        }
-    }
-
-    private func scheduleFocusDimRecompute(after delay: TimeInterval) {
-        guard !dimRecomputeScheduled else {
-            return
-        }
-        dimRecomputeScheduled = true
-        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self else {
-                return
-            }
-            self.dimRecomputeScheduled = false
-            self.recomputeFocusDim()
-        }
-    }
-
-    /// Re-checks the timing rule (a motion may have started since), then
-    /// queries the WindowServer once. Never on main, never an AX call.
-    private func recomputeFocusDim() {
-        guard !isShuttingDown else {
-            return
-        }
-        switch focusDimDecision(indicator: session.config.focus.indicator, activity: focusDimActivity()) {
-        case .hide(let reason):
-            postFocusDim(.hidden(reason))
-        case .retryAfterRelease:
-            // Only while a button is held: compute after release.
-            scheduleFocusDimRecompute(after: 0.05)
-        case .compute:
-            postFocusDim(focusDimSnapshot())
-        }
-    }
-
-    /// Visible tiled windows of every shown workspace (Gio's physical frames)
-    /// against the on-screen z-order. Only the current workspace's focus is lit.
-    private func focusDimSnapshot() -> FocusDimState {
-        guard let focusedID = session.manager.currentWorkspace().focusedWindow,
-              let focusedFrame = physicalFrames[focusedID],
-              session.registry.find(focusedID)?.isMinimized == false
-        else {
-            return .hidden(.noFocus)
-        }
-        var windows: [DimWindow] = []
-        for display in displays.allDisplays() {
-            guard let workspace = session.manager.workspace(id: display.workspace) else {
-                continue
-            }
-            for id in workspace.columns.flatMap(\.windows) where id != focusedID {
-                guard let record = session.registry.find(id), record.mode == .tiled, !record.isMinimized,
-                      let frame = physicalFrames[id]
-                else {
-                    continue
-                }
-                windows.append(DimWindow(pid: id.pid, frame: frame))
-            }
-        }
-        let regions = focusDimRegions(
-            focused: DimWindow(pid: focusedID.pid, frame: focusedFrame), windows: windows,
-            frontToBack: probe.windowServerWindows(displayHeight: mainHeight()),
-            displays: displays.allDisplays().map(\.frame)
-        )
-        return regions.isEmpty ? .hidden(.noFocus) : .shown(regions: regions, strength: session.config.focus.dimStrength)
-    }
-
-    private func postFocusDim(_ state: FocusDimState) {
-        guard focusDimMailbox.post(state) else {
-            return
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let next = self.focusDimMailbox.take() else {
-                return
-            }
-            self.onFocusDim?(next)
-        }
+        focusDim.update()
+        focusRing.publish()
     }
 
     /// After `session.config` changed: rebuild bindings and messages,
@@ -769,7 +603,7 @@ final class SessionHost: @unchecked Sendable {
         GioLog.minimumLevel = session.config.logging.level
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
         inactiveParking.invalidate()
-        ringGate.reset()
+        focusRing.resetGate()
         refreshDispatcher()
         configMessages = loadGioConfig().messages
         reapplyRules()
@@ -802,7 +636,7 @@ final class SessionHost: @unchecked Sendable {
                 break
             }
         }
-        publishBarState()
+        barPublisher.publish()
         return response
     }
 
@@ -1065,7 +899,7 @@ final class SessionHost: @unchecked Sendable {
         // every parking target: nothing placed before it is trusted.
         trustedFrames.removeAll()
         inactiveParking.invalidate()
-        ringGate.reset()
+        focusRing.resetGate()
     }
 
     // MARK: - Reflow
@@ -1264,11 +1098,11 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         // The snap-back reflow after a drag releases the dim hold.
-        dimDragHeld = false
+        focusDim.releaseDragHold()
         // Every exit (animation started or instant pass) refreshes the ring.
         defer {
             publishFocusRing()
-            publishBarState()
+            barPublisher.publish()
         }
         // A new pass invalidates any pending render check (FI-05).
         renderChecks.cancel()
@@ -2309,7 +2143,7 @@ final class SessionHost: @unchecked Sendable {
         zoomWindowServerIDs.removeValue(forKey: id)
         nativeZoom.endVerifying(id)
         // The last verification lifts the zoom hold on the dim.
-        updateFocusDim()
+        focusDim.update()
     }
 
     /// Zooms whose window is no longer laid out on a display: nothing to judge.
@@ -2604,7 +2438,7 @@ final class SessionHost: @unchecked Sendable {
             }
             requestFocusAdoption(.activation, pid: event.pid, element: nil)
             // Another app's windows may now be in front of dimmed ones.
-            updateFocusDim()
+            focusDim.update()
         case .window(let kind):
             handleWindowEvent(kind, pid: event.pid, element: event.element)
         }
@@ -2647,8 +2481,7 @@ final class SessionHost: @unchecked Sendable {
             }
             // Not our echo: the window moved on its own (drag, app resize).
             // The dim comes down and returns after the snap-back reflow.
-            dimDragHeld = true
-            postFocusDim(.hidden(.drag))
+            focusDim.holdForDrag()
             trustedFrames.invalidate(known)
             nativeZoom.forget(known)
             if invalidate {
@@ -3253,3 +3086,6 @@ private func sameElement(_ lhs: AXUIElement?, _ rhs: AXUIElement?) -> Bool {
     default: return false
     }
 }
+
+/// The menu bar's dedupe gate drives the bar publisher.
+extension BarStateGate: PublicationGate {}
