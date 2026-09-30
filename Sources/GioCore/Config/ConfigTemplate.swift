@@ -44,10 +44,11 @@ public func defaultConfigTemplate() -> String {
     # up and nothing is in the way, "always" ignores how well the app keeps
     # up (still never overlaps a neighbour).
     resize = "never"
-    # How motion is drawn: "snapshot" (default) animates window images in an
-    # overlay and needs the Screen Recording permission (Gio falls back to
-    # "ax" while it is missing); "ax" moves the real windows every frame.
-    renderer = "snapshot"
+    # How motion is drawn: "ax" (default) moves the real windows every frame,
+    # always showing live content. "snapshot" (experimental) animates window
+    # images in an overlay: smoother on slow apps, but it can flicker and needs
+    # the Screen Recording permission (Gio falls back to "ax" while missing).
+    renderer = "ax"
 
     [focus-ring]
     # A rounded outline drawn around the focused window (click-through overlay).

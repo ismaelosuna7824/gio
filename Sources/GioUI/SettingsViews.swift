@@ -211,12 +211,12 @@ struct AnimationsSettingsView: View {
                 Text("Never (default) grows windows once at the end. Adaptive grows them during the motion when their app keeps up and nothing is in the way; Always ignores how well the app keeps up.")
                     .font(.caption).foregroundStyle(.secondary)
                 Picker("Renderer", selection: $renderer) {
-                    Text("Snapshot").tag(RendererKind.snapshot)
                     Text("Accessibility").tag(RendererKind.ax)
+                    Text("Snapshot (experimental)").tag(RendererKind.snapshot)
                 }
                 .pickerStyle(.segmented)
                 .disabled(!enabled)
-                Text("Snapshot animates window images and needs the Screen Recording permission (grant it from Overview or Diagnostics; Gio falls back to Accessibility while it is missing). Accessibility moves the real windows every frame.")
+                Text("Accessibility (default) moves the real windows every frame, so you always see live content. Snapshot (experimental) animates window images in an overlay: smoother on slow apps, but it can flicker and needs the Screen Recording permission (grant it from Overview or Diagnostics).")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

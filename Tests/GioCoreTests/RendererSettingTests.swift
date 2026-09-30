@@ -4,8 +4,8 @@ import XCTest
 /// SM-01: `[animations] renderer` and the pure choice between the snapshot
 /// (ScreenCaptureKit) renderer and the Accessibility motion.
 final class RendererSettingTests: XCTestCase {
-    func testDefaultIsSnapshotAndBothValuesParse() throws {
-        XCTAssertEqual(defaultGioConfig().animations.renderer, .snapshot)
+    func testDefaultIsAxAndBothValuesParse() throws {
+        XCTAssertEqual(defaultGioConfig().animations.renderer, .ax)
         for kind in ["snapshot", "ax"] {
             let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"\(kind)\"\n").get()
             XCTAssertTrue(warnings.isEmpty)
@@ -15,7 +15,7 @@ final class RendererSettingTests: XCTestCase {
 
     func testUnknownRendererWarnsAndKeepsDefault() throws {
         let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"gpu\"\n").get()
-        XCTAssertEqual(config.animations.renderer, .snapshot)
+        XCTAssertEqual(config.animations.renderer, .ax)
         XCTAssertEqual(warnings.count, 1)
         XCTAssertTrue(warnings[0].contains("animations.renderer"))
     }
@@ -25,10 +25,10 @@ final class RendererSettingTests: XCTestCase {
     }
 
     func testTemplateDeclaresRenderer() throws {
-        XCTAssertTrue(defaultConfigTemplate().contains("renderer = \"snapshot\""))
+        XCTAssertTrue(defaultConfigTemplate().contains("renderer = \"ax\""))
         let (config, warnings) = try parseGioConfig(defaultConfigTemplate()).get()
         XCTAssertTrue(warnings.isEmpty)
-        XCTAssertEqual(config.animations.renderer, .snapshot)
+        XCTAssertEqual(config.animations.renderer, .ax)
     }
 
     func testAnimationEditsCarryRendererWhenGiven() {
@@ -55,6 +55,7 @@ final class RendererSettingTests: XCTestCase {
 
     func testReasonNamesWhyTheRendererWasChosen() {
         var animations = AnimationsSectionConfig()
+        animations.renderer = .snapshot
         XCTAssertEqual(rendererReason(config: animations, permission: true), "configured")
         XCTAssertEqual(rendererReason(config: animations, permission: false), "screen-recording-missing")
         animations.renderer = .ax
@@ -65,6 +66,7 @@ final class RendererSettingTests: XCTestCase {
     func testLogGateEmitsOnlyOnChange() {
         var gate = RendererLogGate()
         var animations = AnimationsSectionConfig()
+        animations.renderer = .snapshot
         XCTAssertEqual(
             gate.line(config: animations, permission: false),
             "renderer effective=ax reason=screen-recording-missing"

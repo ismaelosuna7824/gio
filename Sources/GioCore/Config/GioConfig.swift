@@ -88,7 +88,7 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .snapshot
+        renderer: RendererKind = .ax
     ) {
         self.resize = resize
         self.renderer = renderer
