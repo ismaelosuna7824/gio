@@ -97,3 +97,4 @@ Map: delegated Explore (done). RF-00..RF-12: delegated writers in batches (RF-00
 - 2026-09-30: RF-04..RF-06 done, pushed. Next: RF-07..RF-09.
 - 2026-09-30: RF-07..RF-09 done, pushed. Next: RF-10..RF-12.
 - 2026-09-30: RF-10..RF-12 done, pushed (first CI run pending). SessionHost 3260 -> 1393.
+- 2026-09-30: user live regression pass after refactor: "parece que va bien".
