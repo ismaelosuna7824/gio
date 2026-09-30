@@ -108,6 +108,15 @@ build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TAS
   when the maximize was native; `[animations] native-zoom` (default true); log `native zoom ...
   result=`. Probe skips non-resizable/unchanged windows. Bundles 25/7/19/39/1054 all 0 failures
   (parent re-ran); signed build OK. LIVE PENDING.
+- [x] PA-10 (`a53234d`) — Live: every Alt+F logged `fallback(pressFailed) ms=0` yet the window
+  zoomed edge-to-edge without gaps and the ring was inconsistent. Cause (code-confirmed): the
+  0.25s write-lane stall timeout abandoned the blocking `AXZoomWindow` press -> Gio wrote the
+  fallback, then the app's zoom finished and overwrote it. Fix: lane abandonment / -25204 =
+  pending (settle decides, 1.5s timeout), 1.0s messaging timeout on the zoom button, definitive
+  AX errors fall back with the code logged; accept only <=2pt, else one correcting write to the
+  gapped target (`exact|corrected|fallback(...)`); `[focus-ring] hide-when-maximized` (default
+  true). TDD deviation: tests written first but RED not observed. Bundles 25/7/19/39/1064 all 0
+  failures (parent re-ran); signed build OK. LIVE PENDING.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
