@@ -61,3 +61,16 @@ func parseSnapshotCandidates(
         )
     }
 }
+
+/// Diagnostics: the size the WindowServer currently draws for one window
+/// (`CGWindowID`), or nil when it is not listed. Public API, no titles read.
+public func windowServerSize(windowID: UInt32) -> CGSize? {
+    guard let raw = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowID)) as? [[String: Any]],
+          let entry = raw.first,
+          let dictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+          let bounds = CGRect(dictionaryRepresentation: dictionary as CFDictionary)
+    else {
+        return nil
+    }
+    return bounds.size
+}

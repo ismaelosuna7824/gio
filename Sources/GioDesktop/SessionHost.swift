@@ -76,6 +76,12 @@ final class SessionHost: @unchecked Sendable {
     private var physicalFrames: [WindowID: CGRect] = [:]
     private var player: MotionPlayer?
     private var motionTimer: DispatchSourceTimer?
+    /// Diagnostics: the latest flight's animations (to find the FI-03 grows at
+    /// the final pass), the sizes each window already reached and the live
+    /// resize-latency probes, one short-lived timer each (session queue only).
+    private var lastMotionAnimations: [WindowAnimation] = []
+    private var resizeHistory = ResizeSizeHistory()
+    private var resizeProbes: [WindowID: (size: CGSize, timer: DispatchSourceTimer)] = [:]
     private var skipAnimationOnce = false
     /// FI-05: render verification bookkeeping (session queue only).
     private var renderChecks = RenderCheckBook()
@@ -1820,6 +1826,8 @@ final class SessionHost: @unchecked Sendable {
         )
         self.player = player
         player.start(animations)
+        lastMotionAnimations = animations
+        probeResizes(of: animations.filter { $0.sizeSchedule == .atStart }, frames: { $0.from })
         // Motion frames are unverified: the final pass must read these windows,
         // and the render check looks at them afterwards.
         for animation in animations {
@@ -1846,6 +1854,63 @@ final class SessionHost: @unchecked Sendable {
             self?.motionTick()
         }
         motionTimer = timer
+        timer.resume()
+    }
+
+    /// Diagnostics: for each growing animation, poll the WindowServer bounds of
+    /// that window only until they match the requested size or 1.5 s pass, and
+    /// log `resize latency`. The window is found by pid + frame (FI-05 rule);
+    /// unresolvable or ambiguous windows are skipped. The probe ends itself.
+    private func probeResizes(of animations: [WindowAnimation], frames: (WindowAnimation) -> CGRect) {
+        let growing = animations.filter {
+            $0.duration > 0
+                && ($0.to.width - $0.from.width > ResizeProbeLimits.tolerance
+                    || $0.to.height - $0.from.height > ResizeProbeLimits.tolerance)
+        }
+        guard !growing.isEmpty else {
+            return
+        }
+        let managed = Dictionary(growing.map { ($0.id, frames($0)) }, uniquingKeysWith: { $1 })
+        let candidates = windowServerSnapshotCandidates(
+            pids: Set(managed.keys.map(\.pid)), displayHeight: mainHeight()
+        )
+        let matches = matchSnapshotCandidates(managed: managed, candidates: candidates)
+        for animation in growing {
+            guard case .matched(let windowID)? = matches[animation.id] else {
+                continue
+            }
+            if let live = resizeProbes[animation.id], live.size == animation.to.size {
+                continue
+            }
+            startResizeProbe(id: animation.id, requested: animation.to.size, windowID: windowID)
+        }
+    }
+
+    private func startResizeProbe(id: WindowID, requested: CGSize, windowID: UInt32) {
+        resizeProbes[id]?.timer.cancel()
+        let began = ProcessInfo.processInfo.systemUptime
+        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
+        timer.schedule(deadline: .now(), repeating: .milliseconds(8), leeway: .microseconds(500))
+        timer.setEventHandler { [weak self] in
+            guard let self, !self.isShuttingDown else {
+                return
+            }
+            let elapsed = ProcessInfo.processInfo.systemUptime - began
+            let decision = resizeProbeDecision(
+                requested: requested, observed: windowServerSize(windowID: windowID), elapsed: elapsed
+            )
+            guard decision != .pending else {
+                return
+            }
+            self.resizeProbes[id]?.timer.cancel()
+            self.resizeProbes[id] = nil
+            let first = self.resizeHistory.recordIsFirst(id, size: requested)
+            GioLog.record(
+                .info,
+                resizeLatencyLine(id: id, app: self.appName(id.pid), size: requested, result: decision, first: first)
+            )
+        }
+        resizeProbes[id] = (requested, timer)
         timer.resume()
     }
 
@@ -1892,6 +1957,12 @@ final class SessionHost: @unchecked Sendable {
             stopMotion()
             GioLog.record(.info, summary.logLine)
             learnResizeCapability(from: summary)
+            // FI-03 grows land in the final pass: measure them for comparison.
+            probeResizes(
+                of: lastMotionAnimations.filter { $0.sizeSchedule == .none },
+                frames: { physicalFrames[$0.id] ?? $0.from }
+            )
+            lastMotionAnimations = []
             performReflow(animate: false)
         }
     }
