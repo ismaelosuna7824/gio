@@ -125,43 +125,11 @@ final class SessionHost: @unchecked Sendable {
     /// PA-03 / SM-04: refresh rates and capture screens, read on main
     /// (AppKit), read by the session queue behind their lock.
     private let displayParameters = DisplayParameters()
-    private var focusSettle = FocusSettle<FocusEvent>()
-    /// HD-01: the window keyboard/IPC actions want focused (session queue only).
-    private var focusIntent = FocusIntent()
+    /// Focus adoption, keyboard intent, centering, cursor warp and
+    /// focus-follows-mouse (clicks and pointer handed over under their locks).
+    private var focus: FocusCoordinator!
     /// FI-06: rapid actions during a motion merge into one reflow per tick.
     private var reflowCoalescer = ReflowCoalescer()
-    private let clickLock = NSLock()
-    private var tappedClick: MouseClick?
-    /// HD-04: centering asked by the last keyboard/IPC focus change (consumed
-    /// by the next reflow), and whether the cursor should follow that focus.
-    private var centerRequest: CenterRequest?
-    private var warpAfterFocus = false
-    /// Focused-grow: the window a sizing action (maximize, width preset) just
-    /// resized; already frontmost, so it needs no focus intent. Consumed by the
-    /// next reflow.
-    private var sizingFocus: WindowID?
-    /// HD-04 focus-follows-mouse. `hoverLock` guards the flag and the latest
-    /// pointer location the main-thread tap hands over; the rest is on `queue`.
-    private var hoverFocus = HoverFocus()
-    private var hoverFrames: [WindowID: CGRect] = [:]
-    private let hoverLock = NSLock()
-    private var hoverEnabled = false
-    private var hoverLocation: CGPoint?
-    private var hoverScheduled = false
-
-    /// One focus signal awaiting adoption. `element` is the window the
-    /// event itself carried (focused-window changes), if any.
-    private struct FocusEvent: Equatable {
-        let source: FocusSource
-        let pid: pid_t
-        let element: AXUIElement?
-
-        static func == (lhs: FocusEvent, rhs: FocusEvent) -> Bool {
-            lhs.source == rhs.source && lhs.pid == rhs.pid
-                && sameElement(lhs.element, rhs.element)
-        }
-    }
-
     /// NF-01: the focus ring. The session queue posts (reflow, focus
     /// adoption, every motion frame); at most one main-queue block pending.
     private var focusRing: FocusRingPublisher!
@@ -235,7 +203,7 @@ final class SessionHost: @unchecked Sendable {
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
                 isReady: { [unowned self] in reconciler != nil },
-                visibleTargets: { [unowned self] in hoverFrames },
+                visibleTargets: { [unowned self] in focus.hoverFrames },
                 viewports: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
                 serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: mainHeight()) },
                 nudge: { [unowned self] in reconciler?.nudge(steps: $0) ?? [] },
@@ -385,6 +353,32 @@ final class SessionHost: @unchecked Sendable {
             ),
             resizeProbes: resizeProbes, scheduler: scheduler
         )
+        focus = FocusCoordinator(
+            context: .init(
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                isMouseDown: { [unowned self] in probe.isMouseDown },
+                mouseLocation: { [unowned self] in probe.mouseLocation },
+                frontmostPID: { [unowned self] in probe.frontmostPID },
+                windowAreas: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
+                currentWorkspace: { [unowned self] in session.manager.currentWorkspace() },
+                updateWorkspace: { [unowned self] in session.manager.update($0) },
+                isMinimized: { [unowned self] in session.registry.find($0)?.isMinimized == true },
+                knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
+                focusedWindowElement: { focusedWindowElement(pid: $0) },
+                frame: { [unowned self] in try? actuator?.frame(of: $0) },
+                registerAppeared: { [unowned self] in registerAppearedWindow($0, pid: $1, attempt: 0) },
+                pendingScroll: { [unowned self] in pendingScroll() },
+                isVisibleInViewport: { [unowned self] in isVisibleInViewport($0) },
+                topWindowOwnerPID: { topWindowOwnerPID(atCocoa: $0) },
+                warpCursor: { warpCursor(toCocoa: $0) },
+                mouseFollowsFocus: { [unowned self] in session.config.behavior.mouseFollowsFocus },
+                centerMode: { [unowned self] in session.config.layout.centerFocusedColumn },
+                publishFocusRing: { [unowned self] in publishFocusRing() },
+                reflowAll: { [unowned self] in reflowAll() },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
         configCoordinator = ConfigCoordinator(
             context: .init(
                 session: { [unowned self] in session },
@@ -399,11 +393,7 @@ final class SessionHost: @unchecked Sendable {
                     inactiveParking.invalidate()
                     focusRing.resetGate()
                 },
-                setFocusFollowsMouse: { [unowned self] wanted in
-                    hoverLock.lock()
-                    hoverEnabled = wanted
-                    hoverLock.unlock()
-                },
+                setFocusFollowsMouse: { [unowned self] in focus.focusFollowsMouse = $0 },
                 tapObservesMouseMoved: { [unowned self] in hotkeyTap?.observesMouseMoved },
                 requestTapRestart: { [unowned self] in
                     DispatchQueue.main.async { [weak self] in
@@ -422,7 +412,7 @@ final class SessionHost: @unchecked Sendable {
             focusedWindow: { [unowned self] in session.manager.currentWorkspace().focusedWindow },
             dispatch: { [unowned self] in dispatchIPC($0, session: &session, restartAvailable: true) },
             applyReloadedConfig: { [unowned self] in configCoordinator.applyReloadedConfig() },
-            requestFocusIntent: { [unowned self] in requestFocusIntent(if: $0, previous: $1) },
+            requestFocusIntent: { [unowned self] in focus.requestIntent(if: $0, previous: $1) },
             reflow: { [unowned self] in reflowAll() },
             publishBar: { [unowned self] in barPublisher.publish() },
             mainAfter: { delay, block in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block) },
@@ -614,7 +604,7 @@ final class SessionHost: @unchecked Sendable {
                 syncShownWorkspace()
             }
             session.manager.update(plan.workspace)
-            requestFocusIntent(if: true, previous: previous)
+            focus.requestIntent(if: true, previous: previous)
             GioLog.record(
                 .info,
                 "focus window requested id=\(id.pid):\(id.elementID) workspace=\(plan.index) switched=\(plan.switchesWorkspace)"
@@ -634,9 +624,7 @@ final class SessionHost: @unchecked Sendable {
         guard let tap = hotkeyTap else {
             return
         }
-        hoverLock.lock()
-        let wanted = hoverEnabled
-        hoverLock.unlock()
+        let wanted = focus.focusFollowsMouse
         guard tapNeedsRestart(observingMouseMoved: tap.observesMouseMoved, wanted: wanted) else {
             return
         }
@@ -767,13 +755,13 @@ final class SessionHost: @unchecked Sendable {
         // a focused window; only the frontmost app's is the user's.
         // A click in flight is the focus events' business (they validate
         // it against the click point), never the rescan's.
-        if currentClick() == nil,
+        if focus.currentClick() == nil,
            let focusedID = adoptableFocus(
                among: focusCandidates,
                frontmostPID: probe.frontmostPID
            )
         {
-            adoptFocus(focusedID, source: .rescan)
+            focus.adoptFocus(focusedID, source: .rescan)
         }
         if onlyPID == nil {
             reapDeadPids(live: liveIDs)
@@ -1025,37 +1013,6 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// Adopt `id` as the session focus (current workspace), logging what it
-    /// did to the viewport. True when the focus changed. Callers that adopt
-    /// outside a reflow follow up with `reflowAll` when `scrolls` is set.
-    @discardableResult
-    private func adoptFocus(_ id: WindowID, source: FocusSource) -> Bool {
-        let current = session.manager.currentWorkspace()
-        let column = current.columns.firstIndex { $0.windows.contains(id) }
-        let visibility = isVisibleInViewport(id)
-        guard let adopted = adoptingFocus(id, in: current), adopted != current else {
-            logAdoption(source, id, column, visibility, changed: false)
-            return false
-        }
-        session.manager.update(adopted)
-        logAdoption(source, id, column, visibility, changed: true)
-        publishFocusRing()
-        return true
-    }
-
-    private func logAdoption(
-        _ source: FocusSource, _ id: WindowID, _ column: Int?, _ visible: Bool?, changed: Bool
-    ) {
-        let scroll = pendingScroll().map { "\(Int($0.from))->\(Int($0.to))" } ?? "no scroll"
-        let placement = visible.map { $0 ? "visible" : "parked" } ?? "unplaced"
-        GioLog.record(
-            .debug,
-            "focus adopt source=\(source.rawValue) id=\(id.pid):\(id.elementID) "
-                + "column=\(column.map(String.init) ?? "none") \(placement) "
-                + "changed=\(changed) scroll=\(scroll)"
-        )
-    }
-
     /// Would `id` be inside its display's viewport under the current offset?
     private func isVisibleInViewport(_ id: WindowID) -> Bool? {
         let modes = tileableModes()
@@ -1179,10 +1136,8 @@ final class SessionHost: @unchecked Sendable {
         var plans: [ParkingPlan] = []
         var animations: [WindowAnimation] = []
         var prepositions: [WindowID: CGRect] = [:]
-        let centering = centerRequest ?? .none
-        centerRequest = nil
-        let sizingTarget = sizingFocus
-        sizingFocus = nil
+        let centering = focus.takeCenterRequest()
+        let sizingTarget = focus.takeSizingFocus()
         var hovered: [WindowID: CGRect] = [:]
         let inactive = planInactiveWorkspaces()
         // Native zoom: windows whose zoom ended since the last pass get their
@@ -1231,7 +1186,7 @@ final class SessionHost: @unchecked Sendable {
             )
         }
         plans.append(inactive)
-        hoverFrames = hovered
+        focus.setHoverFrames(hovered)
         nativeZoom.dropUnjudged(unjudgedZooms)
         if settings.curve == .spring {
             animations = animations.map { $0.springing(settings.spring) }
@@ -1259,7 +1214,7 @@ final class SessionHost: @unchecked Sendable {
         // a focus intent (passive reflow) the target is nil: FI-03 applies.
         animations = planSizeSchedules(
             animations, mode: settings.resize, capablePids: capablePids,
-            focused: focusIntent.pendingTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget,
+            focused: focus.pendingIntentTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget,
             focusedGrow: settings.focusedGrow
         )
         // SM-04: with the snapshot renderer the real windows get one write to
@@ -1281,20 +1236,9 @@ final class SessionHost: @unchecked Sendable {
             motion.start(animations, sink: reconciler)
             // FI-06: the keyboard follows the logical focus right away instead
             // of after the animation; the final pass only re-asserts a drift.
-            let now = ProcessInfo.processInfo.systemUptime
-            if let target = focusIntent.takeImmediate(
-                parked: Set(plans.flatMap { $0.parked.keys }), now: now
-            ) {
-                let result = reconciler.focusNow(target)
-                GioLog.record(
-                    .debug,
-                    "focus now id=\(target.pid):\(target.elementID) failed=\(result == .failed)"
-                )
-                if warpAfterFocus {
-                    warpCursorToFocus(target, plans: plans)
-                }
+            focus.focusAtMotionStart(parked: Set(plans.flatMap { $0.parked.keys }), plans: plans) {
+                reconciler.focusNow($0) == .failed
             }
-            warpAfterFocus = false
             if let zoomJob {
                 nativeZoom.start(zoomJob)
             }
@@ -1305,36 +1249,11 @@ final class SessionHost: @unchecked Sendable {
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
         // pass nil so they never steal focus. The intent reaches the last
         // plan only, so focus lands after every frame of the pass.
-        var focusTarget = focusIntent.take(
-            motionStarting: false,
-            parked: Set(plans.flatMap { $0.parked.keys }),
-            now: ProcessInfo.processInfo.systemUptime
-        )
-        if focusTarget == nil,
-           let reassert = focusIntent.takeReassert(
-            logicalFocus: session.manager.currentWorkspace().focusedWindow,
-            frontmostPID: probe.frontmostPID,
-            frontmostFocusedWindow: { [actuator] in
-                // Never reads Gio's own pid: a target is never Gio's.
-                guard let pid = probe.frontmostPID,
-                      pid != ProcessInfo.processInfo.processIdentifier,
-                      let element = focusedWindowElement(pid: pid) else {
-                    return nil
-                }
-                return actuator.id(matching: element, pid: pid)
-            }
-           ) {
-            GioLog.record(
-                .debug,
-                "focus reassert id=\(reassert.id.pid):\(reassert.id.elementID) reason=\(reassert.reason.rawValue)"
-            )
-            focusTarget = reassert.id
-        }
-        let warp = warpAfterFocus
-        warpAfterFocus = false
+        let settleFocus = focus.takeSettleFocus(parked: Set(plans.flatMap { $0.parked.keys }))
+        let focusTarget = settleFocus.target
         defer {
-            if warp, let focusTarget {
-                warpCursorToFocus(focusTarget, plans: plans)
+            if settleFocus.warp, let focusTarget {
+                focus.warpCursorToFocus(focusTarget, plans: plans)
             }
         }
         var zoomWriteFailures: Set<WindowID> = []
@@ -1597,7 +1516,7 @@ final class SessionHost: @unchecked Sendable {
                 // full resync (it retries the tap and rebuilds observers).
                 scheduleReflow()
             }
-            requestFocusAdoption(.activation, pid: event.pid, element: nil)
+            focus.requestAdoption(.activation, pid: event.pid, element: nil)
             // Another app's windows may now be in front of dimmed ones.
             focusDim.update()
         case .window(let kind):
@@ -1671,151 +1590,11 @@ final class SessionHost: @unchecked Sendable {
                 try? session.registry.update(record)
             }
         case .adoptFocus:
-            requestFocusAdoption(.focusChanged, pid: pid, element: element)
+            focus.requestAdoption(.focusChanged, pid: pid, element: element)
         case .resync:
             scheduleReflow()
         case .ignore:
             break
-        }
-    }
-
-    /// The click explaining a focus event right now, if any: a button is
-    /// down or one went down moments ago, at a point inside a window area.
-    private func currentClick() -> MouseClick? {
-        clickLock.lock()
-        let tapped = tappedClick
-        clickLock.unlock()
-        let click = recentClick(
-            pressed: probe.isMouseDown,
-            currentLocation: probe.mouseLocation,
-            now: ProcessInfo.processInfo.systemUptime,
-            lastTapped: tapped
-        )
-        return windowAreaClick(
-            click, visibleAreas: displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame }
-        )
-    }
-
-    /// Light path for a click or app switch: no rescan. Keyboard-driven
-    /// events adopt at once; mouse-driven ones coalesce, settle and are
-    /// validated against the click (`FocusSettle`). The activation and the
-    /// focused-window event of one click therefore adopt once.
-    private func requestFocusAdoption(_ source: FocusSource, pid: pid_t, element: AXUIElement?) {
-        // Gio's own window (main window, launcher) is never a tiling focus.
-        guard pid != ProcessInfo.processInfo.processIdentifier else {
-            return
-        }
-        // A background app changing its own key window is not the user's focus.
-        if source == .focusChanged,
-           pid != probe.frontmostPID
-        {
-            return
-        }
-        let event = FocusEvent(source: source, pid: pid, element: element)
-        switch focusSettle.request(event, click: currentClick()) {
-        case .adoptNow(let event):
-            if let element = focusedElement(for: event, fresh: false) {
-                adoptResolved(element, event: event)
-            }
-        case .wait(let delay):
-            scheduleFocusPoll(after: delay)
-        case .coalesced:
-            break
-        }
-    }
-
-    private func scheduleFocusPoll(after delay: TimeInterval) {
-        queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.isShuttingDown else {
-                return
-            }
-            let poll = self.focusSettle.poll(
-                mouseDown: probe.isMouseDown,
-                now: ProcessInfo.processInfo.systemUptime
-            )
-            switch poll {
-            case .idle:
-                break
-            case .wait(let next):
-                self.scheduleFocusPoll(after: next)
-            case .resolve(let event, let click):
-                self.validateClickFocus(event, click: click, fresh: false)
-            }
-        }
-    }
-
-    /// The window to adopt: the one the event carried the first time, the
-    /// app's current key window when re-reading.
-    private func focusedElement(for event: FocusEvent, fresh: Bool) -> AXUIElement? {
-        if !fresh, let element = event.element {
-            return element
-        }
-        return focusedWindowElement(pid: event.pid)
-    }
-
-    private func validateClickFocus(_ event: FocusEvent, click: MouseClick, fresh: Bool) {
-        let element = probe.frontmostPID == event.pid
-            ? focusedElement(for: event, fresh: fresh) : nil
-        let known = element.flatMap { actuator?.id(matching: $0, pid: event.pid) }
-        var matches = false
-        var frame: CGRect?
-        if let known {
-            frame = try? actuator?.frame(of: known)
-            matches = focusMatchesClick(frame: frame, click: click.location)
-        } else if element != nil {
-            // Unknown window: single-window admission decides, nothing to compare.
-            matches = true
-        }
-        switch focusSettle.judge(matchesClick: matches) {
-        case .adopt:
-            if let element {
-                adoptResolved(element, event: event)
-            }
-        case .retry(let delay):
-            queue.asyncAfter(deadline: .now() + delay) { [weak self] in
-                guard let self, !self.isShuttingDown,
-                      let (latest, latestClick) = self.focusSettle.resolveAgain()
-                else {
-                    return
-                }
-                self.validateClickFocus(latest, click: latestClick, fresh: true)
-            }
-        case .giveUp:
-            let id = known.map { "\($0.pid):\($0.elementID)" } ?? "none"
-            let box = frame.map { "\(Int($0.minX)),\(Int($0.minY)) \(Int($0.width))x\(Int($0.height))" }
-                ?? "unreadable"
-            GioLog.record(
-                .debug,
-                "focus dropped source=\(event.source.rawValue) id=\(id) frame=\(box) "
-                    + "click=\(Int(click.location.x)),\(Int(click.location.y)) "
-                    + "reason=focused window not under click"
-            )
-        }
-    }
-
-    /// The frontmost app's window becomes the session focus; an unknown
-    /// window goes through single-window admission; a reflow follows only
-    /// when the viewport has to scroll to show the focused column.
-    private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
-        guard event.pid == probe.frontmostPID else {
-            return
-        }
-        guard let id = actuator?.id(matching: element, pid: event.pid) else {
-            // Registration focuses the new window and reflows.
-            registerAppearedWindow(element, pid: event.pid, attempt: 0)
-            return
-        }
-        if session.registry.find(id)?.isMinimized == true {
-            return
-        }
-        // Trailing activation events of a focus Gio just moved must not undo it.
-        if focusIntent.shouldIgnoreAdoption(of: id, now: ProcessInfo.processInfo.systemUptime) {
-            GioLog.record(.debug, "focus adopt ignored (superseded by keyboard intent) id=\(id.pid):\(id.elementID)")
-            return
-        }
-        adoptFocus(id, source: event.source)
-        if pendingScroll() != nil {
-            reflowAll()
         }
     }
 
@@ -1917,112 +1696,21 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// `mouse-follows-focus`: after a keyboard focus change landed, put the
-    /// cursor in the middle of the focused window (unless already inside).
-    private func warpCursorToFocus(_ id: WindowID, plans: [ParkingPlan]) {
-        guard let frame = plans.lazy.compactMap({ $0.visible[id] }).first,
-              let target = mouseFollowsFocusTarget(
-                  enabled: session.config.behavior.mouseFollowsFocus, frame: frame,
-                  pointer: probe.mouseLocation
-              )
-        else {
-            return
-        }
-        hoverFocus.noteWarp(now: ProcessInfo.processInfo.systemUptime)
-        warpCursor(toCocoa: target)
-        GioLog.record(.debug, "cursor warped to focus id=\(id.pid):\(id.elementID)")
-    }
-
-    // MARK: - Focus follows mouse (HD-04)
-
-    /// Main thread (tap). Hands the latest pointer location to the session
-    /// queue, coalesced to one look per 30 ms.
-    private func handlePointerMoved(_ location: CGPoint) {
-        hoverLock.lock()
-        guard hoverEnabled else {
-            hoverLock.unlock()
-            return
-        }
-        hoverLocation = location
-        let schedule = !hoverScheduled
-        hoverScheduled = true
-        hoverLock.unlock()
-        guard schedule else {
-            return
-        }
-        queue.asyncAfter(deadline: .now() + 0.03) { [weak self] in
-            self?.processPointer()
-        }
-    }
-
-    private func processPointer() {
-        hoverLock.lock()
-        let location = hoverLocation
-        hoverScheduled = false
-        hoverLock.unlock()
-        guard let location, !isShuttingDown else {
-            return
-        }
-        let now = ProcessInfo.processInfo.systemUptime
-        let target = hoveredWindow(at: location)
-        if let delay = hoverFocus.pointerMoved(over: target, now: now) {
-            queue.asyncAfter(deadline: .now() + delay + 0.01) { [weak self] in
-                self?.fireHoverFocus()
-            }
-        }
-    }
-
-    private func hoveredWindow(at location: CGPoint) -> WindowID? {
-        // Cheap geometry first; the window-server lookup only near a managed window.
-        guard hoverFrames.values.contains(where: { $0.contains(location) }) else {
-            return nil
-        }
-        return hoverTarget(
-            at: location, frames: hoverFrames, topWindowPID: topWindowOwnerPID(atCocoa: location),
-            ownPID: ProcessInfo.processInfo.processIdentifier
-        )
-    }
-
-    private func fireHoverFocus() {
-        guard !isShuttingDown else {
-            return
-        }
-        let frontPID = probe.frontmostPID
-        let logical = session.manager.currentWorkspace().focusedWindow
-        let focused = logical.flatMap { $0.pid == frontPID ? $0 : nil }
-        guard let id = hoverFocus.due(
-            now: ProcessInfo.processInfo.systemUptime,
-            buttonDown: probe.isMouseDown, focused: focused
-        ), hoveredWindow(at: probe.mouseLocation) == id else {
-            return
-        }
-        adoptFocus(id, source: .hover)
-        focusIntent.request(id, now: ProcessInfo.processInfo.systemUptime)
-        reflowAll()
-    }
-
     private func recordClick(at location: CGPoint) {
         // Clicks must hit real windows: an overlay in the air comes down now.
         _ = overlayAbortForMouseDown?()
-        clickLock.lock()
-        tappedClick = MouseClick(location: location, time: ProcessInfo.processInfo.systemUptime)
-        clickLock.unlock()
         // A click is the user choosing the focus: drop any pending keyboard intent.
-        queue.async { [weak self] in
-            self?.focusIntent.cancel()
-        }
+        focus.recordClick(at: location)
     }
 
     private func startTap() {
-        hoverLock.lock()
-        let observeMouseMoved = hoverEnabled
-        hoverLock.unlock()
+        let observeMouseMoved = focus.focusFollowsMouse
         // Only subscribed while focus-follows-mouse is on: otherwise every
         // mouse move would cost a main-thread callback.
         var moveHandler: (@Sendable (CGPoint) -> Void)?
         if observeMouseMoved {
             moveHandler = { [weak self] location in
-                self?.handlePointerMoved(location)
+                self?.focus.pointerMoved(location)
             }
         }
         let tap = HotkeyTap(
@@ -2158,27 +1846,11 @@ final class SessionHost: @unchecked Sendable {
                 over: workspace
             )
         }
-        requestFocusIntent(if: action.carriesFocusIntent, previous: previousFocus)
+        focus.requestIntent(if: action.carriesFocusIntent, previous: previousFocus)
         if action.growsFocusedWindow {
-            sizingFocus = session.manager.currentWorkspace().focusedWindow
+            focus.noteSizingFocus(session.manager.currentWorkspace().focusedWindow)
         }
         reflowAll()
-    }
-
-    /// Ask the next reflow to focus and raise the current workspace's focused
-    /// window (after its frame lands; at the end of an animation).
-    private func requestFocusIntent(if carries: Bool, previous: WindowID?) {
-        guard carries else {
-            return
-        }
-        // Keyboard/IPC focus changes may center the column and warp the
-        // cursor (HD-04); passive and hover focus never do.
-        centerRequest = CenterRequest(mode: session.config.layout.centerFocusedColumn, previouslyFocused: previous)
-        warpAfterFocus = true
-        focusIntent.request(
-            session.manager.currentWorkspace().focusedWindow,
-            now: ProcessInfo.processInfo.systemUptime
-        )
     }
 
     /// Store `next` when an action changed anything.
@@ -2229,15 +1901,6 @@ final class SessionHost: @unchecked Sendable {
             gap: session.config.layout.resolvedFullscreenGap
         )
         try? fullscreen.toggle(id, registry: session.registry, frame: frame)
-    }
-}
-
-/// Same AX element (CFEqual), or both absent.
-private func sameElement(_ lhs: AXUIElement?, _ rhs: AXUIElement?) -> Bool {
-    switch (lhs, rhs) {
-    case (nil, nil): return true
-    case (let lhs?, let rhs?): return CFEqual(lhs, rhs)
-    default: return false
     }
 }
 
