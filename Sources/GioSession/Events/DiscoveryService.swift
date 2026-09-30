@@ -144,6 +144,12 @@ public final class DiscoveryService: @unchecked Sendable {
     private let context: Context
     private let scheduler: SessionScheduler
     private var nextElementID: UInt64 = 0
+    /// NW-06: apps launched moments ago (their first window may appear
+    /// before they are frontmost).
+    private var recentLaunches = RecentLaunches()
+    /// NW-06: `when-active` arrivals placed silently, awaiting their app's
+    /// activation.
+    private var pendingFollows = PendingFollowBook()
 
     public init(context: Context, scheduler: SessionScheduler) {
         self.context = context
@@ -228,6 +234,45 @@ public final class DiscoveryService: @unchecked Sendable {
     /// A launched app's observer attached: register its windows, reflow.
     public func appAttached(_ pid: pid_t) {
         enumerateAndPlace(onlyPID: pid)
+        context.reflowAll()
+    }
+
+    /// NW-06: an app was launched (its first windows may take the user to
+    /// their named workspace even before it is frontmost).
+    public func appLaunched(_ pid: pid_t) {
+        recentLaunches.record(pid, at: context.now())
+    }
+
+    /// NW-06: an app became active. Its window placed silently on a hidden
+    /// named workspace moments ago takes the user there now, unless the
+    /// user moved (workspace or focus) since, or the window is minimized.
+    public func appActivated(_ pid: pid_t) {
+        guard let pending = pendingFollows.activated(pid: pid, now: context.now()),
+              context.registry().find(pending.id)?.isMinimized == false
+        else {
+            return
+        }
+        var previousFocus: WindowID?
+        var followed = false
+        context.updateManager { manager in
+            guard pendingFollowStillWanted(
+                pending, currentWorkspace: manager.currentID, currentFocus: manager.currentWorkspace().focusedWindow
+            ),
+                let dest = manager.workspace(id: pending.workspace),
+                let focused = adoptingFocus(pending.id, in: dest)
+            else {
+                return
+            }
+            previousFocus = manager.currentWorkspace().focusedWindow
+            manager.update(focused)
+            followed = manager.focus(pending.workspace)
+        }
+        guard followed else {
+            context.log(.debug, "window follow cancelled id=\(pending.id.pid):\(pending.id.elementID) reason=userMoved")
+            return
+        }
+        context.log(.info, "window follow deferred id=\(pending.id.pid):\(pending.id.elementID) reason=activated")
+        context.followArrival(previousFocus)
         context.reflowAll()
     }
 
@@ -374,10 +419,18 @@ public final class DiscoveryService: @unchecked Sendable {
         context.resetWindowState(id)
         try? context.registry().register(window)
         let minimized = window.isMinimized
-        let follows = mayFollow && !minimized && outcome.openOnWorkspace != nil
-            && shouldFollowArrival(outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID())
+        let now = context.now()
+        // NW-02/NW-06: only a live, visible arrival routed to a named
+        // workspace may take the user there.
+        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openOnWorkspace != nil
+            ? decideArrivalFollow(
+                outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID(),
+                launchedAt: recentLaunches.launchedAt(window.pid, now: now), now: now
+            )
+            : .stay
         var previousFocus: WindowID?
         var followed = false
+        var pending: PendingArrivalFollow?
         var destinationShown = false
         var workspaceLabel = ""
         context.updateManager { manager in
@@ -387,12 +440,28 @@ public final class DiscoveryService: @unchecked Sendable {
             workspaceLabel = dest.name ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
             Self.appendColumn(id, to: &dest, focus: !minimized)
             manager.update(dest)
-            if follows, manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID {
+            guard decision != .stay,
+                  manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID
+            else {
+                return
+            }
+            if case .follow = decision {
                 previousFocus = manager.currentWorkspace().focusedWindow
                 followed = manager.focus(destID)
+            } else {
+                pending = PendingArrivalFollow(
+                    id: id, workspace: destID, placedAt: now,
+                    fromWorkspace: manager.currentID, fromFocus: manager.currentWorkspace().focusedWindow
+                )
             }
         }
+        if let pending {
+            pendingFollows.add(pending)
+        }
         if followed {
+            if decision == .follow(.launched) {
+                context.log(.info, "window follow deferred id=\(id.pid):\(id.elementID) reason=launched")
+            }
             // PF-02: the switch starts in the pass this registration runs.
             context.followArrival(previousFocus)
         }
@@ -460,6 +529,7 @@ public final class DiscoveryService: @unchecked Sendable {
         context.windowsClosing(ids.sorted())
         for id in ids.sorted() {
             registry.remove(id)
+            pendingFollows.forget(id)
             context.forgetWindow(id)
         }
         context.updateManager { manager in

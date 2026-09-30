@@ -177,6 +177,8 @@ public final class WindowEventRouter: @unchecked Sendable {
     public func handle(_ event: SystemWindowEvent, deliveredAt: TimeInterval? = nil) {
         switch event.kind {
         case .appLaunched:
+            // NW-06: before the attach, whose scan may register its windows.
+            discovery.appLaunched(event.pid)
             attachLaunchedApp(event.pid, attempt: 0)
         case .appTerminated:
             port?.detach(pid: event.pid)
@@ -194,6 +196,9 @@ public final class WindowEventRouter: @unchecked Sendable {
                 // full resync (it retries the tap and rebuilds observers).
                 context.scheduleReflow(true)
             }
+            // NW-06: a window placed moments ago may take the user to its
+            // workspace now; before adoption, which then focuses it there.
+            discovery.appActivated(event.pid)
             context.requestFocusAdoption(.activation, event.pid, nil)
             // Another app's windows may now be in front of dimmed ones.
             context.updateDim()

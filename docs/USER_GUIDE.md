@@ -235,7 +235,7 @@ A rule is a `[[window-rules]]` block:
 | `mode` | no | `"tiled"`, `"floating"`, `"fullscreen"` | Force the window's mode. |
 | `workspace` | no | integer `1` to `9` | Put the window on this position of the focused display's workspace stack when it appears. A number past the end of the stack uses the empty workspace at the bottom (intermediate empty workspaces cannot exist), so `workspace = 3` on a two-workspace stack lands on the bottom empty one. |
 | `open-on-workspace` | no | a `[[workspace]]` name | Put the window on that named workspace when it appears. Wins over `workspace` when both are set (with a warning). A name no `[[workspace]]` declares is a warning and the rule keeps its other keys. |
-| `follow` | no | `"when-active"` (default), `"always"`, `"never"` | With `open-on-workspace`: whether Gio also takes you there. `when-active` follows only when the app is frontmost as its window appears (you just launched or used it); a window that appears in the background goes there silently. |
+| `follow` | no | `"when-active"` (default), `"always"`, `"never"` | With `open-on-workspace`: whether Gio also takes you there. `when-active` follows when the app is frontmost as its window appears, when you launched the app within the last 3 seconds, or when the app becomes active within 1.5 seconds after its window was placed (unless you switched workspace or focus in the meantime, or the window closed); any other window that appears in the background goes there silently. |
 
 Behavior:
 
