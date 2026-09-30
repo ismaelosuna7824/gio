@@ -4,7 +4,7 @@ import Foundation
 // Diagnostics: the AX size write can be acknowledged in a few ms while the app
 // repaints at the new size much later (new backing surfaces, relayout). The
 // probe compares the WindowServer bounds with the requested size until they
-// agree; these are its pure decisions (the polling lives in `SessionHost`).
+// agree; these are its pure decisions (the polling is `GioSession.ResizeProbeRunner`).
 
 public enum ResizeProbeLimits {
     /// Bounds within this many points of the request count as drawn.

@@ -80,18 +80,12 @@ final class SessionHost: @unchecked Sendable {
     private var isShuttingDown = false
     private var reflowDeferral = ReflowDeferral()
     /// MO-04: where each window physically is (last applied or sampled
-    /// frame), the frame player and its display-rate timer. All on `queue`.
+    /// frame). On `queue`.
     private var physicalFrames: [WindowID: CGRect] = [:]
-    private var player: MotionPlayer?
-    private var motionTimer: DispatchSourceTimer?
-    /// Diagnostics: the latest flight's animations (to find the FI-03 grows at
-    /// the final pass), the sizes each window already reached and the live
-    /// resize-latency probes, one short-lived timer each (session queue only).
-    private var lastMotionAnimations: [WindowAnimation] = []
-    private var resizeHistory = ResizeSizeHistory()
-    private var resizeProbes: [WindowID: (size: CGSize, started: CGSize?, timer: DispatchSourceTimer)] = [:]
-    /// Windows the resize probe learned to ignore (fixed size, not settable).
-    private var resizeProbeGate = ResizeProbeGate()
+    /// The AX motion: player, display-rate timer, animating pids.
+    private var motion: MotionDriver!
+    /// Diagnostics: resize-latency probes (owned with the motion).
+    private var resizeProbes: ResizeProbeRunner!
     /// Native zoom: presses, settle pollers, verdicts and verifications.
     private var nativeZoom: NativeZoomController!
     /// The next pass is written without motion: armed for the session's
@@ -119,12 +113,6 @@ final class SessionHost: @unchecked Sendable {
     var overlayAbortForMouseDown: (() -> Bool)?
     /// Wallpaper backdrops, readable from any thread.
     var overlayWallpapers: WallpaperCache?
-    /// Screens as the capture needs them (id, frame, scale), read on main.
-    private var captureScreens: [SnapshotDisplay] = []
-    private var capturePrimaryHeight: CGFloat = 1169
-    /// PA-04: pids with windows in the running motion; their moved/resized
-    /// events are our own writes and are dropped before any lookup.
-    private var animatingPids: Set<pid_t> = []
     /// PA-04: parking plan of hidden windows, recomputed only when its inputs change.
     private struct InactiveParkKey: Equatable {
         var frames: [WindowID: CGRect]
@@ -134,11 +122,9 @@ final class SessionHost: @unchecked Sendable {
     private var inactiveParking = PlanMemo<InactiveParkKey, [WindowID: ParkedTarget]>()
     /// NC-06: the pre-hide frames of floating windows.
     private var hiddenBook = HiddenWindowBook()
-    /// PA-03: screen frames + refresh rates, read on main (AppKit) at start
-    /// and on every screen-parameter change; the session queue only reads
-    /// this copy when a motion starts and never queries AppKit for it.
-    private let refreshLock = NSLock()
-    private var displayRefreshes: [DisplayRefresh] = []
+    /// PA-03 / SM-04: refresh rates and capture screens, read on main
+    /// (AppKit), read by the session queue behind their lock.
+    private let displayParameters = DisplayParameters()
     private var focusSettle = FocusSettle<FocusEvent>()
     /// HD-01: the window keyboard/IPC actions want focused (session queue only).
     private var focusIntent = FocusIntent()
@@ -211,7 +197,7 @@ final class SessionHost: @unchecked Sendable {
                 session: { [unowned self] in session },
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 displays: { [unowned self] in displays.allDisplays() },
-                isMotionActive: { [unowned self] in player?.isActive == true },
+                isMotionActive: { [unowned self] in motion.isActive },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isNativeZoomActive: { [unowned self] in nativeZoom.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
@@ -245,7 +231,7 @@ final class SessionHost: @unchecked Sendable {
         renderVerifier = RenderVerifier(
             context: .init(
                 isShuttingDown: { [unowned self] in isShuttingDown },
-                isMotionActive: { [unowned self] in player?.isActive == true },
+                isMotionActive: { [unowned self] in motion.isActive },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
                 isReady: { [unowned self] in reconciler != nil },
@@ -266,14 +252,14 @@ final class SessionHost: @unchecked Sendable {
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
-                isMotionActive: { [unowned self] in player?.isActive == true },
+                isMotionActive: { [unowned self] in motion.isActive },
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
                             config: session.config.animations, permission: hasScreenRecordingPermission()
                         ) == .snapshot
                 },
-                captureScreens: { [unowned self] in refreshLock.withLock { (captureScreens, capturePrimaryHeight) } },
+                captureScreens: { [unowned self] in displayParameters.captureScreens },
                 capture: { [snapshotCapturer] request, done in
                     Task.detached {
                         let result = await snapshotCapturer.capture(request)
@@ -310,7 +296,7 @@ final class SessionHost: @unchecked Sendable {
         nativeZoom = NativeZoomController(
             context: .init(
                 isShuttingDown: { [unowned self] in isShuttingDown },
-                isMotionActive: { [unowned self] in player?.isActive == true },
+                isMotionActive: { [unowned self] in motion.isActive },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isEnabled: { [unowned self] in session.config.animations.nativeZoom },
                 snapshotRendererUsable: { [unowned self] in snapshotRefresher.rendererUsable() },
@@ -349,6 +335,55 @@ final class SessionHost: @unchecked Sendable {
                 log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler
+        )
+        resizeProbes = ResizeProbeRunner(
+            context: .init(
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                matchWindows: { [unowned self] managed in
+                    let candidates = windowServerSnapshotCandidates(
+                        pids: Set(managed.keys.map(\.pid)), displayHeight: mainHeight()
+                    )
+                    return matchSnapshotCandidates(managed: managed, candidates: candidates)
+                },
+                windowServerSize: { windowServerSize(windowID: $0) },
+                isSizeSettable: { [unowned self] in actuator?.element(for: $0).map(axIsSizeSettable) ?? false },
+                appName: { [unowned self] in appName($0) },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
+        motion = MotionDriver(
+            context: .init(
+                isShuttingDown: { [unowned self] in isShuttingDown },
+                isMouseDown: { [unowned self] in probe.isMouseDown },
+                armInstantPlacementForMouse: { [unowned self] in instantPlacement.arm(.mouse) },
+                reflowAll: { [unowned self] in reflowAll() },
+                takeCoalescedReflow: { [unowned self] in reflowCoalescer.takeAtTick() },
+                resetCoalescer: { [unowned self] in reflowCoalescer.reset() },
+                performReflow: { [unowned self] in performReflow() },
+                finalPass: { [unowned self] in performReflow(animate: false) },
+                recordSampled: { [unowned self] id, frame, now in
+                    physicalFrames[id] = frame
+                    echoGate.recordApplied(id, frame: frame, at: now)
+                },
+                recordPreposition: { [unowned self] id, frame, now in
+                    physicalFrames[id] = frame
+                    trustedFrames.invalidate(id)
+                    echoGate.recordApplied(id, frame: frame, at: now)
+                },
+                markUnverified: { [unowned self] id in
+                    trustedFrames.invalidate(id)
+                    renderVerifier.insertCandidate(id)
+                },
+                focusedWindow: { [unowned self] in session.manager.currentWorkspace().focusedWindow },
+                publishFocusRing: { [unowned self] in publishFocusRing() },
+                learnResizeCapability: { [unowned self] in learnResizeCapability(from: $0) },
+                physicalFrame: { [unowned self] in physicalFrames[$0] },
+                displayRefreshes: { [unowned self] in displayParameters.displayRefreshes },
+                playerAppName: { [probe] in probe.applicationName($0) },
+                log: { GioLog.record($0, $1) }
+            ),
+            resizeProbes: resizeProbes, scheduler: scheduler
         )
         configCoordinator = ConfigCoordinator(
             context: .init(
@@ -461,7 +496,7 @@ final class SessionHost: @unchecked Sendable {
             }
             isShuttingDown = true
             pendingReflow?.cancel()
-            stopMotion()
+            motion.stop()
             overlayFlight.end(fadeOut: false)
             snapshotRefresher.removeAll()
             reconciler?.waitForMotionIdle(timeout: 0.3)
@@ -494,7 +529,7 @@ final class SessionHost: @unchecked Sendable {
                 return
             }
             pendingReflow?.cancel()
-            stopMotion()
+            motion.stop()
             overlayFlight.end(fadeOut: false)
             reconciler?.waitForMotionIdle(timeout: 0.3)
             let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
@@ -872,7 +907,7 @@ final class SessionHost: @unchecked Sendable {
             renderVerifier.forget([id])
             physicalFrames.removeValue(forKey: id)
             nativeZoom.purge(id)
-            resizeProbeGate.forget(id)
+            resizeProbes.forget(id)
             snapshotRefresher.evict([id])
             fullscreen.forget(id)
             actuator?.forget(elementID: id.elementID)
@@ -1077,7 +1112,7 @@ final class SessionHost: @unchecked Sendable {
             // FI-06: during a motion the retargeting reflow waits for the next
             // tick, so a burst of keys costs one reflow, not one per key.
             let flying = overlayFlight.isActive
-            if reflowCoalescer.request(motionActive: player?.isActive == true || flying) == .runNow {
+            if reflowCoalescer.request(motionActive: motion.isActive || flying) == .runNow {
                 performReflow()
             } else if flying {
                 // An overlay flight has no tick: one merged retarget shortly after the burst.
@@ -1242,8 +1277,8 @@ final class SessionHost: @unchecked Sendable {
             overlayFlight.end(fadeOut: false)
         }
         if !animations.isEmpty && !snapshotFlight {
-            applyPrepositions(prepositions, reconciler: reconciler)
-            startMotion(animations, reconciler: reconciler)
+            motion.applyPrepositions(prepositions) { reconciler.preposition(frames: $0, from: physicalFrames) }
+            motion.start(animations, sink: reconciler)
             // FI-06: the keyboard follows the logical focus right away instead
             // of after the animation; the final pass only re-asserts a drift.
             let now = ProcessInfo.processInfo.systemUptime
@@ -1266,7 +1301,7 @@ final class SessionHost: @unchecked Sendable {
             nativeZoom.scheduleVerifications(failed: [])
             return
         }
-        stopMotion()
+        motion.stop()
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
         // pass nil so they never steal focus. The intent reaches the last
         // plan only, so focus lands after every frame of the pass.
@@ -1451,184 +1486,6 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
-    /// Place hidden incoming windows directly below their target before the
-    /// player starts (off-screen, so the jump is invisible).
-    private func applyPrepositions(_ frames: [WindowID: CGRect], reconciler: WindowReconciler<AXWindowActuator>) {
-        let written = reconciler.preposition(frames: frames, from: physicalFrames)
-        for id in written {
-            guard let frame = frames[id] else {
-                continue
-            }
-            physicalFrames[id] = frame
-            trustedFrames.invalidate(id)
-            echoGate.recordApplied(id, frame: frame, at: ProcessInfo.processInfo.systemUptime)
-        }
-    }
-
-    private func startMotion(_ animations: [WindowAnimation], reconciler: WindowReconciler<AXWindowActuator>) {
-        let player = self.player ?? MotionPlayer(
-            sink: reconciler,
-            appName: { [probe] in probe.applicationName($0) }
-        )
-        self.player = player
-        player.start(animations)
-        lastMotionAnimations = animations
-        probeResizes(of: animations.filter { $0.sizeSchedule == .atStart }, frames: { $0.from })
-        // Motion frames are unverified: the final pass must read these windows,
-        // and the render check looks at them afterwards.
-        for animation in animations {
-            trustedFrames.invalidate(animation.id)
-            renderVerifier.insertCandidate(animation.id)
-            animatingPids.insert(animation.id.pid)
-        }
-        guard motionTimer == nil else {
-            return
-        }
-        // A display-rate timer on the session queue: a tick only samples and
-        // hands frames to per-app lanes (never an AX call here), so it costs
-        // microseconds, and sampling by elapsed time keeps late ticks honest.
-        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
-        // PA-03: paced to the display holding the moving windows (60 Hz ->
-        // 16.7 ms, 120 Hz -> 8.3 ms), fixed for this motion.
-        let refreshes = refreshLock.withLock { displayRefreshes }
-        let fps = motionRefreshRate(animations: animations, displays: refreshes)
-        let interval = frameInterval(for: fps)
-        timer.schedule(
-            deadline: .now(), repeating: .nanoseconds(Int(interval * 1e9)), leeway: .microseconds(500)
-        )
-        timer.setEventHandler { [weak self] in
-            self?.motionTick()
-        }
-        motionTimer = timer
-        timer.resume()
-    }
-
-    /// Diagnostics: for each growing animation, poll the WindowServer bounds of
-    /// that window only until they match the requested size or 1.5 s pass, and
-    /// log `resize latency`. The window is found by pid + frame (FI-05 rule);
-    /// unresolvable or ambiguous windows are skipped. The probe ends itself.
-    private func probeResizes(of animations: [WindowAnimation], frames: (WindowAnimation) -> CGRect) {
-        let growing = animations.filter {
-            $0.duration > 0
-                && ($0.to.width - $0.from.width > ResizeProbeLimits.tolerance
-                    || $0.to.height - $0.from.height > ResizeProbeLimits.tolerance)
-        }
-        guard !growing.isEmpty else {
-            return
-        }
-        let managed = Dictionary(growing.map { ($0.id, frames($0)) }, uniquingKeysWith: { $1 })
-        let candidates = windowServerSnapshotCandidates(
-            pids: Set(managed.keys.map(\.pid)), displayHeight: mainHeight()
-        )
-        let matches = matchSnapshotCandidates(managed: managed, candidates: candidates)
-        for animation in growing {
-            guard case .matched(let windowID)? = matches[animation.id] else {
-                continue
-            }
-            if let live = resizeProbes[animation.id], live.size == animation.to.size {
-                continue
-            }
-            // Only windows that can be resized and are not already that size:
-            // anything else could only log a `wsMs=timeout` that says nothing.
-            let current = windowServerSize(windowID: windowID)
-            let settable = actuator?.element(for: animation.id).map(axIsSizeSettable) ?? false
-            guard resizeProbeGate.shouldStart(
-                animation.id, current: current, requested: animation.to.size, sizeSettable: settable
-            ) else {
-                continue
-            }
-            startResizeProbe(id: animation.id, requested: animation.to.size, windowID: windowID, started: current)
-        }
-    }
-
-    private func startResizeProbe(id: WindowID, requested: CGSize, windowID: UInt32, started: CGSize?) {
-        resizeProbes[id]?.timer.cancel()
-        let began = ProcessInfo.processInfo.systemUptime
-        let timer = DispatchSource.makeTimerSource(flags: .strict, queue: queue)
-        timer.schedule(deadline: .now(), repeating: .milliseconds(8), leeway: .microseconds(500))
-        timer.setEventHandler { [weak self] in
-            guard let self, !self.isShuttingDown else {
-                return
-            }
-            let elapsed = ProcessInfo.processInfo.systemUptime - began
-            let decision = resizeProbeDecision(
-                requested: requested, observed: windowServerSize(windowID: windowID), elapsed: elapsed
-            )
-            guard decision != .pending else {
-                return
-            }
-            self.resizeProbes[id]?.timer.cancel()
-            self.resizeProbes[id] = nil
-            // A window that never left its size is not slow to repaint, it
-            // does not resize: remember that and stay quiet.
-            if decision == .timeout,
-               self.resizeProbeGate.recordTimeout(id, started: started, observed: windowServerSize(windowID: windowID))
-            {
-                return
-            }
-            let first = self.resizeHistory.recordIsFirst(id, size: requested)
-            GioLog.record(
-                .info,
-                resizeLatencyLine(id: id, app: self.appName(id.pid), size: requested, result: decision, first: first)
-            )
-        }
-        resizeProbes[id] = (requested, started, timer)
-        timer.resume()
-    }
-
-    private func stopMotion() {
-        animatingPids = []
-        reflowCoalescer.reset()
-        motionTimer?.cancel()
-        motionTimer = nil
-        player?.cancel()
-    }
-
-    private func motionTick() {
-        guard let player, player.isActive, !isShuttingDown else {
-            stopMotion()
-            return
-        }
-        if probe.isMouseDown {
-            // Nothing moves under the cursor: abandon the flight, and let
-            // the deferred reflow finish instantly after release.
-            stopMotion()
-            instantPlacement.arm(.mouse)
-            reflowAll()
-            return
-        }
-        if reflowCoalescer.takeAtTick() {
-            // One merged retarget for every action since the last tick.
-            performReflow()
-            return
-        }
-        let tick = player.tick()
-        // In place, only the windows written this tick; frame writes raise
-        // moved events like any other write of ours.
-        let now = ProcessInfo.processInfo.systemUptime
-        for (id, frame) in tick.sampled {
-            physicalFrames[id] = frame
-            echoGate.recordApplied(id, frame: frame, at: now)
-        }
-        // The ring follows the focused window's sampled frame, and only
-        // when that window moved this tick.
-        if let focused = session.manager.currentWorkspace().focusedWindow, tick.sampled[focused] != nil {
-            publishFocusRing()
-        }
-        if let summary = tick.summary {
-            stopMotion()
-            GioLog.record(.info, summary.logLine)
-            learnResizeCapability(from: summary)
-            // FI-03 grows land in the final pass: measure them for comparison.
-            probeResizes(
-                of: lastMotionAnimations.filter { $0.sizeSchedule == .none },
-                frames: { physicalFrames[$0.id] ?? $0.from }
-            )
-            lastMotionAnimations = []
-            performReflow(animate: false)
-        }
-    }
-
     /// Debounced reflow. `full` also re-enumerates windows (resync); a
     /// light one only re-lays out what is registered. A pending full
     /// request is never downgraded by a later light one.
@@ -1750,7 +1607,7 @@ final class SessionHost: @unchecked Sendable {
 
     private func handleWindowEvent(_ kind: WindowEventKind, pid: pid_t, element: AXUIElement?) {
         // Our own animation writes: dropped before the handle lookup.
-        if dropsAsMotionEcho(kind, pid: pid, animating: animatingPids) {
+        if dropsAsMotionEcho(kind, pid: pid, animating: motion.animatingPids) {
             return
         }
         let known = element.flatMap { actuator?.id(matching: $0, pid: pid) }
@@ -2038,11 +1895,7 @@ final class SessionHost: @unchecked Sendable {
             return SnapshotDisplay(id: number.uint32Value, frame: screen.frame, scale: screen.backingScaleFactor)
         }
         let primary = NSScreen.screens.first?.frame.height ?? 1169
-        refreshLock.withLock {
-            displayRefreshes = snapshot
-            captureScreens = screens
-            capturePrimaryHeight = primary
-        }
+        displayParameters.store(refreshes: snapshot, captureScreens: screens, primaryHeight: primary)
     }
 
     private func watchDisplays() {
