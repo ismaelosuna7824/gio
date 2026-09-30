@@ -37,6 +37,7 @@ private enum ConfigSection: Equatable {
     case logging
     case keybindings
     case windowRules
+    case workspaceEntry
     case ignored(String)
 }
 
@@ -52,12 +53,25 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
     var section: ConfigSection = .none
     var ruleDraft: [String: ConfigValue] = [:]
     var ruleHasContent = false
+    var ruleLines: [Int] = []
+    var workspaceDraft: [String: ConfigValue] = [:]
+    var workspaceOpen = false
+    var workspaceLine = 0
 
     func closeRule(line: Int) {
+        if workspaceOpen {
+            buildWorkspace(workspaceDraft, line: workspaceLine, errors: &errors, config: &config)
+            workspaceDraft = [:]
+            workspaceOpen = false
+        }
         guard ruleHasContent else {
             return
         }
-        buildRule(ruleDraft, line: line, errors: &errors, config: &config)
+        let before = config.rules.count
+        buildRule(ruleDraft, line: line, errors: &errors, warnings: &warnings, config: &config)
+        if config.rules.count > before {
+            ruleLines.append(line)
+        }
         ruleDraft = [:]
         ruleHasContent = false
     }
@@ -78,6 +92,10 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             let name = String(stripped.dropFirst(2).dropLast(2)).trimmingCharacters(in: .whitespaces)
             if name == "window-rules" {
                 section = .windowRules
+            } else if name == "workspace" {
+                section = .workspaceEntry
+                workspaceOpen = true
+                workspaceLine = line
             } else {
                 warnings.append("line \(line): unknown table [[\(name)]], ignored")
                 section = .ignored(name)
@@ -152,11 +170,32 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
         case .windowRules:
             ruleDraft[key] = value
             ruleHasContent = true
+        case .workspaceEntry:
+            if workspaceKeys.contains(key) {
+                workspaceDraft[key] = value
+            } else {
+                warnings.append("line \(line): unknown workspace key '\(key)', ignored")
+            }
         case .ignored:
             break
         }
     }
     closeRule(line: rawLines.count + 1)
+    // NW-01: a rule naming no [[workspace]] keeps its other opinions.
+    let names = Set(config.workspaces.map(\.name))
+    for index in config.rules.indices {
+        if let target = config.rules[index].openOnWorkspace, !names.contains(target) {
+            warnings.append(
+                "line \(ruleLines[index]): window-rules open-on-workspace '\(target)' names no [[workspace]], ignored"
+            )
+            config.rules[index].openOnWorkspace = nil
+        } else if config.rules[index].openOnWorkspace != nil, let number = config.rules[index].workspace {
+            warnings.append(
+                "line \(ruleLines[index]): window-rules open-on-workspace wins over workspace = \(number)"
+            )
+            config.rules[index].workspace = nil
+        }
+    }
     if errors.isEmpty {
         return .success((config, warnings))
     }
@@ -603,12 +642,74 @@ func applyBindingKey(
     config.keybindings.append((combo, action))
 }
 
-func buildRule(
+private let workspaceKeys: Set<String> = ["name", "icon", "color", "display"]
+
+/// NW-01: one `[[workspace]]` table; `line` is its header.
+func buildWorkspace(
     _ draft: [String: ConfigValue], line: Int,
     errors: inout [String], config: inout GioConfig
 ) {
-    guard case .string(let app) = draft["app"], !app.isEmpty else {
-        errors.append("line \(line): window-rules needs a non-empty app string")
+    guard case .string(let raw) = draft["name"],
+          case let name = raw.trimmingCharacters(in: .whitespaces), !name.isEmpty
+    else {
+        errors.append("line \(line): workspace needs a non-empty name")
+        return
+    }
+    if config.workspaces.contains(where: { $0.name == name }) {
+        errors.append("line \(line): duplicate workspace name '\(name)'")
+        return
+    }
+    var definition = WorkspaceDefinition(name: name)
+    if let value = draft["icon"] {
+        guard case .string(let icon) = value else {
+            errors.append("line \(line): workspace icon expects an SF Symbol name string")
+            return
+        }
+        definition.icon = icon.isEmpty ? nil : icon
+    }
+    if let value = draft["color"] {
+        guard case .string(let color) = value, ThemeColor(hex: color) != nil else {
+            errors.append("line \(line): workspace color expects a hex color like \"#7fc8ff\"")
+            return
+        }
+        definition.color = color
+    }
+    if let value = draft["display"] {
+        switch value {
+        case .string("main"):
+            definition.display = .main
+        case .int(let number) where number >= 1:
+            definition.display = .index(number)
+        default:
+            errors.append("line \(line): workspace display expects \"main\" or a display number (1, 2, ...)")
+            return
+        }
+    }
+    config.workspaces.append(definition)
+}
+
+func buildRule(
+    _ draft: [String: ConfigValue], line: Int,
+    errors: inout [String], warnings: inout [String], config: inout GioConfig
+) {
+    var app = ""
+    if let raw = draft["app"] {
+        guard case .string(let text) = raw else {
+            errors.append("line \(line): window-rules app must be a string")
+            return
+        }
+        app = text
+    }
+    var bundleID: String?
+    if let raw = draft["bundle-id"] {
+        guard case .string(let text) = raw, !text.isEmpty else {
+            errors.append("line \(line): window-rules bundle-id must be a non-empty string")
+            return
+        }
+        bundleID = text
+    }
+    guard !app.isEmpty || bundleID != nil else {
+        errors.append("line \(line): window-rules needs a non-empty app or bundle-id string")
         return
     }
     var mode: WindowMode?
@@ -629,7 +730,26 @@ func buildRule(
         }
         workspace = number
     }
-    config.rules.append(WindowRule(app: app, mode: mode, workspace: workspace))
+    var openOnWorkspace: String?
+    if let raw = draft["open-on-workspace"] {
+        guard case .string(let name) = raw, !name.isEmpty else {
+            errors.append("line \(line): window-rules open-on-workspace must be a workspace name")
+            return
+        }
+        openOnWorkspace = name
+    }
+    var follow = WorkspaceFollowPolicy.whenActive
+    if let raw = draft["follow"] {
+        guard case .string(let text) = raw, let parsed = WorkspaceFollowPolicy(rawValue: text) else {
+            errors.append("line \(line): window-rules follow must be \"when-active\", \"always\" or \"never\"")
+            return
+        }
+        follow = parsed
+    }
+    config.rules.append(WindowRule(
+        app: app, bundleID: bundleID, mode: mode, workspace: workspace,
+        openOnWorkspace: openOnWorkspace, follow: follow
+    ))
 }
 
 /// Action vocabulary for config values: plan verbs plus `workspace N` and

@@ -132,8 +132,32 @@ public func defaultConfigTemplate() -> String {
     # columns; "move-window-left" / "move-window-right" (unbound) append the
     # window to the neighbouring column instead.
 
+    # Named workspaces always exist (even when empty), come first in their
+    # display's stack in this order (Alt+1 is the first), and keep their
+    # name across launches. icon is an SF Symbol name, color a hex color,
+    # display "main" (default) or a display number (1, 2, ...; a missing
+    # display falls back to the main one).
+    # [[workspace]]
+    # name = "Code"
+    # icon = "chevron.left.forwardslash.chevron.right"
+    # color = "#7fc8ff"
+    #
+    # [[workspace]]
+    # name = "Browsers"
+    # icon = "globe"
+
+    # Rules match an app by bundle-id (preferred) or by app name, first
+    # match wins. mode = "tiled" | "floating" | "fullscreen"; workspace = N
+    # (index) or open-on-workspace = "<name>" (a [[workspace]] above; wins
+    # over workspace). follow = "when-active" (default: go there only when
+    # the app is frontmost as its window appears), "always" or "never".
     [[window-rules]]
     app = "Calculator"
     mode = "floating"
+
+    # [[window-rules]]
+    # bundle-id = "com.microsoft.VSCode"
+    # open-on-workspace = "Code"
+    # follow = "always"
     """
 }

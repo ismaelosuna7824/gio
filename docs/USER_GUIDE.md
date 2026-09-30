@@ -59,7 +59,7 @@ Notes:
 
 Gio parses a strict **subset of TOML**:
 
-- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus]`, `[focus-ring]`, `[logging]`, `[keybindings]` and array tables `[[window-rules]]`.
+- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus]`, `[focus-ring]`, `[logging]`, `[keybindings]`, the per-animation tables `[animations.<name>]`, and array tables `[[workspace]]` and `[[window-rules]]`.
 - `key = value` with double-quoted strings, integers, decimals, `true`/`false`, and flat lists of numbers like `[0.33, 0.5, 800]` (a trailing comma is tolerated; nested lists are not).
 - `#` comments outside quotes. Keys may be quoted (`"Alt+H" = ...`).
 - No escapes in strings, no multi-line values, no inline tables.
@@ -149,6 +149,19 @@ The `[keybindings]` table maps a combo to an action name: `"Alt+H" = "focus-left
 - **Unknown keys are rejected.** A binding on a key outside the list above (for example `Alt+F13`) is a config validation error (`unknown key 'F13' in hotkey ...`), never a binding that silently does nothing. Keys are matched on the ANSI virtual keycode, so the physical position wins on non-US layouts.
 - `Alt+Space` (launcher) cannot be rebound or removed.
 
+### `[[workspace]]`
+
+A named workspace (Niri's named workspaces). Each block declares one; order in the file is their order in the stack.
+
+| Key | Required | Values | Meaning |
+| --- | --- | --- | --- |
+| `name` | yes | non-empty string, unique | Shown in the Overview, menu bar and launcher; the target of a rule's `open-on-workspace`. |
+| `icon` | no | SF Symbol name, e.g. `"globe"` | Shown next to the name by the desktop app. |
+| `color` | no | hex color `"#RGB"` or `"#RRGGBB"` | Accent for the workspace in the desktop app. |
+| `display` | no | `"main"` (default) or a display number `1`, `2`, ... | The display whose stack holds it, counting displays in the order Gio registers them (1 is the main one). A number with no such display connected falls back to the main display. |
+
+An empty or duplicate `name`, a bad `color` or a bad `display` is a config error. Unknown keys warn.
+
 ### `[[window-rules]]`
 
 See [Window rules](#window-rules).
@@ -197,6 +210,15 @@ mode = "floating"
 [[window-rules]]
 app = "Notes"
 workspace = 2
+
+[[workspace]]
+name = "Code"
+icon = "chevron.left.forwardslash.chevron.right"
+
+[[window-rules]]
+bundle-id = "com.microsoft.VSCode"
+open-on-workspace = "Code"
+follow = "always"
 ```
 
 ## Window rules
@@ -205,9 +227,12 @@ A rule is a `[[window-rules]]` block:
 
 | Key | Required | Values | Meaning |
 | --- | --- | --- | --- |
-| `app` | yes | non-empty string | **Exact** application name as macOS reports it (`localizedName`). No globs, no prefixes, no bundle IDs. |
+| `app` | `app` or `bundle-id` | non-empty string | **Exact** application name as macOS reports it (`localizedName`). No globs, no prefixes. |
+| `bundle-id` | `app` or `bundle-id` | non-empty string, e.g. `"com.microsoft.VSCode"` | **Exact** bundle identifier. Preferred over `app`: when the window's bundle identifier is known, a rule with `bundle-id` matches only by it; when it is unknown, the rule falls back to its `app` name (if any). |
 | `mode` | no | `"tiled"`, `"floating"`, `"fullscreen"` | Force the window's mode. |
 | `workspace` | no | integer `1` to `9` | Put the window on this position of the focused display's workspace stack when it appears. A number past the end of the stack uses the empty workspace at the bottom (intermediate empty workspaces cannot exist), so `workspace = 3` on a two-workspace stack lands on the bottom empty one. |
+| `open-on-workspace` | no | a `[[workspace]]` name | Put the window on that named workspace when it appears. Wins over `workspace` when both are set (with a warning). A name no `[[workspace]]` declares is a warning and the rule keeps its other keys. |
+| `follow` | no | `"when-active"` (default), `"always"`, `"never"` | With `open-on-workspace`: whether Gio also takes you there. `when-active` follows only when the app is frontmost as its window appears (you just launched or used it); a window that appears in the background goes there silently. |
 
 Behavior:
 
@@ -215,7 +240,7 @@ Behavior:
 - Rules apply **when a window first appears**. Workspace assignment is not re-applied after a config reload.
 - On reload, float rules are re-evaluated: a newly matching `floating` rule floats the window (reason `rule`), and a window whose rule no longer matches goes back to tiled. Windows floated by admission (dialog, panel, not resizable) or by the user are never promoted or relabeled.
 - A `tiled` rule does not override admission: a fixed-size window still floats.
-- An invalid rule (missing `app`, bad `mode`, workspace outside 1 to 9) is a config error and rejects the whole file.
+- An invalid rule (neither `app` nor `bundle-id`, bad `mode`, workspace outside 1 to 9, bad `follow`) is a config error and rejects the whole file.
 
 ## Desktop app
 

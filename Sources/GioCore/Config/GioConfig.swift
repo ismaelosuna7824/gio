@@ -160,6 +160,9 @@ public struct GioConfig: Sendable {
     /// Ordered file bindings; applied over dispatcher defaults.
     public var keybindings: [(HotkeyCombo, HotkeyAction)]
     public var rules: [WindowRule]
+    /// NW-01: `[[workspace]]` entries in file order (empty: no named
+    /// workspaces, the pre-NW behaviour).
+    public var workspaces: [WorkspaceDefinition]
 
     public init(
         layout: LayoutSectionConfig = LayoutSectionConfig(),
@@ -169,8 +172,10 @@ public struct GioConfig: Sendable {
         focus: FocusSectionConfig = FocusSectionConfig(),
         logging: LoggingSectionConfig = LoggingSectionConfig(),
         keybindings: [(HotkeyCombo, HotkeyAction)] = [],
-        rules: [WindowRule] = []
+        rules: [WindowRule] = [],
+        workspaces: [WorkspaceDefinition] = []
     ) {
+        self.workspaces = workspaces
         self.layout = layout
         self.behavior = behavior
         self.animations = animations

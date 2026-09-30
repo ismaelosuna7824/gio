@@ -12,13 +12,21 @@ public enum ConfigEditValue: Equatable, Sendable {
 
 /// One text-level change to `config.toml`. Rule indices count only
 /// `[[window-rules]]` blocks that have at least one key (the ones the
-/// parser turns into rules), in file order; edits apply sequentially.
+/// parser turns into rules), in file order; workspace indices count
+/// `[[workspace]]` blocks the same way. Edits apply sequentially.
 public enum ConfigEdit: Equatable, Sendable {
     case set(table: String, key: String, value: ConfigEditValue)
     case remove(table: String, key: String)
     case addRule(WindowRule)
     case updateRule(index: Int, WindowRule)
     case removeRule(index: Int)
+    /// Moves the block (with the comments inside it) to position `to`.
+    case moveRule(from: Int, to: Int)
+    /// NW-01: new blocks go after the last `[[workspace]]` (or at the end).
+    case addWorkspace(WorkspaceDefinition)
+    case updateWorkspace(index: Int, WorkspaceDefinition)
+    case removeWorkspace(index: Int)
+    case moveWorkspace(from: Int, to: Int)
 }
 
 /// A patched file body that the parser accepts, with what it parses to.
@@ -126,16 +134,70 @@ private func apply(_ edit: ConfigEdit, to lines: inout [String]) -> String? {
         lines.replaceSubrange(range, with: block)
         return nil
     case .removeRule(let index):
-        guard let range = ruleBlockRange(index, in: lines) else {
-            return "rule \(index) does not exist"
+        return removeBlock(arrayTable: "window-rules", index: index, noun: "rule", from: &lines)
+    case .moveRule(let from, let to):
+        return moveBlock(arrayTable: "window-rules", from: from, to: to, noun: "rule", in: &lines)
+    case .addWorkspace(let definition):
+        guard let block = renderWorkspace(definition) else {
+            return "workspace values contain characters that cannot be written"
         }
-        lines.removeSubrange(range)
-        let at = range.lowerBound
-        if at > 0, isBlank(lines[at - 1]), at == lines.count || isBlank(lines[at]) {
-            lines.remove(at: at - 1)
+        let existing = arrayBlockRanges("workspace", in: lines)
+        if let last = existing.last {
+            insertBlock(block, at: last.upperBound, in: &lines)
+        } else {
+            appendBlock(block, to: &lines)
         }
         return nil
+    case .updateWorkspace(let index, let definition):
+        guard let block = renderWorkspace(definition) else {
+            return "workspace values contain characters that cannot be written"
+        }
+        let ranges = arrayBlockRanges("workspace", in: lines)
+        guard ranges.indices.contains(index) else {
+            return "workspace \(index) does not exist"
+        }
+        lines.replaceSubrange(ranges[index], with: block)
+        return nil
+    case .removeWorkspace(let index):
+        return removeBlock(arrayTable: "workspace", index: index, noun: "workspace", from: &lines)
+    case .moveWorkspace(let from, let to):
+        return moveBlock(arrayTable: "workspace", from: from, to: to, noun: "workspace", in: &lines)
     }
+}
+
+private func removeBlock(arrayTable: String, index: Int, noun: String, from lines: inout [String]) -> String? {
+    let ranges = arrayBlockRanges(arrayTable, in: lines)
+    guard ranges.indices.contains(index) else {
+        return "\(noun) \(index) does not exist"
+    }
+    let range = ranges[index]
+    lines.removeSubrange(range)
+    let at = range.lowerBound
+    if at > 0, isBlank(lines[at - 1]), at == lines.count || isBlank(lines[at]) {
+        lines.remove(at: at - 1)
+    }
+    return nil
+}
+
+/// Cut the block out, then put it before the block now at `to` (or after
+/// the last one when `to` is the last position).
+private func moveBlock(arrayTable: String, from: Int, to: Int, noun: String, in lines: inout [String]) -> String? {
+    let ranges = arrayBlockRanges(arrayTable, in: lines)
+    guard ranges.indices.contains(from), ranges.indices.contains(to) else {
+        return "cannot move \(noun) \(from) to \(to)"
+    }
+    guard from != to else {
+        return nil
+    }
+    let block = Array(lines[ranges[from]])
+    _ = removeBlock(arrayTable: arrayTable, index: from, noun: noun, from: &lines)
+    let remaining = arrayBlockRanges(arrayTable, in: lines)
+    if to < remaining.count {
+        lines.insert(contentsOf: block + [""], at: remaining[to].lowerBound)
+    } else {
+        insertBlock(block, at: remaining[remaining.count - 1].upperBound, in: &lines)
+    }
+    return nil
 }
 
 private func setKey(table: String, key: String, rendered: String, in lines: inout [String]) {
@@ -239,22 +301,25 @@ private func appendBlock(_ block: [String], to lines: inout [String]) {
     lines.append(contentsOf: block)
 }
 
-/// Header through the last non-blank, non-comment line of the block:
-/// trailing blank lines and comments belong to whatever follows.
 private func ruleBlockRange(_ index: Int, in lines: [String]) -> Range<Int>? {
-    let blocks = spans(of: lines).filter { span in
-        span.isArray && span.name == "window-rules"
-            && ((span.header + 1)..<span.end).contains { keyName(lines[$0]) != nil }
+    let ranges = arrayBlockRanges("window-rules", in: lines)
+    return ranges.indices.contains(index) ? ranges[index] : nil
+}
+
+/// Each `[[name]]` block with at least one key, from its header through its
+/// last key line: trailing blank lines and comments belong to whatever
+/// follows.
+private func arrayBlockRanges(_ name: String, in lines: [String]) -> [Range<Int>] {
+    spans(of: lines).compactMap { span in
+        guard span.isArray, span.name == name else {
+            return nil
+        }
+        var last: Int?
+        for line in (span.header + 1)..<span.end where keyName(lines[line]) != nil {
+            last = line
+        }
+        return last.map { span.header..<($0 + 1) }
     }
-    guard blocks.indices.contains(index) else {
-        return nil
-    }
-    let block = blocks[index]
-    var last = block.header
-    for line in (block.header + 1)..<block.end where keyName(lines[line]) != nil {
-        last = line
-    }
-    return block.header..<(last + 1)
 }
 
 // MARK: - Rendering
@@ -289,15 +354,58 @@ private func render(_ value: ConfigEditValue) -> String? {
 }
 
 private func renderRule(_ rule: WindowRule) -> [String]? {
-    guard let app = quoted(rule.app) else {
-        return nil
+    var block = ["[[window-rules]]"]
+    if !rule.app.isEmpty || rule.bundleID == nil {
+        guard let app = quoted(rule.app) else {
+            return nil
+        }
+        block.append("app = \(app)")
     }
-    var block = ["[[window-rules]]", "app = \(app)"]
+    if let bundleID = rule.bundleID {
+        guard let text = quoted(bundleID) else {
+            return nil
+        }
+        block.append("bundle-id = \(text)")
+    }
     if let mode = rule.mode {
         block.append("mode = \"\(mode.rawValue)\"")
     }
     if let workspace = rule.workspace {
         block.append("workspace = \(workspace)")
+    }
+    if let name = rule.openOnWorkspace {
+        guard let text = quoted(name) else {
+            return nil
+        }
+        block.append("open-on-workspace = \(text)")
+    }
+    if rule.follow != .whenActive {
+        block.append("follow = \"\(rule.follow.rawValue)\"")
+    }
+    return block
+}
+
+private func renderWorkspace(_ definition: WorkspaceDefinition) -> [String]? {
+    guard let name = quoted(definition.name) else {
+        return nil
+    }
+    var block = ["[[workspace]]", "name = \(name)"]
+    if let icon = definition.icon {
+        guard let text = quoted(icon) else {
+            return nil
+        }
+        block.append("icon = \(text)")
+    }
+    if let color = definition.color {
+        guard let text = quoted(color) else {
+            return nil
+        }
+        block.append("color = \(text)")
+    }
+    switch definition.display {
+    case .main?: block.append("display = \"main\"")
+    case .index(let number)?: block.append("display = \(number)")
+    case nil: break
     }
     return block
 }

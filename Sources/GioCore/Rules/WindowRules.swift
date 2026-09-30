@@ -1,18 +1,51 @@
 import Foundation
 
-/// Plan §18 rule: opinions about newly created windows, matched by app key.
-/// The key is whatever the caller supplies — app name today (what discovery
-/// provides), bundle ID when config lands (Phase 14). Matching is exact:
-/// no globs, no prefixes, no surprises.
+/// NW-01: whether arriving at an `open-on-workspace` destination also
+/// takes the user there.
+public enum WorkspaceFollowPolicy: String, Equatable, Sendable, CaseIterable {
+    /// Follow only when the window's app is frontmost as the window appears
+    /// (the user just launched or used it); otherwise the window goes there
+    /// silently.
+    case whenActive = "when-active"
+    case always
+    case never
+}
+
+/// Plan §18 rule: opinions about newly created windows, matched by app.
+/// Matching is exact: no globs, no prefixes, no surprises. NW-01: a rule
+/// with `bundleID` matches by bundle identifier when the window's is known
+/// (preferred), else by `app` name; an empty `app` never matches a name.
 public struct WindowRule: Equatable, Sendable {
     public var app: String
+    public var bundleID: String?
     public var mode: WindowMode?
+    /// Index semantics (`workspace = N`): the focused display's stack.
     public var workspace: Int?
+    /// NW-01: a `[[workspace]]` name; wins over `workspace` when both parse.
+    public var openOnWorkspace: String?
+    public var follow: WorkspaceFollowPolicy
 
-    public init(app: String, mode: WindowMode? = nil, workspace: Int? = nil) {
+    public init(
+        app: String,
+        bundleID: String? = nil,
+        mode: WindowMode? = nil,
+        workspace: Int? = nil,
+        openOnWorkspace: String? = nil,
+        follow: WorkspaceFollowPolicy = .whenActive
+    ) {
         self.app = app
+        self.bundleID = bundleID
         self.mode = mode
         self.workspace = workspace
+        self.openOnWorkspace = openOnWorkspace
+        self.follow = follow
+    }
+
+    public func matches(app name: String, bundleID windowBundle: String?) -> Bool {
+        if let bundleID, let windowBundle {
+            return bundleID == windowBundle
+        }
+        return !app.isEmpty && app == name
     }
 }
 
@@ -20,15 +53,32 @@ public struct WindowRule: Equatable, Sendable {
 public struct RuleOutcome: Equatable, Sendable {
     public var mode: WindowMode?
     public var workspace: Int?
+    public var openOnWorkspace: String?
+    public var follow: WorkspaceFollowPolicy
 
-    public static let none = RuleOutcome(mode: nil, workspace: nil)
+    public init(
+        mode: WindowMode? = nil,
+        workspace: Int? = nil,
+        openOnWorkspace: String? = nil,
+        follow: WorkspaceFollowPolicy = .whenActive
+    ) {
+        self.mode = mode
+        self.workspace = workspace
+        self.openOnWorkspace = openOnWorkspace
+        self.follow = follow
+    }
+
+    public static let none = RuleOutcome()
 }
 
 /// First matching rule wins, entirely. Later rules never merge: one app,
 /// one verdict, predictable from reading the file top to bottom.
-public func evaluateRules(_ rules: [WindowRule], app: String) -> RuleOutcome {
-    for rule in rules where rule.app == app {
-        return RuleOutcome(mode: rule.mode, workspace: rule.workspace)
+public func evaluateRules(_ rules: [WindowRule], app: String, bundleID: String? = nil) -> RuleOutcome {
+    for rule in rules where rule.matches(app: app, bundleID: bundleID) {
+        return RuleOutcome(
+            mode: rule.mode, workspace: rule.workspace,
+            openOnWorkspace: rule.openOnWorkspace, follow: rule.follow
+        )
     }
     return .none
 }

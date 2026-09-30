@@ -246,26 +246,39 @@ public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool) -> [
     ]
 }
 
-/// Editable window rule. `mode`/`workspace` nil mean "no opinion".
+/// Editable window rule. `mode`/`workspace` nil mean "no opinion". NW-01
+/// fields the form does not show yet are carried through unchanged.
 public struct RuleForm: Equatable, Sendable {
     public var app: String
     public var mode: WindowMode?
     public var workspace: Int?
+    public var bundleID: String?
+    public var openOnWorkspace: String?
+    public var follow: WorkspaceFollowPolicy
 
-    public init(app: String = "", mode: WindowMode? = nil, workspace: Int? = nil) {
+    public init(
+        app: String = "", mode: WindowMode? = nil, workspace: Int? = nil,
+        bundleID: String? = nil, openOnWorkspace: String? = nil, follow: WorkspaceFollowPolicy = .whenActive
+    ) {
         self.app = app
         self.mode = mode
         self.workspace = workspace
+        self.bundleID = bundleID
+        self.openOnWorkspace = openOnWorkspace
+        self.follow = follow
     }
 
     public init(rule: WindowRule) {
-        self.init(app: rule.app, mode: rule.mode, workspace: rule.workspace)
+        self.init(
+            app: rule.app, mode: rule.mode, workspace: rule.workspace,
+            bundleID: rule.bundleID, openOnWorkspace: rule.openOnWorkspace, follow: rule.follow
+        )
     }
 
     public var problems: [String] {
         var found: [String] = []
         let trimmed = app.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { found.append("App name is required.") }
+        if trimmed.isEmpty, bundleID?.isEmpty ?? true { found.append("App name is required.") }
         if trimmed.contains("\"") { found.append("App name cannot contain a double quote.") }
         if let workspace, !WorkspaceManager.range.contains(workspace) {
             found.append("Workspace must be 1 to 9.")
@@ -274,6 +287,9 @@ public struct RuleForm: Equatable, Sendable {
     }
 
     public var rule: WindowRule {
-        WindowRule(app: app.trimmingCharacters(in: .whitespaces), mode: mode, workspace: workspace)
+        WindowRule(
+            app: app.trimmingCharacters(in: .whitespaces), bundleID: bundleID, mode: mode,
+            workspace: workspace, openOnWorkspace: openOnWorkspace, follow: follow
+        )
     }
 }
