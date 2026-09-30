@@ -33,10 +33,10 @@ User (2026-09-30): "dale con el session host" — refactor before new Niri featu
 - Live behaviour cannot be proven by these tests — record what was not run live.
 
 ## Tasks
-- [ ] RF-00 — Scaffold `GioSession` + tests target + pbxproj product link; smoke test.
-- [ ] RF-01 — `SystemProbe` + `SessionScheduler` seams replacing direct AppKit reads.
-- [ ] RF-02 — Publication: FocusRingPublisher, FocusDimPublisher, BarSnapshotPublisher.
-- [ ] RF-03 — RenderVerifier.
+- [x] RF-00 (`49c4bfa`) — Scaffold `GioSession` + tests target + pbxproj product link; smoke test.
+- [x] RF-01 (`f7c59ff`) — `SystemProbe` + `SessionScheduler` seams replacing direct AppKit reads.
+- [x] RF-02 (`3ec8016`) — Publication: FocusRingPublisher, FocusDimPublisher, BarSnapshotPublisher.
+- [x] RF-03 (`a03f30f`) — RenderVerifier.
 - [ ] RF-04 — ConfigCoordinator + IPCRouter.
 - [ ] RF-05 — SnapshotFlightController + SnapshotCacheRefresher (OverlayPort).
 - [ ] RF-06 — NativeZoomController.
@@ -46,6 +46,14 @@ User (2026-09-30): "dale con el session host" — refactor before new Niri featu
 - [ ] RF-10 — ReflowPlanner (value-returning performReflow core).
 - [ ] RF-11 — ActionApplier (`apply(_:)` → ActionEffect).
 - [ ] RF-12 — GitHub Actions CI: `swift test` + unsigned `xcodebuild` on macOS runner.
+
+Evidence RF-00..03 (route: delegated writer, opus): GioSession target + product linked (4 pbxproj
+entries, plutil OK); SystemProbe/LiveSystemProbe, SessionScheduler (QueueScheduler/ManualScheduler),
+MainHop; FocusRingPublisher, FocusDimPublisher, GatedStatePublisher, SessionFactsBuilder;
+RenderVerifier. SessionHost 3260 -> 2986 lines. GioSessionTests 47; all bundles 0 failures (parent
+re-ran); signed build OK. Characterization tests mostly compile-RED only (pin current behaviour).
+Notes: components built in init with [unowned self]; no dispatchPrecondition (documented contract);
+snapshotCell stays in host (SessionSnapshot lives in GioUI). NOT run live.
 
 ## Acceptance criteria
 - SessionHost < 800 lines; GioSession components covered by GioSessionTests; all bundles green;
@@ -61,3 +69,4 @@ Map: delegated Explore (done). RF-00..RF-12: delegated writers in batches (RF-00
 
 ## Progress
 - 2026-09-30: map done, document created. Next: RF-00..RF-03.
+- 2026-09-30: RF-00..RF-03 done, pushed. Next: RF-04..RF-06.
