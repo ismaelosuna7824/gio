@@ -490,12 +490,20 @@ public struct RuleRowPresentation: Equatable, Sendable {
         case .fullscreen?: modeBadge = RuleBadge(label: "Fullscreen", symbol: "arrow.up.left.and.arrow.down.right", kind: .neutral)
         case nil: modeBadge = nil
         }
-        workspaceBadge = rule.workspace.map {
-            RuleBadge(label: "Workspace \($0)", symbol: "square.stack.3d.up", kind: .neutral)
+        if let named = rule.openOnWorkspace {
+            workspaceBadge = RuleBadge(label: named, symbol: "square.stack.3d.up.fill", kind: .info)
+        } else {
+            workspaceBadge = rule.workspace.map {
+                RuleBadge(label: "Workspace \($0)", symbol: "square.stack.3d.up", kind: .neutral)
+            }
         }
         var parts: [String] = []
         if let mode = rule.mode { parts.append(mode.rawValue) }
-        if let workspace = rule.workspace { parts.append("workspace \(workspace)") }
+        if let named = rule.openOnWorkspace {
+            parts.append("workspace \(named)")
+        } else if let workspace = rule.workspace {
+            parts.append("workspace \(workspace)")
+        }
         accessibilityLabel = "\(rule.app): " + (parts.isEmpty ? "no action" : parts.joined(separator: ", "))
     }
 }

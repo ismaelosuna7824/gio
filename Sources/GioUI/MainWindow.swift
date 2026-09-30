@@ -5,7 +5,7 @@ import SwiftUI
 
 /// Sidebar sections of the unified Gio window.
 public enum MainSection: String, CaseIterable, Identifiable, Sendable {
-    case overview, shortcuts, layout, focus, animations, rules, logs, diagnostics
+    case overview, shortcuts, workspaces, layout, focus, animations, rules, logs, diagnostics
 
     public var id: String { rawValue }
 
@@ -13,6 +13,7 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .overview: return "Overview"
         case .shortcuts: return "Shortcuts"
+        case .workspaces: return "Workspaces"
         case .layout: return "Layout"
         case .focus: return "Focus"
         case .animations: return "Animations"
@@ -88,6 +89,7 @@ public struct GioMainView: View {
         switch section {
         case .overview: OverviewView(model: model)
         case .shortcuts: ShortcutsView(model: model)
+        case .workspaces: WorkspacesSettingsView(model: model, drafts: drafts)
         case .layout: LayoutSettingsView(model: model, drafts: drafts)
         case .focus: FocusSettingsView(model: model, drafts: drafts)
         case .animations: AnimationsSettingsView(model: model, drafts: drafts)

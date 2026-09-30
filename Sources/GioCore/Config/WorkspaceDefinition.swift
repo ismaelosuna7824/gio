@@ -1,7 +1,7 @@
 import Foundation
 
 /// NW-01: which display a named workspace lives on.
-public enum WorkspaceDisplayAssignment: Equatable, Sendable {
+public enum WorkspaceDisplayAssignment: Hashable, Sendable {
     /// The main display (the first one the host registers).
     case main
     /// 1-based position in the host's display order; a display that is not

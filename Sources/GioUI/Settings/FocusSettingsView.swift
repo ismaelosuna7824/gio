@@ -235,24 +235,8 @@ struct FocusRingColorRow: View {
     }
 
     private func swatch(_ color: ThemeColor, hex: String) -> some View {
-        let selected = form.color == color
-        return Button {
+        ColorSwatchButton(color: color, label: "Preset \(hex)", isSelected: form.color == color) {
             form.setColor(color)
-        } label: {
-            Circle()
-                .fill(Color(theme: color))
-                .overlay(Circle().strokeBorder(Color.primary.opacity(0.18), lineWidth: 0.5))
-                .overlay(
-                    Circle().strokeBorder(GioColor.primaryText.opacity(0.75), lineWidth: 1.5)
-                        .padding(-3.5)
-                        .opacity(selected ? 1 : 0)
-                )
-                .frame(width: 16, height: 16)
-                .padding(3)
         }
-        .buttonStyle(.plain)
-        .help(hex)
-        .accessibilityLabel("Preset \(hex)")
-        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

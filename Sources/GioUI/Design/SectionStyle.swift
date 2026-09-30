@@ -3,7 +3,7 @@ import GioCore
 /// Tile colors for sidebar sections, System Settings style. Named, not
 /// SwiftUI colors, so the table stays pure and testable.
 public enum SectionTint: String, CaseIterable, Sendable {
-    case blue, indigo, purple, pink, orange, green, gray, teal
+    case blue, indigo, purple, pink, orange, green, gray, teal, cyan
 }
 
 public struct SectionStyle: Equatable, Sendable {
@@ -16,6 +16,7 @@ public func sectionStyle(_ section: MainSection) -> SectionStyle {
     switch section {
     case .overview: return SectionStyle(symbol: "square.grid.2x2.fill", tint: .blue)
     case .shortcuts: return SectionStyle(symbol: "command", tint: .gray)
+    case .workspaces: return SectionStyle(symbol: "square.stack.3d.up.fill", tint: .cyan)
     case .layout: return SectionStyle(symbol: "rectangle.split.3x1.fill", tint: .indigo)
     case .focus: return SectionStyle(symbol: "viewfinder", tint: .purple)
     case .animations: return SectionStyle(symbol: "wand.and.stars", tint: .pink)
@@ -36,7 +37,7 @@ public struct SidebarGroup: Equatable, Sendable, Identifiable {
 public let sidebarGroups: [SidebarGroup] = [
     SidebarGroup(title: "General", sections: [.overview]),
     SidebarGroup(title: "Keyboard", sections: [.shortcuts]),
-    SidebarGroup(title: "Tiling", sections: [.layout, .focus, .animations, .rules]),
+    SidebarGroup(title: "Tiling", sections: [.workspaces, .layout, .focus, .animations, .rules]),
     SidebarGroup(title: "Advanced", sections: [.logs, .diagnostics]),
 ]
 

@@ -151,12 +151,21 @@ enum AppIconResolver {
         let image = running ?? appBundleCandidates(named: name, home: NSHomeDirectory())
             .first { FileManager.default.fileExists(atPath: $0) }
             .map { NSWorkspace.shared.icon(forFile: $0) }
-        let raster = image.flatMap(rasterize)
+        let raster = image.flatMap(rasterizeIcon)
         cache[name] = raster
         return raster
     }
 
-    private static func rasterize(_ image: NSImage) -> CGImage? {
+    /// `.some(nil)` when the key was looked up before and not found.
+    static func cachedIcon(_ key: String) -> CGImage?? {
+        cache[key]
+    }
+
+    static func storeIcon(_ image: CGImage?, for key: String) {
+        cache[key] = image
+    }
+
+    static func rasterizeIcon(_ image: NSImage) -> CGImage? {
         guard let rep = NSBitmapImageRep(
             bitmapDataPlanes: nil, pixelsWide: pixelSize, pixelsHigh: pixelSize, bitsPerSample: 8,
             samplesPerPixel: 4, hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB,

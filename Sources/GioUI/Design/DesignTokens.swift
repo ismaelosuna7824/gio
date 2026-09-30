@@ -88,6 +88,7 @@ public enum GioColor {
         case .green: return Color(nsColor: .systemGreen)
         case .gray: return Color(nsColor: .systemGray)
         case .teal: return Color(nsColor: .systemTeal)
+        case .cyan: return Color(nsColor: .systemCyan)
         }
     }
 }

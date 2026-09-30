@@ -94,7 +94,12 @@ final class DesignSystemTests: XCTestCase {
         let grouped = sidebarGroups.flatMap(\.sections)
         XCTAssertEqual(grouped, MainSection.allCases)
         XCTAssertEqual(sidebarGroups.map(\.title), ["General", "Keyboard", "Tiling", "Advanced"])
-        XCTAssertEqual(sidebarGroups[2].sections, [.layout, .focus, .animations, .rules])
+        XCTAssertEqual(sidebarGroups[2].sections, [.workspaces, .layout, .focus, .animations, .rules])
+    }
+
+    func testWorkspacesSectionHasItsOwnTile() {
+        XCTAssertEqual(sectionStyle(.workspaces), SectionStyle(symbol: "square.stack.3d.up.fill", tint: .cyan))
+        XCTAssertEqual(MainSection.workspaces.title, "Workspaces")
     }
 
     func testFocusSectionHasItsOwnTile() {
