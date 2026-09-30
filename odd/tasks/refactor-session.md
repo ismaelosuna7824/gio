@@ -37,9 +37,9 @@ User (2026-09-30): "dale con el session host" — refactor before new Niri featu
 - [x] RF-01 (`f7c59ff`) — `SystemProbe` + `SessionScheduler` seams replacing direct AppKit reads.
 - [x] RF-02 (`3ec8016`) — Publication: FocusRingPublisher, FocusDimPublisher, BarSnapshotPublisher.
 - [x] RF-03 (`a03f30f`) — RenderVerifier.
-- [ ] RF-04 — ConfigCoordinator + IPCRouter.
-- [ ] RF-05 — SnapshotFlightController + SnapshotCacheRefresher (OverlayPort).
-- [ ] RF-06 — NativeZoomController.
+- [x] RF-04 (`7a5fbf0`) — ConfigCoordinator + IPCRouter.
+- [x] RF-05 (`18e7b4a`) — SnapshotFlightController + SnapshotCacheRefresher (OverlayPort).
+- [x] RF-06 (`938839c`) — NativeZoomController.
 - [ ] RF-07 — MotionDriver + ResizeProbeRunner (tick benchmark before/after).
 - [ ] RF-08 — FocusCoordinator (adoption, settle, intent, warp, hover).
 - [ ] RF-09 — WindowEventRouter + DiscoveryService.
@@ -54,6 +54,12 @@ RenderVerifier. SessionHost 3260 -> 2986 lines. GioSessionTests 47; all bundles 
 re-ran); signed build OK. Characterization tests mostly compile-RED only (pin current behaviour).
 Notes: components built in init with [unowned self]; no dispatchPrecondition (documented contract);
 snapshotCell stays in host (SessionSnapshot lives in GioUI). NOT run live.
+
+Evidence RF-04..06 (route: delegated writer, opus): ConfigCoordinator (+dispatcher lock), IPCRouter,
+SnapshotFlightController (OverlayPort, neutral OverlayFlight), SnapshotCacheRefresher (fixed latent
+unlocked capture-screen read), NativeZoomController (settle poller on scheduler strict timer).
+SessionHost 2986 -> 2426. GioSessionTests 92; all bundles 0 failures (parent re-ran); signed build
+OK. Characterization only (no behavioural RED). NOT run live.
 
 ## Acceptance criteria
 - SessionHost < 800 lines; GioSession components covered by GioSessionTests; all bundles green;
@@ -70,3 +76,4 @@ Map: delegated Explore (done). RF-00..RF-12: delegated writers in batches (RF-00
 ## Progress
 - 2026-09-30: map done, document created. Next: RF-00..RF-03.
 - 2026-09-30: RF-00..RF-03 done, pushed. Next: RF-04..RF-06.
+- 2026-09-30: RF-04..RF-06 done, pushed. Next: RF-07..RF-09.
