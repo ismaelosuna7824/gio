@@ -75,6 +75,7 @@ public final class DiscoveryService: @unchecked Sendable {
         /// Required, no default: a test fixture that forgot it used to write
         /// its retry lines (fake `pid=7`) into the user's real log file.
         public var log: (LogLevel, String) -> Void
+        public var allowsWindowWork: () -> Bool
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -102,8 +103,10 @@ public final class DiscoveryService: @unchecked Sendable {
             discoverAttempt: ((AXUIElement, pid_t) -> SingleWindowDiscovery)? = nil,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             windowRegistered: @escaping (WindowOpenTiming) -> Void = { _ in },
-            log: @escaping (LogLevel, String) -> Void
+            log: @escaping (LogLevel, String) -> Void,
+            allowsWindowWork: @escaping () -> Bool = { true }
         ) {
+            self.allowsWindowWork = allowsWindowWork
             self.followArrival = followArrival
             self.discoverAttempt = discoverAttempt
             self.now = now
@@ -169,6 +172,9 @@ public final class DiscoveryService: @unchecked Sendable {
     /// the dead-pid reap is skipped then, since absence from a partial
     /// scan proves nothing.
     public func enumerateAndPlace(onlyPID: pid_t? = nil) {
+        guard context.allowsWindowWork() else {
+            return
+        }
         guard let found = context.discoverAll(onlyPID) else {
             return
         }
@@ -233,6 +239,9 @@ public final class DiscoveryService: @unchecked Sendable {
 
     /// A launched app's observer attached: register its windows, reflow.
     public func appAttached(_ pid: pid_t) {
+        guard context.allowsWindowWork() else {
+            return
+        }
         enumerateAndPlace(onlyPID: pid)
         context.reflowAll()
     }
@@ -247,7 +256,8 @@ public final class DiscoveryService: @unchecked Sendable {
     /// named workspace moments ago takes the user there now, unless the
     /// user moved (workspace or focus) since, or the window is minimized.
     public func appActivated(_ pid: pid_t) {
-        guard let pending = pendingFollows.activated(pid: pid, now: context.now()),
+        guard context.allowsWindowWork(),
+              let pending = pendingFollows.activated(pid: pid, now: context.now()),
               context.registry().find(pending.id)?.isMinimized == false
         else {
             return
@@ -329,7 +339,7 @@ public final class DiscoveryService: @unchecked Sendable {
 
     private func attemptRegistration(_ element: AXUIElement, pid: pid_t, attempt: Int, clock: RegistrationClock) {
         // Gio's own windows are never classified, registered or retried.
-        guard pid != context.ownPID else {
+        guard pid != context.ownPID, context.allowsWindowWork() else {
             return
         }
         if context.knownWindow(element, pid) != nil {

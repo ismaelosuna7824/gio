@@ -47,8 +47,11 @@ public final class FocusCoordinator: @unchecked Sendable {
         public var centerMode: () -> CenterFocusedColumnMode
         public var publishFocusRing: () -> Void
         public var reflowAll: () -> Void
+        public var workspaceFocusPlan: (WindowID) -> WindowFocusPlan?
+        public var showWorkspace: (WorkspaceID) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
+        public var allowsWindowWork: () -> Bool
 
         public init(
             isShuttingDown: @escaping () -> Bool, isMouseDown: @escaping () -> Bool,
@@ -68,8 +71,11 @@ public final class FocusCoordinator: @unchecked Sendable {
             mouseFollowsFocus: @escaping () -> Bool,
             centerMode: @escaping () -> CenterFocusedColumnMode,
             publishFocusRing: @escaping () -> Void, reflowAll: @escaping () -> Void,
+            workspaceFocusPlan: @escaping (WindowID) -> WindowFocusPlan?,
+            showWorkspace: @escaping (WorkspaceID) -> Void,
             log: @escaping (LogLevel, String) -> Void,
-            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+            allowsWindowWork: @escaping () -> Bool = { true }
         ) {
             self.isShuttingDown = isShuttingDown
             self.isMouseDown = isMouseDown
@@ -92,8 +98,11 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.centerMode = centerMode
             self.publishFocusRing = publishFocusRing
             self.reflowAll = reflowAll
+            self.workspaceFocusPlan = workspaceFocusPlan
+            self.showWorkspace = showWorkspace
             self.log = log
             self.now = now
+            self.allowsWindowWork = allowsWindowWork
         }
     }
 
@@ -210,6 +219,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// outside a reflow follow up with `reflowAll` when it scrolls.
     @discardableResult
     public func adoptFocus(_ id: WindowID, source: FocusSource) -> Bool {
+        guard context.allowsWindowWork() else {
+            return false
+        }
         let current = context.currentWorkspace()
         let column = current.columns.firstIndex { $0.windows.contains(id) }
         let visibility = context.isVisibleInViewport(id)
@@ -241,6 +253,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// validated against the click (`FocusSettle`). The activation and the
     /// focused-window event of one click therefore adopt once.
     public func requestAdoption(_ source: FocusSource, pid: pid_t, element: AXUIElement?) {
+        guard context.allowsWindowWork() else {
+            return
+        }
         // Gio's own window (main window, launcher) is never a tiling focus.
         guard pid != context.ownPID else {
             return
@@ -262,6 +277,10 @@ public final class FocusCoordinator: @unchecked Sendable {
         case .coalesced:
             break
         }
+    }
+
+    public func discardPendingAdoptions() {
+        focusSettle.discard()
     }
 
     private func scheduleFocusPoll(after delay: TimeInterval) {
@@ -337,6 +356,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// window goes through single-window admission; a reflow follows only
     /// when the viewport has to scroll to show the focused column.
     private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
+        guard context.allowsWindowWork() else {
+            return
+        }
         guard event.pid == context.frontmostPID() else {
             return
         }
@@ -353,10 +375,29 @@ public final class FocusCoordinator: @unchecked Sendable {
             context.log(.debug, "focus adopt ignored (superseded by keyboard intent) id=\(id.pid):\(id.elementID)")
             return
         }
+        if revealOnOtherWorkspace(id, source: event.source) {
+            return
+        }
         adoptFocus(id, source: event.source)
         if context.pendingScroll() != nil {
             context.reflowAll()
         }
+    }
+
+    private func revealOnOtherWorkspace(_ id: WindowID, source: FocusSource) -> Bool {
+        guard let plan = context.workspaceFocusPlan(id), plan.switchesWorkspace else {
+            return false
+        }
+        focusIntent.cancel()
+        context.showWorkspace(plan.workspace.id)
+        context.updateWorkspace(plan.workspace)
+        context.log(
+            .info,
+            "focus reveal id=\(id.pid):\(id.elementID) workspace=\(plan.index) source=\(source.rawValue)"
+        )
+        context.publishFocusRing()
+        context.reflowAll()
+        return true
     }
 
     // MARK: Keyboard / IPC intent

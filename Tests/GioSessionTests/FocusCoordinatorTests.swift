@@ -26,6 +26,8 @@ final class FocusCoordinatorTests: XCTestCase {
         var centerMode = CenterFocusedColumnMode.never
         var ringPublishes = 0
         var reflows = 0
+        var shownWorkspaces: [WorkspaceID] = []
+        var windowWorkAllowed = true
         var logs: [(LogLevel, String)] = []
 
         func id(of element: AXUIElement) -> WindowID? {
@@ -90,8 +92,14 @@ final class FocusCoordinatorTests: XCTestCase {
                 centerMode: { world.centerMode },
                 publishFocusRing: { world.ringPublishes += 1 },
                 reflowAll: { world.reflows += 1 },
+                workspaceFocusPlan: { planFocusWindow($0, in: fixture.session.manager) },
+                showWorkspace: {
+                    world.shownWorkspaces.append($0)
+                    _ = fixture.session.manager.focus($0)
+                },
                 log: { world.logs.append(($0, $1)) },
-                now: { scheduler.now }
+                now: { scheduler.now },
+                allowsWindowWork: { world.windowWorkAllowed }
             ),
             scheduler: scheduler
         )
@@ -164,6 +172,61 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(world.reflows, 0)
     }
 
+    // MARK: Foreign Space
+
+    func testForeignSpaceAdoptsAndRegistersNothing() {
+        world.windowWorkAllowed = false
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+        let stranger = AXUIElementCreateApplication(777)
+        world.focusedElements[3] = stranger
+        world.frontmost = 3
+
+        focus.requestAdoption(.activation, pid: 3, element: nil)
+        focus.requestAdoption(.focusChanged, pid: 3, element: stranger)
+        scheduler.advance(by: 1)
+
+        XCTAssertEqual(focused, ids[0])
+        XCTAssertTrue(world.registered.isEmpty)
+        XCTAssertEqual(world.reflows, 0)
+        XCTAssertTrue(world.focusedElementReads.isEmpty)
+    }
+
+    func testDirectAdoptionIsRefusedOnAForeignSpace() {
+        world.windowWorkAllowed = false
+
+        XCTAssertFalse(focus.adoptFocus(ids[1], source: .rescan))
+
+        XCTAssertEqual(focused, ids[0])
+    }
+
+    func testDiscardedPendingClickAdoptionNeverResolves() {
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+        world.mouseLocation = center(1)
+        focus.recordClick(at: center(1))
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(1))
+
+        focus.discardPendingAdoptions()
+        scheduler.advance(by: 2)
+
+        XCTAssertEqual(focused, ids[0])
+        XCTAssertTrue(world.focusedElementReads.isEmpty)
+    }
+
+    func testAdoptionResumesOnceTheManagedSpaceIsBack() {
+        world.windowWorkAllowed = false
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(1))
+        XCTAssertEqual(focused, ids[0])
+
+        world.windowWorkAllowed = true
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(1))
+
+        XCTAssertEqual(focused, ids[1])
+    }
+
     // MARK: Adoption
 
     func testKeyboardActivationAdoptsAtOnceAndReflowsOnlyToScroll() {
@@ -183,6 +246,84 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(focused, ids[0])
         XCTAssertEqual(world.reflows, 1)
         XCTAssertTrue(world.logs.contains { $0.1.contains("scroll=0->600") })
+    }
+
+    private func moveToHiddenWorkspace(_ index: Int) {
+        _ = fixture.session.manager.moveWindow(ids[index], to: 2)
+    }
+
+    func testFocusChangedOnAHiddenWorkspaceWindowSwitchesAndRevealsWithoutFocusCall() {
+        moveToHiddenWorkspace(2)
+        world.frontmost = 2
+        let hiddenWorkspace = fixture.session.manager.workspace(2)!.id
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(2))
+
+        XCTAssertEqual(world.shownWorkspaces, [hiddenWorkspace])
+        XCTAssertEqual(fixture.session.manager.current, 2)
+        XCTAssertEqual(focused, ids[2])
+        XCTAssertEqual(world.reflows, 1)
+        XCTAssertTrue(world.logs.contains {
+            $0.0 == .info && $0.1 == "focus reveal id=2:3 workspace=2 source=focusChanged"
+        })
+        let settle = focus.takeSettleFocus(parked: [])
+        XCTAssertNil(settle.target)
+    }
+
+    func testActivationRevealsTheAppsFocusedWindowNotTheFirstOfItsPid() {
+        moveToHiddenWorkspace(2)
+        world.frontmost = 2
+        world.focusedElements[2] = element(2)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(fixture.session.manager.current, 2)
+        XCTAssertEqual(focused, ids[2])
+        XCTAssertTrue(world.logs.contains { $0.1.hasSuffix("source=activation") })
+    }
+
+    func testSameAppWindowOnTheCurrentWorkspaceDoesNotSwitch() {
+        moveToHiddenWorkspace(2)
+        world.frontmost = 2
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(1))
+
+        XCTAssertEqual(world.shownWorkspaces, [])
+        XCTAssertEqual(fixture.session.manager.current, 1)
+        XCTAssertEqual(focused, ids[1])
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("focus reveal") })
+    }
+
+    func testRevealCancelsAStaleKeyboardIntent() {
+        moveToHiddenWorkspace(2)
+        focus.requestIntent(if: true, previous: nil)
+        scheduler.advance(by: FocusIntent.requestWindow + 1)
+        world.frontmost = 2
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(2))
+
+        XCTAssertNil(focus.takeSettleFocus(parked: []).target)
+    }
+
+    func testRevealIsRefusedOnAForeignSpace() {
+        moveToHiddenWorkspace(2)
+        world.frontmost = 2
+        world.windowWorkAllowed = false
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(2))
+
+        XCTAssertEqual(world.shownWorkspaces, [])
+        XCTAssertEqual(fixture.session.manager.current, 1)
+    }
+
+    func testMinimizedWindowOnAHiddenWorkspaceIsNotRevealed() {
+        moveToHiddenWorkspace(2)
+        world.frontmost = 2
+        world.minimized = [ids[2]]
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(2))
+
+        XCTAssertEqual(world.shownWorkspaces, [])
     }
 
     func testBackgroundAppKeyWindowChangeIsIgnored() {
