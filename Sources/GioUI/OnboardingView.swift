@@ -12,6 +12,7 @@ import SwiftUI
 public struct OnboardingStore {
     private let defaults: UserDefaults
     static let key = "GioOnboardingCompleted"
+    static let resumeKey = "GioOnboardingResumeStep"
 
     public init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -22,6 +23,20 @@ public struct OnboardingStore {
     public func markCompleted() {
         defaults.set(true, forKey: Self.key)
     }
+
+    public func markResume(_ step: OnboardingStep) {
+        defaults.set(step.rawValue, forKey: Self.resumeKey)
+    }
+
+    public func clearResume() {
+        defaults.removeObject(forKey: Self.resumeKey)
+    }
+
+    public func consumeResumeStep() -> OnboardingStep? {
+        let stored = defaults.object(forKey: Self.resumeKey) as? Int
+        clearResume()
+        return stored.flatMap(OnboardingStep.init(rawValue:))
+    }
 }
 
 /// Main-window state for the onboarding sheet: decided once per launch,
@@ -29,6 +44,7 @@ public struct OnboardingStore {
 @MainActor
 public final class OnboardingPresenter: ObservableObject {
     @Published public var isPresented = false
+    public private(set) var startStep = OnboardingStep.welcome
     private var store: OnboardingStore
     private var evaluated = false
 
@@ -41,21 +57,33 @@ public final class OnboardingPresenter: ObservableObject {
             return
         }
         evaluated = true
-        if shouldShowOnboarding(hasCompleted: store.hasCompleted, accessibilityGranted: facts.accessibilityGranted) {
+        let resumeStep = store.consumeResumeStep()
+        let shouldShow = shouldShowOnboarding(
+            hasCompleted: store.hasCompleted, accessibilityGranted: facts.accessibilityGranted, resumeStep: resumeStep
+        )
+        if shouldShow {
+            startStep = resumeStep ?? .welcome
             isPresented = true
         }
     }
 
     public func present() {
+        startStep = .welcome
         isPresented = true
+    }
+
+    func prepareRelaunch(at step: OnboardingStep) {
+        store.markResume(step)
     }
 
     func finish() {
         store.markCompleted()
+        store.clearResume()
         isPresented = false
     }
 
     func later() {
+        store.clearResume()
         isPresented = false
     }
 }
@@ -74,13 +102,17 @@ extension EnvironmentValues {
 /// The live sheet: polls permissions through the model while on screen.
 struct OnboardingSheet: View {
     @ObservedObject var model: DesktopModel
+    let startStep: OnboardingStep
     let onFinish: () -> Void
     let onLater: () -> Void
+    let onPrepareRelaunch: () -> Void
 
     var body: some View {
         OnboardingContent(
             accessibilityGranted: model.snapshot.facts?.accessibilityGranted ?? false,
             screenRecordingGranted: model.snapshot.facts?.screenRecordingGranted ?? false,
+            screenRecordingRequested: model.screenRecordingRequested,
+            step: startStep,
             onFinish: onFinish, onLater: onLater,
             requestAccessibility: {
                 _ = requestAXPermission()
@@ -89,7 +121,12 @@ struct OnboardingSheet: View {
             },
             requestScreenRecording: {
                 _ = requestScreenRecordingPermission()
+                model.markScreenRecordingRequested()
                 model.refresh()
+            },
+            relaunch: {
+                onPrepareRelaunch()
+                model.relaunch()
             }
         )
         .onAppear { model.refresh() }
@@ -108,20 +145,26 @@ func openPrivacyPane(_ anchor: String) {
 struct OnboardingContent: View {
     let accessibilityGranted: Bool
     let screenRecordingGranted: Bool
+    let screenRecordingRequested: Bool
     var onFinish: () -> Void = {}
     var onLater: () -> Void = {}
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
+    var relaunch: () -> Void = {}
     @State private var state: OnboardingState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
-        accessibilityGranted: Bool, screenRecordingGranted: Bool, step: OnboardingStep = .welcome,
+        accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingRequested: Bool = false,
+        step: OnboardingStep = .welcome,
         onFinish: @escaping () -> Void = {}, onLater: @escaping () -> Void = {},
-        requestAccessibility: @escaping () -> Void = {}, requestScreenRecording: @escaping () -> Void = {}
+        requestAccessibility: @escaping () -> Void = {}, requestScreenRecording: @escaping () -> Void = {},
+        relaunch: @escaping () -> Void = {}
     ) {
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
+        self.screenRecordingRequested = screenRecordingRequested
+        self.relaunch = relaunch
         self.onFinish = onFinish
         self.onLater = onLater
         self.requestAccessibility = requestAccessibility
@@ -156,12 +199,10 @@ struct OnboardingContent: View {
         .frame(width: 560, height: 520)
         .background(GioColor.page)
         .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.9), value: state.step)
-        .onChange(of: accessibilityGranted) { _ in sync() }
-        .onChange(of: screenRecordingGranted) { _ in sync() }
     }
 
-    private func sync() {
-        state.update(accessibilityGranted: accessibilityGranted, screenRecordingGranted: screenRecordingGranted)
+    private var current: OnboardingState {
+        state.updating(accessibilityGranted: accessibilityGranted, screenRecordingGranted: screenRecordingGranted)
     }
 
     // MARK: Steps
@@ -203,8 +244,9 @@ struct OnboardingContent: View {
             icon: SectionIcon(symbol: "hand.raised.fill", tint: .blue, size: 64),
             title: "Allow Accessibility",
             why: "Gio arranges your windows and listens for its shortcuts through Accessibility. Without it nothing can tile. Gio never reads window contents, and its logs never contain window titles.",
-            granted: accessibilityGranted,
-            waiting: "Waiting for permission… turn Gio on in the list, then come back.",
+            phase: accessibilityGranted ? .granted : .notRequested,
+            idleText: "Waiting for permission… turn Gio on in the list, then come back.",
+            showsProgress: true,
             grantedText: "Accessibility is on. You're ready to tile.",
             button: "Open System Settings", action: requestAccessibility
         )
@@ -215,17 +257,20 @@ struct OnboardingContent: View {
             icon: SectionIcon(symbol: "record.circle", tint: .pink, size: 64),
             title: "Screen Recording (Optional)",
             why: "Only the experimental snapshot renderer needs it: it animates captured images of your windows, then places them once. Gio records nothing and saves nothing. Skip this unless you want to try it.",
-            granted: screenRecordingGranted,
-            waiting: "Not granted. macOS applies it after you relaunch Gio.",
+            phase: screenRecordingStepPhase(granted: screenRecordingGranted, requested: screenRecordingRequested),
+            idleText: "Not granted. Open System Settings to turn it on, or skip this step.",
+            showsProgress: false,
             grantedText: "Screen Recording is on.",
             button: "Open System Settings", action: requestScreenRecording
         )
     }
 
+    @ViewBuilder
     private func permissionStep(
-        icon: SectionIcon, title: String, why: String, granted: Bool, waiting: String, grantedText: String,
-        button: String, action: @escaping () -> Void
+        icon: SectionIcon, title: String, why: String, phase: PermissionStepPhase, idleText: String,
+        showsProgress: Bool, grantedText: String, button: String, action: @escaping () -> Void
     ) -> some View {
+        let granted = phase == .granted
         VStack(spacing: GioSpacing.m) {
             Spacer(minLength: 0)
             icon
@@ -243,12 +288,20 @@ struct OnboardingContent: View {
                         .foregroundStyle(GioColor.ok)
                         .transition(.scale.combined(with: .opacity))
                     Text(grantedText).font(GioFont.callout.weight(.medium))
+                } else if phase == .awaitingRelaunch {
+                    Text("Granted it? macOS applies Screen Recording after Gio relaunches.")
+                        .font(GioFont.callout)
+                        .foregroundStyle(GioColor.secondaryText)
                 } else {
-                    ProgressView().controlSize(.small).opacity(isStatic ? 0 : 1)
-                    Text(waiting).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
+                    if showsProgress {
+                        ProgressView().controlSize(.small).opacity(isStatic ? 0 : 1)
+                    }
+                    Text(idleText).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
                 }
                 Spacer(minLength: 0)
-                if !granted {
+                if phase == .awaitingRelaunch {
+                    GioButton(title: "Relaunch Gio", systemImage: "arrow.clockwise", role: .prominent, action: relaunch)
+                } else if !granted {
                     GioButton(title: button, systemImage: "arrow.up.forward.app", action: action)
                 }
             }
@@ -309,18 +362,20 @@ struct OnboardingContent: View {
                 GioButton(title: "Back", role: .borderless) { state.back() }
             }
             Spacer(minLength: 0)
-            if state.step == .accessibility, !state.canAdvance {
+            if current.step == .accessibility, !current.canAdvance {
                 GioButton(title: "Set Up Later", action: onLater)
                     .help("Close for now; this guide opens again on the next launch")
             }
-            GioButton(title: state.primaryTitle, role: .prominent, shortcut: .defaultAction) {
-                if state.isLastStep {
+            GioButton(title: current.primaryTitle, role: .prominent, shortcut: .defaultAction) {
+                if current.isLastStep {
                     onFinish()
                 } else {
-                    state.advance()
+                    var next = current
+                    next.advance()
+                    state = next
                 }
             }
-            .disabled(!state.canAdvance)
+            .disabled(!current.canAdvance)
         }
         .padding(.horizontal, GioSpacing.l)
         .padding(.vertical, GioSpacing.s + 2)

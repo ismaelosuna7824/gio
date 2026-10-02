@@ -147,28 +147,125 @@ final class FullscreenTests: XCTestCase {
         XCTAssertFalse(book.isFullscreen(id(2)))
     }
 
-    func testFocusingAwayReleasesFullscreen() throws {
+    func testFullscreenSurvivesFocusMovingAwayAndBack() throws {
         let registry = try registry()
         var book = FullscreenBook()
-        try book.toggle(id(2), registry: registry, frame: display)
-        XCTAssertEqual(book.release(keeping: [id(2)], registry: registry), [])
+        let frame = fullscreenFrame(display: display, usable: usable)
+        try book.toggle(id(2), registry: registry, frame: frame)
+        let tiled = try planDisplayLayout(
+            workspace: workspace(focused: 2), modes: [:], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+
+        let focusedOnOther = try planDisplayLayout(
+            workspace: workspace(focused: 4), modes: [id(2): .fullscreen], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertTrue(book.isFullscreen(id(2)))
         XCTAssertEqual(registry.find(id(2))?.mode, .fullscreen)
-        XCTAssertEqual(book.release(keeping: [id(4)], registry: registry), [id(2)])
+        XCTAssertNotEqual(focusedOnOther.plan.visible[id(4)], frame)
+        XCTAssertEqual(plannedFrame(of: id(2), in: focusedOnOther)?.size, frame.size)
+
+        let focusedBack = try planDisplayLayout(
+            workspace: workspace(focused: 2), modes: [id(2): .fullscreen], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(focusedBack.plan.visible, [id(2): frame])
+
+        XCTAssertFalse(try book.toggle(id(2), registry: registry, frame: frame))
         XCTAssertEqual(registry.find(id(2))?.mode, .tiled)
-        XCTAssertFalse(book.isFullscreen(id(2)))
+        let restored = try planDisplayLayout(
+            workspace: workspace(focused: 2), modes: [:], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(restored.plan, tiled.plan)
     }
 
-    func testReleaseDropsRecordsWhoseModeChangedOrWindowVanished() throws {
+    func testFocusingAnotherWindowShowsItPerNormalLayoutRules() throws {
+        let planned = try planDisplayLayout(
+            workspace: workspace(focused: 4), modes: [id(2): .fullscreen], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        let fullscreen = fullscreenFrame(display: display, usable: usable)
+        XCTAssertTrue(planned.plan.visible.values.allSatisfy { $0 != fullscreen })
+        XCTAssertNotNil(planned.plan.visible[id(4)])
+        XCTAssertTrue(planned.layout.frames.keys.contains(id(2)))
+    }
+
+    private func plannedFrame(of window: WindowID, in planned: DisplayLayoutPlan) -> CGRect? {
+        planned.plan.visible[window] ?? planned.plan.parked[window]?.frame
+    }
+
+    func testUnfocusedFullscreenWindowKeepsItsFullscreenSize() throws {
+        let fullscreen = fullscreenFrame(display: display, usable: usable)
+        let modes: [WindowID: WindowMode] = [id(2): .fullscreen]
+        let focusedOnFullscreen = try planDisplayLayout(
+            workspace: workspace(focused: 2), modes: modes, engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(focusedOnFullscreen.plan.visible, [id(2): fullscreen])
+
+        let focusedOnNeighbour = try planDisplayLayout(
+            workspace: workspace(focused: 4), modes: modes, engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(focusedOnNeighbour.layout.frames[id(2)]?.size, fullscreen.size)
+        XCTAssertEqual(plannedFrame(of: id(2), in: focusedOnNeighbour)?.size, fullscreen.size)
+        XCTAssertNotNil(focusedOnNeighbour.plan.visible[id(4)])
+        XCTAssertNotEqual(plannedFrame(of: id(2), in: focusedOnNeighbour), fullscreen)
+
+        var scrolledBack = workspace(focused: 2)
+        scrolledBack.viewportOffset = focusedOnNeighbour.workspace.viewportOffset
+        let focusedBack = try planDisplayLayout(
+            workspace: scrolledBack, modes: modes, engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(focusedBack.plan.visible, [id(2): fullscreen])
+    }
+
+    func testMovingFocusAmongOtherWindowsNeverResizesTheOffscreenFullscreenWindow() throws {
+        let modes: [WindowID: WindowMode] = [id(2): .fullscreen]
+        let fullscreenSize = fullscreenFrame(display: display, usable: usable).size
+        for focused in [4, 1, 3] as [UInt64] {
+            let planned = try planDisplayLayout(
+                workspace: workspace(focused: focused), modes: modes, engine: engine,
+                viewport: usable, display: display, otherDisplays: []
+            )
+            XCTAssertEqual(plannedFrame(of: id(2), in: planned)?.size, fullscreenSize, "focused \(focused)")
+        }
+    }
+
+    func testTogglingFullscreenOffRestoresThePreviousColumnWidth() throws {
+        let tiled = try planDisplayLayout(
+            workspace: workspace(focused: 4), modes: [:], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        let fullscreen = try planDisplayLayout(
+            workspace: workspace(focused: 4), modes: [id(2): .fullscreen], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(fullscreen.workspace.columns, workspace(focused: 4).columns)
+        let restored = try planDisplayLayout(
+            workspace: fullscreen.workspace, modes: [:], engine: engine,
+            viewport: usable, display: display, otherDisplays: []
+        )
+        XCTAssertEqual(restored.layout.frames[id(2)]?.size, tiled.layout.frames[id(2)]?.size)
+        XCTAssertEqual(plannedFrame(of: id(2), in: restored)?.size, plannedFrame(of: id(2), in: tiled)?.size)
+    }
+
+    func testPruneDropsRecordsWhoseModeChangedOrWindowVanished() throws {
         let registry = try registry()
         var book = FullscreenBook()
         try book.toggle(id(2), registry: registry, frame: display)
         try book.toggle(id(3), registry: registry, frame: display)
-        _ = try registry.toggleFloating(for: id(2))   // leaves fullscreen -> tiled
+        try book.toggle(id(4), registry: registry, frame: display)
+        _ = try registry.toggleFloating(for: id(2))
         registry.remove(id(3))
-        XCTAssertEqual(book.release(keeping: [id(2), id(3)], registry: registry), [])
+        book.prune(registry: registry)
         XCTAssertFalse(book.isFullscreen(id(2)))
         XCTAssertFalse(book.isFullscreen(id(3)))
-        XCTAssertEqual(registry.find(id(2))?.mode, .tiled)
+        XCTAssertTrue(book.isFullscreen(id(4)))
+        XCTAssertEqual(registry.find(id(4))?.mode, .fullscreen)
     }
 
     func testUnknownWindowThrows() throws {

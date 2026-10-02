@@ -39,14 +39,18 @@ public struct DesktopActions: Sendable {
     /// summary line (counts and timings) through the completion, on main.
     public var testSnapshotCapture: @Sendable (@escaping @Sendable (String) -> Void) -> Void
 
+    public var relaunch: @Sendable () -> Void
+
     public init(
         applyEdits: @escaping @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
         reloadConfig: @escaping @Sendable () -> Void = {},
         restoreAllWindows: @escaping @Sendable (@escaping @Sendable (Int) -> Void) -> Void = { $0(0) },
         testSnapshotCapture: @escaping @Sendable (@escaping @Sendable (String) -> Void) -> Void = {
             $0("snapshot capture is unavailable")
-        }
+        },
+        relaunch: @escaping @Sendable () -> Void = {}
     ) {
+        self.relaunch = relaunch
         self.testSnapshotCapture = testSnapshotCapture
         self.applyEdits = applyEdits
         self.reloadConfig = reloadConfig
@@ -72,6 +76,7 @@ public final class DesktopModel: ObservableObject {
     @Published public private(set) var snapshot = SessionSnapshot()
     /// True while the main window is on screen. Tickers run only then.
     @Published public private(set) var windowVisible = true
+    @Published public private(set) var screenRecordingRequested = false
     private let fetch: @Sendable () -> SessionSnapshot
     private let actions: DesktopActions
 
@@ -122,6 +127,14 @@ public final class DesktopModel: ObservableObject {
         refresh()
         refreshSoon()
         return feedback
+    }
+
+    public func markScreenRecordingRequested() {
+        screenRecordingRequested = true
+    }
+
+    public func relaunch() {
+        actions.relaunch()
     }
 
     public func reloadConfig() {

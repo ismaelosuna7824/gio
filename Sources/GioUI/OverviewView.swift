@@ -19,6 +19,7 @@ struct OverviewView: View {
             },
             requestScreenRecording: {
                 _ = requestScreenRecordingPermission()
+                model.markScreenRecordingRequested()
                 model.refresh()
             }
         )

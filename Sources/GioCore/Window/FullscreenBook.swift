@@ -47,28 +47,10 @@ public struct FullscreenBook: Equatable, Sendable {
         return true
     }
 
-    /// Leave fullscreen for every recorded window not in `focused` (focusing
-    /// away restores the layout). Records whose window vanished or already
-    /// left fullscreen by another route are dropped without touching the
-    /// registry. Returns the windows actually restored, in ID order.
-    @discardableResult
-    public mutating func release(keeping focused: Set<WindowID>, registry: WindowRegistry) -> [WindowID] {
-        var restored: [WindowID] = []
-        for id in records.keys.sorted() {
-            guard let record = records[id] else {
-                continue
-            }
-            guard registry.find(id)?.mode == .fullscreen else {
-                records.removeValue(forKey: id)
-                continue
-            }
-            if !focused.contains(id) {
-                try? registry.endFullscreen(record)
-                records.removeValue(forKey: id)
-                restored.append(id)
-            }
+    public mutating func prune(registry: WindowRegistry) {
+        for id in records.keys where registry.find(id)?.mode != .fullscreen {
+            records.removeValue(forKey: id)
         }
-        return restored
     }
 
     /// Forget a window that is gone for good.

@@ -59,6 +59,8 @@ final class SessionHost: @unchecked Sendable {
     /// Menu bar hook, always invoked on the main thread.
     var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
+    private var spaceMonitor: ManagedSpaceMonitor?
+    private var space: SpaceCoordinator!
     private var pendingReflow: DispatchWorkItem?
     private var echoGate = WriteEchoGate()
     private var pendingFull = false
@@ -153,10 +155,25 @@ final class SessionHost: @unchecked Sendable {
     /// IPC reply left; the app shuts the session down and relaunches itself.
     var onRestart: (() -> Void)?
 
+    func requestRestart() {
+        onRestart?()
+    }
+
     /// Builds the components. Their contexts read host state on the session
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.
     init() {
+        space = SpaceCoordinator(context: .init(
+            reflowAll: { [unowned self] in reflowAll() },
+            discardPendingAdoptions: { [unowned self] in focus.discardPendingAdoptions() },
+            adoptFrontmostFocus: { [unowned self] in
+                guard let pid = probe.frontmostPID else {
+                    return
+                }
+                focus.requestAdoption(.activation, pid: pid, element: nil)
+            },
+            log: { GioLog.record($0, $1) }
+        ))
         reflowPlanner = ReflowPlanner(context: .init(
             physicalFrames: { [unowned self] in physicalFrames },
             readFrame: { [unowned self] in try? actuator?.frame(of: $0) },
@@ -460,7 +477,8 @@ final class SessionHost: @unchecked Sendable {
                 },
                 discoverAttempt: { discoverSystemWindowAttempt(element: $0, pid: $1) },
                 windowRegistered: { [unowned self] in openTimeline.registered($0) },
-                log: { GioLog.record($0, $1) }
+                log: { GioLog.record($0, $1) },
+                allowsWindowWork: { [unowned self] in space.allowsWindowWork }
             ),
             scheduler: scheduler
         )
@@ -513,7 +531,14 @@ final class SessionHost: @unchecked Sendable {
                 centerMode: { [unowned self] in session.config.layout.centerFocusedColumn },
                 publishFocusRing: { [unowned self] in publishFocusRing() },
                 reflowAll: { [unowned self] in reflowAll() },
-                log: { GioLog.record($0, $1) }
+                workspaceFocusPlan: { [unowned self] in planFocusWindow($0, in: session.manager) },
+                showWorkspace: { [unowned self] in
+                    _ = session.manager.focus($0)
+                    syncShownWorkspace()
+                    motionCauses.note(.workspaceSwitch)
+                },
+                log: { GioLog.record($0, $1) },
+                allowsWindowWork: { [unowned self] in space.allowsWindowWork }
             ),
             scheduler: scheduler
         )
@@ -605,6 +630,7 @@ final class SessionHost: @unchecked Sendable {
             self.initialSync()
         }
         watchDisplays()
+        watchManagedSpace()
         queue.sync {
             self.events.rebuild()
             self.publishSnapshot()
@@ -983,7 +1009,7 @@ final class SessionHost: @unchecked Sendable {
     /// the cursor; a user's manual drag is therefore not fought, and the
     /// window snaps back to its column after release.
     private func reflowAll() {
-        guard !isShuttingDown else {
+        guard !isShuttingDown, space.allowsWindowWork else {
             return
         }
         switch reflowDeferral.request(mouseDown: probe.isMouseDown) {
@@ -1027,7 +1053,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func performReflow(animate: Bool = true) {
-        guard let actuator else {
+        guard let actuator, space.allowsWindowWork else {
             return
         }
         // The snap-back reflow after a drag releases the dim hold.
@@ -1058,13 +1084,7 @@ final class SessionHost: @unchecked Sendable {
         let animating = placement == .animate
         // NA-02: an instant pass (startup, permission, mouse) just places them.
         let opening = openingWindows.take(animating: animating)
-        // Focusing away from a fullscreen window brings its column back.
-        fullscreen.release(
-            keeping: Set(displays.allDisplays().compactMap {
-                session.manager.workspace(id: $0.workspace)?.focusedWindow
-            }),
-            registry: session.registry
-        )
+        fullscreen.prune(registry: session.registry)
         syncShownWorkspace()
         let modes = tileableModes()
         let centering = focus.takeCenterRequest()
@@ -1281,6 +1301,9 @@ final class SessionHost: @unchecked Sendable {
     /// light one only re-lays out what is registered. A pending full
     /// request is never downgraded by a later light one.
     private func scheduleReflow(full: Bool = true) {
+        guard space.allowsWindowWork else {
+            return
+        }
         pendingFull = pendingFull || full
         pendingReflow?.cancel()
         let work = DispatchWorkItem { [weak self] in
@@ -1289,6 +1312,9 @@ final class SessionHost: @unchecked Sendable {
             }
             let wantsFull = self.pendingFull
             self.pendingFull = false
+            guard self.space.allowsWindowWork else {
+                return
+            }
             if wantsFull {
                 self.resyncAndReflow()
             } else {
@@ -1362,6 +1388,14 @@ final class SessionHost: @unchecked Sendable {
                 self.overlayFlight.abortForDisplayChange()
                 self.discovery.syncDisplays()
                 self.reflowAll()
+            }
+        }
+    }
+
+    private func watchManagedSpace() {
+        spaceMonitor = ManagedSpaceMonitor { [weak self] managedActive in
+            self?.queue.async {
+                self?.space.managedSpaceActivityChanged(managedActive)
             }
         }
     }

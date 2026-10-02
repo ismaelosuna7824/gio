@@ -73,7 +73,11 @@ public struct GioMainView: View {
         .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
         .environment(\.onboardingPresenter, onboarding)
         .sheet(isPresented: $onboarding.isPresented) {
-            OnboardingSheet(model: model, onFinish: { onboarding.finish() }, onLater: { onboarding.later() })
+            OnboardingSheet(
+                model: model, startStep: onboarding.startStep,
+                onFinish: { onboarding.finish() }, onLater: { onboarding.later() },
+                onPrepareRelaunch: { onboarding.prepareRelaunch(at: .screenRecording) }
+            )
                 .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
         }
         .onReceive(model.$snapshot) { onboarding.evaluate($0.facts) }

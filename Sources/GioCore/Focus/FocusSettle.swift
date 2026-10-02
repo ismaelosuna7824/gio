@@ -163,6 +163,10 @@ public struct FocusSettle<Event: Equatable> {
         return (event, click)
     }
 
+    public mutating func discard() {
+        reset()
+    }
+
     private mutating func reset() {
         phase = .idle
         event = nil

@@ -46,6 +46,19 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertEqual(state.step, .screenRecording)
     }
 
+    func testUpdatingKeepsTheStepAndTakesTheLatestPermissions() {
+        var stored = OnboardingState(accessibilityGranted: false, screenRecordingGranted: false)
+        stored.advance()
+
+        let current = stored.updating(accessibilityGranted: true, screenRecordingGranted: true)
+
+        XCTAssertEqual(current.step, .accessibility)
+        XCTAssertTrue(current.accessibilityGranted)
+        XCTAssertTrue(current.screenRecordingGranted)
+        XCTAssertTrue(current.canAdvance)
+        XCTAssertFalse(stored.canAdvance)
+    }
+
     func testScreenRecordingIsSkippable() {
         var state = OnboardingState(accessibilityGranted: true, screenRecordingGranted: false)
         state.advance()
@@ -66,6 +79,105 @@ final class ShellPresentationTests: XCTestCase {
         state.advance()
         XCTAssertEqual(state.primaryTitle, "Done")
         XCTAssertEqual(state.progress, OnboardingProgress(index: 3, count: 4))
+    }
+
+    func testScreenRecordingStepPhaseFollowsPermissionAndRequest() {
+        XCTAssertEqual(screenRecordingStepPhase(granted: false, requested: false), .notRequested)
+        XCTAssertEqual(screenRecordingStepPhase(granted: false, requested: true), .awaitingRelaunch)
+        XCTAssertEqual(screenRecordingStepPhase(granted: true, requested: false), .granted)
+        XCTAssertEqual(screenRecordingStepPhase(granted: true, requested: true), .granted)
+    }
+
+    func testResumeMarkerForcesOnboardingEvenWhenCompleted() {
+        XCTAssertTrue(shouldShowOnboarding(hasCompleted: true, accessibilityGranted: true, resumeStep: .screenRecording))
+        XCTAssertFalse(shouldShowOnboarding(hasCompleted: true, accessibilityGranted: true, resumeStep: nil))
+    }
+
+    private func temporaryDefaults() -> UserDefaults {
+        let suite = "gio.tests.onboarding.\(UUID().uuidString)"
+        addTeardownBlock { UserDefaults(suiteName: suite)?.removePersistentDomain(forName: suite) }
+        return UserDefaults(suiteName: suite)!
+    }
+
+    private func temporaryStore() -> OnboardingStore {
+        OnboardingStore(defaults: temporaryDefaults())
+    }
+
+    func testStoreConsumesTheResumeStepOnce() {
+        let store = temporaryStore()
+        XCTAssertNil(store.consumeResumeStep())
+        store.markResume(.screenRecording)
+        XCTAssertEqual(store.consumeResumeStep(), .screenRecording)
+        XCTAssertNil(store.consumeResumeStep())
+    }
+
+    func testStoreClearsTheResumeStep() {
+        let store = temporaryStore()
+        store.markResume(.screenRecording)
+        store.clearResume()
+        XCTAssertNil(store.consumeResumeStep())
+    }
+
+    func testStoreIgnoresAnUnknownResumeValue() {
+        let defaults = temporaryDefaults()
+        defaults.set(99, forKey: OnboardingStore.resumeKey)
+        XCTAssertNil(OnboardingStore(defaults: defaults).consumeResumeStep())
+    }
+
+    @MainActor
+    func testPresenterReopensOnTheResumeStepOnceAfterCompletion() {
+        let store = temporaryStore()
+        store.markCompleted()
+        store.markResume(.screenRecording)
+        let presenter = OnboardingPresenter(store: store)
+        presenter.evaluate(grantedFacts())
+        XCTAssertTrue(presenter.isPresented)
+        XCTAssertEqual(presenter.startStep, .screenRecording)
+        XCTAssertNil(store.consumeResumeStep())
+    }
+
+    @MainActor
+    func testPresenterStaysClosedAfterCompletionWithoutResume() {
+        let store = temporaryStore()
+        store.markCompleted()
+        let presenter = OnboardingPresenter(store: store)
+        presenter.evaluate(grantedFacts())
+        XCTAssertFalse(presenter.isPresented)
+        XCTAssertEqual(presenter.startStep, .welcome)
+    }
+
+    @MainActor
+    func testPrepareRelaunchStoresTheStepAndFinishOrLaterClearIt() {
+        let store = temporaryStore()
+        let presenter = OnboardingPresenter(store: store)
+        presenter.prepareRelaunch(at: .screenRecording)
+        presenter.later()
+        XCTAssertNil(store.consumeResumeStep())
+        presenter.prepareRelaunch(at: .screenRecording)
+        presenter.finish()
+        XCTAssertNil(store.consumeResumeStep())
+        presenter.prepareRelaunch(at: .screenRecording)
+        XCTAssertEqual(store.consumeResumeStep(), .screenRecording)
+    }
+
+    @MainActor
+    func testModelTracksScreenRecordingRequestAndRelaunches() {
+        let relaunches = RelaunchCounter()
+        var actions = DesktopActions.unavailable
+        actions.relaunch = { relaunches.count += 1 }
+        let model = DesktopModel(fetch: { SessionSnapshot() }, actions: actions)
+        XCTAssertFalse(model.screenRecordingRequested)
+        model.markScreenRecordingRequested()
+        XCTAssertTrue(model.screenRecordingRequested)
+        model.relaunch()
+        XCTAssertEqual(relaunches.count, 1)
+    }
+
+    private func grantedFacts() -> SessionFacts {
+        SessionFacts(
+            configPath: "/c", configExists: true, configMessages: [], accessibilityGranted: true,
+            currentWorkspace: 1, displays: [], windows: []
+        )
     }
 
     func testKeysToKnowMatchTheDefaults() {
@@ -148,4 +260,8 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertNil(selection.index(forDigit: 5))
         XCTAssertNil(selection.index(forDigit: 0))
     }
+}
+
+private final class RelaunchCounter: @unchecked Sendable {
+    var count = 0
 }

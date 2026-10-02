@@ -3,14 +3,22 @@ import Foundation
 /// HD-03: the single key-name vocabulary. `parseHotkey` accepts exactly these
 /// canonical names (plus the aliases below); the macOS tap keys its keycode
 /// table by them, and a test keeps both sides identical.
-public let supportedKeyNames: [String] =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map(String.init)
-    + "0123456789".map(String.init)
-    + (1...12).map { "F\($0)" }
-    + ["Left", "Right", "Up", "Down", "Tab", "Return", "Escape", "Space", "Delete"]
-    + ["Grave", "Comma", "Period", "Slash", "Semicolon", "Quote", "Backslash",
-       "Minus", "Equal", "BracketLeft", "BracketRight"]
-    + ["Home", "End", "PageUp", "PageDown"]
+public let supportedKeyNames: [String] = [
+    letterKeyNames, digitKeyNames, functionKeyNames,
+    navigationKeyNames, punctuationKeyNames, pageKeyNames,
+].flatMap { $0 }
+
+private let letterKeyNames: [String] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".map(String.init)
+private let digitKeyNames: [String] = "0123456789".map(String.init)
+private let functionKeyNames: [String] = (1...12).map { "F\($0)" }
+private let navigationKeyNames: [String] = [
+    "Left", "Right", "Up", "Down", "Tab", "Return", "Escape", "Space", "Delete",
+]
+private let punctuationKeyNames: [String] = [
+    "Grave", "Comma", "Period", "Slash", "Semicolon", "Quote", "Backslash",
+    "Minus", "Equal", "BracketLeft", "BracketRight",
+]
+private let pageKeyNames: [String] = ["Home", "End", "PageUp", "PageDown"]
 
 /// Symbol and word spellings folded into canonical names, keyed lowercase.
 private let keyAliases: [String: String] = [
