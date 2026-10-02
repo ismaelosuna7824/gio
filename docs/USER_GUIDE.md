@@ -34,7 +34,7 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+[` (`Alt+BracketLeft`) | `consume-or-expel-window-left` | Pull the window into the left column, or push it out into its own column. |
 | `Alt+]` (`Alt+BracketRight`) | `consume-or-expel-window-right` | Same, to the right. |
 | `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. |
-| `Alt+Shift+F` | `fullscreen` | Toggle fullscreen for the focused window; focusing another window restores the layout. |
+| `Alt+Shift+F` | `fullscreen` | Toggle fullscreen for the focused window. It stays fullscreen when you focus another window: it keeps its full size and slides out of view like any column (the other window shows in the normal layout), and fills the display again when you focus it back, until you press the shortcut on it again; closing or minimizing it also ends it. |
 | `Alt+U` | `focus-workspace-down` | Focus the workspace below in this display's stack (stops at the empty one at the bottom). |
 | `Alt+I` | `focus-workspace-up` | Focus the workspace above. |
 | `Alt+Shift+U` | `move-window-to-workspace-down` | Send the focused window one workspace down and follow it. From the last workspace with windows it lands in the empty one at the bottom, which opens a new empty workspace below. |

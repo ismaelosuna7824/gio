@@ -1058,13 +1058,7 @@ final class SessionHost: @unchecked Sendable {
         let animating = placement == .animate
         // NA-02: an instant pass (startup, permission, mouse) just places them.
         let opening = openingWindows.take(animating: animating)
-        // Focusing away from a fullscreen window brings its column back.
-        fullscreen.release(
-            keeping: Set(displays.allDisplays().compactMap {
-                session.manager.workspace(id: $0.workspace)?.focusedWindow
-            }),
-            registry: session.registry
-        )
+        fullscreen.prune(registry: session.registry)
         syncShownWorkspace()
         let modes = tileableModes()
         let centering = focus.takeCenterRequest()

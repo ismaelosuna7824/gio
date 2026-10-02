@@ -25,10 +25,15 @@ public func planDisplayLayout(
     centering: CenterRequest = .none
 ) throws -> DisplayLayoutPlan {
     var workspace = workspace
-    var layout = try engine.calculate(
-        workspace: tilingWorkspace(from: workspace, modes: modes), viewport: viewport
-    )
-    if let covering = fullscreenWindow(in: workspace, modes: modes) {
+    let covering = fullscreenWindow(in: workspace, modes: modes)
+    let layoutModes = covering == nil ? modesKeepingFullscreenInColumns(modes) : modes
+    var layout = try covering == nil
+        ? layoutKeepingFullscreenSize(
+            workspace: workspace, modes: modes, layoutModes: layoutModes, engine: engine,
+            viewport: viewport, display: display
+        )
+        : engine.calculate(workspace: tilingWorkspace(from: workspace, modes: layoutModes), viewport: viewport)
+    if let covering {
         // Real fullscreen: the window fills the display and every tiled
         // window parks where its column already is, so leaving fullscreen
         // finds the strip exactly as it was.
@@ -48,8 +53,9 @@ public func planDisplayLayout(
     {
         var scrolled = workspace
         scrolled.viewportOffset = revealed
-        if let relaid = try? engine.calculate(
-            workspace: tilingWorkspace(from: scrolled, modes: modes), viewport: viewport
+        if let relaid = try? layoutKeepingFullscreenSize(
+            workspace: scrolled, modes: modes, layoutModes: layoutModes, engine: engine,
+            viewport: viewport, display: display
         ) {
             layout = relaid
             workspace.viewportOffset = revealed
@@ -62,13 +68,40 @@ public func planDisplayLayout(
     return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)
 }
 
-/// The window covering the display, when any workspace member is fullscreen:
-/// the focused one if it is, else the first in column order.
+/// The window covering the display, when the focused workspace member is
+/// fullscreen (or none is focused: the first fullscreen in column order).
 func fullscreenWindow(in workspace: Workspace, modes: [WindowID: WindowMode]) -> WindowID? {
-    if let focused = workspace.focusedWindow, modes[focused] == .fullscreen {
-        return focused
+    guard let focused = workspace.focusedWindow else {
+        return workspace.columns.flatMap(\.windows).first { modes[$0] == .fullscreen }
     }
-    return workspace.columns.flatMap(\.windows).first { modes[$0] == .fullscreen }
+    return modes[focused] == .fullscreen ? focused : nil
+}
+
+private func layoutKeepingFullscreenSize(
+    workspace: Workspace, modes: [WindowID: WindowMode], layoutModes: [WindowID: WindowMode],
+    engine: ScrollableLayoutEngine, viewport: CGRect, display: CGRect
+) throws -> LayoutResult {
+    let frame = fullscreenFrame(display: display, usable: viewport, gap: engine.config.fullscreenGap)
+    var widened = workspace
+    widened.columns = workspace.columns.map { column in
+        var widened = column
+        if column.windows.contains(where: { modes[$0] == .fullscreen }) {
+            widened.widthSpec = .points(frame.width)
+        }
+        return widened
+    }
+    let layout = try engine.calculate(
+        workspace: tilingWorkspace(from: widened, modes: layoutModes), viewport: viewport
+    )
+    var frames = layout.frames
+    for (window, placed) in layout.frames where modes[window] == .fullscreen {
+        frames[window] = CGRect(x: placed.minX, y: frame.minY, width: frame.width, height: frame.height)
+    }
+    return LayoutResult(frames: frames, contentWidth: layout.contentWidth, viewportOffset: layout.viewportOffset)
+}
+
+private func modesKeepingFullscreenInColumns(_ modes: [WindowID: WindowMode]) -> [WindowID: WindowMode] {
+    modes.mapValues { $0 == .fullscreen ? .tiled : $0 }
 }
 
 /// Focused column's content range revealed into the viewport. Nil when
