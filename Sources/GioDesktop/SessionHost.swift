@@ -153,6 +153,10 @@ final class SessionHost: @unchecked Sendable {
     /// IPC reply left; the app shuts the session down and relaunches itself.
     var onRestart: (() -> Void)?
 
+    func requestRestart() {
+        onRestart?()
+    }
+
     /// Builds the components. Their contexts read host state on the session
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.

@@ -23,6 +23,7 @@ struct DiagnosticsView: View {
                 },
                 requestScreenRecording: {
                     _ = requestScreenRecordingPermission()
+                    model.markScreenRecordingRequested()
                     model.refresh()
                 }
             )

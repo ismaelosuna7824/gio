@@ -8,8 +8,21 @@ import GioCore
 
 /// First run, or any launch while Accessibility is missing. Unknown
 /// permission (no facts yet) only counts on first run.
-public func shouldShowOnboarding(hasCompleted: Bool, accessibilityGranted: Bool?) -> Bool {
-    !hasCompleted || accessibilityGranted == false
+public func shouldShowOnboarding(
+    hasCompleted: Bool, accessibilityGranted: Bool?, resumeStep: OnboardingStep? = nil
+) -> Bool {
+    !hasCompleted || accessibilityGranted == false || resumeStep != nil
+}
+
+public enum PermissionStepPhase: Equatable, Sendable {
+    case notRequested, awaitingRelaunch, granted
+}
+
+public func screenRecordingStepPhase(granted: Bool, requested: Bool) -> PermissionStepPhase {
+    if granted {
+        return .granted
+    }
+    return requested ? .awaitingRelaunch : .notRequested
 }
 
 public enum OnboardingStep: Int, CaseIterable, Sendable {
@@ -36,6 +49,12 @@ public struct OnboardingState: Equatable, Sendable {
     public mutating func update(accessibilityGranted: Bool, screenRecordingGranted: Bool) {
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
+    }
+
+    public func updating(accessibilityGranted: Bool, screenRecordingGranted: Bool) -> OnboardingState {
+        var current = self
+        current.update(accessibilityGranted: accessibilityGranted, screenRecordingGranted: screenRecordingGranted)
+        return current
     }
 
     /// Accessibility is required; everything else can be passed.
