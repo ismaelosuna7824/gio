@@ -67,7 +67,7 @@ necesidad de modificar el config.toml").
   (TESTING.md 13b): registration, approval, the quiet login launch, and whether the launch
   Apple event still carries `keyAELaunchedAsLogInItem` for `SMAppService.mainApp`
   launches on this macOS [INFERENCE from community practice, not observed].
-- [ ] DA-07 — Everything controllable from the app (user rule 2026-10-08: "todo se debe de
+- [ ] DA-07 (`d84ca62`) — Everything controllable from the app (user rule 2026-10-08: "todo se debe de
   controlar desde la app sin necesidad de modificar el config.toml"). The two config keys
   without a control were `[keybindings]` (Shortcuts was view-only) and `[logging] level`
   (the Logs level chips only filter the view). Themes stay parsed-but-unused (out of scope).
@@ -169,3 +169,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: DA-04 + DA-05 done. All tasks code-complete. Next: user live test.
 - 2026-10-08: DA-07 code-complete (editable Shortcuts with recorder and `"none"` unbind, Log
   file level picker). Uncommitted. Next: signed build and live check 10b.
+- 2026-10-08: DA-07 committed as `d84ca62` and pushed to `main`. LIVE PENDING: check 10b.

@@ -99,7 +99,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   (settings label + docs). Route: inline (mechanical, 5 files). RED: 4 default tests failed first;
   GREEN after change + pinning snapshot in 2 reason/log-gate tests. Bundles 25/7/19/33/980 all 0
   failures; signed build OK.
-- [ ] SM-08 (uncommitted) — Overlay fidelity: one flight indistinguishable at overlay on/off, smooth under
+- [ ] SM-08 (`fa27a03`) — Overlay fidelity: one flight indistinguishable at overlay on/off, smooth under
   rapid keys (the snapshot renderer becomes the primary motion path; default stays `"ax"` until the live
   test). The SM-07 flicker causes, each with its fix:
   - Backdrop: the wallpaper file (no icons, no unmanaged windows) is gone; `WallpaperCache` and its
@@ -163,7 +163,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   Alt+L, panel never stuck (watchdog from the prime), the extra main pass before `snapshotPrimed` being
   enough for the first frame, keyframe playback without stepping on 60 Hz and 120 Hz displays,
   `prime-failed` never appearing.
-- [ ] SM-09 (uncommitted) — Cache freshness and cost (snapshot renderer becomes the primary motion path).
+- [ ] SM-09 (`fa27a03`) — Cache freshness and cost (snapshot renderer becomes the primary motion path).
   Live before: `snapshot fallback reason=cache-miss ids=1..5` 60+ times (images expired after 60 s, nothing
   refreshed at rest) and every post-settle refresh re-captured the whole set (5-6 windows, ~75 ms) even
   when nothing changed. Decisions:
@@ -215,7 +215,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   `snapshot capture` cost (expected `windows=0..2`, not the whole set), typing/focus lines appear once
   per pause, blank-guard false positives on flat windows, an idle pause over 180 s still falls back once
   (raise `snapshotMaxAge` if that shows up in practice).
-- [ ] SM-10 (uncommitted) — Review fixes for SM-08/SM-09 (7 findings, `agent://SnapshotReview`):
+- [ ] SM-10 (`fa27a03`) — Review fixes for SM-08/SM-09 (7 findings, `agent://SnapshotReview`):
   1. (blocker) A key press during the prime was lost: the deferred writes (`instantPass` -> `motion.stop()`
      -> `reflowCoalescer.reset()`) cleared the coalesced request, the 30 ms retarget found nothing and the
      flight finished on the stale plan. `SnapshotFlightController.primed` now reads
@@ -260,7 +260,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   wallpaper change shows in the next flight; a terminal with one prompt line gets an image (no
   `snapshot window blank` for it, no `cache-miss` fallback).
 
-- [ ] SM-11 (uncommitted) — Cache coverage: every workspace, two sizes, attributed misses, no endless retries.
+- [ ] SM-11 (`fa27a03`) — Cache coverage: every workspace, two sizes, attributed misses, no endless retries.
   Live evidence (2026-10-08 18:53:49-18:55:21 UTC, debug, renderer snapshot, 189 key presses in 92 s): 53/55
   flights as images; 3 `snapshot fallback reason=cache-miss ids=1`: (1) `workspace(2)` into `5618:3` on a
   non-adjacent workspace had no image (AX motion `frames=45 dropped=42`, WhatsApp write 251 ms); (2)
@@ -334,7 +334,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   Alt+H/L bursts log no `reason=focus`; `snapshot cache ... dirty=0` at rest; LoopOps (`54147:*`) miss reason;
   memory with every workspace covered (`snapshot cache ... pixels=` vs the cap).
 
-- [ ] SM-12 (uncommitted) — Flight latency: non-blocking real writes under the overlay, real frame
+- [ ] SM-12 (`fa27a03`) — Flight latency: non-blocking real writes under the overlay, real frame
   measurement. Live evidence (user session 2026-10-08 18:53:49-18:55:21 UTC, debug, renderer snapshot, 189
   key presses in 92 s): in snapshot mode the instant pass still waited for the real writes on the session
   queue (`reflow timing total=90..158ms slowest=WhatsApp`) while the overlay already hid them, so the next
@@ -383,7 +383,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   for WhatsApp unless it really hung); focus lands on the last pressed target (never an older one); no
   display link left after a flight (CPU idle at rest).
 
-- [ ] SM-13 (uncommitted) — Review fixes for SM-11/SM-12 (9 findings of the dual review, each cause verified
+- [ ] SM-13 (`fa27a03`) — Review fixes for SM-11/SM-12 (9 findings of the dual review, each cause verified
   in the code before the fix).
   0. Focus never dropped. A dispatched pass's focus step its lane never reached (claim failed after the
      claim wait, lane abandoned) runs in `WindowReconciler.collect` (`DispatchFocusStep.run`: `taken` stops a
@@ -454,7 +454,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   `snapshot coverage stopped` at most once; `workspace(N)` to a workspace of same-width columns of one app
   flies each window with its own content (no swapped images); Alt+F twice keeps the current-size image.
 
-- [ ] SM-14 (uncommitted) — Blank windows after the overlay: no occlusion, hand-off only when painted.
+- [ ] SM-14 (`fa27a03`) — Blank windows after the overlay: no occlusion, hand-off only when painted.
   Report (2026-10-08, build SM-08..SM-10, renderer snapshot): "si me muevo rápido las pantallas tardan en
   renderizar y se ven espacios en blanco". Log: 505 flights, 138 lasted >= 1 s (rapid presses chain
   retargets; max 4.3 s); `render unmatched ... reason=offscreenTarget` for Xcode/WhatsApp/LoopOps.
@@ -507,7 +507,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   logs at info and its `ms`; `ms=300` with `painted` < `windows` on every flight would mean an app still
   does not paint behind the overlay; no `snapshot flight aborted reason=watchdog` from the hold.
 
-- [ ] SM-16 (uncommitted) — Windows without an image show through holes in the backdrop.
+- [ ] SM-16 (`fa27a03`) — Windows without an image show through holes in the backdrop.
   Live (2026-10-08 20:28-20:31 UTC, renderer snapshot, debug): flights smooth (`fps=114..120`), but "aún
   está el bug en el que tarda en mostrar algunas ventanas y se ve como un espacio vacío hasta que
   aparecen". Rapid Alt+H/L chains logged `snapshot retarget uncovered ids=1..3` (10x) and 7 `snapshot
@@ -554,7 +554,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   non-occluding panel inside the hole (no white or stale area); no `snapshot fallback reason=cache-miss`
   during rapid Alt+H/L chains unless no moving window has an image.
 
-- [ ] SM-17 (uncommitted) — Title tie-break for same-size parked windows never seen on screen.
+- [ ] SM-17 (`fa27a03`) — Title tie-break for same-size parked windows never seen on screen.
   Evidence (2026-10-08 20:28-20:31 UTC, renderer snapshot, debug): `snapshot miss id=5618:3/5618:4
   reason=ambiguous app=Google Chrome`, `5980:5/6/7 reason=ambiguous app=Code`: same-app, same-size windows
   parked at one parking frame; SM-13 learns CGWindowIDs only while a window is visible, so windows not seen
@@ -596,7 +596,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   empty titles, e.g. two "New Tab" windows); every parked window captured at startup (coverage); no
   swapped images in a flight; no title in any log line.
 
-- [ ] SM-18 (uncommitted) — The overlay panel stops at the usable frame (menu bar and Dock stay live).
+- [ ] SM-18 (`fa27a03`) — The overlay panel stops at the usable frame (menu bar and Dock stay live).
   Evidence (2026-10-08, user screenshot during a flight): the menu bar showed a stale app name and clock
   ("Tern", 1:44 pm). The panel covered the whole display and its backdrop (a display capture) contains the
   menu bar; the live menu bar is transparent and draws above level `.normal + 1`, so the captured one showed
@@ -628,7 +628,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   also confirms the inferred macOS `contentsRect` y origin, bottom-left for unflipped contents); repeat with
   the Dock on the left and with auto-hide; move the Dock between flights.
 
-- [ ] SM-19 (uncommitted) — Early paint check and trusted apps: the hand-off stops waiting for the check.
+- [ ] SM-19 (`fa27a03`) — Early paint check and trusted apps: the hand-off stops waiting for the check.
   Evidence (2026-10-08 21:04-21:08 UTC, 229 s, 519 presses, renderer snapshot, debug): 146 paint checks,
   0 blank; every hand-off held the overlay ~56 ms after the deadline (median 56, max 76), the time of the
   check itself; the checks cost 8.0 s of ScreenCaptureKit time vs 5.0 s for all cache captures.
@@ -664,7 +664,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   LIVE PENDING: `waited ms=0` dominates; `windows=0` after a few flights per app; no blank windows after the
   overlay; ScreenCaptureKit time of the checks far below the cache captures.
 
-- [ ] SM-20 (uncommitted) — Cache diet: prune unusable images, memory pressure, cap 8, stacking-order tie-break.
+- [ ] SM-20 (`fa27a03`) — Cache diet: prune unusable images, memory pressure, cap 8, stacking-order tie-break.
   Evidence (same session as SM-19): `snapshot cache entries=12 images=14 pixels=68346128
   backdropPixels=8416800` ≈ 307 MB (BGRA); images older than `snapshotMaxAge` (180 s) never fly but stayed
   until the 12-display cap evicted them; nothing reacted to memory pressure. `snapshot miss id=5618:3/5618:4
@@ -743,7 +743,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   same-title Chrome windows and `reason=ambiguous` ≈ 0; no swapped images in a flight; no new `snapshot
   fallback` compared with the SM-19 session.
 
-- [ ] SM-21 (uncommitted) — The shown strip survives memory pressure and the cap; warning is not a purge.
+- [ ] SM-21 (`fa27a03`) — The shown strip survives memory pressure and the cap; warning is not a purge.
   Evidence (live 2026-10-08 21:41:14-21:42:46 UTC, SM-20 build): flights better than ever (fps median 119,
   min 114; single flights with a hitch 17 %, was 50 %; hand-off wait 0 ms), yet the user: "antes se sentía un
   poco más fluido". At 21:41:47 `snapshot cache pressure level=warning freed=7` (24 GB Mac, `memory_pressure`
@@ -851,3 +851,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-08: live session (519 presses) showed every hand-off held ~56 ms by the paint check; SM-19 (early paint check 80 ms before the deadline, per-app trust after 5 clean checks) uncommitted, all bundles green. Next: signed build, then the SM-19 LIVE PENDING list.
 - 2026-10-08: same session showed a 307 MB cache of mostly unusable images and Chrome windows still `ambiguous` (equal titles); SM-20 (prune at each settle, memory-pressure source, cap 8 with backdrops counted, stacking-order tie-break never learned) uncommitted, all bundles green. Next: signed build, then the SM-20 LIVE PENDING list.
 - 2026-10-08: live session (21:41 UTC) showed a system-wide memory-pressure warning purge the shown strip (43 holes in 34 flights after it, none before) and the dropped windows never re-captured (`tried`); SM-21 (warning is not a purge, strip coverage regardless of `tried`, recovery on normal, cap never evicts the strip) uncommitted, all bundles green. Next: signed build, then the SM-21 LIVE PENDING list.
+- 2026-10-08: SM-08..SM-21 committed as `fa27a03` (with PF-I) and pushed to `main`. Last live session (21:57-21:59 UTC, 293 presses, 79/80 flights as images): fps median 117 (min 110), single flights with a hitch 20 %, hand-off wait 0 ms (max 12), 8 holes (after `snapshot coverage stopped cap reached images=12`), cache 259 MB. Open: hidden-workspace images vs the cap (half resolution or a higher cap), Xcode window `31952:13` refusing focus (-25201).

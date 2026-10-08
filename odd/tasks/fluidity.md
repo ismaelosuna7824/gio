@@ -126,7 +126,7 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   to 872 (padding kept). GREEN: Core 1318, Session 300, UI 250 (53 skipped), MacOS 40,
   Mac 19, POC 7, 0 failures; signed build succeeded. LIVE PENDING: `Alt+F` on a middle or
   last column shows the padding on both sides at once.
-- [ ] PF-I — Keyboard focus from an unmanaged active app reaches the tiled window. Not
+- [ ] PF-I (`fa27a03`, together with the snapshot renderer) — Keyboard focus from an unmanaged active app reaches the tiled window. Not
   committed (user asked for no commit). Live 2026-10-08 20:46 UTC: `hotkey focusLeft` then
   `focus intent id=5980:5 changed=true failed=false` (VS Code), yet the screenshot showed
   OrbStack (unmanaged, no tiled window) still active (menu bar OrbStack, keys not reaching

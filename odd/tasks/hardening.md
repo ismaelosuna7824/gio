@@ -41,7 +41,7 @@ exists); signing team stays a documented per-collaborator step.
 - [x] HD-06 (`c1671dc`) — Launcher searches managed windows too; choosing one focuses and reveals it.
 - [x] HD-07 (`14369e3`) — Guardian process: launched by Gio, watches Gio's pid, restores off-screen
   windows if Gio exits without a clean shutdown (crash, SIGKILL, Force Quit).
-- [x] HD-08 (uncommitted) — Test bundles never write the real log: under XCTest the global
+- [x] HD-08 (`ef3d9cb`) — Test bundles never write the real log: under XCTest the global
   `GioLog` defaults to a per-process temp file (`$TMPDIR/gio-xctest-<pid>.log`).
 
 Evidence HD-01..03 (route: one delegated writer): FocusIntent table (focus/move/workspace/
@@ -102,4 +102,4 @@ fixture counts unchanged (68/12/2). Each bundle process wrote only `gio-xctest-<
 - 2026-09-29: HD-01..HD-03 done, pushed. Next: HD-04..HD-06.
 - 2026-09-29: HD-04..HD-06 done, pushed. Next: HD-07 guardian.
 - 2026-09-29: HD-07 done, pushed. All hardening tasks code-complete. Next: user live test.
-- 2026-10-08: HD-08 done (uncommitted): tests no longer pollute the real log.
+- 2026-10-08: HD-08 done, committed as `ef3d9cb`: tests no longer pollute the real log.
