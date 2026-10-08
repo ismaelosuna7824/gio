@@ -55,6 +55,15 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Gio starts as an accessory app and turns regular only while the
+        // main window shows; the Dock then draws the icon the system icon
+        // cache holds for this bundle, which can be stale after a rebuild
+        // (live: a blank placeholder, then an earlier icon). Hand it the
+        // icon file inside this build instead; `NSImage(named:
+        // applicationIconName)` goes through the same stale cache.
+        if let icon = Bundle.main.image(forResource: "AppIcon") {
+            NSApplication.shared.applicationIconImage = icon
+        }
         launcherCatalog.start()
         _ = launcher
         focusRing.start()
