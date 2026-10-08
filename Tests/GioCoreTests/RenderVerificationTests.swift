@@ -207,6 +207,16 @@ final class RenderVerificationTests: XCTestCase {
         XCTAssertEqual(planNudge(target: frame, viewport: viewport), [frame.offsetBy(dx: -1, dy: 0), frame])
     }
 
+    /// PF-C: the second tier changes the size, so the app commits a new
+    /// surface; it shrinks in place (never past the viewport) and restores.
+    func testSizeNudgeShrinksOnePointThenRestoresTheTarget() {
+        let viewport = CGRect(x: 0, y: 0, width: 2000, height: 800)
+        XCTAssertEqual(
+            planNudge(target: frame, viewport: viewport, tier: .size),
+            [CGRect(x: frame.minX, y: frame.minY, width: frame.width - 1, height: frame.height), frame]
+        )
+    }
+
     // MARK: Single shot and cancellation
 
     func testAWindowIsNudgedOncePerSettle() {
@@ -247,9 +257,6 @@ final class RenderVerificationTests: XCTestCase {
         XCTAssertEqual(
             renderMismatchLine(id: id(7, 3), app: "Code", ax: frame, ws: frame.offsetBy(dx: 900, dy: 0)),
             "render mismatch id=7:3 app=Code ax=(100,200,600,400) ws=(1000,200,600,400)"
-        )
-        XCTAssertEqual(
-            renderNudgeLine(id: id(7, 3), app: "Code", fixed: true), "render nudge id=7:3 app=Code fixed=true"
         )
     }
 

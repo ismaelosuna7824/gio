@@ -5,9 +5,11 @@ import GioCore
 /// FI-05 / PA-04 render verification: ~150 ms after a settle that wrote
 /// visible windows, compare the frames the settle already read or verified
 /// with the on-screen WindowServer list (no AX read, no all-Spaces
-/// snapshot). A mismatch gets one corrective nudge per window per settle and
-/// a re-check 100 ms later; a nudge that did not fix it makes the window
-/// render-unverifiable. Session queue only. Logs carry app names, never titles.
+/// snapshot). A mismatch gets one corrective position nudge per window per
+/// settle and a re-check 100 ms later; PF-C: a failed position nudge
+/// escalates once to a size nudge, and only a failed size nudge makes the
+/// window render-unverifiable. Session queue only. Logs carry app names,
+/// never titles.
 public final class RenderVerifier: @unchecked Sendable {
     public struct Context {
         public var isShuttingDown: () -> Bool
@@ -166,19 +168,24 @@ public final class RenderVerifier: @unchecked Sendable {
         guard !written.isEmpty else {
             return
         }
+        recordEchoes(written, targets: targets)
+        scheduler.asyncAfter(0.1) { [weak self] in
+            self?.recheck(token: token, written: written, axFrames: axFrames, targets: targets, tier: .position)
+        }
+    }
+
+    private func recordEchoes(_ written: [WindowID], targets: [WindowID: CGRect]) {
         let nudgeTime = context.now()
         for id in written {
             if let target = targets[id] {
                 context.recordEcho(id, target, nudgeTime)
             }
         }
-        scheduler.asyncAfter(0.1) { [weak self] in
-            self?.recheck(token: token, written: written, axFrames: axFrames, targets: targets)
-        }
     }
 
     private func recheck(
-        token: Int, written: [WindowID], axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]
+        token: Int, written: [WindowID], axFrames: [WindowID: CGRect], targets: [WindowID: CGRect],
+        tier: NudgeTier
     ) {
         guard mayRun(token) else {
             return
@@ -187,12 +194,39 @@ public final class RenderVerifier: @unchecked Sendable {
         let still = Set(
             verdict(axFrames: axFrames.filter { written.contains($0.key) }, targets: subset).mismatches.map(\.id)
         )
+        let viewports = context.viewports()
+        var escalate: [WindowID: [CGRect]] = [:]
         for id in written {
             let fixed = !still.contains(id)
-            if book.recordNudge(id, fixed: fixed) {
-                context.log(.debug, renderUnverifiableLine(id: id, app: context.appName(id.pid)))
+            context.log(
+                fixed ? .info : .warn, renderNudgeLine(id: id, app: context.appName(id.pid), tier: tier, fixed: fixed)
+            )
+            if !fixed, tier == .position, let target = targets[id] {
+                let viewport = viewports.first { $0.intersects(target) } ?? target
+                escalate[id] = planNudge(target: target, viewport: viewport, tier: .size)
+                continue
             }
-            context.log(fixed ? .info : .warn, renderNudgeLine(id: id, app: context.appName(id.pid), fixed: fixed))
+            markUnverifiableIfFailed(id, fixed: fixed)
+        }
+        guard !escalate.isEmpty else {
+            return
+        }
+        let resized = context.nudge(escalate)
+        for id in escalate.keys where !resized.contains(id) {
+            markUnverifiableIfFailed(id, fixed: false)
+        }
+        guard !resized.isEmpty else {
+            return
+        }
+        recordEchoes(resized, targets: targets)
+        scheduler.asyncAfter(0.1) { [weak self] in
+            self?.recheck(token: token, written: resized, axFrames: axFrames, targets: targets, tier: .size)
+        }
+    }
+
+    private func markUnverifiableIfFailed(_ id: WindowID, fixed: Bool) {
+        if book.recordNudge(id, fixed: fixed) {
+            context.log(.debug, renderUnverifiableLine(id: id, app: context.appName(id.pid)))
         }
     }
 }

@@ -230,14 +230,27 @@ public func findRenderMismatches(
     evaluateRender(axFrames: axFrames, server: server, targets: targets, viewports: viewports).mismatches
 }
 
-/// Minimal sequence that forces the WindowServer to take a fresh position:
-/// the target shifted 1 pt on x (inward when the target touches the
-/// viewport's right edge), then the target itself. A plain rewrite of an
+/// PF-C: how hard a nudge pushes. `position` moves the window 1 pt and back;
+/// `size`, tried only after a failed position nudge, shrinks it 1 pt and
+/// restores it, so the app lays out and commits a new surface.
+public enum NudgeTier: String, Sendable {
+    case position, size
+}
+
+/// Minimal sequence that forces the WindowServer to take a fresh frame.
+/// `position`: the target shifted 1 pt on x (inward when the target touches
+/// the viewport's right edge), then the target itself. A plain rewrite of an
 /// unchanged frame is skipped by AX, so the offset step is what makes the
-/// app commit a new position twice.
-public func planNudge(target: CGRect, viewport: CGRect) -> [CGRect] {
-    let dx: CGFloat = target.maxX + 1 > viewport.maxX ? -1 : 1
-    return [target.offsetBy(dx: dx, dy: 0), target]
+/// app commit a new position twice. `size`: the target 1 pt narrower in
+/// place, then the target.
+public func planNudge(target: CGRect, viewport: CGRect, tier: NudgeTier = .position) -> [CGRect] {
+    switch tier {
+    case .position:
+        let dx: CGFloat = target.maxX + 1 > viewport.maxX ? -1 : 1
+        return [target.offsetBy(dx: dx, dy: 0), target]
+    case .size:
+        return [CGRect(x: target.minX, y: target.minY, width: target.width - 1, height: target.height), target]
+    }
 }
 
 /// Bounds of the check: one live token (a newer settle or a cancel
@@ -305,8 +318,8 @@ public func renderMismatchLine(id: WindowID, app: String, ax: CGRect, ws: CGRect
     "render mismatch id=\(id.pid):\(id.elementID) app=\(app) ax=\(formatFrame(ax)) ws=\(ws.map(formatFrame) ?? "missing")"
 }
 
-public func renderNudgeLine(id: WindowID, app: String, fixed: Bool) -> String {
-    "render nudge id=\(id.pid):\(id.elementID) app=\(app) fixed=\(fixed)"
+public func renderNudgeLine(id: WindowID, app: String, tier: NudgeTier, fixed: Bool) -> String {
+    "render nudge id=\(id.pid):\(id.elementID) app=\(app) tier=\(tier.rawValue) fixed=\(fixed)"
 }
 
 public func renderUnmatchedLine(id: WindowID, app: String, reason: UnmatchedReason, candidates: Int) -> String {

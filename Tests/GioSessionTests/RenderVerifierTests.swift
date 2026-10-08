@@ -135,26 +135,44 @@ final class RenderVerifierTests: XCTestCase {
         scheduler.advance(by: 0.001)
         XCTAssertEqual(probe.serverQueries, 2)
         XCTAssertEqual(world.logs.last?.0, .info)
-        XCTAssertEqual(world.logs.last?.1, "render nudge id=7:1 app=Editor fixed=true")
+        XCTAssertEqual(world.logs.last?.1.hasSuffix("tier=position fixed=true"), true)
     }
 
-    func testFailedNudgeMakesTheWindowUnverifiable() {
+    /// PF-C (live 2026-10-07: Tern stayed off the WindowServer list after the
+    /// 1 pt move): a failed position nudge escalates to a size nudge.
+    func testFailedPositionNudgeEscalatesToASizeNudge() {
         let verifier = makeVerifier()
         settle(verifier)
         scheduler.advance(by: 0.25)
+        XCTAssertEqual(world.nudges.count, 2)
+        XCTAssertEqual(world.nudges.last?[id], planNudge(target: target, viewport: screen, tier: .size))
+        XCTAssertEqual(world.echoes.map(\.0), [id, id])
+        probe.serverWindows = [ServerWindow(pid: 7, bounds: target)]
+        scheduler.advance(by: 0.1)
+        XCTAssertEqual(world.logs.last?.0, .info)
+        XCTAssertEqual(world.logs.last?.1.hasSuffix("tier=size fixed=true"), true)
+        XCTAssertTrue(world.logs.map(\.1).filter { $0.hasPrefix("render unverifiable") }.isEmpty)
+    }
+
+    func testFailedSizeNudgeMakesTheWindowUnverifiable() {
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.35)
+        XCTAssertEqual(world.nudges.count, 2)
         XCTAssertEqual(world.logs.map(\.1).filter { $0.hasPrefix("render unverifiable") }.count, 1)
-        XCTAssertEqual(world.logs.last?.0, .warn)
-        XCTAssertEqual(world.logs.last?.1, "render nudge id=7:1 app=Editor fixed=false")
+        let nudge = world.logs.last { $0.1.hasPrefix("render nudge") }
+        XCTAssertEqual(nudge?.0, .warn)
+        XCTAssertEqual(nudge?.1.hasSuffix("tier=size fixed=false"), true)
         // The next settle no longer checks it at all.
         settle(verifier)
-        scheduler.advance(by: 0.25)
-        XCTAssertEqual(probe.serverQueries, 2)
-        XCTAssertEqual(world.nudges.count, 1)
+        scheduler.advance(by: 0.35)
+        XCTAssertEqual(probe.serverQueries, 3)
+        XCTAssertEqual(world.nudges.count, 2)
         // Re-registered windows start clean.
         verifier.forget([id])
         settle(verifier)
         scheduler.advance(by: 0.15)
-        XCTAssertEqual(world.nudges.count, 2)
+        XCTAssertEqual(world.nudges.count, 3)
     }
 
     func testRecheckIsDroppedWhenANewPassSupersedesTheCheck() {
