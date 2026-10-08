@@ -249,6 +249,11 @@ public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool) -> [
     ]
 }
 
+/// DA-07: `[logging] level`, the minimum severity written to `gio.log`.
+public func logLevelEdits(_ level: LogLevel) -> [ConfigEdit] {
+    [.set(table: "logging", key: "level", value: .string(level.name))]
+}
+
 /// Editable window rule. `mode`/`workspace` nil mean "no opinion". NW-01
 /// fields the form does not show yet are carried through unchanged.
 public struct RuleForm: Equatable, Sendable {

@@ -57,6 +57,9 @@ final class SessionHost: @unchecked Sendable {
     /// in the tap callback, guarded by `typingLock`.
     private var lastTypingHop: TimeInterval?
     private let typingLock = NSLock()
+    /// DA-07: set while the app records a shortcut; the tap callback (main)
+    /// then passes every combo through. `HotkeyGate` carries its own lock.
+    private let hotkeyGate = HotkeyGate()
     /// Latest snapshot for the main thread. The session queue publishes it
     /// (start, config changes, every `snapshot()` request); main only reads,
     /// so it never waits behind a slow reflow (tap timeouts, dead hotkeys).
@@ -955,9 +958,7 @@ final class SessionHost: @unchecked Sendable {
     /// Must run on `queue`.
     private func publishSnapshot() {
         snapshotCell.publish(
-            SessionSnapshot(
-                keybindings: session.config.keybindings, facts: factsBuilder.facts(), config: session.config
-            )
+            SessionSnapshot(facts: factsBuilder.facts(), config: session.config)
         )
     }
 
@@ -1796,25 +1797,33 @@ final class SessionHost: @unchecked Sendable {
 
     // MARK: - Actions (main thread in, session queue for work)
 
+    /// DA-07: pause or resume hotkey dispatch (the recorder; main thread).
+    /// The tap stays installed, so resuming needs no restart.
+    func setHotkeysSuspended(_ suspended: Bool) {
+        hotkeyGate.setSuspended(suspended)
+        GioLog.record(.info, "hotkeys \(suspended ? "suspended" : "resumed") for shortcut recording")
+    }
+
     private func handleCombo(_ combo: HotkeyCombo) -> Bool {
-        if combo == HotkeyCombo(modifiers: [.alt], key: "Space") {
+        let route = routeHotkey(
+            combo, dispatcher: configCoordinator.currentDispatcher(), suspended: hotkeyGate.isSuspended
+        )
+        switch route {
+        case .passThrough:
+            return false
+        case .launcher:
             let firedAt = ProcessInfo.processInfo.systemUptime
             DispatchQueue.main.async { [weak self] in
                 self?.onSummonLauncher?(firedAt)
             }
-            return true
-        }
-        guard let action = configCoordinator.currentDispatcher().action(for: combo) else {
-            return false
-        }
-        if action == .toggleOverview {
+        case .overview:
             DispatchQueue.main.async { [weak self] in
                 self?.onToggleOverview?()
             }
-            return true
-        }
-        queue.async { [weak self] in
-            self?.apply(action)
+        case .action(let action):
+            queue.async { [weak self] in
+                self?.apply(action)
+            }
         }
         return true
     }

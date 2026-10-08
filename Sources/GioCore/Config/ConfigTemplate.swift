@@ -143,6 +143,8 @@ public func defaultConfigTemplate() -> String {
     # follows it. Unbound: "move-window-to-monitor-..." (only the focused
     # window) and "move-workspace-to-monitor-..." (the whole workspace), e.g.
     # "Ctrl+Alt+Cmd+L" = "move-workspace-to-monitor-right"
+    # "none" switches a combo off, defaults included (the app's Shortcuts
+    # section writes these lines for you), e.g. "Alt+C" = "none"
 
     # Named workspaces always exist (even when empty), come first in their
     # display's stack in this order (Alt+1 is the first), and keep their

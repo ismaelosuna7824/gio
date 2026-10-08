@@ -64,4 +64,12 @@ final class HotkeyKeyTableTests: XCTestCase {
             XCTAssertEqual(parseHotkey("Alt+\(name)")?.key, name, name)
         }
     }
+
+    /// DA-07: the shortcut recorder names NSEvent keycodes with the same table.
+    func testRecorderKeyNamesComeFromTheSameTable() {
+        for (name, code) in tapKeyCodes {
+            XCTAssertEqual(hotkeyKeyName(forKeyCode: code), name, name)
+        }
+        XCTAssertNil(hotkeyKeyName(forKeyCode: 10))
+    }
 }

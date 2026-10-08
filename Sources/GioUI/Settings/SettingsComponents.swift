@@ -249,6 +249,42 @@ struct ApplyToastView: View {
     }
 }
 
+/// DA-07: the Apply toast alone, floating at the bottom, for pages that
+/// apply one edit at a time (Shortcuts rows, the Logs file level).
+struct ApplyToastOverlay: ViewModifier {
+    @Binding var toast: ApplyToast?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        content
+            .overlay(alignment: .bottom) {
+                if let toast {
+                    ApplyToastView(toast: toast) { self.toast = nil }
+                        .padding(.horizontal, GioSpacing.xl)
+                        .padding(.bottom, GioSpacing.m)
+                        .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(reduceMotion ? nil : .spring(response: 0.32, dampingFraction: 0.86), value: toast)
+            .task(id: toast) {
+                // Success fades on its own; problems stay until dismissed.
+                guard let shown = toast, shown.details.isEmpty else {
+                    return
+                }
+                try? await Task.sleep(nanoseconds: 2_400_000_000)
+                if toast == shown {
+                    toast = nil
+                }
+            }
+    }
+}
+
+extension View {
+    func applyToastOverlay(_ toast: Binding<ApplyToast?>) -> some View {
+        modifier(ApplyToastOverlay(toast: toast))
+    }
+}
+
 /// Settings page chrome: the page, then the Apply bar and toast floating at
 /// the bottom. Keyboard: ⌘S applies, Esc reverts (while the bar shows).
 struct SettingsScaffold<Content: View, Accessory: View>: View {

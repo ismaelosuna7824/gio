@@ -87,6 +87,16 @@ public struct ApplyToast: Equatable, Sendable {
             self.init(kind: .failure, title: "Not applied — config.toml unchanged", details: messages)
         }
     }
+
+    /// DA-07: a one-off edit names its change ("Added ⌥⇧X to …") instead of
+    /// a bare "Applied"; warnings and rejections read as usual.
+    public init(feedback: ApplyFeedback, successTitle: String) {
+        if case .applied(let warnings) = feedback, warnings.isEmpty {
+            self.init(kind: .success, title: successTitle, details: [])
+        } else {
+            self.init(feedback: feedback)
+        }
+    }
 }
 
 // MARK: - Layout preview

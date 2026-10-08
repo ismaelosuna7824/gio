@@ -5,18 +5,13 @@ import GioCore
 /// queue and handed to the main thread by value. Views never touch session
 /// state directly.
 public struct SessionSnapshot: Sendable {
-    /// Config-file keybindings (layered over the defaults by the catalog).
-    public var keybindings: [(HotkeyCombo, HotkeyAction)]
     /// Session, permission and window facts; nil before the first fetch.
     public var facts: SessionFacts?
-    /// The config the session is running with right now.
+    /// The config the session is running with right now (its
+    /// `keybindings`/`unboundKeys` feed the Shortcuts catalog).
     public var config: GioConfig
 
-    public init(
-        keybindings: [(HotkeyCombo, HotkeyAction)] = [], facts: SessionFacts? = nil,
-        config: GioConfig = GioConfig()
-    ) {
-        self.keybindings = keybindings
+    public init(facts: SessionFacts? = nil, config: GioConfig = GioConfig()) {
         self.facts = facts
         self.config = config
     }
@@ -41,6 +36,10 @@ public struct DesktopActions: Sendable {
 
     public var relaunch: @Sendable () -> Void
 
+    /// DA-07: pause (true) or resume (false) Gio's global hotkeys while a
+    /// shortcut is recorded. The tap stays installed; combos pass through.
+    public var setHotkeysSuspended: @Sendable (Bool) -> Void
+
     public init(
         applyEdits: @escaping @Sendable ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
         reloadConfig: @escaping @Sendable () -> Void = {},
@@ -48,8 +47,10 @@ public struct DesktopActions: Sendable {
         testSnapshotCapture: @escaping @Sendable (@escaping @Sendable (String) -> Void) -> Void = {
             $0("snapshot capture is unavailable")
         },
-        relaunch: @escaping @Sendable () -> Void = {}
+        relaunch: @escaping @Sendable () -> Void = {},
+        setHotkeysSuspended: @escaping @Sendable (Bool) -> Void = { _ in }
     ) {
+        self.setHotkeysSuspended = setHotkeysSuspended
         self.relaunch = relaunch
         self.testSnapshotCapture = testSnapshotCapture
         self.applyEdits = applyEdits
@@ -77,6 +78,8 @@ public final class DesktopModel: ObservableObject {
     /// True while the main window is on screen. Tickers run only then.
     @Published public private(set) var windowVisible = true
     @Published public private(set) var screenRecordingRequested = false
+    /// DA-07: true while the shortcut recorder holds Gio's hotkeys off.
+    @Published public private(set) var hotkeysSuspended = false
     private let fetch: @Sendable () -> SessionSnapshot
     private let actions: DesktopActions
 
@@ -94,7 +97,8 @@ public final class DesktopModel: ObservableObject {
     }
 
     /// Called by the window controller. Becoming visible refreshes once so
-    /// the sections are current; hiding stops every ticker.
+    /// the sections are current; hiding stops every ticker and never leaves
+    /// hotkeys suspended (a recorder closed with its window).
     public func setWindowVisible(_ visible: Bool) {
         guard visible != windowVisible else {
             return
@@ -102,7 +106,28 @@ public final class DesktopModel: ObservableObject {
         windowVisible = visible
         if visible {
             refresh()
+        } else {
+            resumeHotkeys()
         }
+    }
+
+    /// DA-07: the recorder holds Gio's hotkeys off so a bound combo reaches
+    /// it instead of running its action.
+    public func suspendHotkeys() {
+        guard !hotkeysSuspended else {
+            return
+        }
+        hotkeysSuspended = true
+        actions.setHotkeysSuspended(true)
+    }
+
+    /// Safe to call any number of times (cancel, save, sheet close).
+    public func resumeHotkeys() {
+        guard hotkeysSuspended else {
+            return
+        }
+        hotkeysSuspended = false
+        actions.setHotkeysSuspended(false)
     }
 
     /// Session-side changes land asynchronously; look again shortly so the

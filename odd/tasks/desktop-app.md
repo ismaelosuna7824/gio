@@ -23,7 +23,9 @@ para que se puedan ver y sepas cuales estan disponibles y que hace cada uno".
 Main window shell + menu-bar lifecycle, shortcuts reference, status/windows/workspaces
 overview, settings editing written back to config.toml, logs/diagnostics. The Alt+Space
 launcher stays a summoned panel (it is a launcher, not configuration).
-Not in scope: editing shortcuts by recording keys (view-only per user request).
+Not in scope (2026-09-29): editing shortcuts by recording keys (view-only per user request).
+Superseded by DA-07 (user rule 2026-10-08: "todo se debe de controlar desde la app sin
+necesidad de modificar el config.toml").
 
 ## Constraints
 - SwiftUI for the window content (AppKit host), per plan §3; the app talks to the session
@@ -65,6 +67,66 @@ Not in scope: editing shortcuts by recording keys (view-only per user request).
   (TESTING.md 13b): registration, approval, the quiet login launch, and whether the launch
   Apple event still carries `keyAELaunchedAsLogInItem` for `SMAppService.mainApp`
   launches on this macOS [INFERENCE from community practice, not observed].
+- [ ] DA-07 — Everything controllable from the app (user rule 2026-10-08: "todo se debe de
+  controlar desde la app sin necesidad de modificar el config.toml"). The two config keys
+  without a control were `[keybindings]` (Shortcuts was view-only) and `[logging] level`
+  (the Logs level chips only filter the view). Themes stay parsed-but-unused (out of scope).
+  Decisions:
+  - **Unbind value `"none"`** (`"Alt+C" = "none"`): removes whatever the combo did,
+    defaults included; the last line for a combo wins. Parsed into `GioConfig.unboundKeys`
+    (normalized against `keybindings`, so order never matters downstream); `makeDispatcher`
+    and `shortcutCatalog`/`effectiveHotkeyBindings` drop those combos; `ShortcutEntry`
+    gains `action` (representative) and `removedDefaults` (shown as **Removed**).
+  - **Edits (pure, Core `Hotkeys/KeybindingEditing.swift`):** Add and Replace are the same
+    edit (`.setKeybinding(combo, .action)`; one action per combo, so the other action loses
+    it). Remove writes `"none"` when the combo has a default (deleting an override line would
+    revive the default) and deletes the line for a config-only combo. Reset deletes every
+    line touching the family: its own bindings, `"none"` on its defaults, and its defaults
+    rebound elsewhere. The patcher matches `[keybindings]` lines by parsed combo (any
+    spelling), rewrites the first match in place (keeps its comment), drops duplicates, and
+    inserts quoted keys after the last binding (before the template's comment block).
+  - **Validation** (`checkShortcut`): a modifier, a key in `supportedKeyNames`, not
+    `Alt+Space`; a used combo reports the other action and its source (Replace).
+  - **Apply convention:** each row change applies immediately with a toast naming it
+    ("Added ⌃⌥F9 to Center column"), like Rules (discrete add/remove through a sheet), not
+    the draft+Apply bar of Layout/Animations: a single binding has nothing to batch or
+    preview, and a pending unsaved binding would be confusing while hotkeys run.
+    `ApplyToast(feedback:successTitle:)` and an `applyToastOverlay` modifier carry it.
+  - **Suspension seam:** `routeHotkey(_:dispatcher:suspended:)` (Core, pure) is the whole
+    `handleCombo` decision; `HotkeyGate` (Core, locked flag) is owned by `SessionHost` and
+    set through `DesktopActions.setHotkeysSuspended`. The tap stays installed; while
+    suspended every combo passes through unswallowed (the launcher's too) so the recorder's
+    local `NSEvent` monitor receives it. `DesktopModel.suspendHotkeys/resumeHotkeys` are
+    idempotent; the sheet resumes on save, cancel, Esc, disappear and app resign-active, and
+    hiding the main window resumes. `HotkeyTap` only gained the shared
+    `hotkeyKeyName(forKeyCode:)` the recorder uses to name `NSEvent` keycodes.
+  - **Workspace families** (`workspace N`, `move-to-workspace N`) pick the number in the
+    recorder; their long `⌥1…⌥9` rows remove through a menu.
+  - **Log file level** picker lives in the Logs header (the page that tails the file it
+    tunes), writes `[logging] level` via `logLevelEdits` and reloads with a toast; the
+    view's chips are labelled **Show** and say they filter the view only.
+  - `SessionSnapshot.keybindings` removed (the catalog reads `snapshot.config`).
+  Files: `GioCore/Hotkeys/KeybindingEditing.swift` (new), `ShortcutCatalog.swift`,
+  `Config/{GioConfig,ConfigParser,ConfigPatcher,SettingsForms,ConfigTemplate}.swift`,
+  `GioMacOS/Hotkeys/HotkeyTap.swift`, `GioUI/ShortcutEditing.swift` (new),
+  `GioUI/{ShortcutsView,LogsView,DesktopModel,AdvancedPresentation}.swift`,
+  `GioUI/Settings/{SettingsComponents,SettingsPresentation}.swift`,
+  `GioDesktop/{SessionHost,main}.swift`.
+  Evidence: RED `swift test --filter GioCoreTests.KeybindingEditingTests` failed to compile
+  (`cannot find 'routeHotkey'`, `'HotkeyGate'`, `'checkShortcut'`, `'addShortcutEdits'`,
+  `'configActionName'`, `'logLevelEdits'` ...); RED `swift build --build-tests` failed for
+  `hotkeyKeyName` (HotkeyKeyTableTests) and `ShortcutRowModel` (ShortcutEditingTests).
+  GREEN: KeybindingEditingTests 28, ShortcutEditingTests 17, the key-table test, updated
+  AdvancedPresentationTests. Full `swift test` 2026-10-08: GioUITests 269 (53 skipped),
+  GioSessionTests 326, GioPOCTests 7, GioMacTests 19, GioMacOSTests 48, GioCoreTests 1369,
+  0 failures; `git diff --check` clean. Visual check: throwaway opt-in snapshots (edited
+  Shortcuts page light/dark with config tag, Removed line, Reset, range menu and toast;
+  recorder in conflict, invalid and workspace states; Logs header with the picker) were
+  inspected, led to aligned row actions, a page background on the sheet and a non-truncating
+  Logs header, then deleted. Signed build: not run here. Uncommitted. LIVE PENDING
+  (TESTING.md 10b): recording while the tap runs (a bound combo must reach the recorder, not
+  fire), the recorder sheet getting key focus, resume after Cmd+Tab and window close, and the
+  live reload of a rebound key and of the log level.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
@@ -105,3 +167,5 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: document created (niri-controls user-accepted live: "si parece mejor"). Next: DA-01..DA-03.
 - 2026-09-29: DA-01..DA-03 done. Next: DA-04..DA-05 (route: delegated writer).
 - 2026-09-29: DA-04 + DA-05 done. All tasks code-complete. Next: user live test.
+- 2026-10-08: DA-07 code-complete (editable Shortcuts with recorder and `"none"` unbind, Log
+  file level picker). Uncommitted. Next: signed build and live check 10b.

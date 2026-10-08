@@ -44,7 +44,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 reloadConfig: { [host] in host.reloadConfig() },
                 restoreAllWindows: { [host] completion in host.restoreAllWindows(completion: completion) },
                 testSnapshotCapture: { [host] completion in host.testSnapshotCapture(completion: completion) },
-                relaunch: { [host] in host.requestRestart() }
+                relaunch: { [host] in host.requestRestart() },
+                setHotkeysSuspended: { [host] in host.setHotkeysSuspended($0) }
             )
         )
     )

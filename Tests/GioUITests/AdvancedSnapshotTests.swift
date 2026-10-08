@@ -17,9 +17,8 @@ final class AdvancedSnapshotTests: XCTestCase {
     private func model(keybindings: [(HotkeyCombo, HotkeyAction)] = []) -> DesktopModel {
         DesktopModel(fetch: {
             SessionSnapshot(
-                keybindings: keybindings,
                 facts: OverviewFixture.facts(accessibility: true, screenRecording: true),
-                config: GioConfig()
+                config: GioConfig(keybindings: keybindings)
             )
         })
     }

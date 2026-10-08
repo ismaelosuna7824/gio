@@ -16,17 +16,22 @@ struct LogsView: View {
     @State private var paused: Bool
     @State private var now: Date
     @State private var ticks = 0
+    @State private var toast: ApplyToast?
     private let isSeeded: Bool
     private let displayLimit = 500
 
     /// `seed`, `now` and `paused` are for snapshot tests (no file reads).
-    init(model: DesktopModel, seed: [LogEntry]? = nil, now: Date? = nil, paused: Bool = false, filter: LogLevelFilter = LogLevelFilter()) {
+    init(
+        model: DesktopModel, seed: [LogEntry]? = nil, now: Date? = nil, paused: Bool = false,
+        filter: LogLevelFilter = LogLevelFilter(), toast: ApplyToast? = nil
+    ) {
         self.model = model
         isSeeded = seed != nil
         _entries = State(initialValue: seed ?? [])
         _now = State(initialValue: now ?? Date())
         _paused = State(initialValue: paused)
         _filter = State(initialValue: filter)
+        _toast = State(initialValue: toast)
     }
 
     var body: some View {
@@ -35,6 +40,8 @@ struct LogsView: View {
         let counts = logLevelCounts(entries)
         GioPage("Logs", subtitle: "Events, counts and timings from gio.log. Never window titles.", scrolls: false) {
             HStack(spacing: GioSpacing.xs) {
+                fileLevelPicker
+                Divider().frame(height: 16)
                 GioButton(title: "Copy Visible", systemImage: "doc.on.doc") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(logCopyText(groups), forType: .string)
@@ -46,11 +53,17 @@ struct LogsView: View {
                 }
                 .help(GioLog.logFilePath)
             }
+            // The subtitle wraps before a button label truncates.
+            .fixedSize()
         } content: {
             VStack(alignment: .leading, spacing: GioSpacing.s) {
                 HStack(spacing: GioSpacing.s) {
                     GioSearchField(prompt: "Filter messages", text: $filter.search, large: false)
                         .frame(maxWidth: 260)
+                    Text("Show")
+                        .font(GioFont.callout)
+                        .foregroundStyle(GioColor.secondaryText)
+                        .help("Filters this view only; the Log file level decides what gio.log records")
                     levelChips(counts)
                     Spacer(minLength: 0)
                 }
@@ -58,11 +71,40 @@ struct LogsView: View {
                 footer(lines: visible.count, groups: groups.count)
             }
         }
+        .applyToastOverlay($toast)
         .onAppear { reload() }
         .pollWhileVisible(model, every: 1) { reload() }
     }
 
     // MARK: Pieces
+
+    /// DA-07: `[logging] level`, written through config.toml and reloaded
+    /// live. Lives here because this page is the tail of the file it tunes.
+    private var fileLevelPicker: some View {
+        let current = model.snapshot.config.logging.level
+        return HStack(spacing: GioSpacing.xxs) {
+            Text("Log file level")
+                .font(GioFont.callout)
+                .foregroundStyle(GioColor.secondaryText)
+            GioPopup(
+                title: "Log file level",
+                selection: Binding(
+                    get: { current },
+                    set: { chosen in
+                        let edits = logFileLevelEdits(current: current, chosen: chosen)
+                        guard !edits.isEmpty else {
+                            return
+                        }
+                        toast = logFileLevelToast(model.apply(edits), level: chosen)
+                    }
+                ),
+                options: logFileLevelOptions.map { ($0.level, $0.title) },
+                width: 100
+            )
+        }
+        .fixedSize()
+        .help("The lowest severity Gio writes to gio.log ([logging] level). Debug and Trace add detail for troubleshooting.")
+    }
 
     private func levelChips(_ counts: [LogLevel: Int]) -> some View {
         HStack(spacing: GioSpacing.xs - 2) {

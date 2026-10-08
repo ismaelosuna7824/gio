@@ -49,11 +49,6 @@ public func shortcutChipCount(_ entries: [ShortcutEntry], chip: ShortcutChip, qu
     filterShortcuts(entries, query: query).filter { chip.includes($0.category) }.count
 }
 
-/// True when config.toml binds this action (tagged "config" in the list).
-public func isOverridden(_ entry: ShortcutEntry) -> Bool {
-    entry.bindings.contains { $0.source == .config }
-}
-
 /// Bindings as a row shows them: a long parameterized family
 /// (`workspace 1…9`) reads as its first and last combo with an ellipsis.
 public struct CompactBindings: Equatable, Sendable {

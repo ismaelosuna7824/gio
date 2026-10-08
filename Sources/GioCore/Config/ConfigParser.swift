@@ -637,14 +637,27 @@ func applyBindingKey(
         }
         return
     }
+    // DA-07: `"none"` removes whatever the combo did, defaults included.
+    // Lines apply in file order, so the last one for a combo wins.
+    if name == unbindActionName {
+        config.keybindings.removeAll { $0.0 == combo }
+        if !config.unboundKeys.contains(combo) {
+            config.unboundKeys.append(combo)
+        }
+        return
+    }
     guard let action = parseActionName(name) else {
         errors.append(
-            "line \(line): unknown action '\(name)' (valid: \(validActionNames().joined(separator: ", ")))"
+            "line \(line): unknown action '\(name)' (valid: \(validActionNames().joined(separator: ", ")), or \"none\" to unbind)"
         )
         return
     }
+    config.unboundKeys.removeAll { $0 == combo }
     config.keybindings.append((combo, action))
 }
+
+/// DA-07: the `[keybindings]` value that unbinds a combo.
+public let unbindActionName = "none"
 
 private let workspaceKeys: Set<String> = ["name", "icon", "color", "display"]
 

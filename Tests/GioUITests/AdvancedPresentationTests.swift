@@ -38,13 +38,12 @@ final class AdvancedPresentationTests: XCTestCase {
         XCTAssertEqual(shortcutChipCount(catalog, chip: .category(.app), query: "zzz"), 0)
     }
 
-    func testOverriddenWhenAConfigBindingExists() {
-        let overridden = shortcutCatalog(configKeybindings: [
-            (HotkeyCombo(modifiers: [.ctrl], key: "h"), .focusLeft),
-        ])
+    func testCustomizedWhenAConfigBindingExists() {
+        let config = GioConfig(keybindings: [(HotkeyCombo(modifiers: [.ctrl], key: "H"), .focusLeft)])
+        let overridden = shortcutCatalog(configKeybindings: config.keybindings)
         let focusLeft = overridden.first { $0.id == "focus-left" }!
-        XCTAssertTrue(isOverridden(focusLeft))
-        XCTAssertFalse(isOverridden(catalog.first { $0.id == "focus-left" }!))
+        XCTAssertTrue(shortcutRowModel(focusLeft, config: config).isCustomized)
+        XCTAssertFalse(shortcutRowModel(catalog.first { $0.id == "focus-left" }!, config: GioConfig()).isCustomized)
     }
 
     // MARK: - Logs

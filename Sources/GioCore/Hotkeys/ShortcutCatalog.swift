@@ -25,6 +25,11 @@ public enum ShortcutSource: Equatable, Sendable {
 public struct ShortcutBinding: Equatable, Sendable {
     public let combo: HotkeyCombo
     public let source: ShortcutSource
+
+    public init(combo: HotkeyCombo, source: ShortcutSource) {
+        self.combo = combo
+        self.source = source
+    }
 }
 
 /// One row of the Shortcuts reference. Parameterized actions
@@ -37,6 +42,11 @@ public struct ShortcutEntry: Equatable, Identifiable, Sendable {
     /// The spelling used in `config.toml`; nil for shortcuts the config cannot rebind.
     public let configName: String?
     public let bindings: [ShortcutBinding]
+    /// DA-07: the representative action (`workspace(1)` for `workspace N`);
+    /// nil for the launcher, which the config cannot rebind.
+    public let action: HotkeyAction?
+    /// DA-07: default combos of this action that config set to `"none"`.
+    public let removedDefaults: [HotkeyCombo]
 }
 
 private struct ActionInfo {
@@ -143,6 +153,25 @@ public func shortcutFamily(of action: HotkeyAction) -> String {
     actionInfo(action).id
 }
 
+/// DA-07: the `[keybindings]` value for an action (`workspace 3`).
+public func configActionName(_ action: HotkeyAction) -> String {
+    withParameter(actionInfo(action).id, of: action)
+}
+
+/// DA-07: the action's name for messages (`Go to workspace 3`).
+public func shortcutActionTitle(_ action: HotkeyAction) -> String {
+    withParameter(actionInfo(action).name, of: action)
+}
+
+/// Parameterized families spell their number as a trailing ` N`.
+private func withParameter(_ text: String, of action: HotkeyAction) -> String {
+    let number = parameter(of: action)
+    guard number > 0, text.hasSuffix(" N") else {
+        return text
+    }
+    return text.dropLast().appending("\(number)")
+}
+
 /// One representative per family, in display order within each category.
 private let catalogActions: [HotkeyAction] = [
     .focusLeft, .focusRight, .focusUp, .focusDown,
@@ -162,47 +191,55 @@ private let catalogActions: [HotkeyAction] = [
     .moveWorkspaceToMonitor(.up), .moveWorkspaceToMonitor(.down),
 ]
 
-/// Alt+Space is handled by the app before the action table.
-private let launcherCombo = HotkeyCombo(modifiers: [.alt], key: "Space")
-
-/// Effective bindings: defaults with config bindings layered on top (later
-/// wins, one action per combo), grouped by action, each marked by origin.
+/// Effective bindings: defaults minus `"none"` combos, with config bindings
+/// layered on top (later wins, one action per combo), grouped by action,
+/// each marked by origin.
 public func shortcutCatalog(
-    configKeybindings: [(HotkeyCombo, HotkeyAction)]
+    configKeybindings: [(HotkeyCombo, HotkeyAction)], unbound: [HotkeyCombo] = []
 ) -> [ShortcutEntry] {
-    var effective: [HotkeyCombo: (action: HotkeyAction, source: ShortcutSource)] = [:]
-    for (combo, action) in defaultHotkeyBindings() {
-        effective[combo] = (action, .default)
-    }
-    for (combo, action) in configKeybindings {
-        effective[combo] = (action, .config)
-    }
+    let effective = effectiveHotkeyBindings(configKeybindings: configKeybindings, unbound: unbound)
     var byFamily: [String: [(combo: HotkeyCombo, action: HotkeyAction, source: ShortcutSource)]] = [:]
     for (combo, value) in effective {
         byFamily[shortcutFamily(of: value.action), default: []]
             .append((combo, value.action, value.source))
     }
+    let unboundSet = Set(unbound)
+    var removedByFamily: [String: [(combo: HotkeyCombo, action: HotkeyAction)]] = [:]
+    for (combo, action) in defaultHotkeyBindings() where unboundSet.contains(combo) {
+        removedByFamily[shortcutFamily(of: action), default: []].append((combo, action))
+    }
     var entries: [ShortcutEntry] = catalogActions.map { representative in
         let info = actionInfo(representative)
-        let bindings = (byFamily[info.id] ?? []).sorted { lhs, rhs in
-            let (l, r) = (parameter(of: lhs.action), parameter(of: rhs.action))
-            if l != r {
-                return l < r
-            }
-            return lhs.combo.describe() < rhs.combo.describe()
-        }.map { ShortcutBinding(combo: $0.combo, source: $0.source) }
+        let bindings = (byFamily[info.id] ?? []).sorted(by: bindingOrder)
+            .map { ShortcutBinding(combo: $0.combo, source: $0.source) }
+        let removed = (removedByFamily[info.id] ?? []).map { ($0.combo, $0.action, ShortcutSource.default) }
+            .sorted(by: bindingOrder).map(\.0)
         return ShortcutEntry(
             id: info.id, name: info.name, summary: info.summary,
-            category: info.category, configName: info.id, bindings: bindings
+            category: info.category, configName: info.id, bindings: bindings,
+            action: representative, removedDefaults: removed
         )
     }
     entries.append(ShortcutEntry(
         id: "launcher", name: "Open launcher",
         summary: "Summon the launcher panel to search and open apps and windows.",
         category: .app, configName: nil,
-        bindings: [ShortcutBinding(combo: launcherCombo, source: .default)]
+        bindings: [ShortcutBinding(combo: launcherHotkey, source: .default)],
+        action: nil, removedDefaults: []
     ))
     return entries
+}
+
+/// Family order: parameter first (workspace 1…9), then the combo text.
+private func bindingOrder(
+    _ lhs: (combo: HotkeyCombo, action: HotkeyAction, source: ShortcutSource),
+    _ rhs: (combo: HotkeyCombo, action: HotkeyAction, source: ShortcutSource)
+) -> Bool {
+    let (l, r) = (parameter(of: lhs.action), parameter(of: rhs.action))
+    if l != r {
+        return l < r
+    }
+    return lhs.combo.describe() < rhs.combo.describe()
 }
 
 private func parameter(of action: HotkeyAction) -> Int {

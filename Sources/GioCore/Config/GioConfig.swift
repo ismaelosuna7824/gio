@@ -162,8 +162,12 @@ public struct GioConfig: Sendable {
     /// NF-06: which focus indicator runs (dim by default) and its strength.
     public var focus: FocusSectionConfig
     public var logging: LoggingSectionConfig
-    /// Ordered file bindings; applied over dispatcher defaults.
+    /// Ordered file bindings; applied over dispatcher defaults. A combo set
+    /// to `"none"` later in the file is not here (see `unboundKeys`).
     public var keybindings: [(HotkeyCombo, HotkeyAction)]
+    /// DA-07: combos set to `"none"` (and not bound again further down):
+    /// they do nothing, defaults included.
+    public var unboundKeys: [HotkeyCombo]
     public var rules: [WindowRule]
     /// NW-01: `[[workspace]]` entries in file order (empty: no named
     /// workspaces, the pre-NW behaviour).
@@ -177,6 +181,7 @@ public struct GioConfig: Sendable {
         focus: FocusSectionConfig = FocusSectionConfig(),
         logging: LoggingSectionConfig = LoggingSectionConfig(),
         keybindings: [(HotkeyCombo, HotkeyAction)] = [],
+        unboundKeys: [HotkeyCombo] = [],
         rules: [WindowRule] = [],
         workspaces: [WorkspaceDefinition] = []
     ) {
@@ -188,6 +193,7 @@ public struct GioConfig: Sendable {
         self.focus = focus
         self.logging = logging
         self.keybindings = keybindings
+        self.unboundKeys = unboundKeys
         self.rules = rules
     }
 
@@ -207,9 +213,13 @@ public struct GioConfig: Sendable {
         )
     }
 
-    /// Defaults first, config bindings overriding in file order.
+    /// Defaults first, `"none"` combos removed, config bindings overriding
+    /// in file order.
     public func makeDispatcher() -> HotkeyDispatcher {
         var dispatcher = HotkeyDispatcher()
+        for combo in unboundKeys {
+            dispatcher.unbind(combo)
+        }
         for (combo, action) in keybindings {
             dispatcher.bind(action, to: combo)
         }

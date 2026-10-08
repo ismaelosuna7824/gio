@@ -27,6 +27,14 @@ public enum ConfigEdit: Equatable, Sendable {
     case updateWorkspace(index: Int, WorkspaceDefinition)
     case removeWorkspace(index: Int)
     case moveWorkspace(from: Int, to: Int)
+    /// DA-07: point a combo at an action or at `"none"`. The first
+    /// `[keybindings]` line whose key parses to the same combo (any
+    /// spelling) is rewritten and later duplicates are dropped; otherwise a
+    /// quoted line goes after the last binding (the table is created when
+    /// missing).
+    case setKeybinding(HotkeyCombo, KeybindingTarget)
+    /// DA-07: drop every `[keybindings]` line for the combo.
+    case removeKeybinding(HotkeyCombo)
 }
 
 /// A patched file body that the parser accepts, with what it parses to.
@@ -162,6 +170,18 @@ private func apply(_ edit: ConfigEdit, to lines: inout [String]) -> String? {
         return removeBlock(arrayTable: "workspace", index: index, noun: "workspace", from: &lines)
     case .moveWorkspace(let from, let to):
         return moveBlock(arrayTable: "workspace", from: from, to: to, noun: "workspace", in: &lines)
+    case .setKeybinding(let combo, let target):
+        guard let rendered = quoted(keybindingValue(target)), let key = quoted(combo.describe()) else {
+            return "cannot write key binding \(combo.describe())"
+        }
+        setKeybinding(combo, key: key, rendered: rendered, in: &lines)
+        return nil
+    case .removeKeybinding(let combo):
+        let doomed = keybindingLines(combo, in: lines)
+        for index in doomed.reversed() {
+            lines.remove(at: index)
+        }
+        return nil
     }
 }
 
@@ -222,6 +242,43 @@ private func setKey(table: String, key: String, rendered: String, in lines: inou
         return
     }
     appendBlock(block, to: &lines)
+}
+
+/// Lines of `[keybindings]` tables whose key parses to `combo`, in order.
+private func keybindingLines(_ combo: HotkeyCombo, in lines: [String]) -> [Int] {
+    spans(of: lines).filter { !$0.isArray && $0.name == "keybindings" }.flatMap { span in
+        ((span.header + 1)..<span.end).filter { index in
+            keyName(lines[index]).flatMap(parseHotkey) == combo
+        }
+    }
+}
+
+private func setKeybinding(_ combo: HotkeyCombo, key: String, rendered: String, in lines: inout [String]) {
+    let matches = keybindingLines(combo, in: lines)
+    if let first = matches.first {
+        lines[first] = rewrite(lines[first], key: key, rendered: rendered)
+        for index in matches.dropFirst().reversed() {
+            lines.remove(at: index)
+        }
+        return
+    }
+    let tables = spans(of: lines).filter { !$0.isArray && $0.name == "keybindings" }
+    if let span = tables.last {
+        var insertAt = span.header + 1
+        for index in (span.header + 1)..<span.end where keyName(lines[index]) != nil {
+            insertAt = index + 1
+        }
+        lines.insert("\(key) = \(rendered)", at: insertAt)
+        return
+    }
+    appendBlock(["[keybindings]", "\(key) = \(rendered)"], to: &lines)
+}
+
+private func keybindingValue(_ target: KeybindingTarget) -> String {
+    switch target {
+    case .action(let action): return configActionName(action)
+    case .none: return unbindActionName
+    }
 }
 
 /// NA-04: a dotted table (`animations.window-open`) goes right after its

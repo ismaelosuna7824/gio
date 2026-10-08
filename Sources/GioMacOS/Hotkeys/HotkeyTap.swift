@@ -25,6 +25,12 @@ private let tapKeyNames: [Int64: String] = Dictionary(
     uniqueKeysWithValues: tapKeyCodes.map { ($0.value, $0.key) }
 )
 
+/// DA-07: the key name for a virtual keycode, shared by the shortcut
+/// recorder (an `NSEvent` in the app) and the tap; nil outside the vocabulary.
+public func hotkeyKeyName(forKeyCode keyCode: Int64) -> String? {
+    tapKeyNames[keyCode]
+}
+
 func tapCombo(from event: CGEvent) -> HotkeyCombo? {
     guard let key = tapKeyNames[event.getIntegerValueField(.keyboardEventKeycode)] else {
         return nil
