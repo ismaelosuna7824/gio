@@ -159,6 +159,11 @@ public enum WindowRegistrationRetry {
     public static let delays: [TimeInterval] = [0.1, 0.3, 0.8]
     public static let frameUnreadableDelays: [TimeInterval] = [0.03, 0.08, 0.2, 0.5]
     public static var maxRetries: Int { delays.count }
+    /// PF-B: an element whose retries all failed is not classified again for
+    /// this long. Focus adoption re-offers the same unreadable element on
+    /// every activation (Chrome, Finder's desktop), and each round costs AX
+    /// reads on the session queue while windows animate.
+    public static let abandonCooldown: TimeInterval = 30
 
     public static func delay(
         afterFailedAttempt attempt: Int, reason: WindowRegistrationFailure = .unclassified

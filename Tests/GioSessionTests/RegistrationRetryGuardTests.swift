@@ -91,4 +91,39 @@ final class RegistrationRetryGuardTests: XCTestCase {
         XCTAssertEqual(scheduler.pendingCount, 0)
         XCTAssertTrue(world.logs.isEmpty, "\(world.logs)")
     }
+
+    /// PF-B: the live log showed one unreadable Chrome element retried on
+    /// every activation (177 retry lines in 16 min); after giving up, the
+    /// same element waits out a cooldown, other elements are unaffected.
+    func testAnAbandonedElementIsNotRetriedUntilTheCooldownEnds() {
+        world.running = [4321]
+        var context = world.discoveryContext()
+        let clock = scheduler!
+        context.now = { clock.now }
+        var asked: [Int] = []
+        context.discoverAttempt = { element, _ in
+            asked.append(CFEqual(element, AXUIElementCreateApplication(4242)) ? 1 : 2)
+            return .frameUnreadable
+        }
+        discovery = DiscoveryService(context: context, scheduler: scheduler)
+        let element = AXUIElementCreateApplication(4242)
+
+        discovery.registerAppeared(element, pid: 4321)
+        scheduler.advance(by: 5)
+        let round = WindowRegistrationRetry.frameUnreadableDelays.count + 1
+        XCTAssertEqual(asked, Array(repeating: 1, count: round), "one full round, then gave up")
+
+        discovery.registerAppeared(element, pid: 4321)
+        scheduler.advance(by: 5)
+        XCTAssertEqual(asked.count, round, "the same element is not classified again")
+        XCTAssertEqual(lines("window register skipped pid=4321").map(\.0), [.debug])
+
+        discovery.registerAppeared(AXUIElementCreateApplication(4243), pid: 4321)
+        XCTAssertEqual(asked.last, 2, "another element of the app still registers")
+
+        scheduler.advance(by: WindowRegistrationRetry.abandonCooldown)
+        asked = []
+        discovery.registerAppeared(element, pid: 4321)
+        XCTAssertEqual(asked, [1], "after the cooldown the element gets a fresh round")
+    }
 }

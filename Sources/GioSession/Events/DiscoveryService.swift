@@ -153,6 +153,10 @@ public final class DiscoveryService: @unchecked Sendable {
     /// NW-06: `when-active` arrivals placed silently, awaiting their app's
     /// activation.
     private var pendingFollows = PendingFollowBook()
+    /// PF-B: elements whose registration retries all failed, and when they
+    /// may be classified again (`WindowRegistrationRetry.abandonCooldown`).
+    /// Matched with `CFEqual`; expired entries are dropped on every check.
+    private var abandoned: [(element: AXUIElement, until: TimeInterval)] = []
 
     public init(context: Context, scheduler: SessionScheduler) {
         self.context = context
@@ -346,6 +350,10 @@ public final class DiscoveryService: @unchecked Sendable {
             return
         }
         var clock = clock
+        if attempt == 0, isAbandoned(element) {
+            context.log(.debug, "window register skipped pid=\(pid) reason=recentlyAbandoned")
+            return
+        }
         let classifyStarted = context.now()
         let outcome: SingleWindowDiscovery
         if let discoverAttempt = context.discoverAttempt {
@@ -376,6 +384,7 @@ public final class DiscoveryService: @unchecked Sendable {
         }
         guard let delay = WindowRegistrationRetry.delay(afterFailedAttempt: attempt, reason: reason) else {
             context.log(.info, "window register gave up pid=\(pid) attempts=\(attempt + 1) reason=\(reason.rawValue)")
+            abandoned.append((element, context.now() + WindowRegistrationRetry.abandonCooldown))
             return
         }
         context.log(
@@ -386,6 +395,12 @@ public final class DiscoveryService: @unchecked Sendable {
         scheduler.asyncAfter(delay) { [weak self, clock] in
             self?.attemptRegistration(element, pid: pid, attempt: attempt + 1, clock: clock)
         }
+    }
+
+    private func isAbandoned(_ element: AXUIElement) -> Bool {
+        let now = context.now()
+        abandoned.removeAll { $0.until <= now }
+        return abandoned.contains { CFEqual($0.element, element) }
     }
 
     /// Register a genuinely new window: fresh ID, retained AX handles,
