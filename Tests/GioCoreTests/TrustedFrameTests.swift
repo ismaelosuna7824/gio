@@ -99,6 +99,17 @@ final class TrustedFrameTests: XCTestCase {
         XCTAssertFalse(trusted.canSkipRead(id(2), desired: frame))
     }
 
+    /// PF-A: a deferred window is still mid-motion; its follow-up pass must
+    /// read it, never skip it on an old trusted frame.
+    func testSettleDropsDeferredWindows() {
+        var trusted = TrustedFrames()
+        trusted.trust(id(1), frame: frame)
+        var report = ReconcileReport()
+        report.deferred = [id(1)]
+        trusted.recordSettle(report: report, visible: [id(1): frame], parked: [:])
+        XCTAssertFalse(trusted.canSkipRead(id(1), desired: frame))
+    }
+
     // MARK: Reconciler integration
 
     private final class CountingActuator: WindowActuator {

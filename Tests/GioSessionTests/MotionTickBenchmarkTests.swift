@@ -15,8 +15,6 @@ final class AcceptingMotionSink: MotionFrameSink {
         return accepts
     }
 
-    func waitForMotionIdle(timeout: TimeInterval) {}
-
     func takeMotionStats() -> [pid_t: MotionWriteStats] {
         defer { stats = [:] }
         return stats

@@ -13,15 +13,12 @@ final class MotionPlayerTests: XCTestCase {
         var busy: Set<pid_t> = []
         var accepted: [(pid: pid_t, writes: [MotionWrite])] = []
         var stats: [pid_t: MotionWriteStats] = [:]
-        var idleWaits = 0
 
         func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool {
             guard !busy.contains(pid) else { return false }
             accepted.append((pid, writes))
             return true
         }
-
-        func waitForMotionIdle(timeout: TimeInterval) { idleWaits += 1 }
         func takeMotionStats() -> [pid_t: MotionWriteStats] { defer { stats = [:] }; return stats }
     }
 
@@ -163,7 +160,6 @@ final class MotionPlayerTests: XCTestCase {
         ]
         clock.now = 1
         let summary = player.tick().summary
-        XCTAssertEqual(sink.idleWaits, 1)
         XCTAssertEqual(
             summary?.logLine,
             "anim done windows=2 frames=1 dropped=0 duration=1000ms slowest=app20 42ms curve=ease-out sizeAnimated=0 renderer=ax grewAtStart=0"

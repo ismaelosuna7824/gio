@@ -15,7 +15,6 @@ final class FocusedGrowTests: XCTestCase {
             accepted.append((pid, writes))
             return true
         }
-        func waitForMotionIdle(timeout: TimeInterval) {}
         func takeMotionStats() -> [pid_t: MotionWriteStats] { [:] }
     }
 

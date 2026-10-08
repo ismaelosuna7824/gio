@@ -22,8 +22,6 @@ public struct MotionWrite: Equatable, Sendable {
 /// as `MotionWriteStats.drops`.
 public protocol MotionFrameSink: AnyObject {
     func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool
-    /// Blocks (bounded) until every accepted frame has been written.
-    func waitForMotionIdle(timeout: TimeInterval)
     /// Per-app write stats accumulated since the last call (aggregated in
     /// place; no per-write entries).
     func takeMotionStats() -> [pid_t: MotionWriteStats]
@@ -223,7 +221,10 @@ public final class MotionPlayer {
     }
 
     private func finish() -> MotionSummary {
-        sink.waitForMotionIdle(timeout: 0.3)
+        // PF-A: no wait on the lanes here. A slow app's in-flight write used
+        // to hold the session queue (and stretch `duration`) for up to 0.3 s;
+        // the final pass waits briefly for the apps it writes and defers the
+        // rest. A write still running lands in the next run's stats.
         // The app name is resolved once, here, for the single slowest pid.
         let stats = sink.takeMotionStats()
         var slowestPid: pid_t?

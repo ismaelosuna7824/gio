@@ -54,8 +54,8 @@ public struct TrustedFrames: Sendable {
     }
 
     /// After a settle pass: windows that ended applied, parked or already
-    /// correct are trusted at their desired frame; failed and vanished ones
-    /// lose their trust.
+    /// correct are trusted at their desired frame; failed, vanished and
+    /// deferred (PF-A, still mid-motion) ones lose their trust.
     public mutating func recordSettle(
         report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget]
     ) {
@@ -68,6 +68,7 @@ public struct TrustedFrames: Sendable {
         }
         invalidate(report.failed)
         invalidate(report.vanished)
+        invalidate(report.deferred)
     }
 }
 

@@ -131,8 +131,8 @@ final class MotionLane: @unchecked Sendable {
     }
 }
 
-/// All persistent lanes of a reconciler plus the cheap busy counter that
-/// `waitForIdle` reads: a counter and a condition, not a group per frame.
+/// All persistent lanes of a reconciler plus the cheap busy book that the
+/// waits read: per-pid counts and a condition, not a group per frame.
 final class MotionLanes: @unchecked Sendable {
     private let executor: LaneExecutor
     private let book: MotionBook
@@ -140,7 +140,9 @@ final class MotionLanes: @unchecked Sendable {
     private let lock = NSLock()
     private var lanes: [pid_t: MotionLane] = [:]
     private let idle = NSCondition()
-    private var busy = 0
+    /// Running lanes per pid (a count: a retired lane may still drain while
+    /// a new lane for the same pid starts). Guarded by `idle`.
+    private var busy: [pid_t: Int] = [:]
 
     init(executor: LaneExecutor, book: MotionBook, write: @escaping @Sendable (MotionWrite) -> Void) {
         self.executor = executor
@@ -162,10 +164,10 @@ final class MotionLanes: @unchecked Sendable {
         if let existing = lanes[pid] {
             lane = existing
         } else {
-            lane = MotionLane(pid: pid, executor: executor, write: write) { [self] in leave() }
+            lane = MotionLane(pid: pid, executor: executor, write: write) { [self] in leave(pid) }
             lanes[pid] = lane
         }
-        switch lane.offer(writes, willStart: { enter() }) {
+        switch lane.offer(writes, willStart: { enter(pid) }) {
         case .rejected:
             return false
         case .accepted(_, let overwrote):
@@ -180,51 +182,80 @@ final class MotionLanes: @unchecked Sendable {
         lock.withLock { lanes.removeValue(forKey: pid) }?.retire()
     }
 
-    /// Bounded wait until every lane is idle. On timeout the frames still
-    /// waiting are discarded: the final pass supersedes them and a stuck app
-    /// must not receive stale frames after it.
     /// PF-02: some lane still has a queued or running motion write.
     var isBusy: Bool {
         idle.lock()
         defer { idle.unlock() }
-        return busy > 0
+        return !busy.isEmpty
     }
 
+    /// PF-A: one of `pids` still has a queued or running motion write.
+    func isBusy(pids: Set<pid_t>) -> Bool {
+        idle.lock()
+        defer { idle.unlock() }
+        return pids.contains { busy[$0] != nil }
+    }
+
+    /// Bounded wait until every lane is idle. On timeout the frames still
+    /// waiting are discarded: the final pass supersedes them and a stuck app
+    /// must not receive stale frames after it.
     func waitForIdle(timeout: TimeInterval) {
         idle.lock()
         let deadline = Date(timeIntervalSinceNow: timeout)
         var timedOut = false
-        while busy > 0 {
+        while !busy.isEmpty {
             if !idle.wait(until: deadline) {
-                timedOut = busy > 0
+                timedOut = !busy.isEmpty
                 break
             }
         }
         idle.unlock()
         if timedOut {
-            discardPending()
+            discardPending { _ in true }
         }
     }
 
-    private func discardPending() {
+    /// PF-A: bounded wait for the lanes of `pids` only. Returns the pids
+    /// still writing when the time ran out, with their pending frames
+    /// discarded; lanes of other apps are neither waited for nor touched.
+    func waitForIdle(pids: Set<pid_t>, timeout: TimeInterval) -> Set<pid_t> {
+        idle.lock()
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while pids.contains(where: { busy[$0] != nil }) {
+            if !idle.wait(until: deadline) {
+                break
+            }
+        }
+        let stuck = pids.filter { busy[$0] != nil }
+        idle.unlock()
+        if !stuck.isEmpty {
+            discardPending { stuck.contains($0) }
+        }
+        return stuck
+    }
+
+    private func discardPending(where matches: (pid_t) -> Bool) {
         let all = lock.withLock { Array(lanes.values) }
-        for lane in all where lane.discardPending() > 0 {
+        for lane in all where matches(lane.pid) && lane.discardPending() > 0 {
             book.recordDrop(pid: lane.pid)
         }
     }
 
-    private func enter() {
+    private func enter(_ pid: pid_t) {
         idle.lock()
-        busy += 1
+        busy[pid, default: 0] += 1
         idle.unlock()
     }
 
-    private func leave() {
+    private func leave(_ pid: pid_t) {
         idle.lock()
-        busy -= 1
-        if busy == 0 {
-            idle.broadcast()
+        if let count = busy[pid], count > 1 {
+            busy[pid] = count - 1
+        } else {
+            busy.removeValue(forKey: pid)
         }
+        // Waiters may watch any subset of pids.
+        idle.broadcast()
         idle.unlock()
     }
 }

@@ -154,7 +154,6 @@ final class SpringTests: XCTestCase {
 
     private final class FakeSink: MotionFrameSink {
         func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool { true }
-        func waitForMotionIdle(timeout: TimeInterval) {}
         func takeMotionStats() -> [pid_t: MotionWriteStats] { [:] }
     }
 

@@ -121,24 +121,36 @@ final class MotionLaneTests: XCTestCase {
         XCTAssertEqual(reconciler.motionLaneCount, 0)
     }
 
-    func testAHungMotionWriteStillMakesTheFinalPassReportTimeoutAndDropsStaleFrames() {
+    /// PF-A: a motion write stuck in a slow app (live: Music, 251 ms) no
+    /// longer holds the final pass for 300 ms. After a short grace the app's
+    /// windows are deferred (not failed), its stale pending frames dropped,
+    /// and every other app is reconciled at once.
+    func testAHungMotionWriteDefersItsAppAndTheFinalPassGoesOn() {
         let actuator = Actuator()
         actuator.gate = true
         let id = window(1)
+        let other = window(2, pid: 11)
         actuator.seed(id, start)
+        actuator.seed(other, start)
         let reconciler = WindowReconciler(actuator: actuator)
         XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [write(id, 0, 5)]))
         actuator.entered.wait()
+        actuator.gate = false
         XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [write(id, 5, 9)]))  // pending, stale after the final pass
+        let began = Date()
         let report = reconciler.reconcile(
-            frames: [id: start.offsetBy(dx: 100, dy: 0)], focused: nil, currentlyFocused: nil
+            frames: [id: start.offsetBy(dx: 100, dy: 0), other: start.offsetBy(dx: 300, dy: 0)],
+            focused: nil, currentlyFocused: nil
         )
-        XCTAssertEqual(report.failed, [id])
-        XCTAssertEqual(report.failures[id]?.kind, "timeout")
-        XCTAssertEqual(report.failureNotes[id], "timeout (previous write to this app still pending)")
+        XCTAssertLessThan(Date().timeIntervalSince(began), 0.25, "only the grace, not the 300 ms wait")
+        XCTAssertEqual(report.deferred, [id])
+        XCTAssertTrue(report.failed.isEmpty)
+        XCTAssertEqual(report.applied, [other])
+        XCTAssertTrue(reconciler.isMotionBusy(pids: [10]))
         actuator.proceed.signal()
         reconciler.waitForMotionIdle(timeout: 2)
-        // The stale pending frame was discarded when the wait timed out.
+        XCTAssertFalse(reconciler.isMotionBusy(pids: [10]))
+        // The stale pending frame was discarded when the grace ran out.
         XCTAssertEqual(actuator.written(id), [start.offsetBy(dx: 5, dy: 0)])
         XCTAssertGreaterThanOrEqual(reconciler.takeMotionStats()[10]?.drops ?? 0, 1)
     }

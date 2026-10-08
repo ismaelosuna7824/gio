@@ -71,7 +71,6 @@ final class MotionOverlapTests: XCTestCase {
             self.writes += writes
             return true
         }
-        func waitForMotionIdle(timeout: TimeInterval) {}
         func takeMotionStats() -> [pid_t: MotionWriteStats] { [:] }
     }
 

@@ -99,6 +99,8 @@ final class SessionHost: @unchecked Sendable {
     private var motionCauses = MotionCauseLatch()
     /// FI-05: render verification: candidates, settled frames, nudges.
     private var renderVerifier: RenderVerifier!
+    /// PF-A: one more final pass for windows a busy app made the last one defer.
+    private var deferredSettle: DeferredSettle!
     /// PA-04: frames Gio placed and verified; the final pass skips their AX
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
@@ -400,6 +402,15 @@ final class SessionHost: @unchecked Sendable {
                 log: { GioLog.record($0, $1) }
             ),
             resizeProbes: resizeProbes, scheduler: scheduler
+        )
+        deferredSettle = DeferredSettle(
+            context: .init(
+                isBusy: { [unowned self] in reconciler?.isMotionBusy(pids: $0) ?? false },
+                isMotionActive: { [unowned self] in motion.isActive },
+                finalPass: { [unowned self] in performReflow(animate: false) },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
         )
         discovery = DiscoveryService(
             context: .init(
@@ -1273,6 +1284,7 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         var zoomWriteFailures: Set<WindowID> = []
+        var deferred: [WindowID] = []
         openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: 0)
         for (planIndex, plan) in plans.enumerated() {
             let report = reconciler.reconcile(
@@ -1304,9 +1316,10 @@ final class SessionHost: @unchecked Sendable {
                 echoGate.recordApplied(id, frame: target.frame, at: now)
                 physicalFrames[id] = target.frame
             }
-            for id in report.failed + report.vanished {
+            for id in report.failed + report.vanished + report.deferred {
                 physicalFrames.removeValue(forKey: id)
             }
+            deferred += report.deferred
             trustedFrames.recordSettle(report: report, visible: plan.visible, parked: plan.parked)
             // Only visible windows written here are worth a render check;
             // a settle that wrote parked/hidden windows alone checks nothing.
@@ -1320,6 +1333,7 @@ final class SessionHost: @unchecked Sendable {
         for line in openTimeline.settled(at: ProcessInfo.processInfo.systemUptime) {
             GioLog.record(.info, line)
         }
+        deferredSettle.defer(deferred)
         if let zoomJob {
             nativeZoom.start(zoomJob)
         }

@@ -66,12 +66,17 @@ public struct ReconcileReport: Equatable, Sendable {
     /// the write, or trusted). Failed and vanished windows have none.
     public var skippedReads: Int = 0
     public var settledFrames: [WindowID: CGRect] = [:]
+    /// PF-A: windows left out of this pass because their app was still busy
+    /// with a motion write after `finalPassMotionGrace`. Neither written nor
+    /// failed: the caller runs another final pass once the app's lane is idle.
+    public var deferred: [WindowID] = []
 
     public static func == (lhs: ReconcileReport, rhs: ReconcileReport) -> Bool {
         lhs.applied == rhs.applied && lhs.alreadyCorrect == rhs.alreadyCorrect && lhs.parked == rhs.parked
             && lhs.vanished == rhs.vanished && lhs.failed == rhs.failed
             && lhs.failureNotes == rhs.failureNotes && lhs.failures == rhs.failures
             && lhs.focusChanged == rhs.focusChanged && lhs.focusFailed == rhs.focusFailed
+            && lhs.deferred == rhs.deferred
     }
 
     public init(
@@ -246,22 +251,30 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     ) -> ReconcileReport {
         var report = ReconcileReport()
         // An animation frame still being written would make its app look
-        // busy and fail; let it land first (bounded by the stall timeout).
-        waitForMotionIdle(timeout: 0.3)
+        // busy and fail; let it land first, but only for the apps this pass
+        // writes and only for a short grace (PF-A): a slow app is deferred
+        // instead of holding the session queue for every other window.
+        let pids = Set(frames.keys.map(\.pid)).union(parked.keys.map(\.pid))
+        let stuck = motionLanes.waitForIdle(pids: pids, timeout: finalPassMotionGrace)
         let started = clock()
+        var toWrite = frames
+        var toPark = parked
+        if !stuck.isEmpty {
+            toWrite = toWrite.filter { !stuck.contains($0.key.pid) }
+            toPark = toPark.filter { !stuck.contains($0.key.pid) }
+            report.deferred = Set(frames.keys).union(parked.keys).filter { stuck.contains($0.pid) }.sorted()
+        }
         // PA-04: a window sitting at a frame Gio placed and verified needs
         // neither the two AX reads nor a write. Windows that moved in this
         // motion are not trusted by the caller, so they are still verified.
         var skipped: [WindowID] = []
-        var toWrite = frames
-        var toPark = parked
         if trusted.count > 0 {
-            for (id, target) in parked where trusted.canSkipRead(id, desired: target.frame) {
+            for (id, target) in toPark where trusted.canSkipRead(id, desired: target.frame) {
                 skipped.append(id)
                 toPark.removeValue(forKey: id)
                 report.settledFrames[id] = target.frame
             }
-            for (id, frame) in frames where parked[id] == nil && trusted.canSkipRead(id, desired: frame) {
+            for (id, frame) in toWrite where parked[id] == nil && trusted.canSkipRead(id, desired: frame) {
                 skipped.append(id)
                 toWrite.removeValue(forKey: id)
                 report.settledFrames[id] = frame
@@ -512,6 +525,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         motionLanes.isBusy
     }
 
+    /// PF-A: one of `pids` still has a motion write queued or running.
+    public func isMotionBusy(pids: Set<pid_t>) -> Bool {
+        motionLanes.isBusy(pids: pids)
+    }
+
     var motionLaneCount: Int { motionLanes.count }
 
     func motionLaneIdentity(pid: pid_t) -> AnyObject? {
@@ -656,6 +674,11 @@ private struct MotionWorker<Actuator: WindowActuator>: @unchecked Sendable {
 extension WindowReconciler: MotionFrameSink {}
 
 let parkedStripLimit: CGFloat = 40
+
+/// PF-A: how long the final pass lets an in-flight motion write of an app it
+/// is about to write land (a normal write takes a few ms; live, Music hung
+/// for 251 ms). Past it, that app's windows are deferred, not waited for.
+public let finalPassMotionGrace: TimeInterval = 0.1
 
 func isParked(_ actual: CGRect, _ target: ParkedTarget, _ tolerance: CGFloat) -> Bool {
     guard abs(actual.width - target.frame.width) <= tolerance,
