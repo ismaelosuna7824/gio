@@ -260,6 +260,8 @@ Behavior:
 
 `Gio.app` is one process: menu bar item, a main window and the launcher. It shows a Dock icon only while the main window is visible. Closing the window hides it; Gio keeps tiling from the menu bar.
 
+**Open at Login.** Overview > Status has an **Open at Login** switch. It registers this copy of `Gio.app` as a macOS login item (the same list as System Settings > General > Login Items, where you can also turn it off); nothing is written to `config.toml`. If macOS asks for approval, the row says so and offers **Open Login Items…**. A login launch starts quietly in the menu bar without opening the main window, unless Accessibility is missing (then the window opens so you can see why nothing tiles). The item points at the app where it was turned on: if you move `Gio.app` (for example into `/Applications`), turn the switch off and on again from the new copy. Under `swift run` the switch is disabled (no app bundle).
+
 ### Main window sections
 
 | Section | What it shows or does |

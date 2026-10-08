@@ -55,6 +55,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private var signalSources: [DispatchSourceSignal] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // DA-06: read while the launch Apple event is still the current one.
+        let atLogin = launchedAsLoginItem()
         // Gio starts as an accessory app and turns regular only while the
         // main window shows; the Dock then draws the icon the system icon
         // cache holds for this bundle, which can be stale after a rebuild
@@ -89,8 +91,13 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it
-        // hides it and Gio keeps running from the menu bar.
-        mainWindow.show()
+        // hides it and Gio keeps running from the menu bar. A login launch
+        // stays in the menu bar unless Accessibility is missing (DA-06).
+        let opensWindow = opensMainWindowAtLaunch(launchedAtLogin: atLogin, accessibilityGranted: AXIsProcessTrusted())
+        GioLog.record(.info, "launch atLogin=\(atLogin) window=\(opensWindow ? "shown" : "hidden")")
+        if opensWindow {
+            mainWindow.show()
+        }
     }
 
     /// Dock icon click while the window is hidden (policy is regular only

@@ -46,6 +46,25 @@ Not in scope: editing shortcuts by recording keys (view-only per user request).
   trigger reload; validation messages shown inline.
 - [x] DA-05 (`143b294`) — Logs & diagnostics section: live log viewer with level filter, doctor facts,
   actions (reload config, restore all windows, open config file, quit).
+- [ ] DA-06 — Open at Login (user request 2026-10-08: "agregar la opción de que se inicie la
+  app cuando inicia la Mac"). Decisions: macOS owns the state (`SMAppService.mainApp`,
+  macOS 13 = deployment target), so there is no config key; the switch lives in Overview >
+  Status next to the permissions (system integration, the "General" sidebar group);
+  `LoginItemModel` re-reads the system status after every change and on the Overview poll,
+  so a change in System Settings shows up; `requiresApproval` keeps the switch on with an
+  **Open Login Items…** button; outside an app bundle the switch is disabled. A login launch
+  (`keyAELaunchedAsLogInItem` in the launch Apple event) does not open the main window
+  unless Accessibility is missing (`opensMainWindowAtLaunch`, GioCore). Files:
+  `GioCore/Commands/LaunchAtLogin.swift`, `GioMacOS/System/LoginItem.swift`,
+  `GioUI/LoginItem.swift`, `GioUI/OverviewView.swift`, `GioDesktop/main.swift`. RED:
+  `swift build --build-tests` failed (`cannot find 'opensMainWindowAtLaunch'`, then
+  `LoginItemService`, `LoginItemModel`, `loginItemPresentation` unknown) for
+  `LaunchAtLoginTests` (3) and `LoginItemTests` (4); GREEN. Visual check: opt-in snapshots
+  of the Status card (off light, on dark, approval pending) rendered with `GioSwitch` (the
+  first render used a plain `Toggle`, which `ImageRenderer` cannot draw). LIVE PENDING
+  (TESTING.md 13b): registration, approval, the quiet login launch, and whether the launch
+  Apple event still carries `keyAELaunchedAsLogInItem` for `SMAppService.mainApp`
+  launches on this macOS [INFERENCE from community practice, not observed].
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,

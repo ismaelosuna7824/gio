@@ -6,6 +6,7 @@ import SwiftUI
 /// hands plain values to the dashboard.
 struct OverviewView: View {
     @ObservedObject var model: DesktopModel
+    @StateObject private var loginItem = LoginItemModel(service: SystemLoginItem())
     @Environment(\.onboardingPresenter) private var onboarding
 
     var body: some View {
@@ -21,10 +22,19 @@ struct OverviewView: View {
                 _ = requestScreenRecordingPermission()
                 model.markScreenRecordingRequested()
                 model.refresh()
-            }
+            },
+            loginItem: loginItem.presentation,
+            setLoginItem: { loginItem.set($0) },
+            openLoginItems: { loginItem.openSystemSettings() }
         )
-        .onAppear { model.refresh() }
-        .pollWhileVisible(model, every: 3) { model.refresh() }
+        .onAppear {
+            model.refresh()
+            loginItem.refresh()
+        }
+        .pollWhileVisible(model, every: 3) {
+            model.refresh()
+            loginItem.refresh()
+        }
     }
 }
 
@@ -36,6 +46,10 @@ struct OverviewDashboard: View {
     var showGuide: (() -> Void)?
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
+    /// DA-06: the Open at Login row; nil hides it.
+    var loginItem: LoginItemPresentation?
+    var setLoginItem: (Bool) -> Void = { _ in }
+    var openLoginItems: () -> Void = {}
 
     var body: some View {
         GioPage("Overview", subtitle: subtitle) {
@@ -204,6 +218,11 @@ struct OverviewDashboard: View {
                     missingKind: .warning, missingLabel: "Off"
                 )
             }
+            if let loginItem {
+                CardRow {
+                    loginItemRow(loginItem)
+                }
+            }
             CardRow(divider: false) {
                 VStack(alignment: .leading, spacing: GioSpacing.xs) {
                     HStack(spacing: GioSpacing.s) {
@@ -257,6 +276,26 @@ struct OverviewDashboard: View {
                 Button(action.0, action: action.1)
                     .controlSize(.small)
             }
+        }
+    }
+
+    private func loginItemRow(_ item: LoginItemPresentation) -> some View {
+        HStack(spacing: GioSpacing.s) {
+            SectionIcon(symbol: "power", tint: .green, size: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Open at Login").font(GioFont.body)
+                Text(item.caption)
+                    .font(GioFont.caption)
+                    .foregroundStyle(GioColor.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: GioSpacing.xs)
+            if item.showsApprove {
+                Button("Open Login Items…", action: openLoginItems)
+                    .controlSize(.small)
+            }
+            GioSwitch(title: "Open at Login", isOn: Binding(get: { item.isOn }, set: setLoginItem))
+                .disabled(!item.isEnabled)
         }
     }
 
