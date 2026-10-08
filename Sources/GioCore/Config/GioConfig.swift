@@ -110,7 +110,7 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .ax,
+        renderer: RendererKind = .snapshot,
         focusedGrow: FocusedGrowMode = .start,
         nativeZoom: Bool = true,
         closeGhost: Bool = false,

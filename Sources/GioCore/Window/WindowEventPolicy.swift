@@ -97,7 +97,8 @@ public struct WriteEchoGate: Sendable {
 
     private struct Entry: Sendable {
         let frame: CGRect
-        let at: TimeInterval
+        /// Any event up to this time is an echo whatever the frame.
+        let suppressedUntil: TimeInterval
     }
 
     private var entries: [WindowID: Entry] = [:]
@@ -106,13 +107,23 @@ public struct WriteEchoGate: Sendable {
 
     public mutating func recordApplied(_ frames: [WindowID: CGRect], at time: TimeInterval) {
         for (id, frame) in frames {
-            entries[id] = Entry(frame: frame, at: time)
+            entries[id] = Entry(frame: frame, suppressedUntil: time + Self.suppression)
         }
     }
 
     /// Single-window form for the per-tick path: no dictionary is built.
     public mutating func recordApplied(_ id: WindowID, frame: CGRect, at time: TimeInterval) {
-        entries[id] = Entry(frame: frame, at: time)
+        entries[id] = Entry(frame: frame, suppressedUntil: time + Self.suppression)
+    }
+
+    /// SM-13: a write dispatched at `time` that lands on its app's lane at
+    /// most `landingWithin` later (claim wait plus the lane's writes): its
+    /// echo is suppressed until the latest landing plus `suppression`.
+    /// Recording the landed write (`recordApplied`) replaces the bound.
+    public mutating func recordDispatched(
+        _ id: WindowID, frame: CGRect, at time: TimeInterval, landingWithin: TimeInterval
+    ) {
+        entries[id] = Entry(frame: frame, suppressedUntil: time + landingWithin + Self.suppression)
     }
 
     public mutating func forget(_ id: WindowID) {
@@ -126,14 +137,14 @@ public struct WriteEchoGate: Sendable {
         guard let entry = entries[id] else {
             return false
         }
-        return time - entry.at <= Self.suppression
+        return time <= entry.suppressedUntil
     }
 
     public func isEcho(_ id: WindowID, observed: CGRect, at time: TimeInterval) -> Bool {
         guard let entry = entries[id] else {
             return false
         }
-        if time - entry.at <= Self.suppression {
+        if time <= entry.suppressedUntil {
             return true
         }
         let tolerance = Self.tolerance

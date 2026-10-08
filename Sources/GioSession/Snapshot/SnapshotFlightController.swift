@@ -17,60 +17,138 @@ public struct OverlayFlightItem: @unchecked Sendable {
     }
 }
 
-/// The items of one display's overlay.
+/// The items of one display's overlay and the backdrop under them: the
+/// display as captured without its managed windows (SM-09). SM-18: the
+/// panel covers only `usableFrame` (menu bar and Dock excluded).
 public struct OverlayFlight: @unchecked Sendable {
     public let displayFrame: CGRect
+    public let usableFrame: CGRect
+    public let backdrop: CGImage
     public let items: [OverlayFlightItem]
 
-    public init(displayFrame: CGRect, items: [OverlayFlightItem]) {
+    public init(displayFrame: CGRect, usableFrame: CGRect, backdrop: CGImage, items: [OverlayFlightItem]) {
         self.displayFrame = displayFrame
+        self.usableFrame = usableFrame
+        self.backdrop = backdrop
         self.items = items
     }
 }
 
-/// SM-04: the overlay that flies window images. Called on the session
+/// SM-04/SM-08: the overlay that flies window images. Called on the session
 /// queue; implementations hop to the main thread themselves.
 public protocol OverlayPort: AnyObject {
-    func beginFlight(token: Int, spring: SpringParameters, flights: [OverlayFlight])
-    func retargetFlight(token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight])
-    func endFlight(fadeOut: Bool)
-    /// A wallpaper backdrop is ready for the display with this frame (any thread).
-    func hasBackdrop(for displayFrame: CGRect) -> Bool
+    /// Put the overlay on screen with every layer at its start frame (prime).
+    /// The implementation reports `SnapshotFlightController.primed` from
+    /// main once the first frame is committed, or with `ok: false` when the
+    /// overlay could not be shown.
+    /// SM-16: `holes` are the target frames of the windows that fly without
+    /// a layer; each display's backdrop is cut there so they show through.
+    func beginFlight(
+        token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
+    )
+    /// The real windows' writes are dispatched: start the springs.
+    func flyFlight(token: Int)
+    /// `holes` replaces the flight's whole hole set.
+    func retargetFlight(
+        token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
+    )
+    /// Remove the overlay at once.
+    func endFlight()
+}
+
+/// What `drive` decided for this animated pass.
+public enum SnapshotDrive: Equatable, Sendable {
+    /// The AX renderer carries the motion; the caller runs it now.
+    case ax
+    /// A primed overlay is flying (or being retargeted): the caller runs the
+    /// instant pass now (one write per window under the overlay).
+    case flying
+    /// The overlay is being primed: the caller hands its instant pass and
+    /// its AX fallback to `deferPass` and returns without writing anything.
+    case priming
 }
 
 /// SM-04: the running overlay flight. With the snapshot renderer the real
-/// windows get one write to their final frames under an opaque overlay that
-/// flies their cached images; the flight settles when its layers landed AND
-/// the final exact pass settled (`SnapshotFlightGate` tokens). Session queue
-/// only; `layersFinished`/`aborted` are called from main and hop on.
+/// windows get one write to their final frames under an overlay that draws
+/// an opaque picture (SM-14: the panel itself is not opaque, so it does not
+/// occlude them) and flies their cached images. SM-16: windows without an
+/// image show through holes in that picture at their targets. SM-08 order: the session plans the flight and
+/// primes the overlay (layers at their start frames, panel on screen); only
+/// once main reports the prime does the session write the real windows, and
+/// only then do the layers fly. SM-12: those writes are dispatched on the
+/// per-app lanes without the session waiting (the overlay hides them); the
+/// pass reports `passSettled` once dispatched and `collectWrites` folds the
+/// outcome when the flight ends. The flight settles when its layers landed
+/// AND the final exact pass settled (`SnapshotFlightGate` tokens). SM-14:
+/// the overlay then stays up (nothing moving) until the windows that came
+/// from off screen or changed size capture painted, at most
+/// `SnapshotHandoff.cap` (`SnapshotHandoff`, `checkPaint`). SM-19: that
+/// check starts `SnapshotHandoff.earlyLead` before the deadline the overlay
+/// reports (`deadlineArmed`), so the overlay usually goes at the deadline,
+/// and apps that painted `PaintTrustBook.cleanChecksToTrust` times in a row
+/// are not checked. Session queue only; `primed`/`deadlineArmed`/
+/// `layersFinished`/`aborted` are called from main and hop on.
 public final class SnapshotFlightController: @unchecked Sendable {
     public struct Context {
         public var displayFrames: () -> [CGRect]
+        /// SM-18: each display's usable frame (menu bar and Dock excluded),
+        /// index-aligned with `displayFrames`; the overlay panel covers it.
+        public var usableFrames: () -> [CGRect]
         public var physicalFrames: () -> [WindowID: CGRect]
         public var isShuttingDown: () -> Bool
         /// FI-06: an action arrived during the motion (`ReflowCoalescer.takeAtTick`).
         public var takeCoalescedReflow: () -> Bool
+        /// Put a coalesced request back (`ReflowCoalescer.request(motionActive: true)`).
+        public var requestReflow: () -> Void
         public var performReflow: () -> Void
-        public var publishFocusRing: () -> Void
+        /// SM-08: ring and dim the overlay draws for the windows landing at
+        /// `targets` (the live rules, `FocusRingPublisher.flightDecorations`).
+        public var decorations: ([WindowID: CGRect]) -> OverlayDecorations
+        /// Publish the live ring and dim now (they return at the settle).
+        public var publishIndicators: () -> Void
+        /// SM-12: the real windows' writes under the overlay are dispatched
+        /// without waiting; fold their outcome now (bounded wait). Called on
+        /// every exit of a flight that may have written: settle, abort, end.
+        public var collectWrites: () -> Void
         /// FI-05: schedule the render check when candidates are waiting.
         public var scheduleRenderCheck: () -> Void
+        /// SM-14: tiny captures of these windows at these (target) frames and
+        /// the blank test, off the session queue; `answer` may run on any
+        /// thread. A window missing from the answer counts as `unknown`.
+        public var checkPaint: (
+            [WindowID: CGRect], @escaping @Sendable ([WindowID: SnapshotPaintVerdict]) -> Void
+        ) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
 
         public init(
-            displayFrames: @escaping () -> [CGRect], physicalFrames: @escaping () -> [WindowID: CGRect],
+            displayFrames: @escaping () -> [CGRect], usableFrames: @escaping () -> [CGRect],
+            physicalFrames: @escaping () -> [WindowID: CGRect],
             isShuttingDown: @escaping () -> Bool, takeCoalescedReflow: @escaping () -> Bool,
-            performReflow: @escaping () -> Void, publishFocusRing: @escaping () -> Void,
-            scheduleRenderCheck: @escaping () -> Void, log: @escaping (LogLevel, String) -> Void,
+            requestReflow: @escaping () -> Void, performReflow: @escaping () -> Void,
+            decorations: @escaping ([WindowID: CGRect]) -> OverlayDecorations,
+            publishIndicators: @escaping () -> Void, collectWrites: @escaping () -> Void,
+            scheduleRenderCheck: @escaping () -> Void,
+            checkPaint: @escaping (
+                [WindowID: CGRect], @escaping @Sendable ([WindowID: SnapshotPaintVerdict]) -> Void
+            ) -> Void,
+            log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         ) {
             self.displayFrames = displayFrames
+            self.usableFrames = usableFrames
             self.physicalFrames = physicalFrames
             self.isShuttingDown = isShuttingDown
             self.takeCoalescedReflow = takeCoalescedReflow
+            self.requestReflow = requestReflow
             self.performReflow = performReflow
-            self.publishFocusRing = publishFocusRing
+            self.decorations = decorations
+            self.publishIndicators = publishIndicators
+            self.collectWrites = collectWrites
             self.scheduleRenderCheck = scheduleRenderCheck
+            self.checkPaint = checkPaint
             self.log = log
             self.now = now
         }
@@ -90,6 +168,24 @@ public final class SnapshotFlightController: @unchecked Sendable {
     private var windows: Set<WindowID> = []
     private var cacheAgeMilliseconds = 0
     private var reflowScheduled = false
+    /// SM-08: the token `beginFlight` was primed with, until main reports
+    /// it; the pass waiting for that report (the latest one wins).
+    private var primingToken: Int?
+    private var pending: (writes: () -> Void, fallback: () -> Void)?
+    /// SM-12: what the display presented, reported with the landing token.
+    private var frames: FlightFrameStats?
+    /// SM-14: every window's frame when it joined the flight (the first pass
+    /// that involved it) and its latest target, for the paint-check set.
+    private var origins: [WindowID: CGRect] = [:]
+    private var targets: [WindowID: CGRect] = [:]
+    /// SM-14: the hold at the deadline until the windows that came from off
+    /// screen or changed size painted.
+    private var handoff = SnapshotHandoff()
+    /// SM-19: per-app paint statistics for the session.
+    private var trust = PaintTrustBook()
+    /// SM-16: windows visible at their target without a layer, at that
+    /// target; the backdrop is cut there.
+    private var holes: [WindowID: CGRect] = [:]
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -100,8 +196,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
         self.scheduler = scheduler
     }
 
+    /// A flight runs or its overlay is held for the hand-off (SM-14): either
+    /// way the overlay is up, so ring, dim, cache refresh and render checks
+    /// wait, and a key press retargets.
     public var isActive: Bool {
-        gate.isActive
+        gate.isActive || handoff.isHolding
     }
 
     /// Windows flying (or added to) the current flight.
@@ -126,25 +225,44 @@ public final class SnapshotFlightController: @unchecked Sendable {
         }
     }
 
-    private func makeFlights(_ items: [SnapshotFlightItem]) -> [OverlayFlight] {
+    /// `images`: the one lookup per window the plan was decided with. Every
+    /// display of `items` and of `holes` gets a flight (SM-16: a display
+    /// may show only holes).
+    private func makeFlights(
+        _ items: [SnapshotFlightItem], holes: [SnapshotHole] = [], images: [WindowID: SnapshotCacheUse<CGImage>],
+        now: TimeInterval
+    ) -> [OverlayFlight] {
         let frames = context.displayFrames()
+        let usable = context.usableFrames()
         var byDisplay: [Int: [OverlayFlightItem]] = [:]
+        for hole in holes where frames.indices.contains(hole.displayIndex) {
+            byDisplay[hole.displayIndex, default: []] = []
+        }
         for item in items {
-            guard let entry = cache.cache.entry(item.id), frames.indices.contains(item.displayIndex) else {
+            guard let use = images[item.id], frames.indices.contains(item.displayIndex) else {
                 continue
             }
+            cache.flies(item.id, use, at: now)
             byDisplay[item.displayIndex, default: []].append(
-                OverlayFlightItem(id: item.id, image: entry.image, from: item.from, to: item.to)
+                OverlayFlightItem(id: item.id, image: use.entry.image, from: item.from, to: item.to)
             )
         }
-        return byDisplay.keys.sorted().map { OverlayFlight(displayFrame: frames[$0], items: byDisplay[$0]!) }
+        return byDisplay.keys.sorted().compactMap { index in
+            guard let backdrop = cache.backdrop(for: frames[index]) else {
+                return nil
+            }
+            return OverlayFlight(
+                displayFrame: frames[index], usableFrame: usable.indices.contains(index) ? usable[index] : frames[index],
+                backdrop: backdrop, items: byDisplay[index]!
+            )
+        }
     }
 
     /// Decide snapshot vs AX for this motion and start (or retarget) the
-    /// overlay flight. True when the overlay carries the motion. The caller
-    /// then runs the ordinary instant pass, which is the real windows' one
-    /// write.
-    public func drive(animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters) -> Bool {
+    /// overlay flight. `.flying`: the caller runs the ordinary instant pass
+    /// now (the real windows' one write under a primed overlay). `.priming`:
+    /// the caller defers that pass with `deferPass`.
+    public func drive(animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters) -> SnapshotDrive {
         let screens = context.displayFrames()
         var targets: [WindowID: CGRect] = [:]
         for plan in plans {
@@ -160,56 +278,134 @@ public final class SnapshotFlightController: @unchecked Sendable {
             starts[animation.id] = animation.from
         }
         let now = context.now()
-        let snapshotCache = cache.cache
-        let usable: (WindowID) -> Bool = { id in
-            guard let entry = snapshotCache.entry(id) else {
+        // SM-11: the image of the start size, or a fresh one of the other size.
+        // SM-13: looked up once per window; the layers fly exactly that image.
+        var images: [WindowID: SnapshotCacheUse<CGImage>] = [:]
+        let usable: (WindowID) -> Bool = { [cache] id in
+            if images[id] != nil {
+                return true
+            }
+            guard let use = cache.flightImage(id, startFrame: starts[id] ?? targets[id], at: now) else {
                 return false
             }
-            return snapshotEntryUsable(entry, currentFrame: starts[id] ?? targets[id] ?? entry.frame, now: now)
+            images[id] = use
+            return true
         }
-        if gate.isActive {
+        if isActive {
+            // SM-14: a retarget during the hold flies on; the hold is over.
+            handoff.cancel()
+            origins.merge(starts) { joined, _ in joined }
+            self.targets.merge(targets) { _, latest in latest }
             let plan = planSnapshotRetarget(
                 active: ids, starts: starts, targets: targets, displays: screens,
                 activeDisplays: displays, hasImage: usable
             )
-            let token = gate.retarget()
-            overlay.retargetFlight(token: token, targets: plan.retargets, adds: makeFlights(plan.adds))
             ids.formUnion(plan.adds.map(\.id))
             windows.formUnion(plan.adds.map(\.id))
-            cache.touch(plan.adds.map(\.id), at: now)
+            // SM-16: the hole set follows the latest targets and layers.
+            let previous = holes
+            setHoles(snapshotHoles(layered: ids, targets: self.targets, displays: screens, activeDisplays: displays))
+            let token = gate.retarget()
+            overlay.retargetFlight(
+                token: token, targets: plan.retargets, adds: makeFlights(plan.adds, images: images, now: now),
+                holes: holes, decorations: context.decorations(targets)
+            )
             if !plan.uncovered.isEmpty {
-                // No image: written once under the overlay, revealed when it ends.
+                // No image: written once under the overlay, shown through a
+                // hole when visible at its target (SM-16).
                 context.log(.debug, "snapshot retarget uncovered ids=\(plan.uncovered.count)")
                 cache.schedule(delay: 0.05)
             }
-            return true
+            if holes != previous, !holes.isEmpty {
+                context.log(.debug, snapshotHolesLine(count: holes.count))
+            }
+            return primingToken == nil ? .flying : .priming
         }
-        let overlay = overlay
+        let cache = cache
         let decision = planSnapshotFlight(
             starts: starts, targets: targets, displays: screens, hasImage: usable,
-            backdropReady: { overlay.hasBackdrop(for: screens[$0]) }
+            backdropReady: { cache.backdrop(for: screens[$0]) != nil }
         )
         switch decision {
         case .fallback(let reason, let missing):
             context.log(.info, snapshotFallbackLine(reason: reason, count: missing.count))
             // Next time the images are there.
             cache.schedule(delay: 0.05)
-            return false
-        case .snapshot(let items):
-            let flights = makeFlights(items)
+            return .ax
+        case .snapshot(let items, let holes):
+            let flights = makeFlights(items, holes: holes, images: images, now: now)
             guard !flights.isEmpty else {
-                return false
+                return .ax
             }
             let ids = Set(items.map(\.id))
             let token = gate.begin()
             self.ids = ids
             windows = ids
-            displays = Set(items.map(\.displayIndex))
+            displays = Set(items.map(\.displayIndex)).union(holes.map(\.displayIndex))
+            setHoles(holes)
+            if !holes.isEmpty {
+                context.log(.debug, snapshotHolesLine(count: holes.count))
+            }
             startedAt = now
             cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids, now: now)
-            cache.touch(ids, at: now)
-            overlay.beginFlight(token: token, spring: spring, flights: flights)
-            return true
+            origins = starts
+            self.targets = targets
+            primingToken = token
+            pending = nil
+            overlay.beginFlight(
+                token: token, spring: spring, flights: flights, holes: self.holes,
+                decorations: context.decorations(targets)
+            )
+            return .priming
+        }
+    }
+
+    /// SM-08: the pass that waits for the prime. `writes` is the instant
+    /// pass (one write per real window, then `passSettled`); `fallback` is
+    /// the AX motion for the same pass, run when the overlay never made it
+    /// to the screen. A later pass during the prime replaces both.
+    public func deferPass(writes: @escaping () -> Void, fallback: @escaping () -> Void) {
+        guard primingToken != nil else {
+            return
+        }
+        pending = (writes, fallback)
+    }
+
+    /// Main reports the prime of flight `token`: the overlay is on screen
+    /// with every layer at its start frame (`ok`), or could not be shown.
+    /// Then, in this order, the real windows are written and the layers
+    /// fly; on failure the pass runs through AX with no write done yet.
+    /// A reflow request that arrived while priming (a key press) survives
+    /// the writes, which stop the AX motion and reset the coalescer: it is
+    /// put back after them so the merged retarget flies to the newest layout.
+    public func primed(_ token: Int, ok: Bool) {
+        scheduler.async { [weak self] in
+            guard let self, !context.isShuttingDown(), gate.isActive, primingToken == token else {
+                return
+            }
+            primingToken = nil
+            let pass = pending
+            pending = nil
+            guard ok else {
+                context.log(.info, snapshotFallbackLine(reason: .primeFailed, count: ids.count))
+                gate.abort()
+                clear()
+                overlay.endFlight()
+                pass?.fallback()
+                // The ring was hidden for the prime; the AX motion shows it
+                // at the start frame like any AX pass.
+                context.publishIndicators()
+                return
+            }
+            let retarget = context.takeCoalescedReflow()
+            pass?.writes()
+            if gate.isActive {
+                overlay.flyFlight(token: gate.currentToken)
+            }
+            if retarget {
+                context.requestReflow()
+                scheduleReflow()
+            }
         }
     }
 
@@ -221,11 +417,39 @@ public final class SnapshotFlightController: @unchecked Sendable {
         }
     }
 
-    /// Overlay layers of flight `token` landed (called from the main thread).
-    public func layersFinished(_ token: Int) {
+    /// SM-19: the overlay armed the landing of flight `token` at `deadline`
+    /// (`now()` clock; at the fly and at every retarget while flying). One
+    /// paint check of the hand-off set is scheduled `earlyLead` before it;
+    /// a retarget, an abort or an end supersedes the token and the check
+    /// no-ops. Called from the main thread.
+    public func deadlineArmed(_ token: Int, at deadline: TimeInterval) {
+        scheduler.async { [weak self] in
+            guard let self, !context.isShuttingDown(), gate.isActive, token == gate.currentToken else {
+                return
+            }
+            let now = context.now()
+            let delay = SnapshotHandoff.earlyCheckTime(deadline: deadline, now: now) - now
+            scheduler.asyncAfter(delay) { [weak self] in
+                guard let self, !context.isShuttingDown(), gate.isActive, token == gate.currentToken,
+                      let (check, step) = handoff.prepare(windows: paintCheckWindows())
+                else {
+                    return
+                }
+                advanceHandoff(step, token: check)
+            }
+        }
+    }
+
+    /// Overlay layers of flight `token` landed (called from the main thread)
+    /// with the frames the display presented meanwhile (SM-12, nil when not
+    /// measured).
+    public func layersFinished(_ token: Int, frames: FlightFrameStats? = nil) {
         scheduler.async { [weak self] in
             guard let self, !context.isShuttingDown() else {
                 return
+            }
+            if gate.isActive, token == gate.currentToken {
+                self.frames = frames
             }
             if gate.layersFinished(token) {
                 settle()
@@ -234,66 +458,155 @@ public final class SnapshotFlightController: @unchecked Sendable {
     }
 
     /// The overlay came down on its own (watchdog, mouse down): treat it as a
-    /// settle without the fade. Called from the main thread.
+    /// settle. A pass still waiting for the prime runs through AX instead.
+    /// Called from the main thread.
     public func aborted(_ reason: SnapshotAbortReason) {
         scheduler.async { [weak self] in
-            guard let self, !context.isShuttingDown(), gate.isActive else {
+            guard let self, !context.isShuttingDown(), isActive else {
                 return
             }
             context.log(reason.logLevel, snapshotAbortLine(reason: reason))
+            let pass = takePending()
+            handoff.cancel()
             gate.abort()
             clear()
-            context.publishFocusRing()
+            context.collectWrites()
+            context.publishIndicators()
             context.scheduleRenderCheck()
             cache.schedule()
+            pass?.fallback()
         }
     }
 
     /// Screens changed under the flight: come down (the caller relayouts).
     public func abortForDisplayChange() {
-        if gate.isActive {
+        if isActive {
             context.log(.info, snapshotAbortLine(reason: .displayChange))
-            end(fadeOut: false)
+            end()
         }
     }
 
-    /// Abandon a flight without the normal settle (fallback to AX, shutdown).
-    public func end(fadeOut: Bool) {
-        guard gate.isActive else {
+    /// Abandon a flight without the normal settle (shutdown, display change,
+    /// a non-animated pass); a pass waiting for the prime is dropped, the
+    /// caller relayouts or restores.
+    public func end() {
+        guard isActive else {
             return
         }
+        _ = takePending()
+        handoff.cancel()
         gate.abort()
+        context.collectWrites()
         clear()
-        overlay.endFlight(fadeOut: fadeOut)
-        context.publishFocusRing()
+        overlay.endFlight()
+        context.publishIndicators()
     }
 
-    /// Layers landed and the real windows settled: remove the overlay, show
-    /// the ring, verify the render and refresh the image cache in the
-    /// background.
+    /// Layers landed and the real windows' writes were dispatched: their
+    /// outcome is folded (SM-12). SM-14: the overlay is then held until the
+    /// windows that came from off screen or changed size painted (or the
+    /// cap); `handOver` brings it down.
     private func settle() {
         let duration = context.now() - startedAt
-        overlay.endFlight(fadeOut: true)
         context.log(
-            .info,
-            MotionSummary(
-                windows: windows.count, frames: 0, dropped: 0, duration: duration, slowest: nil,
-                curve: "spring", renderer: "snapshot"
-            ).logLine
+            .info, MotionSummary.snapshotFlight(windows: windows.count, duration: duration, frames: frames).logLine
         )
         context.log(
             .info,
-            snapshotFlightLine(layers: ids.count, cacheAgeMilliseconds: cacheAgeMilliseconds, duration: duration)
+            snapshotFlightLine(
+                layers: ids.count, cacheAgeMilliseconds: cacheAgeMilliseconds, duration: duration, frames: frames
+            )
         )
+        context.collectWrites()
+        let (token, step) = handoff.begin(windows: paintCheckWindows(), now: context.now())
+        if handoff.isHolding {
+            scheduler.asyncAfter(SnapshotHandoff.cap) { [weak self] in
+                guard let self, !context.isShuttingDown(),
+                      let summary = handoff.capReached(token, now: context.now())
+                else {
+                    return
+                }
+                handOver(summary)
+            }
+        }
+        advanceHandoff(step, token: token)
+    }
+
+    /// The windows whose paint the hand-off waits for. SM-16: the hole
+    /// windows came into view through their holes (always checked); SM-19:
+    /// the others of trusted apps are skipped.
+    private func paintCheckWindows() -> Set<WindowID> {
+        let screens = context.displayFrames()
+        let candidates = snapshotPaintCheckWindows(
+            starts: origins, targets: targets, screens: screens,
+            covered: displays.sorted().filter { screens.indices.contains($0) }.map { screens[$0] }
+        ).union(holes.keys)
+        return trust.windowsToCheck(candidates, holes: Set(holes.keys))
+    }
+
+    private func advanceHandoff(_ step: SnapshotHandoff.Step, token: Int) {
+        switch step {
+        case .check(let ids):
+            checkPaint(ids, token: token)
+        case .recheck(let ids, let delay):
+            scheduler.asyncAfter(delay) { [weak self] in
+                guard let self, !context.isShuttingDown(), handoff.isCurrent(token) else {
+                    return
+                }
+                checkPaint(ids, token: token)
+            }
+        case .release(let summary):
+            handOver(summary)
+        case .awaiting:
+            break
+        }
+    }
+
+    /// The capture runs off the queue; its answer hops back on.
+    private func checkPaint(_ ids: Set<WindowID>, token: Int) {
+        let frames = targets.filter { ids.contains($0.key) }
+        context.checkPaint(frames) { [weak self] verdicts in
+            self?.scheduler.async { [weak self] in
+                guard let self, !context.isShuttingDown(), handoff.isCurrent(token) else {
+                    return
+                }
+                trust.record(verdicts.filter { ids.contains($0.key) })
+                guard let step = handoff.record(token, verdicts: verdicts, now: context.now()) else {
+                    return
+                }
+                advanceHandoff(step, token: token)
+            }
+        }
+    }
+
+    /// The live ring and dim go up (same geometry as the overlay's), then
+    /// the overlay comes down, then the render check and the image refresh.
+    private func handOver(_ summary: SnapshotHandoffSummary) {
+        context.log(summary.logLevel, summary.logLine)
         clear()
-        context.publishFocusRing()
+        context.publishIndicators()
+        overlay.endFlight()
         context.scheduleRenderCheck()
         cache.schedule()
+    }
+
+    private func takePending() -> (writes: () -> Void, fallback: () -> Void)? {
+        primingToken = nil
+        defer { pending = nil }
+        return pending
     }
 
     private func clear() {
         ids = []
         displays = []
         windows = []
+        frames = nil
+        origins = [:]
+        targets = [:]
+        holes = [:]
+    }
+
+    private func setHoles(_ next: [SnapshotHole]) {
+        holes = Dictionary(uniqueKeysWithValues: next.map { ($0.id, $0.frame) })
     }
 }

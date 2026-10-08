@@ -71,12 +71,18 @@ private func tapCallback(
         return Unmanaged.passUnretained(event)
     case .keyDown:
         guard let combo = tapCombo(from: event) else {
+            box.onKeyDown?()
             return Unmanaged.passUnretained(event)
         }
         // Returning nil swallows the key. Only exact matches are swallowed, so
         // ordinary typing (including Option-accented characters) passes through
         // untouched — at the cost that WM keys must be unambiguous.
-        return box.onCombo(combo) ? nil : Unmanaged.passUnretained(event)
+        if box.onCombo(combo) {
+            return nil
+        }
+        // SM-09: a key that reached an app is typing (observed, never swallowed).
+        box.onKeyDown?()
+        return Unmanaged.passUnretained(event)
     }
 }
 
@@ -84,6 +90,7 @@ final class TapBox: @unchecked Sendable {
     let onCombo: @Sendable (HotkeyCombo) -> Bool
     let onMouseDown: (@Sendable (CGPoint) -> Void)?
     let onMouseMoved: (@Sendable (CGPoint) -> Void)?
+    let onKeyDown: (@Sendable () -> Void)?
     /// The callback (main) and the watchdog (main) both use these; the lock
     /// keeps `stop()` from racing them. Never held across a call out.
     private let lock = NSLock()
@@ -93,11 +100,13 @@ final class TapBox: @unchecked Sendable {
     init(
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
         onMouseDown: (@Sendable (CGPoint) -> Void)?,
-        onMouseMoved: (@Sendable (CGPoint) -> Void)?
+        onMouseMoved: (@Sendable (CGPoint) -> Void)?,
+        onKeyDown: (@Sendable () -> Void)? = nil
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
+        self.onKeyDown = onKeyDown
     }
 
     func attach(_ port: CFMachPort?) {
@@ -143,6 +152,7 @@ public final class HotkeyTap {
     private let onCombo: @Sendable (HotkeyCombo) -> Bool
     private let onMouseDown: (@Sendable (CGPoint) -> Void)?
     private let onMouseMoved: (@Sendable (CGPoint) -> Void)?
+    private let onKeyDown: (@Sendable () -> Void)?
 
     /// Whether this tap subscribes to pointer moves (only when a handler was
     /// given; the host passes one only for focus-follows-mouse).
@@ -151,15 +161,19 @@ public final class HotkeyTap {
     }
 
     /// `onMouseDown` observes clicks and `onMouseMoved` pointer moves (Cocoa
-    /// global location) without swallowing either.
+    /// global location) without swallowing either. `onKeyDown` observes
+    /// every key-down that reaches an app (not the swallowed WM combos);
+    /// it must be cheap: it runs in the tap callback on main (SM-09).
     public init(
         onMouseDown: (@Sendable (CGPoint) -> Void)? = nil,
         onMouseMoved: (@Sendable (CGPoint) -> Void)? = nil,
+        onKeyDown: (@Sendable () -> Void)? = nil,
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
+        self.onKeyDown = onKeyDown
     }
 
     @discardableResult
@@ -167,7 +181,7 @@ public final class HotkeyTap {
         guard port == nil else {
             return true
         }
-        let box = TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved)
+        let box = TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onKeyDown: onKeyDown)
         let boxRefcon = Unmanaged.passRetained(box).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,

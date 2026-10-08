@@ -93,6 +93,16 @@ public enum FocusRingState: Equatable, Sendable {
 /// counts as off-viewport (parked windows keep a 1 pt sliver on screen).
 private let minimumVisibleExtent: CGFloat = 24
 
+/// The focus indicators (ring, dim, their overlay copies) draw only for a
+/// window with at least 24 pt of width and height inside some display.
+public func focusIndicatorVisible(_ frame: CGRect, on displays: [CGRect]) -> Bool {
+    displays.contains { display in
+        let overlap = display.intersection(frame)
+        return !overlap.isNull && overlap.width >= minimumVisibleExtent
+            && overlap.height >= minimumVisibleExtent
+    }
+}
+
 /// Pure decision: the ring for the focused window, or hidden when the feature
 /// is off, nothing is focused, the window is minimized, maximized or
 /// fullscreen while `hideWhenMaximized` is on, fullscreen without
@@ -110,12 +120,7 @@ public func focusRingState(
     else {
         return .hidden
     }
-    let visible = displays.contains { display in
-        let overlap = display.intersection(frame)
-        return !overlap.isNull && overlap.width >= minimumVisibleExtent
-            && overlap.height >= minimumVisibleExtent
-    }
-    guard visible else {
+    guard focusIndicatorVisible(frame, on: displays) else {
         return .hidden
     }
     let width = CGFloat(config.width)

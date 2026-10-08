@@ -5,7 +5,7 @@ import GioCore
 /// FI-05: what the WindowServer actually draws. PA-04: on-screen windows
 /// only (never every window of every Space), since only visible targets are checked. `CGWindowListCopyWindowInfo`
 /// is public and returns owner pid, layer and bounds without Screen
-/// Recording; window names are a separate key that Gio never reads.
+/// Recording; window names are a separate key this list never reads.
 public func windowServerWindows(displayHeight: CGFloat) -> [ServerWindow] {
     let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
@@ -34,7 +34,9 @@ func parseWindowServerEntries(_ entries: [[String: Any]], displayHeight: CGFloat
 /// SM-02: every layer-0 window of `pids` with its `CGWindowID` (the same id
 /// as `SCWindow.windowID`) and Cocoa bounds. Off-screen and other-Space
 /// windows are included so parked windows can be matched too. Public API,
-/// no Screen Recording needed; titles are never read.
+/// no Screen Recording needed. SM-17: the window name (`kCGWindowName`,
+/// listed only with Screen Recording) rides on the candidate for the title
+/// tie-break and is never logged or stored.
 public func windowServerSnapshotCandidates(pids: Set<pid_t>, displayHeight: CGFloat) -> [SnapshotCandidate] {
     let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
     guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
@@ -55,11 +57,62 @@ func parseSnapshotCandidates(
         else {
             return nil
         }
+        let name = entry[kCGWindowName as String] as? String
         return SnapshotCandidate(
             windowID: UInt32(truncatingIfNeeded: number), pid: pid_t(pid),
-            frame: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight)
+            frame: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight),
+            title: name?.isEmpty == false ? name : nil
         )
     }
+}
+
+/// SM-20: the window numbers of the layer-0 on-screen windows of `pids`,
+/// front to back (`kCGWindowListOptionOnScreenOnly` is documented as
+/// "ordered from front to back"; `optionAll`, which lists the candidates,
+/// documents no order). Parked windows keep a sliver on screen, so they are
+/// listed; windows of other Spaces and minimized ones are not. Public API,
+/// no titles read.
+public func windowServerStacking(pids: Set<pid_t>) -> [UInt32] {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return []
+    }
+    return parseWindowServerStacking(raw, pids: pids)
+}
+
+func parseWindowServerStacking(_ entries: [[String: Any]], pids: Set<pid_t>) -> [UInt32] {
+    entries.compactMap { entry in
+        guard let pid = entry[kCGWindowOwnerPID as String] as? Int, pids.contains(pid_t(pid)),
+              let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
+              let number = entry[kCGWindowNumber as String] as? Int
+        else {
+            return nil
+        }
+        return UInt32(truncatingIfNeeded: number)
+    }
+}
+
+/// SM-10: the `CGWindowID`s of every on-screen window of `pid`, whatever
+/// its layer (Gio's ring, dim and overlay panels sit above layer 0). A
+/// backdrop capture needs them in the shareable-content cache to exclude
+/// them. Public API, no Screen Recording needed; titles are never read.
+public func windowServerOnScreenWindowIDs(pid: pid_t) -> Set<UInt32> {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return []
+    }
+    return parseWindowServerWindowIDs(raw, pid: pid)
+}
+
+func parseWindowServerWindowIDs(_ entries: [[String: Any]], pid: pid_t) -> Set<UInt32> {
+    Set(entries.compactMap { entry in
+        guard let owner = entry[kCGWindowOwnerPID as String] as? Int, pid_t(owner) == pid,
+              let number = entry[kCGWindowNumber as String] as? Int
+        else {
+            return nil
+        }
+        return UInt32(truncatingIfNeeded: number)
+    })
 }
 
 /// Diagnostics: the size the WindowServer currently draws for one window

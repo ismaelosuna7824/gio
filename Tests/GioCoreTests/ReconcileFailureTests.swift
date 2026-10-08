@@ -104,4 +104,60 @@ final class ReconcileFailureTests: XCTestCase {
         )
         XCTAssertFalse(GioLog.entries().contains { $0.message.contains("see firstFailure") })
     }
+
+    // MARK: - PF-I refused focus
+
+    func testFocusGateLogsOncePerWindowPerMinuteAndCountsTheRest() {
+        var gate = FocusFailureLogGate()
+        XCTAssertEqual(gate.admit(id(1), now: 0), 0)
+        XCTAssertNil(gate.admit(id(1), now: 1))
+        XCTAssertNil(gate.admit(id(1), now: 59))
+        XCTAssertEqual(gate.admit(id(2), now: 2), 0, "another window has its own minute")
+        XCTAssertEqual(gate.admit(id(1), now: 60), 2, "the next line reports what it held back")
+        XCTAssertNil(gate.admit(id(1), now: 61))
+    }
+
+    private struct Refused: Error, FrameFailureReporting {
+        var failureKind: String { "notFrontmost(frontmost=77)" }
+        var failureActual: CGRect? { nil }
+    }
+
+    private final class RefusingActuator: WindowActuator {
+        func frame(of id: WindowID) throws -> CGRect? { nil }
+        func setFrame(_ frame: CGRect, for id: WindowID) throws {}
+        func focus(id: WindowID) throws { throw Refused() }
+    }
+
+    private final class Clock: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: TimeInterval = 0
+        func now() -> TimeInterval { lock.withLock { value } }
+        func set(_ time: TimeInterval) { lock.withLock { value = time } }
+    }
+
+    func testRefusedFocusIsLoggedOncePerWindowPerMinuteWithItsReason() {
+        GioLog.clearForTests()
+        GioLog.logFilePath = NSTemporaryDirectory() + "gio-pfi-\(UUID().uuidString).log"
+        let clock = Clock()
+        let reconciler = WindowReconciler(
+            actuator: RefusingActuator(), concurrency: .serial, clock: { clock.now() }, appName: { _ in "Xcode" }
+        )
+        // One refused focus per key press (live: 32 presses onto 31952:13).
+        for time in [0.0, 0.5, 1.0] {
+            clock.set(time)
+            reconciler.reconcile(frames: [:], focused: id(13), currentlyFocused: nil)
+        }
+        clock.set(2)
+        XCTAssertEqual(reconciler.focusNow(id(13)), .failed)
+        clock.set(3)
+        _ = reconciler.collect(reconciler.dispatch(frames: [:], focused: id(13), currentlyFocused: nil))
+        clock.set(61)
+        reconciler.reconcile(frames: [:], focused: id(13), currentlyFocused: nil)
+        let lines = GioLog.entries().filter { $0.message.hasPrefix("focus failed") }
+        XCTAssertEqual(lines.map(\.level), [.debug, .debug])
+        XCTAssertEqual(lines.map(\.message), [
+            "focus failed id=10:13 app=Xcode reason=notFrontmost(frontmost=77) suppressed=0",
+            "focus failed id=10:13 app=Xcode reason=notFrontmost(frontmost=77) suppressed=4",
+        ])
+    }
 }

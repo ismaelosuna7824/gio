@@ -234,6 +234,12 @@ final class MotionLanes: @unchecked Sendable {
         return stuck
     }
 
+    /// SM-12: a dispatched final pass supersedes the frames still queued for
+    /// `pids`; their in-flight write finishes and the pass's lane follows it.
+    func discardPending(pids: Set<pid_t>) {
+        discardPending { pids.contains($0) }
+    }
+
     private func discardPending(where matches: (pid_t) -> Bool) {
         let all = lock.withLock { Array(lanes.values) }
         for lane in all where matches(lane.pid) && lane.discardPending() > 0 {

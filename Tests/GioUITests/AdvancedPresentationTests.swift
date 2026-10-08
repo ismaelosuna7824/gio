@@ -154,8 +154,9 @@ final class AdvancedPresentationTests: XCTestCase {
     }
 
     func testScreenRecordingOnlyMattersForTheSnapshotRenderer() {
-        XCTAssertEqual(check(checklist(facts(sr: false)), "permissions").status, .ok)
         var config = GioConfig()
+        config.animations.renderer = .ax
+        XCTAssertEqual(check(checklist(facts(sr: false), config: config), "permissions").status, .ok)
         config.animations.renderer = .snapshot
         let list = checklist(facts(sr: false), config: config)
         XCTAssertEqual(check(list, "permissions").status, .warning)
@@ -181,6 +182,7 @@ final class AdvancedPresentationTests: XCTestCase {
 
     func testSnapshotCaptureTestOnlyWithTheSnapshotRenderer() {
         var config = GioConfig()
+        config.animations.renderer = .ax
         XCTAssertFalse(showsSnapshotCaptureTest(config: config, screenRecording: true))
         config.animations.renderer = .snapshot
         XCTAssertTrue(showsSnapshotCaptureTest(config: config, screenRecording: true))

@@ -136,16 +136,16 @@ struct AnimationsSettingsView: View {
     private var rendererCard: some View {
         SectionCard("Renderer") {
             RendererOption(
-                title: "Accessibility", badge: StatusBadge(.ok, "Default"),
-                detail: "Moves the real windows every frame, so you always see live content.",
-                isSelected: draft.current.renderer == .ax
-            ) { draft.current.renderer = .ax }
-            Divider().padding(.leading, 44)
-            RendererOption(
-                title: "Snapshot", badge: StatusBadge(.warning, "Experimental", symbol: "flask.fill"),
-                detail: "Animates window images in an overlay: smoother on slow apps, but it can flicker and needs Screen Recording.",
+                title: "Snapshot", badge: StatusBadge(.ok, "Default"),
+                detail: "Slides images of the windows at the display's refresh rate, the same speed with every app; the real windows move once. Content is frozen during the slide. Needs Screen Recording; without it Gio uses Accessibility.",
                 isSelected: draft.current.renderer == .snapshot
             ) { draft.current.renderer = .snapshot }
+            Divider().padding(.leading, 44)
+            RendererOption(
+                title: "Accessibility", badge: nil,
+                detail: "Moves the real windows every frame, so content stays live. Slow apps (WhatsApp, Music, Xcode) move at their own pace.",
+                isSelected: draft.current.renderer == .ax
+            ) { draft.current.renderer = .ax }
         }
         .disabled(!draft.current.enabled)
     }
@@ -165,7 +165,7 @@ struct AnimationsSettingsView: View {
 /// A radio-style choice with a title, badge and explanation.
 private struct RendererOption: View {
     let title: String
-    let badge: StatusBadge
+    let badge: StatusBadge?
     let detail: String
     let isSelected: Bool
     let select: () -> Void
@@ -185,7 +185,9 @@ private struct RendererOption: View {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: GioSpacing.xs) {
                         Text(title).font(GioFont.body.weight(.medium))
-                        badge
+                        if let badge {
+                            badge
+                        }
                     }
                     Text(detail)
                         .font(GioFont.caption)

@@ -71,6 +71,14 @@ public final class FocusDimPublisher: @unchecked Sendable {
         }
     }
 
+    /// SM-08: the end of a snapshot flight. The overlay drew the dim at full
+    /// strength; the live one must be up in the frame the overlay leaves, so
+    /// this recomputes now (one WindowServer query on this queue) instead of
+    /// waiting for the coalesced recompute.
+    public func publishNow() {
+        recompute()
+    }
+
     /// The window moved on its own (drag, app resize): the dim comes down and
     /// returns after the snap-back reflow.
     public func holdForDrag() {

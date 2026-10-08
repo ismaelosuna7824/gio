@@ -15,6 +15,9 @@ public enum SystemWindowActionError: Error, CustomStringConvertible, FrameFailur
     case writeFailed(attribute: String, status: AXError)
     case readbackFailed(attribute: String, status: AXError)
     case focusRefused(pid: pid_t)
+    /// PF-I: the focus call ran but another app (or none) stayed frontmost.
+    /// `frontmostWrite` is the status of the `AXFrontmost` write.
+    case notFrontmost(pid: pid_t, frontmost: pid_t?, frontmostWrite: AXError)
     case frameMismatch(requested: CGRect, actual: CGRect)
     case unknownHandle(elementID: UInt64)
 
@@ -28,6 +31,8 @@ public enum SystemWindowActionError: Error, CustomStringConvertible, FrameFailur
         case .writeFailed(let attribute, let status): return "writeFailed(\(attribute),\(status.rawValue))"
         case .readbackFailed(let attribute, let status): return "readbackFailed(\(attribute),\(status.rawValue))"
         case .focusRefused: return "focusRefused"
+        case .notFrontmost(_, let frontmost, let write):
+            return "notFrontmost(frontmost=\(frontmost.map(String.init) ?? "none"),ax=\(write.rawValue))"
         case .frameMismatch: return ReconcileFailure.frameMismatchKind
         case .unknownHandle: return "unknownHandle"
         }
@@ -56,6 +61,8 @@ public enum SystemWindowActionError: Error, CustomStringConvertible, FrameFailur
             return "readbackFailed: attribute=\(attribute) status=\(status.rawValue)"
         case .focusRefused(let pid):
             return "focusRefused: pid=\(pid)"
+        case .notFrontmost(let pid, let frontmost, let write):
+            return "notFrontmost: pid=\(pid) frontmost=\(frontmost.map(String.init) ?? "none") axFrontmostWrite=\(write.rawValue)"
         case .frameMismatch(let requested, let actual):
             return "frameMismatch: requested=\(describeFrame(requested)) actual=\(describeFrame(actual))"
         case .unknownHandle(let elementID):
@@ -106,17 +113,46 @@ func framesMatch(_ requested: CGRect, _ actual: CGRect) -> Bool {
         && abs(requested.size.height - actual.size.height) <= 1
 }
 
-/// Activate the app and ask macOS to focus this window. Throws `focusRefused`
-/// when the window does not become focused.
+/// Activate the app and ask macOS to focus this window. Throws when the app
+/// does not become frontmost (`notFrontmost`) or keeps another window focused
+/// (`focusRefused`).
 public func focusSystemWindow(_ target: DiscoveredSystemWindow) throws {
     try actionAXPermission()
+    // A CLI's main thread runs no run loop on its own: spin it while waiting
+    // so `NSWorkspace` sees the activation (properties refresh per main
+    // run-loop turn). The app never focuses from main.
     try focusAXWindow(
-        appElement: target.appElement, element: target.element, pid: target.window.pid
+        appElement: target.appElement, element: target.element, pid: target.window.pid,
+        wait: { delay in
+            if Thread.isMainThread {
+                RunLoop.current.run(until: Date(timeIntervalSinceNow: delay))
+            } else {
+                Thread.sleep(forTimeInterval: delay)
+            }
+        }
     )
 }
 
 /// Shared focus primitive used by the CLI and the reconciler actuator.
-func focusAXWindow(appElement: AXUIElement, element: AXUIElement, pid: pid_t) throws {
+///
+/// PF-I: focus is the target's app frontmost with the target as its focused
+/// window (`FocusLanding`). `NSRunningApplication.activate()` alone is a
+/// request: with no option the app activates only when no other app is
+/// active (documented), so an active unmanaged app (live: OrbStack) kept the
+/// keyboard. The trusted Accessibility client therefore also writes the
+/// app's `AXFrontmost` (the app makes itself active), after the window is
+/// focused and raised so it is the one activation brings forward. Then the
+/// bounded re-check (`FocusLandingCheck`, at most 50 ms) confirms it.
+///
+/// Runs on the calling thread: an app's write lane or the session queue,
+/// never main (`wait` sleeps there). Off-main AppKit use: `NSRunningApplication`
+/// is documented thread-safe; `activate()` and `NSWorkspace.frontmostApplication`
+/// already ran on the session queue before SM-12. Gio's own pid never reaches
+/// here (AGENTS rule 4), so no AX call runs AppKit in-process.
+func focusAXWindow(
+    appElement: AXUIElement, element: AXUIElement, pid: pid_t,
+    wait: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+) throws {
     guard let app = NSRunningApplication(processIdentifier: pid) else {
         throw SystemWindowActionError.appNotRunning(pid: pid)
     }
@@ -125,20 +161,46 @@ func focusAXWindow(appElement: AXUIElement, element: AXUIElement, pid: pid_t) th
         appElement, kAXFocusedWindowAttribute as CFString, element
     )
     guard status == .success else {
+        throw SystemWindowActionError.writeFailed(attribute: kAXFocusedWindowAttribute as String, status: status)
+    }
+    // Bring the window above its siblings; the landing check decides success.
+    _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+    let frontmostWrite = AXUIElementSetAttributeValue(
+        appElement, kAXFrontmostAttribute as CFString, kCFBooleanTrue
+    )
+    var frontmost: pid_t?
+    let landing = FocusLandingCheck.await(
+        check: {
+            frontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            return FocusLanding.judge(targetPID: pid, frontmostPID: frontmost) {
+                appFocusedWindow(of: appElement, is: element)
+            }
+        },
+        clock: { ProcessInfo.processInfo.systemUptime },
+        wait: wait
+    )
+    switch landing {
+    case .landed:
+        return
+    case .notFrontmost:
+        throw SystemWindowActionError.notFrontmost(pid: pid, frontmost: frontmost, frontmostWrite: frontmostWrite)
+    case .windowNotFocused:
         throw SystemWindowActionError.focusRefused(pid: pid)
     }
-    // Bring the window above its siblings; the focus check below decides success.
-    _ = AXUIElementPerformAction(element, kAXRaiseAction as CFString)
+}
+
+/// One AX read: whether the app's focused window is `element`.
+private func appFocusedWindow(of appElement: AXUIElement, is element: AXUIElement) -> Bool {
     var raw: CFTypeRef?
     guard AXUIElementCopyAttributeValue(
         appElement, kAXFocusedWindowAttribute as CFString, &raw
     ) == .success,
         let focused = raw,
-        CFGetTypeID(focused) == AXUIElementGetTypeID(),
-        CFEqual(focused as! AXUIElement, element)
+        CFGetTypeID(focused) == AXUIElementGetTypeID()
     else {
-        throw SystemWindowActionError.focusRefused(pid: pid)
+        return false
     }
+    return CFEqual(focused as! AXUIElement, element)
 }
 
 /// Move a window, then verify with readback. Returns the observed frame.

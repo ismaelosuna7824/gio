@@ -222,4 +222,76 @@ final class FocusIntentTests: XCTestCase {
         XCTAssertNil(intent.takeReassert(logicalFocus: id(2), frontmostPID: 77, frontmostFocusedWindow: { nil }))
         XCTAssertEqual(intent.takeImmediate(parked: [], now: 0.03), id(3))
     }
+
+    // MARK: - PF-I focus landing
+
+    func testFocusLandsOnlyWhenTheTargetAppIsFrontmostAndItsFocusedWindowMatches() {
+        XCTAssertEqual(FocusLanding.judge(targetPID: 10, frontmostPID: 10, focusedWindowMatches: { true }), .landed)
+        XCTAssertEqual(
+            FocusLanding.judge(targetPID: 10, frontmostPID: 10, focusedWindowMatches: { false }), .windowNotFocused
+        )
+    }
+
+    func testAnotherFrontmostAppIsNotFrontmostWithoutReadingTheWindow() {
+        // Live: OrbStack stayed active while VS Code's focused window matched.
+        XCTAssertEqual(
+            FocusLanding.judge(
+                targetPID: 10, frontmostPID: 77, focusedWindowMatches: { XCTFail("not read"); return true }
+            ),
+            .notFrontmost
+        )
+        XCTAssertEqual(
+            FocusLanding.judge(
+                targetPID: 10, frontmostPID: nil, focusedWindowMatches: { XCTFail("not read"); return true }
+            ),
+            .notFrontmost
+        )
+    }
+
+    func testLandingCheckFinishesOnLandingAndRetriesOnlyWithinItsBudget() {
+        XCTAssertEqual(FocusLandingCheck.budget, 0.05)
+        XCTAssertEqual(FocusLandingCheck.next(after: .landed, elapsed: 0), .finish(.landed))
+        XCTAssertEqual(
+            FocusLandingCheck.next(after: .notFrontmost, elapsed: 0), .retry(after: FocusLandingCheck.interval)
+        )
+        guard case .retry(let tail) = FocusLandingCheck.next(after: .windowNotFocused, elapsed: 0.048) else {
+            return XCTFail("expected a retry")
+        }
+        XCTAssertEqual(tail, 0.002, accuracy: 1e-9, "the last wait never runs past the budget")
+        XCTAssertEqual(FocusLandingCheck.next(after: .notFrontmost, elapsed: 0.05), .finish(.notFrontmost))
+        XCTAssertEqual(FocusLandingCheck.next(after: .windowNotFocused, elapsed: 0.2), .finish(.windowNotFocused))
+    }
+
+    func testAwaitedLandingStopsAtTheFirstLanding() {
+        var now: TimeInterval = 0
+        var checks = 0
+        let result = FocusLandingCheck.await(
+            check: {
+                checks += 1
+                return checks < 4 ? .notFrontmost : .landed
+            },
+            clock: { now },
+            wait: { now += $0 }
+        )
+        XCTAssertEqual(result, .landed)
+        XCTAssertEqual(checks, 4)
+        XCTAssertEqual(now, 3 * FocusLandingCheck.interval, accuracy: 1e-9)
+    }
+
+    func testAwaitedLandingGivesUpAtTheBudgetWithTheLastReason() {
+        var now: TimeInterval = 0
+        var checks = 0
+        let result = FocusLandingCheck.await(
+            check: {
+                checks += 1
+                return .notFrontmost
+            },
+            clock: { now },
+            wait: { now += $0 }
+        )
+        XCTAssertEqual(result, .notFrontmost)
+        XCTAssertLessThanOrEqual(now, FocusLandingCheck.budget + 1e-9)
+        XCTAssertGreaterThan(checks, 1)
+        XCTAssertLessThanOrEqual(checks, Int((FocusLandingCheck.budget / FocusLandingCheck.interval).rounded()) + 2)
+    }
 }

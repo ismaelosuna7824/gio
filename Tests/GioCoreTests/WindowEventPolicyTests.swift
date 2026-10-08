@@ -127,6 +127,25 @@ final class WindowEventPolicyTests: XCTestCase {
         XCTAssertTrue(gate.isEcho(id, observed: next, at: 100))
     }
 
+    func testADispatchedWriteLandingLateIsStillAnEcho() {
+        var gate = WriteEchoGate()
+        // SM-13: the lane may land the write up to 0.75 s after dispatch.
+        gate.recordDispatched(id, frame: frame, at: 10, landingWithin: 0.75)
+        let clamped = CGRect(x: 100, y: 100, width: 900, height: 600)
+        let lateLanding = 10 + 0.75 + WriteEchoGate.suppression / 2
+        XCTAssertTrue(gate.isSuppressed(id, at: lateLanding))
+        XCTAssertTrue(gate.isEcho(id, observed: clamped, at: lateLanding))
+        XCTAssertFalse(gate.isEcho(id, observed: clamped, at: 10 + 0.75 + WriteEchoGate.suppression + 0.1))
+    }
+
+    func testRecordingTheLandedWriteRestartsTheEchoWindowFromIt() {
+        var gate = WriteEchoGate()
+        gate.recordDispatched(id, frame: frame, at: 10, landingWithin: 0.75)
+        gate.recordApplied(id, frame: frame, at: 10.2)
+        let clamped = CGRect(x: 100, y: 100, width: 900, height: 600)
+        XCTAssertFalse(gate.isEcho(id, observed: clamped, at: 10.2 + WriteEchoGate.suppression + 0.05))
+    }
+
     // MARK: Registration retry
 
     func testRegistrationRetryDelaysGrowThenStop() {

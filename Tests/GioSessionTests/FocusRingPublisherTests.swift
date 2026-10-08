@@ -113,4 +113,40 @@ final class FocusRingPublisherTests: XCTestCase {
         XCTAssertEqual(hop.blocks.count, 0)
         XCTAssertEqual(delivered.values.count, 1)
     }
+
+    // MARK: SM-08 flight decorations
+
+    func testFlightDecorationsRingTheFocusedWindowWhereItLands() {
+        let publisher = makePublisher()
+        fixture.flightActive = true
+        let id = fixture.focusedID!
+        let landing = CGRect(x: 300, y: 0, width: 900, height: 1000)
+        let decorations = publisher.flightDecorations(
+            targets: [id: landing, SessionFixture.id(1, pid: 2): landing.offsetBy(dx: 900, dy: 0)]
+        )
+        XCTAssertEqual(decorations.ring, OverlayRing(id: id, width: 4, color: FocusRingSectionConfig.defaultColor))
+        XCTAssertNil(decorations.dim)
+        XCTAssertEqual(publisher.snapshot(), .hidden, "the live ring stays hidden during the flight")
+    }
+
+    func testFlightDecorationsFollowTheRingRulesAndTheDimIndicator() {
+        let publisher = makePublisher()
+        let id = fixture.focusedID!
+        let other = SessionFixture.id(1, pid: 2)
+        let targets = [id: fixture.physicalFrames[id]!, other: fixture.physicalFrames[other]!]
+        fixture.fullscreen = [id]
+        XCTAssertEqual(publisher.flightDecorations(targets: targets), .none)
+        fixture.fullscreen = []
+        fixture.zoomBusy = [id]
+        XCTAssertEqual(publisher.flightDecorations(targets: targets), .none)
+        fixture.zoomBusy = []
+        // A parked landing: no ring (the live rule), nothing to dim either.
+        let parked = CGRect(x: -899, y: 0, width: 900, height: 1000)
+        XCTAssertEqual(publisher.flightDecorations(targets: [id: parked, other: targets[other]!]), .none)
+        fixture.session.config.focus = FocusSectionConfig(indicator: .dim, dimStrength: 0.3)
+        XCTAssertEqual(publisher.flightDecorations(targets: targets).dim, OverlayDim(ids: [other], strength: 0.3))
+        XCTAssertEqual(publisher.flightDecorations(targets: [id: parked, other: targets[other]!]), .none)
+        fixture.session.config.focus.indicator = .none
+        XCTAssertEqual(publisher.flightDecorations(targets: targets), .none)
+    }
 }

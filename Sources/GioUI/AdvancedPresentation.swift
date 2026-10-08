@@ -278,7 +278,7 @@ public func diagnosticChecklist(
         renderer = DiagnosticCheck(
             id: "renderer", title: "Renderer", symbol: "wand.and.stars", tint: .pink, status: .ok,
             badge: "Snapshot",
-            summary: "Experimental: animates captured snapshots, then places the windows once.", details: []
+            summary: "Slides window images at the display's refresh rate, then places the windows once.", details: []
         )
     } else if wantsSnapshot {
         renderer = DiagnosticCheck(

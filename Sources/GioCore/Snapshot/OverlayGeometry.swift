@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-// SM-03: pure math behind the GPU snapshot overlay (GioUI `SnapshotOverlay`).
-// Everything the AppKit/Core Animation code decides lives here so it is
-// tested without a screen.
+// SM-03/SM-08: pure math behind the GPU snapshot overlay (GioUI
+// `SnapshotOverlay`). Everything the AppKit/Core Animation code decides lives
+// here so it is tested without a screen.
 
 /// Layer geometry in the overlay's local space: `position` is the layer's
 /// center (default anchor point), `bounds` starts at the origin.
@@ -17,7 +17,48 @@ public struct LayerGeometry: Equatable, Sendable {
     }
 }
 
-/// Cocoa global frame (bottom-left origin) to overlay-local layer geometry.
+// MARK: panel area (SM-18)
+
+/// The part of a display one overlay panel covers: the usable frame (the one
+/// the layout uses, menu bar and Dock excluded), so the live menu bar and
+/// Dock, which are transparent and draw above the panel, never show a stale
+/// captured copy through themselves. Layers, holes and the mask are local to
+/// `panelFrame` (pass it as the `in:` frame below); the backdrop, a capture
+/// of the whole display, is cropped to it with `backdropContentsRect`.
+public struct OverlayArea: Equatable, Sendable {
+    public let display: CGRect
+    /// The usable frame clamped to the display; the whole display when the
+    /// usable frame does not overlap it (auto-hide menu bar and Dock: equal).
+    public let panelFrame: CGRect
+
+    public init(display: CGRect, usable: CGRect) {
+        self.display = display
+        let clamped = display.intersection(usable)
+        panelFrame = clamped.isNull || clamped.width <= 0 || clamped.height <= 0 ? display : clamped
+    }
+
+    /// `contentsRect` (unit space of the display-sized capture) showing just
+    /// the panel's part, its edges snapped to the capture's pixel grid
+    /// (`scale` pixels per point). `flipped`: unit y measured from the top
+    /// (the layer's contents are flipped) instead of from the bottom.
+    public func backdropContentsRect(scale: CGFloat, flipped: Bool) -> CGRect {
+        guard display.width > 0, display.height > 0, scale > 0 else {
+            return CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+        let width = display.width * scale
+        let height = display.height * scale
+        let left = ((panelFrame.minX - display.minX) * scale).rounded()
+        let right = ((panelFrame.maxX - display.minX) * scale).rounded()
+        let low = flipped ? display.maxY - panelFrame.maxY : panelFrame.minY - display.minY
+        let high = flipped ? display.maxY - panelFrame.minY : panelFrame.maxY - display.minY
+        let bottom = (low * scale).rounded()
+        let top = (high * scale).rounded()
+        return CGRect(x: left / width, y: bottom / height, width: (right - left) / width, height: (top - bottom) / height)
+    }
+}
+
+/// Cocoa global frame (bottom-left origin) to overlay-local layer geometry;
+/// `display` is the overlay's frame (SM-18: `OverlayArea.panelFrame`).
 /// `flipped` is true when the overlay's root layer measures y from the top
 /// (`isGeometryFlipped`); the overlay uses an unflipped view, so it passes
 /// false, but the conversion is explicit and covered both ways.
@@ -31,25 +72,185 @@ public func overlayLayerGeometry(frame: CGRect, in display: CGRect, flipped: Boo
     )
 }
 
-/// `CASpringAnimation` parameters for a Gio spring: mass 1, the same
-/// stiffness, damping `2 ζ sqrt(k)` (the equation `SpringParameters` solves).
-public struct OverlaySpring: Equatable, Sendable {
-    public let mass: Double
-    public let stiffness: Double
-    public let damping: Double
+/// Corner radius of a window layer: the one macOS gives windows, shared
+/// with the live ring and dim so the hand-off draws the same shape.
+public let overlayWindowCornerRadius: CGFloat = focusRingWindowCornerRadius
+
+/// Velocity of a layer's geometry, points per second.
+public struct LayerVelocity: Equatable, Sendable {
+    public var position: CGVector
+    public var size: CGSize
+
+    public static let zero = LayerVelocity(position: .zero, size: .zero)
+
+    public init(position: CGVector, size: CGSize) {
+        self.position = position
+        self.size = size
+    }
 }
 
-public func overlaySpring(_ spring: SpringParameters) -> OverlaySpring {
-    OverlaySpring(
-        mass: 1, stiffness: spring.stiffness,
-        damping: 2 * spring.dampingRatio * spring.stiffness.squareRoot()
+/// One layer's flight: where it started, where it lands and how fast it was
+/// going when this flight (re)started. Each axis (x, y, width, height) is
+/// Gio's own spring (`SpringParameters.state`), the model the AX renderer
+/// animates with, so the overlay moves exactly like the real windows would.
+public struct FlightTrack: Equatable, Sendable {
+    public var start: LayerGeometry
+    public var end: LayerGeometry
+    public var velocity: LayerVelocity
+
+    public init(start: LayerGeometry, end: LayerGeometry, velocity: LayerVelocity = .zero) {
+        self.start = start
+        self.end = end
+        self.velocity = velocity
+    }
+
+    /// Displacement and velocity of every axis relative to the target.
+    private var axes: [(displacement: Double, velocity: Double)] {
+        [
+            (Double(start.position.x - end.position.x), Double(velocity.position.dx)),
+            (Double(start.position.y - end.position.y), Double(velocity.position.dy)),
+            (Double(start.bounds.width - end.bounds.width), Double(velocity.size.width)),
+            (Double(start.bounds.height - end.bounds.height), Double(velocity.size.height)),
+        ]
+    }
+
+    /// Geometry and velocity `elapsed` seconds into the flight.
+    public func state(at elapsed: TimeInterval, spring: SpringParameters) -> (geometry: LayerGeometry, velocity: LayerVelocity) {
+        let samples = axes.map { spring.state(displacement: $0.displacement, velocity: $0.velocity, at: elapsed) }
+        let geometry = LayerGeometry(
+            position: CGPoint(x: end.position.x + samples[0].displacement, y: end.position.y + samples[1].displacement),
+            bounds: CGRect(
+                x: 0, y: 0, width: end.bounds.width + samples[2].displacement,
+                height: end.bounds.height + samples[3].displacement
+            )
+        )
+        let velocity = LayerVelocity(
+            position: CGVector(dx: samples[0].velocity, dy: samples[1].velocity),
+            size: CGSize(width: samples[2].velocity, height: samples[3].velocity)
+        )
+        return (geometry, velocity)
+    }
+
+    /// A new flight towards `end` from where this one is `elapsed` seconds
+    /// in, carrying its velocity: a retarget mid-air does not stutter.
+    public func retargeted(to end: LayerGeometry, at elapsed: TimeInterval, spring: SpringParameters) -> FlightTrack {
+        let current = state(at: elapsed, spring: spring)
+        return FlightTrack(start: current.geometry, end: end, velocity: current.velocity)
+    }
+
+    /// Seconds until every axis is at rest, capped like the AX motion.
+    public func settleTime(spring: SpringParameters) -> TimeInterval {
+        min(spring.settleTime(axes: axes), SpringParameters.maxDuration)
+    }
+
+    /// Largest movement of any edge/size component.
+    public var travel: Double {
+        flightTravel(
+            from: CGRect(origin: CGPoint(x: start.position.x - start.bounds.width / 2, y: start.position.y - start.bounds.height / 2), size: start.bounds.size),
+            to: CGRect(origin: CGPoint(x: end.position.x - end.bounds.width / 2, y: end.position.y - end.bounds.height / 2), size: end.bounds.size)
+        )
+    }
+}
+
+/// A track sampled for `CAKeyframeAnimation`: `times` are fractions of
+/// `duration`, one sample per display refresh at `rate` Hz, the last one
+/// exactly the end. The render server interpolates between samples; Gio
+/// does no per-frame work during the flight.
+public struct FlightKeyframes: Equatable, Sendable {
+    public var duration: TimeInterval
+    public var times: [Double]
+    public var geometries: [LayerGeometry]
+}
+
+public func flightKeyframes(track: FlightTrack, spring: SpringParameters, rate: Double = 120) -> FlightKeyframes {
+    let duration = track.settleTime(spring: spring)
+    let count = max(Int((duration * rate).rounded(.up)), 1)
+    var times: [Double] = []
+    var geometries: [LayerGeometry] = []
+    times.reserveCapacity(count + 1)
+    geometries.reserveCapacity(count + 1)
+    for index in 0...count {
+        let fraction = Double(index) / Double(count)
+        times.append(fraction)
+        geometries.append(index == count ? track.end : track.state(at: fraction * duration, spring: spring).geometry)
+    }
+    return FlightKeyframes(duration: duration, times: times, geometries: geometries)
+}
+
+// MARK: backdrop holes (SM-16)
+
+/// The holes (Cocoa global frames) that touch `display` (the overlay's
+/// frame, SM-18: `OverlayArea.panelFrame`), in the overlay's
+/// local space: same origin and flip as `overlayLayerGeometry`.
+public func overlayBackdropHoles(_ holes: [CGRect], in display: CGRect, flipped: Bool) -> [CGRect] {
+    holes.compactMap { hole in
+        let overlap = display.intersection(hole)
+        guard !overlap.isNull, overlap.width > 0, overlap.height > 0 else {
+            return nil
+        }
+        let geometry = overlayLayerGeometry(frame: hole, in: display, flipped: flipped)
+        return CGRect(
+            x: geometry.position.x - hole.width / 2, y: geometry.position.y - hole.height / 2,
+            width: hole.width, height: hole.height
+        )
+    }
+}
+
+/// Mask of the backdrop layer: the whole overlay frame minus the holes, rounded
+/// like the window layers, filled even-odd. The holes are merged first, so
+/// overlapping holes stay open. Nil when no hole touches the display (the
+/// backdrop needs no mask).
+public func overlayBackdropMask(holes: [CGRect], in display: CGRect, flipped: Bool) -> CGPath? {
+    let local = overlayBackdropHoles(holes, in: display, flipped: flipped)
+    guard !local.isEmpty else {
+        return nil
+    }
+    let shapes = local.map { rect in
+        let radius = min(overlayWindowCornerRadius, rect.width / 2, rect.height / 2)
+        return CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+    }
+    let merged = shapes.dropFirst().reduce(shapes[0]) { $0.union($1, using: .winding) }
+    let mask = CGMutablePath()
+    mask.addRect(CGRect(origin: .zero, size: display.size))
+    mask.addPath(merged)
+    return mask
+}
+
+// MARK: shadow, ring and dim
+
+/// The shadow each window layer casts, in the layer's (y-up) space: offset
+/// down. Real windows cast shadows into the gaps; without one the gaps
+/// brighten when the overlay goes up and darken when it comes down.
+public struct OverlayShadow: Equatable, Sendable {
+    public var offset: CGSize
+    public var radius: CGFloat
+    public var opacity: Float
+}
+
+/// Between macOS's heavy key-window shadow and the lighter one of the other
+/// windows (most tiles are not key): 10 pt down, 22 pt blur, 38 %. Chosen by
+/// eye against Sonoma windows; the live match is checked on screen (SM-08).
+public let overlayWindowShadow = OverlayShadow(offset: CGSize(width: 0, height: -10), radius: 22, opacity: 0.38)
+
+/// Precomputed shadow outline (no per-frame offscreen pass): the window's
+/// rounded rect.
+public func overlayShadowPath(bounds: CGRect, cornerRadius: CGFloat) -> CGPath {
+    CGPath(roundedRect: bounds, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
+}
+
+/// The ring layer around a window layer: the same center, the bounds outset
+/// by the ring width, with a border of that width inside them, so the inner
+/// edge sits on the window edge like the live ring (`FocusRingGeometry`).
+public func overlayRingGeometry(window: LayerGeometry, width: CGFloat) -> LayerGeometry {
+    LayerGeometry(
+        position: window.position,
+        bounds: CGRect(x: 0, y: 0, width: window.bounds.width + 2 * width, height: window.bounds.height + 2 * width)
     )
 }
 
-/// Where a retargeted layer starts: the value on screen right now (the
-/// presentation layer), else its model value. Velocity is not carried over.
-public func retargetStart(presentation: LayerGeometry?, model: LayerGeometry) -> LayerGeometry {
-    presentation ?? model
+/// Outer radius of the ring layer; the inner edge keeps the window's radius.
+public func overlayRingCornerRadius(width: CGFloat) -> CGFloat {
+    overlayWindowCornerRadius + width
 }
 
 public struct OverlayDiff: Equatable, Sendable {
@@ -99,21 +300,26 @@ public func overlayDisplayIndex(
 }
 
 /// Bound for one overlay flight: it may not outlive `limit` seconds since it
-/// was armed (begin or retarget). A new arm supersedes older tokens.
+/// was armed (begin or retarget). A new arm supersedes older tokens. SM-14:
+/// an arm may carry its own limit (the hand-off hold after the deadline,
+/// `SnapshotHandoff.watchdogLimit`); the next plain arm uses `limit` again.
 public struct FlightWatchdog: Equatable, Sendable {
     public static let defaultLimit: TimeInterval = 1.5
 
     private let limit: TimeInterval
     private var generation = 0
     private var armedAt: TimeInterval?
+    private var armedLimit: TimeInterval
 
     public init(limit: TimeInterval = FlightWatchdog.defaultLimit) {
         self.limit = limit
+        armedLimit = limit
     }
 
-    public mutating func arm(at now: TimeInterval) -> Int {
+    public mutating func arm(at now: TimeInterval, limit: TimeInterval? = nil) -> Int {
         generation += 1
         armedAt = now
+        armedLimit = limit ?? self.limit
         return generation
     }
 
@@ -130,7 +336,7 @@ public struct FlightWatchdog: Equatable, Sendable {
         guard isCurrent(token), let armedAt else {
             return false
         }
-        return now - armedAt >= limit
+        return now - armedAt >= armedLimit
     }
 }
 

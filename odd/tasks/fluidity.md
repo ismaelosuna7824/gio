@@ -47,6 +47,19 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
 - PF-G: `layout.center-focused-column` defaults to `on-overflow` (was `never`): a neighbour
   already in view only takes focus, the strip scrolls and centers only when the column does
   not fit next to the previous one. Chosen by the user after trying it live in Settings.
+- PF-I: focus counts only when the target's app is frontmost (`NSWorkspace.frontmostApplication`)
+  and its focused window is the target (`FocusLanding.judge`, GioCore). The actuator keeps
+  `NSRunningApplication.activate()`, focuses and raises the window, then writes the app's
+  `AXFrontmost = true` and re-checks every 5 ms for at most 50 ms (`FocusLandingCheck`); a miss
+  throws `notFrontmost(frontmost=<pid>,ax=<AXError of the AXFrontmost write>)`. No hop to main:
+  AppKit stays on the calling thread (lane / session queue) as before SM-12, because
+  `NSRunningApplication` is documented thread-safe, `activate()` and `frontmostApplication`
+  already ran on the session queue for months, and Gio's own pid never gets here (rule 4). The
+  50 ms wait is on that thread only. Main never waits on a lane; its only `queue.sync` calls on
+  the session queue are in `start` (`initialSync`, no keyboard intent pending yet; at worst one
+  bounded 50 ms wait) and `shutdown` (never focuses). Repeated refusals are one per key press, not a re-send: they are kept and
+  logged by the reconciler once per window per minute (`FocusFailureLogGate`, debug,
+  `focus failed id= app= reason= suppressed=`); `foldSettle` logs only landed intents.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -113,6 +126,62 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   to 872 (padding kept). GREEN: Core 1318, Session 300, UI 250 (53 skipped), MacOS 40,
   Mac 19, POC 7, 0 failures; signed build succeeded. LIVE PENDING: `Alt+F` on a middle or
   last column shows the padding on both sides at once.
+- [ ] PF-I — Keyboard focus from an unmanaged active app reaches the tiled window. Not
+  committed (user asked for no commit). Live 2026-10-08 20:46 UTC: `hotkey focusLeft` then
+  `focus intent id=5980:5 changed=true failed=false` (VS Code), yet the screenshot showed
+  OrbStack (unmanaged, no tiled window) still active (menu bar OrbStack, keys not reaching
+  VS Code until a click; `focus adopt source=activation id=5980:5` only at 20:46:08).
+  `focusAXWindow` verified only the app's `AXFocusedWindow`, never that the app was frontmost.
+  Also `focus intent id=31952:13 changed=false failed=true` 32 times (Xcode window).
+  Log analysis of the 31952:13 lines: every one follows a `hotkey focusRight` onto the last
+  column (e.g. 20:44:15-16: 11 presses, the last four land on 13 and give four failures;
+  failures of one burst appear back to back because dispatched passes are folded together at
+  the flight's settle); totals 588 `focus intent` lines for 594 focus-carrying hotkeys plus 7
+  `focus window requested` and 4 `focus reassert`. So no re-send bug: `FocusIntent.take`
+  consumes the target once per press (HD-01 holds), the window simply refuses focus.
+  Apple documentation (read 2026-10-08):
+  - Documented: `NSRunningApplication.activate(options:)` "attempts to activate"; with no
+    options "the new app is activated only if there's no currently active application"
+    (`activateIgnoringOtherApps` discussion); `activateIgnoringOtherApps` is deprecated since
+    macOS 14. Cooperative activation (macOS 14, `activate(from:options:)`, `yieldActivation(to:)`):
+    activation is a request the system may deny, and "only the active app can influence the
+    activation context" by yielding first; Gio is never the active app here, so it cannot yield.
+    `NSRunningApplication` "is thread safe, in that its properties are returned atomically", and
+    its time-varying properties refresh per turn of the main run loop. `frontmostApplication` is
+    "the app that receives key events". `kAXFrontmostAttribute`: "whether the application ...
+    is active"; the SDK header and the docs do not say whether it is writable.
+  - Inferred (not documented): writing `AXFrontmost = true` makes an AppKit app activate itself
+    (other window managers rely on it); from a background thread `frontmostApplication`
+    follows Gio's main run loop, which keeps turning (main never waits on lanes), so a landing
+    can read late and log a false `notFrontmost` inside 50 ms (diagnostic only: `focusFailed`
+    drives no retry); `activate()` and `NSWorkspace` reads are safe off main (they ran there
+    before SM-12 without a crash); the old success for tiled-to-tiled focus came from
+    `AXFocusedWindow`/`AXRaise` side effects in the target app, not from `activate()`.
+  Decisions: see Decisions (PF-I). Changes: `FocusLanding`, `FocusLandingCheck`,
+  `FocusFailureLogGate` (new `GioCore/Reconciliation/FocusLanding.swift`);
+  `ReconcileReport.focusFailure` (diagnostic, outside equality) filled by `reconcile`,
+  `collect` (`DispatchFocusStep.Outcome.failure`) and logged for `focusNow` too;
+  `SystemWindowActionError.notFrontmost`, a failed `AXFocusedWindow` write now reports
+  `writeFailed(AXFocusedWindow,<status>)` instead of a bare `focusRefused`; `focusSystemWindow`
+  (gio-poc, main thread of a CLI) spins the run loop instead of sleeping. RED: compile
+  (`ReconcileReport` had no `focusFailure`; no `FocusLanding`/`FocusLandingCheck`) for
+  `FocusIntentTests.testFocusLandsOnlyWhenTheTargetAppIsFrontmostAndItsFocusedWindowMatches`,
+  `testAnotherFrontmostAppIsNotFrontmostWithoutReadingTheWindow`,
+  `testLandingCheckFinishesOnLandingAndRetriesOnlyWithinItsBudget`,
+  `testAwaitedLandingStopsAtTheFirstLanding`, `testAwaitedLandingGivesUpAtTheBudgetWithTheLastReason`
+  and `ReconcileFailureTests.testFocusGateLogsOncePerWindowPerMinuteAndCountsTheRest`; then,
+  with the pure types in place and the reconciler unwired, 5 failures:
+  `ReconcilerTests.testFocusFailureIsRecorded`, `testFocusFailureCarriesItsReason`,
+  `testDispatchedFocusFailureCarriesItsReason` (`focusFailure` nil) and
+  `ReconcileFailureTests.testRefusedFocusIsLoggedOncePerWindowPerMinuteWithItsReason` (no
+  `focus failed` lines). GREEN: `swift test` all bundles 0 failures (UI 274 / 53 skipped,
+  Session 349, POC 7, Mac 19, MacOS 49, Core 1469); `git diff --check` clean. Signed
+  `xcodebuild` not run in this task. LIVE PENDING: with OrbStack (or another unmanaged app)
+  active, `Alt+H`/`Alt+L` onto a tiled window makes that app frontmost (menu bar, keystrokes)
+  without a click; the log shows `focus intent id=... changed=true`, or
+  `focus failed ... reason=notFrontmost(frontmost=<pid>,ax=<status>)` if macOS still refuses
+  (`ax` tells whether the `AXFrontmost` write was accepted). Also read the `reason` of the
+  Xcode window 31952:13 the next time it refuses.
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

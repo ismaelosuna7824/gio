@@ -58,6 +58,9 @@ public final class FocusDimController {
         guard next != state else {
             return
         }
+        // SM-08: coming out of a snapshot flight the overlay's own dim was
+        // already there at full strength; the live one appears in place.
+        let afterFlight = state == .hidden(.flight)
         state = next
         generation += 1
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -82,7 +85,10 @@ public final class FocusDimController {
                 CATransaction.commit()
                 if !visible.contains(key) {
                     panel.orderFrontRegardless()
-                    fade(view, to: alpha, duration: focusDimFadeDuration(showing: true, reduceMotion: reduceMotion))
+                    fade(
+                        view, to: alpha,
+                        duration: focusDimFadeDuration(showing: true, reduceMotion: reduceMotion, afterFlight: afterFlight)
+                    )
                 } else if view.shape.opacity != alpha {
                     fade(view, to: alpha, duration: 0)
                 }

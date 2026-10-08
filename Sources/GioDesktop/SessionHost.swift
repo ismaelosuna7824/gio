@@ -29,6 +29,12 @@ final class SessionHost: @unchecked Sendable {
     private var displays = DisplayManager()
     private var actuator: AXWindowActuator?
     private var reconciler: WindowReconciler<AXWindowActuator>?
+    /// SM-12: real-window writes dispatched under the snapshot overlay,
+    /// folded when the flight ends (`collectDispatchedWrites`).
+    private var dispatchedWrites: [(
+        pass: WindowReconciler<AXWindowActuator>.DispatchedPass, visible: [WindowID: CGRect],
+        parked: [WindowID: ParkedTarget], focusTarget: WindowID?
+    )] = []
     private var server: IPCServer?
     private let instanceLock = SingleInstanceLock()
     /// The tap is created and restarted from the main thread but read from
@@ -47,6 +53,10 @@ final class SessionHost: @unchecked Sendable {
             tapLock.unlock()
         }
     }
+    /// SM-09: last time a typing hop reached the session; written on main
+    /// in the tap callback, guarded by `typingLock`.
+    private var lastTypingHop: TimeInterval?
+    private let typingLock = NSLock()
     /// Latest snapshot for the main thread. The session queue publishes it
     /// (start, config changes, every `snapshot()` request); main only reads,
     /// so it never waits behind a slow reflow (tap timeouts, dead hotkeys).
@@ -59,6 +69,10 @@ final class SessionHost: @unchecked Sendable {
     /// Menu bar hook, always invoked on the main thread.
     var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
+    private var desktopPictureObservers: [NSObjectProtocol] = []
+    /// SM-20: system memory pressure trims the snapshot cache (set once at
+    /// start, events on the session queue, cancelled at shutdown).
+    private var memoryPressure: DispatchSourceMemoryPressure?
     private var spaceMonitor: ManagedSpaceMonitor?
     private var space: SpaceCoordinator!
     private var pendingReflow: DispatchWorkItem?
@@ -111,15 +125,18 @@ final class SessionHost: @unchecked Sendable {
     /// no periodic timer) and the running overlay flight.
     private var snapshotRefresher: SnapshotCacheRefresher!
     private var overlayFlight: SnapshotFlightController!
-    /// SM-04 overlay hooks, set once by the app before `start()`. They are
-    /// invoked on the session queue and hop to the main thread themselves.
-    var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight]) -> Void)?
-    var overlayRetarget: ((Int, [WindowID: CGRect], [SnapshotDisplayFlight]) -> Void)?
-    var overlayEnd: ((Bool) -> Void)?
+    /// SM-04/SM-08 overlay hooks, set once by the app before `start()`. They
+    /// are invoked on the session queue and hop to the main thread themselves.
+    /// `overlayBegin` primes the overlay and reports back through
+    /// `snapshotPrimed`; `overlayFly` starts the tracks after the real writes.
+    /// SM-16: the `[CGRect]` are the holes cut in the backdrops (targets of
+    /// the windows that fly without a layer).
+    var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
+    var overlayFly: ((Int) -> Void)?
+    var overlayRetarget: ((Int, [WindowID: CGRect], [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
+    var overlayEnd: (() -> Void)?
     /// Main thread: removes a running flight at once (mouse down); true when one ran.
     var overlayAbortForMouseDown: (() -> Bool)?
-    /// Wallpaper backdrops, readable from any thread.
-    var overlayWallpapers: WallpaperCache?
     /// NA-03 close ghost hooks, set once by the app before `start()`; invoked
     /// on the session queue, they hop to the main thread themselves.
     var ghostShow: ((Int, CGImage, CGRect, TimeInterval, CGFloat) -> Void)?
@@ -268,7 +285,13 @@ final class SessionHost: @unchecked Sendable {
                 capture: { [snapshotCapturer] request, done in
                     Task.detached {
                         let result = await snapshotCapturer.capture(request)
-                        done(result.snapshots.mapValues { CapturedImage(image: $0.image, frame: $0.frame) })
+                        done(SnapshotCaptureOutcome(
+                            images: result.snapshots.mapValues { CapturedImage(image: $0.image, frame: $0.frame) },
+                            backdrops: result.backdrops.values.map {
+                                CapturedBackdropImage(image: $0.image, displayFrame: $0.frame)
+                            },
+                            misses: result.summary.misses
+                        ))
                     }
                 },
                 prefetch: { [snapshotCapturer] managed, done in
@@ -277,7 +300,10 @@ final class SessionHost: @unchecked Sendable {
                         done()
                     }
                 },
-                log: { GioLog.record($0, $1) }
+                serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
+                ownPid: getpid(),
+                log: { GioLog.record($0, $1) },
+                appName: { [unowned self] in appName($0) }
             ),
             scheduler: scheduler
         )
@@ -297,14 +323,32 @@ final class SessionHost: @unchecked Sendable {
         overlayFlight = SnapshotFlightController(
             context: .init(
                 displayFrames: { [unowned self] in displays.allDisplays().map(\.frame) },
+                usableFrames: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
                 physicalFrames: { [unowned self] in physicalFrames },
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 takeCoalescedReflow: { [unowned self] in reflowCoalescer.takeAtTick() },
+                requestReflow: { [unowned self] in _ = reflowCoalescer.request(motionActive: true) },
                 performReflow: { [unowned self] in performReflow() },
-                publishFocusRing: { [unowned self] in publishFocusRing() },
+                decorations: { [unowned self] in focusRing.flightDecorations(targets: $0) },
+                // SM-08: the dim is computed now (not 50 ms later) so the live
+                // ring and dim are up in the frame the overlay leaves.
+                publishIndicators: { [unowned self] in
+                    focusDim.publishNow()
+                    focusRing.publish()
+                },
+                collectWrites: { [unowned self] in collectDispatchedWrites() },
                 scheduleRenderCheck: { [unowned self] in
                     if renderVerifier.hasCandidates {
                         renderVerifier.schedule()
+                    }
+                },
+                // SM-14: tiny captures off the session queue; the answer hops back.
+                checkPaint: { [unowned self, snapshotCapturer] frames, answer in
+                    let (screens, primary) = displayParameters.captureScreens
+                    Task.detached {
+                        answer(await snapshotCapturer.paintCheck(
+                            windows: frames, displays: screens, primaryDisplayHeight: primary
+                        ))
                     }
                 },
                 log: { GioLog.record($0, $1) }
@@ -474,6 +518,7 @@ final class SessionHost: @unchecked Sendable {
                     trustedFrames.removeAll()
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
+                    snapshotRefresher.markBackdropDirty()
                 },
                 windowOpened: { [unowned self] in
                     openingWindows.mark($0)
@@ -492,7 +537,10 @@ final class SessionHost: @unchecked Sendable {
                     focus.requestIntent(if: true, previous: previous)
                 },
                 discoverAttempt: { discoverSystemWindowAttempt(element: $0, pid: $1) },
-                windowRegistered: { [unowned self] in openTimeline.registered($0) },
+                windowRegistered: { [unowned self] timing in
+                    openTimeline.registered(timing)
+                    snapshotRefresher.noteRegistered(timing.id)
+                },
                 log: { GioLog.record($0, $1) },
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork }
             ),
@@ -649,6 +697,8 @@ final class SessionHost: @unchecked Sendable {
             self.initialSync()
         }
         watchDisplays()
+        watchDesktopPicture()
+        watchMemoryPressure()
         watchManagedSpace()
         queue.sync {
             self.events.rebuild()
@@ -670,7 +720,8 @@ final class SessionHost: @unchecked Sendable {
             isShuttingDown = true
             pendingReflow?.cancel()
             motion.stop()
-            overlayFlight.end(fadeOut: false)
+            overlayFlight.end()
+            memoryPressure?.cancel()
             snapshotRefresher.removeAll()
             closeGhost.removeAll()
             reconciler?.waitForMotionIdle(timeout: 0.3)
@@ -704,7 +755,7 @@ final class SessionHost: @unchecked Sendable {
             }
             pendingReflow?.cancel()
             motion.stop()
-            overlayFlight.end(fadeOut: false)
+            overlayFlight.end()
             reconciler?.waitForMotionIdle(timeout: 0.3)
             let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
             let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
@@ -750,7 +801,7 @@ final class SessionHost: @unchecked Sendable {
                 let request = SnapshotCaptureRequest(
                     windows: frames, displays: screens,
                     primaryDisplayHeight: primaryScreen()?.frame.height ?? 1169,
-                    measure: true
+                    measure: true, reason: .measure
                 )
                 Task.detached { [snapshotCapturer] in
                     let result = await snapshotCapturer.capture(request)
@@ -838,7 +889,7 @@ final class SessionHost: @unchecked Sendable {
                 displays: screens.map {
                     SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
                 },
-                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500
+                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500, reason: .overview
             )
             Task.detached { [snapshotCapturer] in
                 let result = await snapshotCapturer.capture(request)
@@ -921,6 +972,8 @@ final class SessionHost: @unchecked Sendable {
     private func publishFocusRing() {
         focusDim.update()
         focusRing.publish()
+        // SM-09: a focus move repaints both windows; their images follow.
+        snapshotRefresher.noteFocus(session.manager.currentWorkspace().focusedWindow)
     }
 
     // MARK: - Sync
@@ -933,7 +986,21 @@ final class SessionHost: @unchecked Sendable {
 
     private func initialSync() {
         if actuator == nil {
-            actuator = AXWindowActuator(displayHeight: primaryHeight())
+            let created = AXWindowActuator(displayHeight: primaryHeight())
+            actuator = created
+            // SM-17: the snapshot title tie-break reads the AX title of a
+            // registered element on the capture task (the actuator's handle
+            // table is behind its lock); titles never leave the capturer.
+            nonisolated(unsafe) let handles = created
+            snapshotCapturer.setWindowTitleReader { id in
+                handles.element(for: id).flatMap(axTitle(of:))
+            }
+            // SM-20: equal or missing titles fall back to the app's AX
+            // window order, mapped to registered ids (no titles), read on
+            // the capture task as well.
+            snapshotCapturer.setWindowOrderReader { pid in
+                axWindowOrder(pid: pid) { handles.id(matching: $0, pid: pid) }
+            }
         }
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
         // MM-01: displays first, so every startup window lands in the stack
@@ -1233,51 +1300,95 @@ final class SessionHost: @unchecked Sendable {
             canAnimateSize: { resizeCapability.canAnimateSize(resizeKey($0)) },
             focused: focus.pendingIntentTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget
         )
-        // SM-04: with the snapshot renderer the real windows get one write to
-        // their final frames (the instant pass below) under an opaque overlay
-        // that flies their images on the GPU; the AX motion is the fallback.
+        // SM-04/SM-08: with the snapshot renderer the real windows get one
+        // write to their final frames (the instant pass) under an overlay
+        // that draws an opaque picture and flies their images on the GPU. The overlay must be on
+        // screen before that write: `.priming` hands the pass to the flight
+        // controller, which runs it once main reports the prime (or the AX
+        // motion instead when the overlay never made it). The AX motion is
+        // the fallback.
         var snapshotFlight = false
-        if animating, snapshotRefresher.rendererUsable() {
-            if !animations.isEmpty {
-                snapshotFlight = overlayFlight.drive(animations: animations, plans: plans, spring: passAnimation.spring)
-            } else {
-                snapshotFlight = overlayFlight.isActive
+        if animating, snapshotRefresher.rendererUsable(), !animations.isEmpty || overlayFlight.isActive {
+            switch overlayFlight.drive(animations: animations, plans: plans, spring: passAnimation.spring) {
+            case .ax:
+                break
+            case .flying:
+                snapshotFlight = true
+            case .priming:
+                // A running AX motion (a fallback's) stops here, not in the
+                // deferred instant pass: its ticks would keep moving the real
+                // windows while main primes, and its end would run the final
+                // pass, which ends the new flight. The AX fallback restarts
+                // its own motion.
+                motion.stop()
+                overlayFlight.deferPass(
+                    writes: { [unowned self] in instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: true, reconciler: reconciler) },
+                    fallback: { [unowned self] in
+                        axMotionPass(
+                            animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
+                            zoomJob: zoomJob, reconciler: reconciler
+                        )
+                    }
+                )
+                return
             }
         }
         if !snapshotFlight {
-            overlayFlight.end(fadeOut: false)
+            overlayFlight.end()
         }
         if !animations.isEmpty && !snapshotFlight {
-            // PF-02: entries (new windows) are written at once and merge into
-            // a running motion; only switch pre-positions wait for its lanes.
-            let writes = planPrepositionWrites(
-                prepositions, entries: pass.entries, motionInFlight: reconciler.hasMotionWritesInFlight
+            axMotionPass(
+                animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
+                zoomJob: zoomJob, reconciler: reconciler
             )
-            motion.applyPrepositions(writes.immediate) {
-                reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
-            }
-            var waitedForMotion: TimeInterval = 0
-            if writes.waitsForMotion {
-                let waitStarted = ProcessInfo.processInfo.systemUptime
-                reconciler.waitForMotionIdle(timeout: 0.3)
-                waitedForMotion = ProcessInfo.processInfo.systemUptime - waitStarted
-                motion.applyPrepositions(writes.afterMotionIdle) {
-                    reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
-                }
-            }
-            motion.start(animations, sink: reconciler)
-            openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
-            // FI-06: the keyboard follows the logical focus right away instead
-            // of after the animation; the final pass only re-asserts a drift.
-            focus.focusAtMotionStart(parked: Set(plans.flatMap { $0.parked.keys }), plans: plans) {
-                reconciler.focusNow($0) == .failed
-            }
-            if let zoomJob {
-                nativeZoom.start(zoomJob)
-            }
-            nativeZoom.scheduleVerifications(failed: [])
             return
         }
+        instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: snapshotFlight, reconciler: reconciler)
+    }
+
+    /// The AX renderer: pre-positions, then the motion driver writes every
+    /// frame of the animation through the reconciler.
+    private func axMotionPass(
+        animations: [WindowAnimation], plans: [ParkingPlan], prepositions: [WindowID: CGRect], entries: Set<WindowID>,
+        zoomJob: NativeZoomController.Job?, reconciler: WindowReconciler<AXWindowActuator>
+    ) {
+        // PF-02: entries (new windows) are written at once and merge into
+        // a running motion; only switch pre-positions wait for its lanes.
+        let writes = planPrepositionWrites(
+            prepositions, entries: entries, motionInFlight: reconciler.hasMotionWritesInFlight
+        )
+        motion.applyPrepositions(writes.immediate) {
+            reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
+        }
+        var waitedForMotion: TimeInterval = 0
+        if writes.waitsForMotion {
+            let waitStarted = ProcessInfo.processInfo.systemUptime
+            reconciler.waitForMotionIdle(timeout: 0.3)
+            waitedForMotion = ProcessInfo.processInfo.systemUptime - waitStarted
+            motion.applyPrepositions(writes.afterMotionIdle) {
+                reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
+            }
+        }
+        motion.start(animations, sink: reconciler)
+        openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
+        // FI-06: the keyboard follows the logical focus right away instead
+        // of after the animation; the final pass only re-asserts a drift.
+        focus.focusAtMotionStart(parked: Set(plans.flatMap { $0.parked.keys }), plans: plans) {
+            reconciler.focusNow($0) == .failed
+        }
+        if let zoomJob {
+            nativeZoom.start(zoomJob)
+        }
+        nativeZoom.scheduleVerifications(failed: [])
+    }
+
+    /// The instant pass: one reconciler write per window to its final frame
+    /// (a still reflow, the final exact pass, or the real windows' single
+    /// write under a snapshot overlay).
+    private func instantPass(
+        plans: [ParkingPlan], zoomJob: NativeZoomController.Job?, snapshotFlight: Bool,
+        reconciler: WindowReconciler<AXWindowActuator>
+    ) {
         motion.stop()
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
         // pass nil so they never steal focus. The intent reaches the last
@@ -1289,81 +1400,180 @@ final class SessionHost: @unchecked Sendable {
                 focus.warpCursorToFocus(focusTarget, plans: plans)
             }
         }
+        openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: 0)
+        if snapshotFlight {
+            dispatchUnderOverlay(plans: plans, focusTarget: focusTarget, reconciler: reconciler)
+            if let zoomJob {
+                nativeZoom.start(zoomJob)
+            }
+            // The writes are on their lanes; the flight settles once its
+            // layers land too, and folds their outcome then.
+            overlayFlight.passSettled()
+            return
+        }
         var zoomWriteFailures: Set<WindowID> = []
         var deferred: [WindowID] = []
-        openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: 0)
         for (planIndex, plan) in plans.enumerated() {
+            let planFocus = planIndex == plans.count - 1 ? focusTarget : nil
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
-                focused: planIndex == plans.count - 1 ? focusTarget : nil, currentlyFocused: nil,
+                focused: planFocus, currentlyFocused: nil,
                 trusted: trustedFrames
             )
-            if let focusTarget, report.focusChanged || report.focusFailed {
-                GioLog.record(
-                    .debug,
-                    "focus intent id=\(focusTarget.pid):\(focusTarget.elementID) changed=\(report.focusChanged) failed=\(report.focusFailed)"
-                )
-            }
-            learnMinimumSizes(from: report)
+            foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus)
             zoomWriteFailures.formUnion(report.failed)
-            GioLog.record(
-                .debug,
-                "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"
-            )
-            // Our writes echo back as moved/resized events: remember them
-            // (parked ones too, so they never retrigger a reflow).
-            // In place, once per settle: no merged copies of the dictionaries.
-            let now = ProcessInfo.processInfo.systemUptime
-            for (id, frame) in plan.visible where plan.parked[id] == nil {
-                echoGate.recordApplied(id, frame: frame, at: now)
-                physicalFrames[id] = frame
-            }
-            for (id, target) in plan.parked {
-                echoGate.recordApplied(id, frame: target.frame, at: now)
-                physicalFrames[id] = target.frame
-            }
-            for id in report.failed + report.vanished + report.deferred {
-                physicalFrames.removeValue(forKey: id)
-            }
             deferred += report.deferred
-            trustedFrames.recordSettle(report: report, visible: plan.visible, parked: plan.parked)
-            // Only visible windows written here are worth a render check;
-            // a settle that wrote parked/hidden windows alone checks nothing.
-            for id in report.applied where plan.visible[id] != nil && plan.parked[id] == nil {
-                renderVerifier.insertCandidate(id)
-            }
-            renderVerifier.recordSettled(from: report.settledFrames)
-            GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
         }
-        // PF-02: every window is on its final frame: one line per opened window.
+        if let zoomJob {
+            nativeZoom.start(zoomJob)
+        }
+        finishSettle(deferred: deferred, zoomWriteFailures: zoomWriteFailures)
+        if renderVerifier.hasCandidates {
+            renderVerifier.schedule()
+        }
+        snapshotRefresher.schedule()
+    }
+
+    /// SM-12: the real windows' one write under a snapshot overlay. All
+    /// plans go out as one pass on the per-app lanes and the session queue
+    /// does not wait for them (the overlay hides the windows; a slow app no
+    /// longer holds the next key). Echoes and physical frames are recorded
+    /// now (the writes land during the flight and a retarget starts from
+    /// them); the windows written lose their trust until the flight's
+    /// settle folds the outcome (`collectDispatchedWrites`). Echoes cover
+    /// the latest landing of each write and restart when the pass is folded.
+    private func dispatchUnderOverlay(
+        plans: [ParkingPlan], focusTarget: WindowID?, reconciler: WindowReconciler<AXWindowActuator>
+    ) {
+        var visible: [WindowID: CGRect] = [:]
+        var parked: [WindowID: ParkedTarget] = [:]
+        for plan in plans {
+            visible.merge(plan.visible) { _, new in new }
+            parked.merge(plan.parked) { _, new in new }
+        }
+        let pass = reconciler.dispatch(
+            frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames
+        )
+        let now = ProcessInfo.processInfo.systemUptime
+        // SM-13: a write lands on its lane up to `landingBounds` after now
+        // (claim wait, the app's earlier writes): its echo is covered until then.
+        for (id, frame) in visible where parked[id] == nil {
+            echoGate.recordDispatched(id, frame: frame, at: now, landingWithin: pass.landingBounds[id] ?? 0)
+            physicalFrames[id] = frame
+            if !trustedFrames.canSkipRead(id, desired: frame) {
+                trustedFrames.invalidate(id)
+            }
+        }
+        for (id, target) in parked {
+            echoGate.recordDispatched(id, frame: target.frame, at: now, landingWithin: pass.landingBounds[id] ?? 0)
+            physicalFrames[id] = target.frame
+            if !trustedFrames.canSkipRead(id, desired: target.frame) {
+                trustedFrames.invalidate(id)
+            }
+        }
+        dispatchedWrites.append((pass, visible, parked, focusTarget))
+    }
+
+    /// SM-12: fold every pass dispatched under the overlay, oldest first
+    /// (the newest outcome wins). Bounded: a lane with no progress for the
+    /// stall timeout fails its windows with "timeout", as in `reconcile`.
+    private func collectDispatchedWrites() {
+        guard !dispatchedWrites.isEmpty, let reconciler else {
+            dispatchedWrites = []
+            return
+        }
+        let passes = dispatchedWrites
+        dispatchedWrites = []
+        var failures: Set<WindowID> = []
+        var deferred: [WindowID] = []
+        for entry in passes {
+            let report = reconciler.collect(entry.pass)
+            foldSettle(report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget)
+            failures.formUnion(report.failed)
+            deferred += report.deferred
+        }
+        finishSettle(deferred: deferred, zoomWriteFailures: failures)
+    }
+
+    /// One settled report into the session's memory: minimum sizes, physical
+    /// frames (failed, vanished and deferred windows are forgotten), trust,
+    /// render-check candidates.
+    private func foldSettle(
+        _ report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
+        focusTarget: WindowID?
+    ) {
+        // PF-I: a refused focus is logged by the reconciler, with its reason,
+        // once per window per minute (one fails per key press onto it).
+        if let focusTarget, report.focusChanged {
+            GioLog.record(.debug, "focus intent id=\(focusTarget.pid):\(focusTarget.elementID) changed=true")
+        }
+        learnMinimumSizes(from: report)
+        GioLog.record(
+            .debug,
+            "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"
+        )
+        // Our writes echo back as moved/resized events: remember them
+        // (parked ones too, so they never retrigger a reflow). A dispatched
+        // pass is folded after its lanes returned, so `now` is at or after
+        // every landing (SM-13): the echo window restarts from it.
+        // In place, once per settle: no merged copies of the dictionaries.
+        let now = ProcessInfo.processInfo.systemUptime
+        for (id, frame) in visible where parked[id] == nil {
+            echoGate.recordApplied(id, frame: frame, at: now)
+            physicalFrames[id] = frame
+        }
+        for (id, target) in parked {
+            echoGate.recordApplied(id, frame: target.frame, at: now)
+            physicalFrames[id] = target.frame
+        }
+        for id in report.failed + report.vanished + report.deferred {
+            physicalFrames.removeValue(forKey: id)
+        }
+        trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
+        // Only visible windows written here are worth a render check;
+        // a settle that wrote parked/hidden windows alone checks nothing.
+        for id in report.applied where visible[id] != nil && parked[id] == nil {
+            renderVerifier.insertCandidate(id)
+        }
+        renderVerifier.recordSettled(from: report.settledFrames)
+        GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
+    }
+
+    /// Every window of the pass is on its final frame (or failed). A zoom
+    /// started by the pass is already running, so its verification is
+    /// scheduled here too.
+    private func finishSettle(deferred: [WindowID], zoomWriteFailures: Set<WindowID>) {
+        // PF-02: one line per opened window.
         for line in openTimeline.settled(at: ProcessInfo.processInfo.systemUptime) {
             GioLog.record(.info, line)
         }
         deferredSettle.defer(deferred)
-        if let zoomJob {
-            nativeZoom.start(zoomJob)
-        }
         nativeZoom.scheduleVerifications(failed: zoomWriteFailures)
-        if snapshotFlight {
-            // The final exact pass is done; the flight settles once its layers land too.
-            overlayFlight.passSettled()
-        } else {
-            if renderVerifier.hasCandidates {
-                renderVerifier.schedule()
-            }
-            snapshotRefresher.schedule()
-        }
     }
 
-    // MARK: - Snapshot renderer (SM-04)
+    // MARK: - Snapshot renderer (SM-04/SM-08)
 
-    /// Overlay layers of flight `token` landed (called from the main thread).
-    func snapshotLayersFinished(_ token: Int) {
-        overlayFlight.layersFinished(token)
+    /// The overlay of flight `token` is on screen with every layer at its
+    /// start frame (`ok`), or could not be shown. Called from the main
+    /// thread; the controller hops on and only then writes the real windows.
+    func snapshotPrimed(_ token: Int, ok: Bool) {
+        overlayFlight.primed(token, ok: ok)
+    }
+
+    /// SM-19: the overlay armed flight `token` to land at `deadline`
+    /// (`systemUptime`); the paint check starts before it. Called from main.
+    func snapshotDeadlineArmed(_ token: Int, at deadline: TimeInterval) {
+        overlayFlight.deadlineArmed(token, at: deadline)
+    }
+
+    /// Overlay layers of flight `token` landed with the frames the display
+    /// presented meanwhile (called from the main thread).
+    func snapshotLayersFinished(_ token: Int, frames: FlightFrameStats?) {
+        overlayFlight.layersFinished(token, frames: frames)
     }
 
     /// The overlay came down on its own (watchdog, mouse down): treat it as a
-    /// settle without the fade. Called from the main thread.
+    /// settle. Called from the main thread.
     func snapshotFlightAborted(_ reason: SnapshotAbortReason) {
         overlayFlight.aborted(reason)
     }
@@ -1479,6 +1689,47 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// SM-10: the captured backdrop shows the desktop picture; a wallpaper
+    /// change (`com.apple.desktop`, also a rotating one advancing) or a
+    /// Space switch makes it stale. Mark it dirty and refresh; no timer.
+    private func watchDesktopPicture() {
+        let handler: (Notification) -> Void = { [weak self] _ in
+            self?.queue.async {
+                guard let self, !self.isShuttingDown else {
+                    return
+                }
+                self.snapshotRefresher.markBackdropDirty()
+                self.snapshotRefresher.schedule()
+            }
+        }
+        desktopPictureObservers = [
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("com.apple.desktop"), object: nil, queue: .main, using: handler
+            ),
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: handler
+            ),
+        ]
+    }
+
+    /// SM-20: warning and critical memory pressure drop snapshot images
+    /// (`SnapshotCacheRefresher.noteMemoryPressure`); SM-21: normal after
+    /// them re-captures what the shown strips lack. Event-driven: a
+    /// dispatch source on the session queue, no timer.
+    private func watchMemoryPressure() {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.normal, .warning, .critical], queue: queue
+        )
+        source.setEventHandler { [weak self] in
+            guard let self, !self.isShuttingDown, let event = self.memoryPressure?.data else {
+                return
+            }
+            self.snapshotRefresher.noteMemoryPressure(event)
+        }
+        memoryPressure = source
+        source.resume()
+    }
+
     private func watchManagedSpace() {
         spaceMonitor = ManagedSpaceMonitor { [weak self] managedActive in
             self?.queue.async {
@@ -1509,6 +1760,9 @@ final class SessionHost: @unchecked Sendable {
                 self?.recordClick(at: location)
             },
             onMouseMoved: moveHandler,
+            onKeyDown: { [weak self] in
+                self?.noteTyping()
+            },
             onCombo: { [weak self] combo in
                 self?.handleCombo(combo) ?? false
             }
@@ -1518,6 +1772,25 @@ final class SessionHost: @unchecked Sendable {
         } else {
             print("[gio] hotkey tap refused (grant Accessibility, then relaunch)")
             GioLog.record(.warn, "hotkey tap refused; running without global hotkeys")
+        }
+    }
+
+    /// SM-09: typing changes the focused window's image. Runs in the tap
+    /// callback on main for every key; only the first key per half second
+    /// hops to the session queue (`typingLock` guards the timestamp).
+    private func noteTyping() {
+        let now = ProcessInfo.processInfo.systemUptime
+        typingLock.lock()
+        let due = snapshotTypingHopDue(now: now, lastHop: lastTypingHop, interval: snapshotTypingHopInterval)
+        if due {
+            lastTypingHop = now
+        }
+        typingLock.unlock()
+        guard due else {
+            return
+        }
+        queue.async { [weak self] in
+            self?.snapshotRefresher.noteTyping()
         }
     }
 
@@ -1595,7 +1868,7 @@ private final class HostGhostPort: CloseGhostPort, @unchecked Sendable {
     }
 }
 
-/// SM-04: forwards the overlay flight to the app's hooks (set before `start()`).
+/// SM-04/SM-08: forwards the overlay flight to the app's hooks (set before `start()`).
 private final class HostOverlayPort: OverlayPort {
     private unowned let host: SessionHost
 
@@ -1603,27 +1876,33 @@ private final class HostOverlayPort: OverlayPort {
         self.host = host
     }
 
-    func beginFlight(token: Int, spring: SpringParameters, flights: [OverlayFlight]) {
-        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init))
+    func beginFlight(
+        token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
+    ) {
+        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init), Array(holes.values), decorations)
     }
 
-    func retargetFlight(token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight]) {
-        host.overlayRetarget?(token, targets, adds.map(SnapshotDisplayFlight.init))
+    func flyFlight(token: Int) {
+        host.overlayFly?(token)
     }
 
-    func endFlight(fadeOut: Bool) {
-        host.overlayEnd?(fadeOut)
+    func retargetFlight(
+        token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
+    ) {
+        host.overlayRetarget?(token, targets, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations)
     }
 
-    func hasBackdrop(for displayFrame: CGRect) -> Bool {
-        host.overlayWallpapers?.hasImage(for: displayFrame) ?? false
+    func endFlight() {
+        host.overlayEnd?()
     }
 }
 
 private extension SnapshotDisplayFlight {
     init(_ flight: OverlayFlight) {
         self.init(
-            displayFrame: flight.displayFrame,
+            displayFrame: flight.displayFrame, usableFrame: flight.usableFrame, backdrop: flight.backdrop,
             items: flight.items.map { SnapshotOverlayItem(id: $0.id, image: $0.image, from: $0.from, to: $0.to) }
         )
     }

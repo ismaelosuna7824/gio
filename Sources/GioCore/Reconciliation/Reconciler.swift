@@ -70,6 +70,10 @@ public struct ReconcileReport: Equatable, Sendable {
     /// with a motion write after `finalPassMotionGrace`. Neither written nor
     /// failed: the caller runs another final pass once the app's lane is idle.
     public var deferred: [WindowID] = []
+    /// PF-I diagnostics, not part of equality: why the focus call failed
+    /// (`FrameFailureReporting.failureKind`, "other" for an untyped error),
+    /// nil unless `focusFailed`.
+    public var focusFailure: String?
 
     public static func == (lhs: ReconcileReport, rhs: ReconcileReport) -> Bool {
         lhs.applied == rhs.applied && lhs.alreadyCorrect == rhs.alreadyCorrect && lhs.parked == rhs.parked
@@ -121,6 +125,14 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let motion: MotionBook
     private let motionLanes: MotionLanes
     private var failureGate = FailureLogGate()
+    /// PF-I: refused focus lines, once per window per minute. Calling thread only.
+    private var focusFailureGate = FocusFailureLogGate()
+    /// SM-12: the newest dispatched lane per app (supersession) and the
+    /// newest dispatched focus step (moved behind a newer write of its
+    /// window). Calling thread only.
+    private var openLanes: [pid_t: LaneState<ItemResult>] = [:]
+    private var openFocus: DispatchFocusStep?
+    private let focusBook = DispatchFocusBook()
 
     /// Timing of the most recent `reconcile` pass (MO-01).
     public private(set) var lastTiming: ReflowTiming?
@@ -147,7 +159,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     }
 
     /// What happened to one window; folded into the report in serial order.
-    private enum WindowOutcome: Sendable {
+    fileprivate enum WindowOutcome: Sendable {
         case alreadyCorrect(CGRect)
         case vanished
         case failed(String, ReconcileFailure)
@@ -155,9 +167,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         case parkedApplied(clamped: Bool)
     }
 
-    private struct ItemResult: Sendable {
+    fileprivate struct ItemResult: Sendable {
         let outcome: WindowOutcome
         let timing: WindowWriteTiming
+        /// `clock()` when the write returned (a dispatched pass's span).
+        let endedAt: TimeInterval
     }
 
     /// Everything a lane thread needs, detached from the reconciler.
@@ -173,13 +187,15 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             let callsBefore = tracks ? actuator.axCallCount(forPid: item.id.pid) : 0
             let started = clock()
             let outcome = reconcileOne(item)
+            let ended = clock()
             return ItemResult(
                 outcome: outcome,
                 timing: WindowWriteTiming(
                     id: item.id, app: "",
-                    milliseconds: (clock() - started) * 1000,
+                    milliseconds: (ended - started) * 1000,
                     axCalls: tracks ? actuator.axCallCount(forPid: item.id.pid) - callsBefore : 0
-                )
+                ),
+                endedAt: ended
             )
         }
 
@@ -264,28 +280,264 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             toPark = toPark.filter { !stuck.contains($0.key.pid) }
             report.deferred = Set(frames.keys).union(parked.keys).filter { stuck.contains($0.pid) }.sorted()
         }
-        // PA-04: a window sitting at a frame Gio placed and verified needs
-        // neither the two AX reads nor a write. Windows that moved in this
-        // motion are not trusted by the caller, so they are still verified.
-        var skipped: [WindowID] = []
-        if trusted.count > 0 {
-            for (id, target) in toPark where trusted.canSkipRead(id, desired: target.frame) {
-                skipped.append(id)
-                toPark.removeValue(forKey: id)
-                report.settledFrames[id] = target.frame
-            }
-            for (id, frame) in toWrite where parked[id] == nil && trusted.canSkipRead(id, desired: frame) {
-                skipped.append(id)
-                toWrite.removeValue(forKey: id)
-                report.settledFrames[id] = frame
-            }
-            skipped.sort()
-            report.alreadyCorrect.append(contentsOf: skipped)
-            report.skippedReads = skipped.count
-        }
+        (toWrite, toPark) = skipTrusted(frames: toWrite, parked: toPark, trusted: trusted, into: &report)
         let lanes = planWriteLanes(frames: toWrite, parked: toPark)
         let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock)
         let results = executor.run(lanes: lanes, mode: concurrency) { worker.process($0) }
+        let windowTimings = fold(lanes: lanes, results: results, frames: frames, parked: parked, into: &report)
+        var focusMilliseconds = 0.0
+        var focusCalls = 0
+        if let focused, focused != currentlyFocused, parked[focused] == nil {
+            let tracks = actuator.tracksCalls
+            let callsBefore = tracks ? actuator.axCallCount(forPid: focused.pid) : 0
+            let focusStart = clock()
+            do {
+                try actuator.focus(id: focused)
+                report.focusChanged = true
+            } catch {
+                report.focusFailed = true
+                report.focusFailure = focusFailureKind(error)
+                logFocusFailure(focused, reason: focusFailureKind(error))
+            }
+            focusMilliseconds = (clock() - focusStart) * 1000
+            focusCalls = tracks ? actuator.axCallCount(forPid: focused.pid) - callsBefore : 0
+        }
+        finish(
+            report, timing: ReflowTiming(
+                totalMilliseconds: (clock() - started) * 1000, focusMilliseconds: focusMilliseconds,
+                windows: windowTimings, focusAXCalls: focusCalls
+            )
+        )
+        return report
+    }
+
+    /// SM-12: a final pass under a snapshot overlay. The same writes as
+    /// `reconcile`, started on the per-app lanes without waiting for them:
+    /// the overlay hides the real windows, so a slow app must not hold the
+    /// caller (the session queue). `collect` folds the outcome at the
+    /// flight's settle. Differences from `reconcile`:
+    /// - no motion grace: the app's queued motion frames are discarded and
+    ///   its lane waits (on its own thread, up to twice the stall timeout)
+    ///   for the in-flight motion write instead of deferring the window;
+    /// - a newer dispatch supersedes this one's not-yet-started writes of
+    ///   the windows it writes again (latest wins, nothing is failed);
+    /// - the focus intent runs on the focused window's app lane after that
+    ///   lane's writes, only while it is the newest intent (an older one
+    ///   never lands after a newer one), and moves behind a newer pass that
+    ///   writes its window again without an intent of its own.
+    public func dispatch(
+        frames: [WindowID: CGRect],
+        parked: [WindowID: ParkedTarget] = [:],
+        focused: WindowID?,
+        currentlyFocused: WindowID?,
+        trusted: TrustedFrames = TrustedFrames()
+    ) -> DispatchedPass {
+        let started = clock()
+        var report = ReconcileReport()
+        let pids = Set(frames.keys.map(\.pid)).union(parked.keys.map(\.pid))
+        motionLanes.discardPending(pids: pids)
+        let (toWrite, toPark) = skipTrusted(frames: frames, parked: parked, trusted: trusted, into: &report)
+        var lanes = planWriteLanes(frames: toWrite, parked: toPark)
+        let written = Set(toWrite.keys).union(toPark.keys)
+        var step: DispatchFocusStep?
+        if let focused, focused != currentlyFocused, parked[focused] == nil {
+            step = DispatchFocusStep(target: focused, generation: focusBook.issue())
+        } else if focused == nil, let pending = openFocus, written.contains(pending.target),
+                  parked[pending.target] == nil, pending.handOver()
+        {
+            step = DispatchFocusStep(target: pending.target, generation: pending.generation)
+        }
+        if let step {
+            openFocus = step
+            if !lanes.contains(where: { $0.pid == step.target.pid }) {
+                lanes.append(WriteLane(pid: step.target.pid, items: []))
+            }
+        }
+        var tails: [pid_t: @Sendable () -> Void] = [:]
+        if let step {
+            let actuator = UncheckedSendableBox(actuator)
+            let book = focusBook
+            let clock = clock
+            tails[step.target.pid] = {
+                step.run(book: book, clock: clock) { try actuator.value.focus(id: $0) }
+            }
+        }
+        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock)
+        let launched: LaunchedLanes<ItemResult>
+        switch concurrency {
+        case .serial:
+            launched = executor.launch(lanes: lanes, claimWait: nil, serial: true, tails: tails) { worker.process($0) }
+        case .concurrent(let stall):
+            for lane in lanes where !lane.items.isEmpty {
+                openLanes[lane.pid]?.supersede(Set(lane.items.map(\.id)))
+            }
+            launched = executor.launch(lanes: lanes, claimWait: stall * 2, tails: tails) { worker.process($0) }
+            for (lane, state) in zip(lanes, launched.states) where !lane.items.isEmpty {
+                openLanes[lane.pid] = state
+            }
+        }
+        GioLog.record(
+            .debug,
+            "reconcile dispatched windows=\(written.count) lanes=\(lanes.count) skippedReads=\(report.skippedReads) "
+                + "ms=\(String(format: "%.1f", (clock() - started) * 1000))"
+        )
+        var landingBounds: [WindowID: TimeInterval] = [:]
+        for lane in lanes {
+            for (position, item) in lane.items.enumerated() {
+                if case .concurrent(let stall) = concurrency {
+                    landingBounds[item.id] = stall * 2 + stall * Double(position + 1)
+                } else {
+                    landingBounds[item.id] = 0
+                }
+            }
+        }
+        return DispatchedPass(
+            launched: launched, frames: frames, parked: parked, report: report, focus: step, started: started,
+            landingBounds: landingBounds
+        )
+    }
+
+    /// SM-12: wait for a dispatched pass (bounded like `reconcile`: a lane
+    /// with no progress for the stall timeout is abandoned and its windows
+    /// fail with "timeout"; waiting for the app claim is not a stall) and
+    /// fold its report. A focus step its lane never reached runs here. Same logs as `reconcile`;
+    /// the timing spans dispatch to the last lane's end. Superseded writes
+    /// appear nowhere in the report: the newer pass reports them.
+    public func collect(_ pass: DispatchedPass) -> ReconcileReport {
+        let stall: TimeInterval
+        if case .concurrent(let timeout) = concurrency {
+            stall = timeout
+        } else {
+            stall = 0
+        }
+        let results = pass.launched.await(stallTimeout: stall)
+        if let focus = pass.focus, focus.outcome.result == .notRun {
+            // SM-13: the lane never reached its focus step (app busy past the
+            // claim wait, lane abandoned): focus now, as `reconcile` always
+            // did. `taken` stops a second run; an older intent stays stale.
+            focus.run(book: focusBook, clock: clock) { try actuator.focus(id: $0) }
+        }
+        for (lane, state) in zip(pass.launched.lanes, pass.launched.states) where openLanes[lane.pid] === state {
+            openLanes.removeValue(forKey: lane.pid)
+        }
+        if let focus = pass.focus, openFocus === focus {
+            openFocus = nil
+        }
+        var report = pass.report
+        let windowTimings = fold(
+            lanes: pass.launched.lanes, results: results, frames: pass.frames, parked: pass.parked, into: &report
+        )
+        var ended = pass.started
+        var timedOut = false
+        for result in results.values {
+            switch result {
+            case .completed(let item):
+                ended = max(ended, item.endedAt)
+            case .timedOut, .skippedBusy:
+                timedOut = true
+            case .superseded:
+                break
+            }
+        }
+        var focusMilliseconds = 0.0
+        if let focus = pass.focus {
+            let outcome = focus.outcome
+            switch outcome.result {
+            case .changed:
+                report.focusChanged = true
+            case .failed, .notRun:
+                let reason = outcome.failure ?? "notRun"
+                report.focusFailed = true
+                report.focusFailure = reason
+                logFocusFailure(focus.target, reason: reason)
+            case .stale, .handedOver:
+                break
+            }
+            focusMilliseconds = outcome.milliseconds
+            if let end = outcome.endedAt {
+                ended = max(ended, end)
+            }
+        }
+        if timedOut {
+            ended = max(ended, clock())
+        }
+        finish(
+            report, timing: ReflowTiming(
+                totalMilliseconds: (ended - pass.started) * 1000, focusMilliseconds: focusMilliseconds,
+                windows: windowTimings, focusAXCalls: 0
+            )
+        )
+        return report
+    }
+
+    /// SM-12: lanes started by `dispatch`, folded by `collect`.
+    public final class DispatchedPass: @unchecked Sendable {
+        fileprivate let launched: LaunchedLanes<ItemResult>
+        fileprivate let frames: [WindowID: CGRect]
+        fileprivate let parked: [WindowID: ParkedTarget]
+        fileprivate let report: ReconcileReport
+        fileprivate let focus: DispatchFocusStep?
+        fileprivate let started: TimeInterval
+        /// SM-13: per written window, the latest a write can land after
+        /// dispatch (claim wait plus one stall per write of its lane up to
+        /// and including its own; 0 when written before `dispatch` returned).
+        /// The session's echo gate covers that span.
+        public let landingBounds: [WindowID: TimeInterval]
+
+        fileprivate init(
+            launched: LaunchedLanes<ItemResult>, frames: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
+            report: ReconcileReport, focus: DispatchFocusStep?, started: TimeInterval,
+            landingBounds: [WindowID: TimeInterval]
+        ) {
+            self.launched = launched
+            self.frames = frames
+            self.parked = parked
+            self.report = report
+            self.focus = focus
+            self.started = started
+            self.landingBounds = landingBounds
+        }
+
+        /// Every lane returned: `collect` will not wait.
+        public var isFinished: Bool {
+            launched.isFinished
+        }
+    }
+
+    /// PA-04: a window sitting at a frame Gio placed and verified needs
+    /// neither the two AX reads nor a write. Windows that moved in this
+    /// motion are not trusted by the caller, so they are still verified.
+    private func skipTrusted(
+        frames: [WindowID: CGRect], parked: [WindowID: ParkedTarget], trusted: TrustedFrames,
+        into report: inout ReconcileReport
+    ) -> ([WindowID: CGRect], [WindowID: ParkedTarget]) {
+        var toWrite = frames
+        var toPark = parked
+        guard trusted.count > 0 else {
+            return (toWrite, toPark)
+        }
+        var skipped: [WindowID] = []
+        for (id, target) in toPark where trusted.canSkipRead(id, desired: target.frame) {
+            skipped.append(id)
+            toPark.removeValue(forKey: id)
+            report.settledFrames[id] = target.frame
+        }
+        for (id, frame) in toWrite where parked[id] == nil && trusted.canSkipRead(id, desired: frame) {
+            skipped.append(id)
+            toWrite.removeValue(forKey: id)
+            report.settledFrames[id] = frame
+        }
+        skipped.sort()
+        report.alreadyCorrect.append(contentsOf: skipped)
+        report.skippedReads = skipped.count
+        return (toWrite, toPark)
+    }
+
+    /// Fold lane results into `report` in serial order; returns the timings.
+    private func fold(
+        lanes: [WriteLane], results: [Int: LaneItemResult<ItemResult>], frames: [WindowID: CGRect],
+        parked: [WindowID: ParkedTarget], into report: inout ReconcileReport
+    ) -> [WindowWriteTiming] {
         var windowTimings: [WindowWriteTiming] = []
         let stallMilliseconds: Double
         if case .concurrent(let stall) = concurrency {
@@ -317,6 +569,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                     }
                     report.parked.append(id)
                 }
+            case .superseded:
+                break
             case .skippedBusy:
                 report.failed.append(id)
                 report.failureNotes[id] = "timeout (previous write to this app still pending)"
@@ -333,25 +587,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 ))
             }
         }
-        var focusMilliseconds = 0.0
-        var focusCalls = 0
-        if let focused, focused != currentlyFocused, parked[focused] == nil {
-            let tracks = actuator.tracksCalls
-            let callsBefore = tracks ? actuator.axCallCount(forPid: focused.pid) : 0
-            let focusStart = clock()
-            do {
-                try actuator.focus(id: focused)
-                report.focusChanged = true
-            } catch {
-                report.focusFailed = true
-            }
-            focusMilliseconds = (clock() - focusStart) * 1000
-            focusCalls = tracks ? actuator.axCallCount(forPid: focused.pid) - callsBefore : 0
-        }
-        let timing = ReflowTiming(
-            totalMilliseconds: (clock() - started) * 1000, focusMilliseconds: focusMilliseconds,
-            windows: windowTimings, focusAXCalls: focusCalls
-        )
+        return windowTimings
+    }
+
+    /// The pass's timing and log lines (shared by `reconcile` and `collect`).
+    private func finish(_ report: ReconcileReport, timing: ReflowTiming) {
         lastTiming = timing
         for line in timing.slowWindowLines {
             GioLog.record(.debug, line)
@@ -363,7 +603,6 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             "reconcile applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) skippedReads=\(report.skippedReads) vanished=\(report.vanished.count) failed=\(report.failed.count)"
         )
         logFailures(report)
-        return report
     }
 
     /// FI-06: outcome of an immediate focus call.
@@ -380,8 +619,22 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             try actuator.focus(id: id)
             return .focused
         } catch {
+            logFocusFailure(id, reason: focusFailureKind(error))
             return .failed
         }
+    }
+
+    /// PF-I: a refused focus repeats once per key press onto the window;
+    /// log it once per window per minute, with the reason and the count held
+    /// back since the previous line.
+    private func logFocusFailure(_ id: WindowID, reason: String) {
+        guard let suppressed = focusFailureGate.admit(id, now: clock()) else {
+            return
+        }
+        GioLog.record(
+            .debug,
+            "focus failed id=\(id.pid):\(id.elementID) app=\(names.display(id.pid)) reason=\(reason) suppressed=\(suppressed)"
+        )
     }
 
     /// FI-01: one line per failed window, warn the first time a (window,
@@ -680,6 +933,11 @@ let parkedStripLimit: CGFloat = 40
 /// for 251 ms). Past it, that app's windows are deferred, not waited for.
 public let finalPassMotionGrace: TimeInterval = 0.1
 
+/// PF-I: the stable reason of a failed focus call for reports and logs.
+func focusFailureKind(_ error: Error) -> String {
+    (error as? FrameFailureReporting)?.failureKind ?? "other"
+}
+
 func isParked(_ actual: CGRect, _ target: ParkedTarget, _ tolerance: CGFloat) -> Bool {
     guard abs(actual.width - target.frame.width) <= tolerance,
           abs(actual.height - target.frame.height) <= tolerance
@@ -697,5 +955,111 @@ func isParked(_ actual: CGRect, _ target: ParkedTarget, _ tolerance: CGFloat) ->
         return actual.maxX > target.display.maxX && visibleWidth <= strip
     case .corner:
         return visibleWidth <= strip && visibleHeight <= strip
+    }
+}
+
+/// SM-12: keyboard intents of dispatched passes. Only the newest intent may
+/// focus. Issuing never waits (the session queue issues); the newest check
+/// and the focus call share `running`, so an older intent whose check passed
+/// finishes before a newer one starts and can never land after it.
+final class DispatchFocusBook: @unchecked Sendable {
+    private let lock = NSLock()
+    private let running = NSLock()
+    private var latest = 0
+
+    func issue() -> Int {
+        lock.withLock {
+            latest += 1
+            return latest
+        }
+    }
+
+    /// Runs `body` when `generation` is still the newest intent.
+    func runIfLatest(_ generation: Int, _ body: () -> Void) -> Bool {
+        running.lock()
+        defer { running.unlock() }
+        guard lock.withLock({ latest == generation }) else {
+            return false
+        }
+        body()
+        return true
+    }
+}
+
+/// SM-12: the focus step of one dispatched pass, run on the focused
+/// window's app lane after its writes, or handed over to a newer pass that
+/// writes the window again.
+final class DispatchFocusStep: @unchecked Sendable {
+    enum Result: Sendable {
+        /// The lane never reached it (app busy, lane abandoned) and neither
+        /// did `collect` yet.
+        case notRun
+        case changed
+        case failed
+        /// A newer intent was issued first.
+        case stale
+        /// A newer pass writes the window again and focuses it after that.
+        case handedOver
+    }
+
+    struct Outcome: Sendable {
+        var result: Result = .notRun
+        var milliseconds: Double = 0
+        var endedAt: TimeInterval?
+        /// PF-I: `focusFailureKind` of a `.failed` focus call.
+        var failure: String?
+    }
+
+    let target: WindowID
+    let generation: Int
+    private let lock = NSLock()
+    private var taken = false
+    private var recorded = Outcome()
+
+    init(target: WindowID, generation: Int) {
+        self.target = target
+        self.generation = generation
+    }
+
+    var outcome: Outcome {
+        lock.withLock { recorded }
+    }
+
+    /// The newer pass takes the step over; false once the lane started it.
+    func handOver() -> Bool {
+        lock.withLock {
+            guard !taken else { return false }
+            taken = true
+            recorded.result = .handedOver
+            return true
+        }
+    }
+
+    func run(book: DispatchFocusBook, clock: ReflowClock, focus: (WindowID) throws -> Void) {
+        guard lock.withLock({ () -> Bool in
+            guard !taken else { return false }
+            taken = true
+            return true
+        }) else {
+            return
+        }
+        let started = clock()
+        var result = Result.stale
+        var failure: String?
+        _ = book.runIfLatest(generation) {
+            do {
+                try focus(target)
+                result = .changed
+            } catch {
+                result = .failed
+                failure = focusFailureKind(error)
+            }
+        }
+        let ended = clock()
+        lock.withLock {
+            recorded = Outcome(
+                result: result, milliseconds: (ended - started) * 1000, endedAt: ended, failure: failure
+            )
+        }
     }
 }

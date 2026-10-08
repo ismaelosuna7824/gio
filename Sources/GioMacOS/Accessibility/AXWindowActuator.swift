@@ -206,6 +206,9 @@ public final class AXWindowActuator: WindowActuator {
         }
     }
 
+    /// PF-I: succeeds only when the window's app is frontmost with the window
+    /// focused (`focusAXWindow`); may wait up to `FocusLandingCheck.budget`
+    /// on the calling thread (an app's write lane or the session queue).
     public func focus(id: WindowID) throws {
         try actuatorPermission()
         guard let handle = handle(for: id) else {

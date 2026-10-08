@@ -1,18 +1,36 @@
 import AppKit
 import GioCore
-import ImageIO
 import QuartzCore
 
-// SM-03: GPU snapshot overlay. Main thread only (AppKit + Core Animation).
-// Compile-checked; every decision it takes (coordinates, spring mapping,
-// retarget start, layer diff, watchdog) is pure and tested in GioCore
-// (`OverlayGeometry`). During a flight Gio does no per-frame work: Core
-// Animation runs the springs on the render server.
+// SM-03/SM-08: GPU snapshot overlay. Main thread only (AppKit + Core
+// Animation). Compile-checked; every decision it takes (coordinates, spring
+// tracks and keyframes, velocity carry, shadow/ring/dim geometry, watchdog,
+// deadline) is pure and tested in GioCore (`OverlayGeometry`,
+// `OverlayDecorations`). During a flight Gio does no per-frame work: the
+// render server plays keyframe tracks sampled from Gio's own spring.
 //
 // Window levels (higher is in front): app windows `.normal` = 0, this overlay
-// `.normal + 1` = 1, the focus ring `.floating` = 3 (so the ring stays visible
-// above the images), Dock 20, menus 24 and above. The overlay is therefore in
-// front of ordinary windows but behind the ring, the Dock and the menu bar.
+// `.normal + 1` = 1, the focus ring `.floating` = 3, Dock 20, menus 24 and
+// above. The overlay is therefore in front of ordinary windows but behind
+// the Dock and the menu bar.
+//
+// SM-18: the panel covers only the display's usable frame (menu bar and Dock
+// excluded, `OverlayArea`). The live menu bar and Dock are translucent and
+// draw above it; a display-sized panel showed the captured (stale) menu bar
+// and Dock through them. Layers, holes and the mask are local to the usable
+// frame; the backdrop layer crops the display capture with `contentsRect`.
+//
+// SM-14: the panel is not opaque for the WindowServer (`isOpaque = false`,
+// clear background, no shadow) although its layers draw an opaque picture
+// (backdrop on a black fill). An opaque display-sized panel
+// marks every window under it occluded, and apps that stop painting occluded
+// windows (Chromium/Electron) showed blank areas when it came down.
+//
+// SM-16: windows that fly without an image show through holes in that
+// picture: the backdrop layer (fill included) is masked by an even-odd
+// `CAShapeLayer` (display minus the holes, `overlayBackdropMask`), set at
+// begin and on retarget only. The root layer is clear, so a hole is
+// transparent down to the real window under the panel.
 
 /// One window image to fly. Frames are Cocoa global coordinates.
 public struct SnapshotOverlayItem: @unchecked Sendable {
@@ -29,13 +47,19 @@ public struct SnapshotOverlayItem: @unchecked Sendable {
     }
 }
 
-/// The items of one display's overlay.
+/// The items of one display's overlay over the display's captured backdrop
+/// (everything on it except the managed windows, SM-09). SM-18: the panel
+/// covers `usableFrame` only (menu bar and Dock excluded).
 public struct SnapshotDisplayFlight: @unchecked Sendable {
     public let displayFrame: CGRect
+    public let usableFrame: CGRect
+    public let backdrop: CGImage
     public let items: [SnapshotOverlayItem]
 
-    public init(displayFrame: CGRect, items: [SnapshotOverlayItem]) {
+    public init(displayFrame: CGRect, usableFrame: CGRect, backdrop: CGImage, items: [SnapshotOverlayItem]) {
         self.displayFrame = displayFrame
+        self.usableFrame = usableFrame
+        self.backdrop = backdrop
         self.items = items
     }
 }
@@ -55,66 +79,186 @@ private final class OverlayRootView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
-/// Wallpaper images per display, decoded off the main thread and read from
-/// any thread (the session queue asks `hasImage` before choosing a renderer).
-public final class WallpaperCache: @unchecked Sendable {
-    private let lock = NSLock()
-    private var images: [String: CGImage] = [:]
+private func displayKey(_ frame: CGRect) -> String {
+    "\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width)),\(Int(frame.height))"
+}
 
-    public init() {}
+/// The layers of one window, bottom to top: the shadow it casts into the
+/// gaps (precomputed `shadowPath`, no offscreen pass), the image, the dim
+/// fill and the ring. All four follow the same track, so they move as one.
+@MainActor
+private final class WindowLayers {
+    let shadow = CALayer()
+    let image = CALayer()
+    let dim = CALayer()
+    let ring = CALayer()
+    /// Where the window flies from and to; `startedAt` (CA media time) is
+    /// nil while primed and not flying yet.
+    var track: FlightTrack
+    var startedAt: CFTimeInterval?
+    private var ringWidth: CGFloat = 0
 
-    static func key(_ frame: CGRect) -> String {
-        "\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width)),\(Int(frame.height))"
+    var all: [CALayer] { [shadow, image, dim, ring] }
+
+    init(image contents: CGImage, scale: CGFloat, track: FlightTrack) {
+        self.track = track
+        let noActions: [String: CAAction] = [
+            "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "shadowPath": NSNull(),
+            "hidden": NSNull(), "opacity": NSNull(), "borderColor": NSNull(), "borderWidth": NSNull(),
+        ]
+        for layer in all {
+            layer.actions = noActions
+            layer.contentsScale = scale
+        }
+        shadow.zPosition = 0
+        shadow.shadowColor = NSColor.black.cgColor
+        shadow.shadowOpacity = overlayWindowShadow.opacity
+        shadow.shadowRadius = overlayWindowShadow.radius
+        shadow.shadowOffset = overlayWindowShadow.offset
+        image.zPosition = 1
+        image.contents = contents
+        image.contentsGravity = .resize
+        image.cornerRadius = overlayWindowCornerRadius
+        image.masksToBounds = true
+        image.magnificationFilter = .linear
+        image.minificationFilter = .linear
+        dim.zPosition = 2
+        dim.backgroundColor = NSColor.black.cgColor
+        dim.cornerRadius = overlayWindowCornerRadius
+        dim.isHidden = true
+        ring.zPosition = 3
+        ring.isHidden = true
+        apply(track.start)
     }
 
-    public func hasImage(for displayFrame: CGRect) -> Bool {
-        lock.withLock { images[Self.key(displayFrame)] != nil }
+    /// Model values (no implicit animation) for every layer.
+    func apply(_ geometry: LayerGeometry) {
+        for layer in [shadow, image, dim] {
+            layer.position = geometry.position
+            layer.bounds = geometry.bounds
+        }
+        shadow.shadowPath = overlayShadowPath(bounds: geometry.bounds, cornerRadius: overlayWindowCornerRadius)
+        let outset = overlayRingGeometry(window: geometry, width: ringWidth)
+        ring.position = outset.position
+        ring.bounds = outset.bounds
     }
 
-    func image(for displayFrame: CGRect) -> CGImage? {
-        lock.withLock { images[Self.key(displayFrame)] }
+    func decorate(ring spec: OverlayRing?, dimAlpha: Float?) {
+        if let spec {
+            ringWidth = spec.width
+            ring.borderWidth = spec.width
+            ring.cornerRadius = overlayRingCornerRadius(width: spec.width)
+            ring.borderColor = NSColor(
+                srgbRed: spec.color.red, green: spec.color.green, blue: spec.color.blue, alpha: 1
+            ).cgColor
+            ring.isHidden = false
+        } else {
+            ringWidth = 0
+            ring.isHidden = true
+        }
+        if let dimAlpha {
+            dim.opacity = dimAlpha
+            dim.isHidden = false
+        } else {
+            dim.isHidden = true
+        }
     }
 
-    func store(_ image: CGImage?, for displayFrame: CGRect) {
-        lock.withLock { images[Self.key(displayFrame)] = image }
+    /// Model values jump to the end; keyframe tracks (kept after completion,
+    /// `fillMode .both`) carry every layer there. A retarget replaces them
+    /// under the same keys.
+    func animate(_ keyframes: FlightKeyframes, beginTime: CFTimeInterval) {
+        apply(track.end)
+        let times = keyframes.times.map { NSNumber(value: $0) }
+        let positions = keyframes.geometries.map { NSValue(point: $0.position) }
+        let bounds = keyframes.geometries.map { NSValue(rect: $0.bounds) }
+        let moves = track.start.position != track.end.position
+        let resizes = track.start.bounds != track.end.bounds
+        for layer in [shadow, image, dim] {
+            Self.setTrack(layer, "position", values: moves ? positions : nil, times: times, keyframes: keyframes, beginTime: beginTime)
+            Self.setTrack(layer, "bounds", values: resizes ? bounds : nil, times: times, keyframes: keyframes, beginTime: beginTime)
+        }
+        Self.setTrack(
+            shadow, "shadowPath",
+            values: resizes
+                ? keyframes.geometries.map { overlayShadowPath(bounds: $0.bounds, cornerRadius: overlayWindowCornerRadius) }
+                : nil,
+            times: times, keyframes: keyframes, beginTime: beginTime, discrete: true
+        )
+        let outsets = keyframes.geometries.map { overlayRingGeometry(window: $0, width: ringWidth) }
+        Self.setTrack(ring, "position", values: moves ? positions : nil, times: times, keyframes: keyframes, beginTime: beginTime)
+        Self.setTrack(
+            ring, "bounds", values: resizes ? outsets.map { NSValue(rect: $0.bounds) } : nil,
+            times: times, keyframes: keyframes, beginTime: beginTime
+        )
     }
 
-    func retain(only frames: [CGRect]) {
-        let keep = Set(frames.map(Self.key))
-        lock.withLock { images = images.filter { keep.contains($0.key) } }
+    func removeAnimations() {
+        all.forEach { $0.removeAllAnimations() }
+    }
+
+    func removeFromSuperlayer() {
+        all.forEach { $0.removeFromSuperlayer() }
+    }
+
+    /// One keyframe track per property, or none when the property does not
+    /// change (the model value already holds). `discrete` for `CGPath`
+    /// values: one path per sample at the display rate, no interpolation.
+    private static func setTrack(
+        _ layer: CALayer, _ keyPath: String, values: [Any]?, times: [NSNumber], keyframes: FlightKeyframes,
+        beginTime: CFTimeInterval, discrete: Bool = false
+    ) {
+        let key = "gio.\(keyPath)"
+        guard let values else {
+            layer.removeAnimation(forKey: key)
+            return
+        }
+        let animation = CAKeyframeAnimation(keyPath: keyPath)
+        animation.values = values
+        animation.keyTimes = times
+        animation.calculationMode = discrete ? .discrete : .linear
+        animation.duration = keyframes.duration
+        animation.beginTime = layer.convertTime(beginTime, from: nil)
+        animation.isRemovedOnCompletion = false
+        animation.fillMode = .both
+        layer.add(animation, forKey: key)
     }
 }
 
-/// One display's overlay: an opaque panel with the wallpaper and one layer
-/// per flying window.
+/// One display's overlay: a panel that draws an opaque picture (the captured
+/// backdrop and the layers of every visible managed window of that display)
+/// without being opaque to the WindowServer (SM-14: no occlusion).
 @MainActor
 final class SnapshotOverlay {
     static let level = NSWindow.Level(rawValue: NSWindow.Level.normal.rawValue + 1)
-    static let cornerRadius: CGFloat = 10
-    static let fadeDuration: TimeInterval = 0.06
 
     let displayFrame: CGRect
+    /// SM-18: display and panel frame of the current flight; layers are
+    /// local to `area.panelFrame`. Set at every begin (the Dock may move
+    /// between flights; a move during one aborts it).
+    private var area: OverlayArea
     private let panel: OverlayPanel
     private let root: OverlayRootView
     private let backdrop = CALayer()
-    private var layers: [WindowID: CALayer] = [:]
-    private var models: [WindowID: LayerGeometry] = [:]
-    private var generation = 0
-    private var fadeGeneration = 0
+    private let backdropMask = CAShapeLayer()
+    private var windows: [WindowID: WindowLayers] = [:]
     var spring: SpringParameters
 
-    var ids: Set<WindowID> { Set(layers.keys) }
+    var ids: Set<WindowID> { Set(windows.keys) }
 
     init(displayFrame: CGRect, spring: SpringParameters) {
         self.displayFrame = displayFrame
+        area = OverlayArea(display: displayFrame, usable: displayFrame)
         self.spring = spring
         panel = OverlayPanel(
             contentRect: displayFrame, styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered, defer: false
         )
         root = OverlayRootView(frame: CGRect(origin: .zero, size: displayFrame.size))
-        panel.isOpaque = true
-        panel.backgroundColor = .black
+        // SM-14: not opaque, so the windows underneath are not occluded; the
+        // root layer's fill and the backdrop make the picture opaque.
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
         panel.level = Self.level
@@ -125,373 +269,377 @@ final class SnapshotOverlay {
         panel.animationBehavior = .none
         root.wantsLayer = true
         root.layer?.masksToBounds = true
-        root.layer?.backgroundColor = NSColor.black.cgColor
+        // SM-16: the black fill is the backdrop's own, so a hole in the
+        // backdrop is clear down to the real window.
+        root.layer?.backgroundColor = NSColor.clear.cgColor
+        backdrop.zPosition = -1
         backdrop.frame = root.bounds
-        backdrop.contentsGravity = .resizeAspectFill
+        backdrop.backgroundColor = NSColor.black.cgColor
+        // The capture is display-sized at the backing scale; `contentsRect`
+        // crops it to the panel (SM-18), drawn 1:1.
+        backdrop.contentsGravity = .resize
         backdrop.masksToBounds = true
-        backdrop.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        backdrop.actions = [
+            "contents": NSNull(), "contentsRect": NSNull(), "bounds": NSNull(), "position": NSNull(), "mask": NSNull(),
+        ]
+        backdropMask.fillRule = .evenOdd
+        backdropMask.fillColor = NSColor.black.cgColor
+        backdropMask.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.layer?.addSublayer(backdrop)
         panel.contentView = root
     }
 
+    private var scale: CGFloat {
+        panel.screen?.backingScaleFactor ?? panel.backingScaleFactor
+    }
+
+    /// Keyframes per second: the display's refresh rate (at least 60).
+    private var sampleRate: Double {
+        Double(max(panel.screen?.maximumFramesPerSecond ?? 60, 60))
+    }
+
+    /// SM-12: the view whose screen the frame link follows, and that
+    /// screen's refresh rate (the expected frames per second).
+    var frameView: NSView { root }
+    var refreshRate: Double { sampleRate }
+
     // MARK: API
 
-    /// Show the overlay: wallpaper, then one layer per item flying from its
-    /// start frame to its target.
-    /// Returns the largest travel (points) of any layer, for the deadline.
-    @discardableResult
-    func begin(backdropImage: CGImage?, items: [SnapshotOverlayItem]) -> Double {
-        fadeGeneration += 1
-        panel.alphaValue = 1
-        panel.setFrame(displayFrame, display: false)
-        root.frame = CGRect(origin: .zero, size: displayFrame.size)
+    /// Prime: backdrop and every window's layers at their start frames, the
+    /// panel on screen and its first frame committed to the render server.
+    /// False when the panel did not make it to the screen.
+    func begin(
+        usable: CGRect, backdrop image: CGImage, items: [SnapshotOverlayItem], holes: [CGRect],
+        decorations: OverlayDecorations
+    ) -> Bool {
+        area = OverlayArea(display: displayFrame, usable: usable)
+        panel.setFrame(area.panelFrame, display: false)
+        root.frame = CGRect(origin: .zero, size: area.panelFrame.size)
+        removeAllLayers()
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         backdrop.frame = root.bounds
-        backdrop.contents = backdropImage
-        CATransaction.commit()
-        removeAllLayers()
-        panel.orderFrontRegardless()
-        return fly(targets: [:], adding: items, prime: true)
-    }
-
-    /// Retarget layers already flying (from their presentation values) and
-    /// add layers for windows that were not part of the flight. Returns the
-    /// largest travel. The end of the flight is the controller's deadline,
-    /// not Core Animation completion.
-    @discardableResult
-    func retarget(targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem]) -> Double {
-        fly(targets: targets, adding: items, prime: false)
-    }
-
-    /// Remove the overlay, fading it out (~60 ms) or at once.
-    func end(fadeOut: Bool) {
-        generation += 1
-        fadeGeneration += 1
-        let token = fadeGeneration
-        guard fadeOut, panel.isVisible else {
-            teardown()
-            return
+        backdrop.contentsScale = scale
+        backdrop.contents = image
+        // The capture's own pixels per point (the backing scale when 1:1).
+        backdrop.contentsRect = area.backdropContentsRect(
+            scale: CGFloat(image.width) / max(displayFrame.width, 1), flipped: backdrop.contentsAreFlipped()
+        )
+        cut(holes)
+        for item in items {
+            add(item)
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.fadeDuration
-            panel.animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self, self.fadeGeneration == token else {
-                    return
-                }
-                self.teardown()
+        applyDecorations(decorations)
+        CATransaction.commit()
+        panel.orderFrontRegardless()
+        root.displayIfNeeded()
+        panel.displayIfNeeded()
+        CATransaction.flush()
+        return panel.isVisible
+    }
+
+    /// The real windows are written: every primed layer starts its track
+    /// now. Returns the longest settle time (seconds) for the deadline.
+    func fly(now: CFTimeInterval) -> TimeInterval {
+        var settle = 0.0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layers in windows.values where layers.startedAt == nil {
+            settle = max(settle, start(layers, at: now))
+        }
+        CATransaction.commit()
+        return settle
+    }
+
+    /// Retarget flying layers (from where they are now, carrying their
+    /// velocity) and add layers for windows that joined. Layers still primed
+    /// only change their target. Returns the longest settle time of the
+    /// tracks started here (0 while primed).
+    func retarget(
+        targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem], holes: [CGRect],
+        decorations: OverlayDecorations, now: CFTimeInterval
+    ) -> TimeInterval {
+        var settle = 0.0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        cut(holes)
+        // Joining windows first, then the ring/dim (the ring width shapes the
+        // tracks), then the tracks.
+        let added = items.map { add($0) }
+        applyDecorations(decorations)
+        for (id, frame) in targets.sorted(by: { $0.key < $1.key }) {
+            guard let layers = windows[id] else {
+                continue
+            }
+            let end = overlayLayerGeometry(frame: frame, in: area.panelFrame, flipped: root.isFlipped)
+            if let startedAt = layers.startedAt {
+                layers.track = layers.track.retargeted(to: end, at: now - startedAt, spring: spring)
+                settle = max(settle, start(layers, at: now))
+            } else {
+                layers.track.end = end
             }
         }
+        if windows.values.contains(where: { $0.startedAt != nil }) {
+            for layers in added {
+                settle = max(settle, start(layers, at: now))
+            }
+        }
+        CATransaction.commit()
+        return settle
+    }
+
+    /// Remove the overlay at once: with the backdrop, shadows, ring and dim
+    /// matching the real desktop, the swap needs no fade.
+    func end() {
+        panel.orderOut(nil)
+        removeAllLayers()
+        backdrop.contents = nil
+        backdrop.mask = nil
     }
 
     func close() {
-        generation += 1
-        fadeGeneration += 1
-        teardown()
+        end()
         panel.close()
     }
 
-    // MARK: Flight
+    // MARK: Layers
 
-    /// `prime`: a fresh overlay. The layers are first attached at their start
-    /// frames and the panel is displayed and flushed to the render server, so
-    /// the first frame shows the start positions; only then the springs are
-    /// added (animations on layers that are not rendered yet complete at once,
-    /// the cause of the 6-83 ms flights).
-    private func fly(targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem], prime: Bool) -> Double {
-        generation += 1
-        let mapping = overlaySpring(spring)
-        var travel = 0.0
-        var starts: [(CALayer, WindowID, LayerGeometry, LayerGeometry)] = []
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for (id, frame) in targets.sorted(by: { $0.key < $1.key }) {
-            guard let layer = layers[id], let model = models[id] else {
-                continue
-            }
-            let next = overlayLayerGeometry(frame: frame, in: displayFrame, flipped: root.isFlipped)
-            let start = retargetStart(
-                presentation: (layer.presentation()).map { LayerGeometry(position: $0.position, bounds: $0.bounds) },
-                model: model
-            )
-            starts.append((layer, id, start, next))
+    /// SM-16: the backdrop shows everything but `holes` (Cocoa global
+    /// frames; the ones off this display are ignored). No holes: no mask.
+    private func cut(_ holes: [CGRect]) {
+        guard let path = overlayBackdropMask(holes: holes, in: area.panelFrame, flipped: root.isFlipped) else {
+            backdrop.mask = nil
+            return
         }
-        for item in items {
-            let layer = makeLayer(item.image)
-            let start = overlayLayerGeometry(frame: item.from, in: displayFrame, flipped: root.isFlipped)
-            let end = overlayLayerGeometry(frame: item.to, in: displayFrame, flipped: root.isFlipped)
-            layers[item.id]?.removeFromSuperlayer()
-            layer.position = start.position
-            layer.bounds = start.bounds
-            root.layer?.addSublayer(layer)
-            layers[item.id] = layer
-            starts.append((layer, item.id, start, end))
-        }
-        CATransaction.commit()
-        if prime {
-            panel.orderFrontRegardless()
-            root.displayIfNeeded()
-            panel.displayIfNeeded()
-            CATransaction.flush()
-        }
-        CATransaction.begin()
-        for (layer, id, start, end) in starts {
-            travel = max(travel, animate(layer, from: start, to: end, spring: mapping))
-            models[id] = end
-        }
-        CATransaction.commit()
-        return travel
+        backdropMask.frame = backdrop.bounds
+        backdropMask.path = path
+        backdrop.mask = backdropMask
     }
 
-    private func makeLayer(_ image: CGImage) -> CALayer {
-        let layer = CALayer()
-        layer.contents = image
-        layer.contentsGravity = .resize
-        layer.cornerRadius = Self.cornerRadius
-        layer.masksToBounds = true
-        layer.magnificationFilter = .linear
-        layer.minificationFilter = .linear
-        layer.isOpaque = false
-        // Shadow is off: a shadow forces an offscreen pass per layer per frame.
-        layer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull()]
-        return layer
-    }
-
-    /// Model values jump to the target (implicit actions off); one spring per
-    /// property carries the layer there from `start`. Animations stay after
-    /// completion (`isRemovedOnCompletion = false`) so the layer never flashes
-    /// back; a retarget replaces them under the same key. Initial velocity is
-    /// not carried over on retarget: the new spring starts from rest at the
-    /// presentation value.
-    /// Returns the travel of the layer in points.
-    private func animate(
-        _ layer: CALayer, from start: LayerGeometry, to end: LayerGeometry, spring: OverlaySpring
-    ) -> Double {
-        layer.position = end.position
-        layer.bounds = end.bounds
-        if start.position != end.position {
-            layer.add(
-                springAnimation(
-                    "position", from: NSValue(point: start.position), to: NSValue(point: end.position),
-                    spring: spring, layer: layer
-                ),
-                forKey: "gio.position"
+    @discardableResult
+    private func add(_ item: SnapshotOverlayItem) -> WindowLayers {
+        windows[item.id]?.removeFromSuperlayer()
+        let layers = WindowLayers(
+            image: item.image, scale: scale,
+            track: FlightTrack(
+                start: overlayLayerGeometry(frame: item.from, in: area.panelFrame, flipped: root.isFlipped),
+                end: overlayLayerGeometry(frame: item.to, in: area.panelFrame, flipped: root.isFlipped)
             )
-        } else {
-            layer.removeAnimation(forKey: "gio.position")
-        }
-        if start.bounds != end.bounds {
-            layer.add(
-                springAnimation(
-                    "bounds", from: NSValue(rect: start.bounds), to: NSValue(rect: end.bounds),
-                    spring: spring, layer: layer
-                ),
-                forKey: "gio.bounds"
-            )
-        } else {
-            layer.removeAnimation(forKey: "gio.bounds")
-        }
-        let moved = flightTravel(
-            from: CGRect(origin: CGPoint(x: start.position.x - start.bounds.width / 2, y: start.position.y - start.bounds.height / 2), size: start.bounds.size),
-            to: CGRect(origin: CGPoint(x: end.position.x - end.bounds.width / 2, y: end.position.y - end.bounds.height / 2), size: end.bounds.size)
         )
-        return moved
+        layers.all.forEach { root.layer?.addSublayer($0) }
+        windows[item.id] = layers
+        return layers
     }
 
-    private func springAnimation(
-        _ keyPath: String, from: NSValue, to: NSValue, spring: OverlaySpring, layer: CALayer
-    ) -> CASpringAnimation {
-        let animation = CASpringAnimation(keyPath: keyPath)
-        animation.mass = CGFloat(spring.mass)
-        animation.stiffness = CGFloat(spring.stiffness)
-        animation.damping = CGFloat(spring.damping)
-        animation.fromValue = from
-        animation.toValue = to
-        animation.duration = min(animation.settlingDuration, SpringParameters.maxDuration)
-        animation.beginTime = layer.convertTime(CACurrentMediaTime(), from: nil)
-        animation.isRemovedOnCompletion = false
-        animation.fillMode = .both
-        return animation
+    private func start(_ layers: WindowLayers, at now: CFTimeInterval) -> TimeInterval {
+        let keyframes = flightKeyframes(track: layers.track, spring: spring, rate: sampleRate)
+        layers.startedAt = now
+        layers.animate(keyframes, beginTime: now)
+        return keyframes.duration
+    }
+
+    private func applyDecorations(_ decorations: OverlayDecorations) {
+        let dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let dimAlpha = decorations.dim.map { Float(focusDimAlpha(strength: $0.strength, darkAppearance: dark)) }
+        for (id, layers) in windows {
+            layers.decorate(
+                ring: decorations.ring?.id == id ? decorations.ring : nil,
+                dimAlpha: decorations.dim?.ids.contains(id) == true ? dimAlpha : nil
+            )
+            if layers.startedAt == nil {
+                layers.apply(layers.track.start)
+            } else {
+                layers.apply(layers.track.end)
+            }
+        }
     }
 
     private func removeAllLayers() {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        for layer in layers.values {
-            layer.removeAllAnimations()
-            layer.removeFromSuperlayer()
+        for layers in windows.values {
+            layers.removeAnimations()
+            layers.removeFromSuperlayer()
         }
-        layers = [:]
-        models = [:]
+        windows = [:]
         CATransaction.commit()
-    }
-
-    private func teardown() {
-        panel.orderOut(nil)
-        panel.alphaValue = 1
-        removeAllLayers()
-        backdrop.contents = nil
     }
 }
 
-/// Owns the per-display overlays and the wallpaper backdrops. Main thread
-/// only, except `wallpapers.hasImage`. The session host drives it through
-/// closures on the main queue and never blocks on it.
+/// Owns the per-display overlays. Main thread only. The session host drives
+/// it through closures on the main queue and never blocks on it.
 @MainActor
 public final class SnapshotOverlayController {
-    public nonisolated let wallpapers = WallpaperCache()
     /// One overlay (panel) per display, kept between flights so a flight
     /// starts without creating a window; `active` are the ones showing.
     private var overlays: [String: SnapshotOverlay] = [:]
     private var active: Set<String> = []
     private var token = 0
-    private var observers: [(center: NotificationCenter, object: NSObjectProtocol)] = []
+    private var flying = false
+    private var observers: [NSObjectProtocol] = []
     private var spring = SpringParameters.niri
 
-    /// Called on main when every display's springs of flight `token` finished.
-    public var onFlightFinished: ((Int) -> Void)?
+    /// Called on main when every display's tracks of flight `token` landed,
+    /// with the frames the display presented during the flight (SM-12; nil
+    /// without a display link).
+    public var onFlightFinished: ((Int, FlightFrameStats?) -> Void)?
     /// Called on main after the controller removed a flight on its own
     /// (watchdog, mouse down): the session must settle as if it had ended.
     public var onFlightAborted: ((Int, SnapshotAbortReason) -> Void)?
-    /// SM-05: independent of the session queue, so a stalled queue or a lost
-    /// completion callback can never leave the opaque overlay up.
+    /// SM-19: called on main with flight `token` and its landing time
+    /// (`systemUptime`) whenever the deadline is armed (fly, retarget), so
+    /// the session checks paint before the layers land.
+    public var onDeadlineArmed: ((Int, TimeInterval) -> Void)?
+    /// SM-05: independent of the session queue, so a stalled queue, a lost
+    /// prime report or a lost completion can never leave the overlay up.
+    /// SM-14: re-armed at the deadline for the hand-off hold
+    /// (`SnapshotHandoff.watchdogLimit`: the hold cap plus a margin).
     private var watchdog = FlightWatchdog()
     /// Landing time from Gio's own spring (not Core Animation completion).
     private var deadline = FlightDeadline()
     private var flightStartedAt: TimeInterval = 0
     private var flightTravel = 0.0
+    /// SM-12: display link while the layers fly; none at rest.
+    private let frameLink = FlightFrameLink()
 
     public nonisolated init() {}
 
     public var isActive: Bool { !active.isEmpty }
 
-    /// Refresh wallpapers now and whenever the screens, the Space or the
-    /// wallpaper change.
+    /// Drop the panels of displays that went away (never a showing one).
     public func start() {
-        let names: [(NotificationCenter, Notification.Name)] = [
-            (NotificationCenter.default, NSApplication.didChangeScreenParametersNotification),
-            (NSWorkspace.shared.notificationCenter, NSWorkspace.activeSpaceDidChangeNotification),
-            (DistributedNotificationCenter.default(), Notification.Name("com.apple.desktop")),
-        ]
-        for (center, name) in names {
-            let object = center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.refreshWallpapers() }
-            }
-            observers.append((center, object))
+        let observer = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pruneOverlays() }
         }
-        refreshWallpapers()
+        observers.append(observer)
     }
 
     /// Remove any overlay at once and stop observing (shutdown, restart).
     public func stop() {
-        observers.forEach { $0.center.removeObserver($0.object) }
+        observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
         for overlay in overlays.values {
             overlay.close()
         }
         overlays = [:]
         active = []
+        flying = false
         deadline.abort()
+        frameLink.cancel()
     }
 
-    /// Load the desktop image of every screen once (aspect-fill downsampled to
-    /// the screen's pixel size) on a background queue.
-    public func refreshWallpapers() {
-        let screens = NSScreen.screens
-        wallpapers.retain(only: screens.map(\.frame))
-        let live = Set(screens.map { WallpaperCache.key($0.frame) })
+    private func pruneOverlays() {
+        let live = Set(NSScreen.screens.map { displayKey($0.frame) })
         for (key, overlay) in overlays where !live.contains(key) && !active.contains(key) {
             overlay.close()
             overlays.removeValue(forKey: key)
         }
-        for screen in screens {
-            guard let url = NSWorkspace.shared.desktopImageURL(for: screen) else {
-                wallpapers.store(nil, for: screen.frame)
-                continue
-            }
-            let frame = screen.frame
-            let maxPixels = Int(max(frame.width, frame.height) * screen.backingScaleFactor)
-            let cache = wallpapers
-            DispatchQueue.global(qos: .utility).async {
-                cache.store(loadWallpaper(url: url, maxPixels: maxPixels), for: frame)
-            }
-        }
     }
 
-    /// Start flight `token`. Returns false (nothing shown) when a display has
-    /// no wallpaper yet: the caller falls back to the AX motion.
+    /// Prime flight `token`: every display's overlay on screen with the
+    /// layers at their start frames. False (nothing left on screen) when a
+    /// panel could not be shown: the session falls back to AX before any
+    /// real write.
     @discardableResult
-    public func begin(token: Int, spring: SpringParameters, flights: [SnapshotDisplayFlight]) -> Bool {
+    public func begin(
+        token: Int, spring: SpringParameters, flights: [SnapshotDisplayFlight], holes: [CGRect],
+        decorations: OverlayDecorations
+    ) -> Bool {
         self.spring = spring
-        guard flights.allSatisfy({ wallpapers.hasImage(for: $0.displayFrame) }) else {
-            return false
-        }
         self.token = token
-        endAll(fadeOut: false)
-        armWatchdog()
-        flightTravel = 0
-        flightStartedAt = ProcessInfo.processInfo.systemUptime
-        var travel = 0.0
+        endAll()
+        flightTravel = flights.flatMap(\.items).map { GioCore.flightTravel(from: $0.from, to: $0.to) }.max() ?? 0
         for flight in flights {
-            let key = WallpaperCache.key(flight.displayFrame)
+            let key = displayKey(flight.displayFrame)
             let overlay = overlays[key] ?? SnapshotOverlay(displayFrame: flight.displayFrame, spring: spring)
             overlay.spring = spring
             overlays[key] = overlay
             active.insert(key)
-            travel = max(
-                travel, overlay.begin(backdropImage: wallpapers.image(for: flight.displayFrame), items: flight.items)
-            )
+            guard overlay.begin(
+                usable: flight.usableFrame, backdrop: flight.backdrop, items: flight.items, holes: holes, decorations: decorations
+            ) else {
+                endAll()
+                return false
+            }
         }
-        flightTravel = travel
-        scheduleDeadline(
-            deadline.begin(now: ProcessInfo.processInfo.systemUptime, settle: flightSettleTime(spring: spring, travel: travel))
-        )
+        armWatchdog()
         return true
     }
 
-    /// Retarget layers and add new ones for the same flight `token`.
-    public func retarget(token: Int, targets: [WindowID: CGRect], adding flights: [SnapshotDisplayFlight]) {
+    /// The real windows of flight `token` are written: the layers fly.
+    public func fly(token: Int) {
+        guard token == self.token, !active.isEmpty, !flying else {
+            return
+        }
+        flying = true
+        armWatchdog()
+        let now = CACurrentMediaTime()
+        var settle = 0.0
+        for key in active.sorted() {
+            settle = max(settle, overlays[key]?.fly(now: now) ?? 0)
+        }
+        flightStartedAt = ProcessInfo.processInfo.systemUptime
+        if let key = active.sorted().first, let overlay = overlays[key] {
+            frameLink.start(on: overlay.frameView, refreshRate: overlay.refreshRate, at: now)
+        }
+        scheduleDeadline(deadline.begin(now: ProcessInfo.processInfo.systemUptime, settle: settle))
+    }
+
+    /// Retarget layers and add new ones for the same flight `token`;
+    /// `holes` replaces every backdrop's holes (SM-16).
+    public func retarget(
+        token: Int, targets: [WindowID: CGRect], adding flights: [SnapshotDisplayFlight], holes: [CGRect],
+        decorations: OverlayDecorations
+    ) {
         self.token = token
         armWatchdog()
-        var travel = 0.0
+        let now = CACurrentMediaTime()
+        var settle = 0.0
         for key in active.sorted() {
             guard let overlay = overlays[key] else {
                 continue
             }
             let mine = targets.filter { overlay.ids.contains($0.key) }
-            let added = flights.first { WallpaperCache.key($0.displayFrame) == key }?.items ?? []
-            travel = max(travel, overlay.retarget(targets: mine, adding: added))
+            let added = flights.first { displayKey($0.displayFrame) == key }?.items ?? []
+            settle = max(
+                settle,
+                overlay.retarget(targets: mine, adding: added, holes: holes, decorations: decorations, now: now)
+            )
         }
-        flightTravel = max(flightTravel, travel)
-        scheduleDeadline(
-            deadline.retarget(now: ProcessInfo.processInfo.systemUptime, settle: flightSettleTime(spring: spring, travel: travel))
+        flightTravel = max(
+            flightTravel, flights.flatMap(\.items).map { GioCore.flightTravel(from: $0.from, to: $0.to) }.max() ?? 0
         )
+        if flying {
+            if let key = active.sorted().first, let overlay = overlays[key] {
+                frameLink.retargeted(on: overlay.frameView, refreshRate: overlay.refreshRate, at: now)
+            }
+            scheduleDeadline(deadline.retarget(now: ProcessInfo.processInfo.systemUptime, settle: settle))
+        }
     }
 
-    /// Remove every overlay (fade ~60 ms, or at once).
-    public func end(fadeOut: Bool) {
-        endAll(fadeOut: fadeOut)
+    /// Remove every overlay at once.
+    public func end() {
+        endAll()
     }
 
     /// A mouse button went down during a flight: remove the overlay at once
-    /// so the click lands on the real window (already at its final frame).
-    /// True when a flight was running.
+    /// so the click lands on the real window. True when a flight was running.
     @discardableResult
     public func abortForMouseDown() -> Bool {
         guard !active.isEmpty else {
             return false
         }
         let aborted = token
-        endAll(fadeOut: false)
+        endAll()
         onFlightAborted?(aborted, .mouseDown)
         return true
     }
 
-    private func armWatchdog() {
-        let armed = watchdog.arm(at: ProcessInfo.processInfo.systemUptime)
-        DispatchQueue.main.asyncAfter(deadline: .now() + FlightWatchdog.defaultLimit + 0.05) { [weak self] in
+    private func armWatchdog(limit: TimeInterval = FlightWatchdog.defaultLimit) {
+        let armed = watchdog.arm(at: ProcessInfo.processInfo.systemUptime, limit: limit)
+        DispatchQueue.main.asyncAfter(deadline: .now() + limit + 0.05) { [weak self] in
             MainActor.assumeIsolated { self?.watchdogFired(armed) }
         }
     }
@@ -501,17 +649,19 @@ public final class SnapshotOverlayController {
             return
         }
         let aborted = token
-        endAll(fadeOut: false)
+        endAll()
         onFlightAborted?(aborted, .watchdog)
     }
 
-    private func endAll(fadeOut: Bool) {
+    private func endAll() {
         watchdog.disarm()
         deadline.abort()
+        frameLink.cancel()
         for key in active {
-            overlays[key]?.end(fadeOut: fadeOut)
+            overlays[key]?.end()
         }
         active = []
+        flying = false
     }
 
     /// One main-thread timer at the deadline; a retarget re-arms it and the
@@ -522,6 +672,7 @@ public final class SnapshotOverlayController {
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             MainActor.assumeIsolated { self?.deadlineFired(armed.token, flightToken: flightToken) }
         }
+        onDeadlineArmed?(flightToken, armed.deadline)
     }
 
     private func deadlineFired(_ generationToken: Int, flightToken: Int) {
@@ -529,25 +680,14 @@ public final class SnapshotOverlayController {
         guard flightToken == token, deadline.finish(generationToken, now: now) else {
             return
         }
-        watchdog.disarm()
+        // SM-14: the session may hold the overlay (layers at rest) until the
+        // windows painted; the watchdog bounds that hold.
+        armWatchdog(limit: SnapshotHandoff.watchdogLimit)
+        let frames = frameLink.finish(at: CACurrentMediaTime())
         let elapsed = now - flightStartedAt
         if flightTooShort(duration: elapsed, travel: flightTravel) {
             GioLog.record(.warn, "snapshot flight too short ms=\(Int((elapsed * 1000).rounded()))")
         }
-        onFlightFinished?(flightToken)
+        onFlightFinished?(flightToken, frames)
     }
-}
-
-/// ImageIO downsample of the desktop image; nil when the URL is not a
-/// single decodable image (a folder, a missing file).
-private func loadWallpaper(url: URL, maxPixels: Int) -> CGImage? {
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-        return nil
-    }
-    let options: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: max(maxPixels, 1),
-    ]
-    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
 }

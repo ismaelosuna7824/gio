@@ -146,6 +146,34 @@ final class ReconcilerTests: XCTestCase {
             frames: [:], focused: id(1), currentlyFocused: nil
         )
         XCTAssertEqual(report, ReconcileReport(focusFailed: true))
+        XCTAssertEqual(report.focusFailure, "other")
+    }
+
+    private struct NotFrontmost: Error, FrameFailureReporting {
+        var failureKind: String { "notFrontmost(frontmost=77)" }
+        var failureActual: CGRect? { nil }
+    }
+
+    private final class RefusingActuator: WindowActuator {
+        func frame(of id: WindowID) throws -> CGRect? { nil }
+        func setFrame(_ frame: CGRect, for id: WindowID) throws {}
+        func focus(id: WindowID) throws { throw NotFrontmost() }
+    }
+
+    func testFocusFailureCarriesItsReason() {
+        let reconciler = WindowReconciler(actuator: RefusingActuator(), concurrency: .serial)
+        let report = reconciler.reconcile(frames: [:], focused: id(1), currentlyFocused: nil)
+        XCTAssertTrue(report.focusFailed)
+        XCTAssertEqual(report.focusFailure, "notFrontmost(frontmost=77)")
+        XCTAssertNil(reconciler.reconcile(frames: [:], focused: nil, currentlyFocused: nil).focusFailure)
+    }
+
+    func testDispatchedFocusFailureCarriesItsReason() {
+        let reconciler = WindowReconciler(actuator: RefusingActuator(), concurrency: .serial)
+        let pass = reconciler.dispatch(frames: [:], focused: id(1), currentlyFocused: nil)
+        let report = reconciler.collect(pass)
+        XCTAssertTrue(report.focusFailed)
+        XCTAssertEqual(report.focusFailure, "notFrontmost(frontmost=77)")
     }
 
     func testFramesAppliedInSortedOrder() {

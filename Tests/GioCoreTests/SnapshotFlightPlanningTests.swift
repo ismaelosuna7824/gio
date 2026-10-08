@@ -18,7 +18,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(-300), id(2): win(100)],
             displays: [display], hasImage: all, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1), id(2)])
         XCTAssertEqual(items[1].from, win(400))
         XCTAssertEqual(items[1].to, win(100))
@@ -30,16 +30,45 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(0), id(2): win(500)],
             displays: [display], hasImage: all, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1), id(2)])
     }
 
-    func testAMissingImageOfAnyVisibleWindowFallsBackToAXForTheWholeMotion() {
+    /// SM-16: no more all-or-nothing. A visible window without an image
+    /// is a hole in the backdrop at its target; the real window, written
+    /// there at the start, shows through.
+    func testAVisibleWindowWithoutAnImageIsAHoleAtItsTarget() {
         let decision = planSnapshotFlight(
             starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(-300), id(2): win(100)],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        XCTAssertEqual(decision, .fallback(reason: .cacheMiss, missing: [id(2)]))
+        XCTAssertEqual(
+            decision,
+            .snapshot(
+                items: [SnapshotFlightItem(id: id(1), from: win(0), to: win(-300), displayIndex: 0)],
+                holes: [SnapshotHole(id: id(2), frame: win(100), displayIndex: 0)]
+            )
+        )
+    }
+
+    func testWithoutAnImageOfAnyMovingWindowTheMotionFallsBackToAX() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(0), id(2): win(100)],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
+        )
+        XCTAssertEqual(decision, .fallback(reason: .cacheMiss, missing: [id(2)]), "only the static window has an image")
+    }
+
+    func testAWindowLeavingForItsParkingFrameWithoutAnImageHasNoHole() {
+        let parked = CGRect(x: -3000, y: 0, width: 400, height: 800)
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(50), id(2): parked],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
+        )
+        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        XCTAssertEqual(items.map(\.id), [id(1)])
+        XCTAssertEqual(holes, [])
+        XCTAssertEqual(decision.finalFrames, [id(1): win(50)])
     }
 
     func testAWindowParkedBeforeAndAfterNeedsNoImage() {
@@ -49,17 +78,20 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(9): parkedA], targets: [id(1): win(50), id(9): parkedB],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
     }
 
-    func testAWindowScrollingInFromParkedNeedsAnImage() {
+    func testAWindowScrollingInFromParkedWithoutAnImageIsAHole() {
         let decision = planSnapshotFlight(
             starts: [id(1): win(0), id(9): CGRect(x: -3000, y: 0, width: 400, height: 800)],
             targets: [id(1): win(-300), id(9): win(500)],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        XCTAssertEqual(decision, .fallback(reason: .cacheMiss, missing: [id(9)]))
+        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        XCTAssertEqual(items.map(\.id), [id(1)])
+        XCTAssertEqual(holes, [SnapshotHole(id: id(9), frame: win(500), displayIndex: 0)])
+        XCTAssertEqual(decision.finalFrames, [id(1): win(-300), id(9): win(500)], "the hole window is written too")
     }
 
     func testOnlyDisplaysWithMovingWindowsGetLayers() {
@@ -67,8 +99,9 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(1000)], targets: [id(1): win(50), id(2): win(1000)],
             displays: [display, other], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
+        XCTAssertEqual(holes, [], "a display without motion gets no overlay, so no hole")
     }
 
     func testNothingMovingOnScreenIsNotASnapshotFlight() {
@@ -120,6 +153,53 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         XCTAssertEqual(plan.uncovered, [])
     }
 
+    // MARK: SM-16 holes
+
+    func testHolesAreTheWindowsVisibleAtTheirTargetWithoutALayer() {
+        let holes = snapshotHoles(
+            layered: [id(1)],
+            targets: [
+                id(1): win(0), id(2): win(400), id(3): CGRect(x: -3000, y: 0, width: 400, height: 800),
+                id(4): CGRect(x: -399, y: 0, width: 400, height: 800), id(5): win(1200), id(6): win(700),
+            ],
+            displays: [display, other], activeDisplays: [0]
+        )
+        XCTAssertEqual(
+            holes,
+            [SnapshotHole(id: id(2), frame: win(400), displayIndex: 0), SnapshotHole(id: id(6), frame: win(700), displayIndex: 0)],
+            "layered, parked, a parking sliver and a window on a display without an overlay have no hole"
+        )
+    }
+
+    func testAWindowThatGetsALayerLosesItsHole() {
+        let targets = [id(1): win(0), id(2): win(400)]
+        XCTAssertEqual(
+            snapshotHoles(layered: [id(1)], targets: targets, displays: [display], activeDisplays: [0]).map(\.id), [id(2)]
+        )
+        XCTAssertEqual(
+            snapshotHoles(layered: [id(1), id(2)], targets: targets, displays: [display], activeDisplays: [0]), []
+        )
+    }
+
+    func testAnUncoveredWindowAtRetargetIsAHoleAtItsNewTarget() {
+        let plan = planSnapshotRetarget(
+            active: [id(1)], starts: [id(1): win(0), id(4): CGRect(x: -3000, y: 0, width: 400, height: 800)],
+            targets: [id(1): win(-300), id(4): win(500)],
+            displays: [display], activeDisplays: [0], hasImage: { $0 == id(1) }
+        )
+        XCTAssertEqual(plan.uncovered, [id(4)])
+        XCTAssertEqual(
+            snapshotHoles(
+                layered: [id(1)], targets: [id(1): win(-300), id(4): win(500)], displays: [display], activeDisplays: [0]
+            ),
+            [SnapshotHole(id: id(4), frame: win(500), displayIndex: 0)]
+        )
+    }
+
+    func testHolesLine() {
+        XCTAssertEqual(snapshotHolesLine(count: 3), "snapshot holes ids=3")
+    }
+
     // MARK: gate
 
     func testTheFlightSettlesOnlyWhenLayersAndTheFinalPassAreBothDone() {
@@ -160,6 +240,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         )
         XCTAssertEqual(snapshotFallbackLine(reason: .cacheMiss, count: 2), "snapshot fallback reason=cache-miss ids=2")
         XCTAssertEqual(snapshotFallbackLine(reason: .noBackdrop, count: 0), "snapshot fallback reason=no-backdrop ids=0")
+        XCTAssertEqual(snapshotFallbackLine(reason: .primeFailed, count: 3), "snapshot fallback reason=prime-failed ids=3")
     }
 
     func testAbortLinesNameTheReason() {
@@ -179,5 +260,112 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         XCTAssertTrue(ax.logLine.hasSuffix("renderer=ax grewAtStart=0"))
         let snap = MotionSummary(windows: 1, frames: 0, dropped: 0, duration: 0.2, slowest: nil, curve: "spring", renderer: "snapshot")
         XCTAssertTrue(snap.logLine.hasSuffix("curve=spring sizeAnimated=0 renderer=snapshot grewAtStart=0"))
+    }
+
+    // MARK: SM-12 frame measurement
+
+    func testFrameStatsCountPresentedDroppedAndHitches() {
+        // 120 Hz for 100 ms: 12 frames expected. Ten callbacks, two of them
+        // late (one 2-frame gap, one 3-frame gap).
+        let interval = 1.0 / 120
+        let intervals = [Double](repeating: interval, count: 8) + [interval * 2, interval * 3]
+        let stats = flightFrameStats(intervals: intervals, refreshRate: 120, duration: 0.1)
+        XCTAssertEqual(stats.presented, 10)
+        XCTAssertEqual(stats.expected, 12)
+        XCTAssertEqual(stats.dropped, 2)
+        XCTAssertEqual(stats.hitches, 2)
+        XCTAssertEqual(stats.framesPerSecond, 100, accuracy: 0.001)
+    }
+
+    func testAHitchIsAnIntervalOverOneAndAHalfRefreshIntervals() {
+        let interval = 1.0 / 60
+        let stats = flightFrameStats(
+            intervals: [interval * 1.4, interval * 1.5, interval * 1.51], refreshRate: 60, duration: 0.05
+        )
+        XCTAssertEqual(stats.hitches, 1, "jitter up to 1.5x is not a hitch")
+    }
+
+    func testDroppedNeverGoesNegative() {
+        // More callbacks than the nominal rate (a late deadline): nothing dropped.
+        let stats = flightFrameStats(
+            intervals: [Double](repeating: 1.0 / 60, count: 8), refreshRate: 60, duration: 0.1
+        )
+        XCTAssertEqual(stats.expected, 6)
+        XCTAssertEqual(stats.dropped, 0)
+    }
+
+    func testTheMeterOnlyCountsWhileRunning() {
+        var meter = FlightFrameMeter()
+        meter.frame(at: 1)
+        XCTAssertFalse(meter.isRunning)
+        XCTAssertNil(meter.finish(at: 2), "no flight, no stats")
+        meter.start(at: 10, refreshRate: 60)
+        XCTAssertTrue(meter.isRunning)
+        meter.frame(at: 10)
+        meter.frame(at: 10 + 1.0 / 60)
+        meter.frame(at: 10 + 4.0 / 60)
+        let stats = meter.finish(at: 10 + 6.0 / 60)
+        XCTAssertEqual(stats?.presented, 2)
+        XCTAssertEqual(stats?.expected, 6)
+        XCTAssertEqual(stats?.hitches, 1, "the 3-frame gap")
+        XCTAssertEqual(stats?.duration ?? 0, 0.1, accuracy: 1e-9)
+        XCTAssertFalse(meter.isRunning)
+        meter.frame(at: 11)
+        XCTAssertNil(meter.finish(at: 12), "a finished meter stays at rest")
+        meter.start(at: 20, refreshRate: 60)
+        meter.cancel()
+        XCTAssertFalse(meter.isRunning)
+        XCTAssertNil(meter.finish(at: 21), "a cancelled flight reports nothing")
+    }
+
+    func testTheMeterStartsAtTheFirstDisplayCallback() {
+        // SM-13: 30 ms of setup and vsync wait before the first callback are
+        // neither expected frames nor a hitch.
+        var meter = FlightFrameMeter()
+        meter.start(at: 10, refreshRate: 120)
+        let first = 10.03
+        for frame in 0...12 {
+            meter.frame(at: first + Double(frame) / 120)
+        }
+        let stats = meter.finish(at: first + 12.0 / 120)
+        XCTAssertEqual(stats?.presented, 12)
+        XCTAssertEqual(stats?.expected, 12)
+        XCTAssertEqual(stats?.dropped, 0)
+        XCTAssertEqual(stats?.hitches, 0)
+        XCTAssertEqual(stats?.duration ?? 0, 0.1, accuracy: 1e-9)
+    }
+
+    func testAFlightWithoutAnyCallbackIsMeasuredFromItsStart() {
+        var meter = FlightFrameMeter()
+        meter.start(at: 10, refreshRate: 60)
+        let stats = meter.finish(at: 10.1)
+        XCTAssertEqual(stats?.presented, 0)
+        XCTAssertEqual(stats?.expected, 6, "the screen never refreshed: every frame dropped")
+    }
+
+    func testSnapshotAnimDoneReportsPresentedFramesDroppedAndHitches() {
+        let stats = FlightFrameStats(presented: 40, expected: 43, hitches: 2, duration: 0.36)
+        XCTAssertEqual(
+            MotionSummary.snapshotFlight(windows: 3, duration: 0.4, frames: stats).logLine,
+            "anim done windows=3 frames=40 dropped=3 hitches=2 duration=400ms slowest=none curve=spring sizeAnimated=0 renderer=snapshot grewAtStart=0"
+        )
+        XCTAssertEqual(
+            MotionSummary.snapshotFlight(windows: 3, duration: 0.4, frames: nil).logLine,
+            "anim done windows=3 frames=0 dropped=0 duration=400ms slowest=none curve=spring sizeAnimated=0 renderer=snapshot grewAtStart=0",
+            "no display link (macOS 13): nothing measured, no hitches field"
+        )
+        XCTAssertEqual(
+            MotionSummary(windows: 2, frames: 25, dropped: 1, duration: 0.2, slowest: nil).logLine,
+            "anim done windows=2 frames=25 dropped=1 duration=200ms slowest=none curve=ease-out sizeAnimated=0 renderer=ax grewAtStart=0",
+            "the AX line is unchanged"
+        )
+    }
+
+    func testSnapshotFlightLineReportsFramesPerSecond() {
+        let stats = FlightFrameStats(presented: 42, expected: 43, hitches: 0, duration: 0.356)
+        XCTAssertEqual(
+            snapshotFlightLine(layers: 3, cacheAgeMilliseconds: 2500, duration: 0.4, frames: stats),
+            "snapshot flight layers=3 cacheAgeMs=2500 duration=400ms fps=118"
+        )
     }
 }

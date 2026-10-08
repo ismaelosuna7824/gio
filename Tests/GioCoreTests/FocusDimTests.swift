@@ -167,7 +167,11 @@ final class FocusDimTests: XCTestCase {
         XCTAssertEqual(focusDimDecision(indicator: .ring, activity: FocusDimActivity()), .hide(.disabled))
         XCTAssertEqual(focusDimDecision(indicator: .none, activity: FocusDimActivity()), .hide(.disabled))
         XCTAssertEqual(focusDimDecision(indicator: .dim, activity: FocusDimActivity(motion: true)), .hide(.motion))
-        XCTAssertEqual(focusDimDecision(indicator: .dim, activity: FocusDimActivity(flight: true)), .hide(.motion))
+        XCTAssertEqual(focusDimDecision(indicator: .dim, activity: FocusDimActivity(flight: true)), .hide(.flight))
+        XCTAssertEqual(
+            focusDimDecision(indicator: .dim, activity: FocusDimActivity(motion: true, flight: true)), .hide(.flight),
+            "the overlay draws the dim itself"
+        )
         XCTAssertEqual(focusDimDecision(indicator: .dim, activity: FocusDimActivity(nativeZoom: true)), .hide(.zoom))
         XCTAssertEqual(
             focusDimDecision(indicator: .dim, activity: FocusDimActivity(mouseDown: true)), .retryAfterRelease
@@ -202,11 +206,14 @@ final class FocusDimTests: XCTestCase {
         XCTAssertEqual(focusDimAlpha(strength: -1, darkAppearance: false), 0, accuracy: 0.0001)
     }
 
-    func testFadeDurationsRespectReduceMotion() {
+    func testFadeDurationsRespectReduceMotionAndSkipTheFlightHandOff() {
         XCTAssertEqual(focusDimFadeDuration(showing: true, reduceMotion: false), 0.15, accuracy: 0.0001)
         XCTAssertEqual(focusDimFadeDuration(showing: false, reduceMotion: false), 0.08, accuracy: 0.0001)
         XCTAssertEqual(focusDimFadeDuration(showing: true, reduceMotion: true), 0)
         XCTAssertEqual(focusDimFadeDuration(showing: false, reduceMotion: true), 0)
+        // SM-08: the overlay already drew the dim; the live one takes over in place.
+        XCTAssertEqual(focusDimFadeDuration(showing: true, reduceMotion: false, afterFlight: true), 0)
+        XCTAssertEqual(focusDimFadeDuration(showing: false, reduceMotion: false, afterFlight: true), 0.08, accuracy: 0.0001)
     }
 
     // MARK: config

@@ -59,6 +59,8 @@ final class WriteLaneTests: XCTestCase {
         private var log: [String] = []
         private var writeCounts: [pid_t: Int] = [:]
         var writeDelay: [pid_t: TimeInterval] = [:]
+        /// Per-window write delay, overriding `writeDelay` (set before the pass starts).
+        var windowDelay: [WindowID: TimeInterval] = [:]
         /// Each listed window blocks its first read until `release` is signalled.
         private var hangingIDs: Set<WindowID> = []
         var hanging: Set<WindowID> {
@@ -66,6 +68,14 @@ final class WriteLaneTests: XCTestCase {
             set { lock.withLock { hangingIDs = newValue } }
         }
         let release = DispatchSemaphore(value: 0)
+        /// Writes to these windows throw (set before the pass starts).
+        var failing: Set<WindowID> = []
+
+        struct Refused: Error {}
+
+        func current(_ id: WindowID) -> CGRect? {
+            lock.withLock { frames[id] }
+        }
 
         func seed(_ id: WindowID, _ frame: CGRect) {
             lock.withLock { frames[id] = frame }
@@ -82,7 +92,11 @@ final class WriteLaneTests: XCTestCase {
         }
 
         func setFrame(_ frame: CGRect, for id: WindowID) throws {
-            Thread.sleep(forTimeInterval: writeDelay[id.pid] ?? 0)
+            Thread.sleep(forTimeInterval: windowDelay[id] ?? writeDelay[id.pid] ?? 0)
+            if failing.contains(id) {
+                lock.withLock { log.append("refuse \(id.pid):\(id.elementID)") }
+                throw Refused()
+            }
             lock.withLock {
                 frames[id] = frame
                 writeCounts[id.pid, default: 0] += 1
@@ -217,6 +231,118 @@ final class WriteLaneTests: XCTestCase {
         XCTAssertTrue(third.failed.isEmpty)
     }
 
+    // MARK: SM-12 dispatched passes (snapshot flights)
+
+    func testADispatchedPassReturnsWithoutWaitingForASlowAppAndCollectSeesEveryOutcome() {
+        let fast = id(1, pid: 10), slow = id(1, pid: 30)
+        // Slow but under the 0.25 s stall timeout: collect waits for it.
+        let actuator = seeded([fast, slow], delays: [30: 0.2])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let started = Date()
+        let pass = reconciler.dispatch(frames: [fast: target, slow: target], focused: nil, currentlyFocused: nil)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "the caller never waits for the slow app")
+        XCTAssertFalse(pass.isFinished)
+        let report = reconciler.collect(pass)
+        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.2, "collect waits for the lane")
+        XCTAssertTrue(pass.isFinished)
+        XCTAssertEqual(report.applied, [fast, slow])
+        XCTAssertEqual(report.settledFrames[slow], target)
+        XCTAssertTrue(report.failed.isEmpty)
+        XCTAssertTrue(report.deferred.isEmpty)
+    }
+
+    func testCollectStillSeesAFailedWriteOfASlowApp() {
+        let fast = id(1, pid: 10), refusing = id(1, pid: 20)
+        let actuator = seeded([fast, refusing], delays: [20: 0.2])
+        actuator.failing = [refusing]
+        let reconciler = WindowReconciler(actuator: actuator)
+        let started = Date()
+        let pass = reconciler.dispatch(frames: [fast: target, refusing: target], focused: nil, currentlyFocused: nil)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1)
+        let report = reconciler.collect(pass)
+        XCTAssertEqual(report.applied, [fast])
+        XCTAssertEqual(report.failed, [refusing])
+        XCTAssertNotNil(report.failureNotes[refusing])
+        XCTAssertEqual(report.failures[refusing]?.requested, target)
+        XCTAssertEqual(actuator.events.filter { $0.hasPrefix("refuse") }, ["refuse 20:1"])
+    }
+
+    func testDispatchedFocusRunsOnTheAppsLaneAfterTheWindowsOwnWrite() {
+        let other = id(1, pid: 10), focused = id(1, pid: 30)
+        let actuator = seeded([other, focused], delays: [30: 0.2])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let started = Date()
+        let pass = reconciler.dispatch(
+            frames: [other: target, focused: target], focused: focused, currentlyFocused: nil
+        )
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "the focus does not hold the caller either")
+        let report = reconciler.collect(pass)
+        XCTAssertTrue(report.focusChanged)
+        XCTAssertFalse(report.focusFailed)
+        let events = actuator.events
+        XCTAssertEqual(events.last, "focus 30:1")
+        XCTAssertLessThan(events.firstIndex(of: "set 30:1")!, events.firstIndex(of: "focus 30:1")!)
+    }
+
+    func testANewerDispatchSupersedesTheUnstartedWriteOfTheSameWindow() {
+        let first = id(1, pid: 30), second = id(2, pid: 30)
+        let newer = CGRect(x: 600, y: 0, width: 400, height: 300)
+        let actuator = seeded([first, second], delays: [30: 0.15])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let older = reconciler.dispatch(frames: [first: target, second: target], focused: nil, currentlyFocused: nil)
+        let latest = reconciler.dispatch(frames: [second: newer], focused: nil, currentlyFocused: nil)
+        let olderReport = reconciler.collect(older)
+        let latestReport = reconciler.collect(latest)
+        XCTAssertEqual(actuator.events, ["set 30:1", "set 30:2"], "the stale target of window 2 is never written")
+        XCTAssertEqual(actuator.current(second), newer)
+        XCTAssertEqual(olderReport.applied, [first])
+        XCTAssertTrue(olderReport.failed.isEmpty, "a superseded write is not a failure")
+        XCTAssertEqual(latestReport.applied, [second])
+    }
+
+    func testAnOlderFocusNeverLandsAfterANewerOne() {
+        let slow = id(1, pid: 30), fast = id(1, pid: 10)
+        let actuator = seeded([slow, fast], delays: [30: 0.2])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let older = reconciler.dispatch(frames: [slow: target], focused: slow, currentlyFocused: nil)
+        let latest = reconciler.dispatch(frames: [fast: target], focused: fast, currentlyFocused: nil)
+        let olderReport = reconciler.collect(older)
+        let latestReport = reconciler.collect(latest)
+        XCTAssertEqual(actuator.events.filter { $0.hasPrefix("focus") }, ["focus 10:1"])
+        XCTAssertFalse(olderReport.focusChanged)
+        XCTAssertFalse(olderReport.focusFailed, "a superseded intent is not a failed focus")
+        XCTAssertTrue(latestReport.focusChanged)
+    }
+
+    func testTheFocusOfASupersededWindowMovesBehindItsNewerWrite() {
+        let first = id(1, pid: 30), focused = id(2, pid: 30)
+        let newer = CGRect(x: 600, y: 0, width: 400, height: 300)
+        let actuator = seeded([first, focused], delays: [30: 0.15])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let older = reconciler.dispatch(
+            frames: [first: target, focused: target], focused: focused, currentlyFocused: nil
+        )
+        let latest = reconciler.dispatch(frames: [focused: newer], focused: nil, currentlyFocused: nil)
+        _ = reconciler.collect(older)
+        let latestReport = reconciler.collect(latest)
+        XCTAssertEqual(actuator.events, ["set 30:1", "set 30:2", "focus 30:2"])
+        XCTAssertTrue(latestReport.focusChanged)
+    }
+
+    func testADispatchedPassWaitsOnTheLaneForAMotionWriteInsteadOfDeferring() {
+        let window = id(1, pid: 30)
+        let actuator = seeded([window], delays: [30: 0.15])
+        let reconciler = WindowReconciler(actuator: actuator)
+        XCTAssertTrue(reconciler.submitMotion(pid: 30, writes: [MotionWrite(id: window, from: stale, to: stale.offsetBy(dx: 50, dy: 0))]))
+        let started = Date()
+        let pass = reconciler.dispatch(frames: [window: target], focused: nil, currentlyFocused: nil)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "no motion grace on the caller")
+        let report = reconciler.collect(pass)
+        XCTAssertTrue(report.deferred.isEmpty)
+        XCTAssertEqual(report.applied, [window])
+        XCTAssertEqual(actuator.current(window), target)
+    }
+
     func testSerialModeRunsInGlobalSortedOrderOnTheCallingThread() {
         let ids = [id(1, pid: 20), id(1, pid: 10)]
         let actuator = seeded(ids)
@@ -226,5 +352,86 @@ final class WriteLaneTests: XCTestCase {
         )
         XCTAssertEqual(actuator.events, ["set 10:1", "set 20:1"])
         XCTAssertEqual(report.applied, ids.sorted())
+    }
+
+    // MARK: SM-13 review fixes
+
+    func testCollectRunsTheFocusOfAnAbandonedLaneExactlyOnce() {
+        let other = id(1, pid: 10), focused = id(1, pid: 30)
+        // Over the 0.25 s stall: collect abandons the focused app's lane.
+        let actuator = seeded([other, focused], delays: [30: 0.4])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let pass = reconciler.dispatch(
+            frames: [other: target, focused: target], focused: focused, currentlyFocused: nil
+        )
+        let report = reconciler.collect(pass)
+        XCTAssertEqual(actuator.events.filter { $0.hasPrefix("focus") }, ["focus 30:1"], "focus ran at collect")
+        XCTAssertTrue(report.focusChanged)
+        XCTAssertFalse(report.focusFailed)
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(
+            actuator.events.filter { $0.hasPrefix("focus") }, ["focus 30:1"], "the abandoned lane never focuses again"
+        )
+    }
+
+    func testCollectRunsTheFocusWhenTheAppStayedBusyPastTheClaimWait() {
+        let holder = id(2, pid: 30), focused = id(1, pid: 30)
+        let actuator = seeded([holder, focused])
+        actuator.windowDelay = [holder: 0.8]
+        let reconciler = WindowReconciler(actuator: actuator)
+        XCTAssertTrue(reconciler.submitMotion(pid: 30, writes: [MotionWrite(id: holder, from: stale, to: target)]))
+        Thread.sleep(forTimeInterval: 0.02)
+        let pass = reconciler.dispatch(frames: [focused: target], focused: focused, currentlyFocused: nil)
+        let report = reconciler.collect(pass)
+        XCTAssertEqual(report.failed, [focused], "the claim wait ran out: the window is reported")
+        XCTAssertTrue(report.focusChanged, "the keyboard focus still moved")
+        XCTAssertEqual(actuator.events.filter { $0.hasPrefix("focus") }, ["focus 30:1"])
+    }
+
+    func testCollectNeverRunsAnOlderFocusOverANewerOne() {
+        let slow = id(1, pid: 30), fast = id(1, pid: 10)
+        let actuator = seeded([slow, fast], delays: [30: 0.4])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let older = reconciler.dispatch(frames: [slow: target], focused: slow, currentlyFocused: nil)
+        let latest = reconciler.dispatch(frames: [fast: target], focused: fast, currentlyFocused: nil)
+        let olderReport = reconciler.collect(older)
+        let latestReport = reconciler.collect(latest)
+        Thread.sleep(forTimeInterval: 0.2)
+        XCTAssertEqual(actuator.events.filter { $0.hasPrefix("focus") }, ["focus 10:1"])
+        XCTAssertFalse(olderReport.focusChanged)
+        XCTAssertTrue(latestReport.focusChanged)
+    }
+
+    func testADispatchedPassBoundsWhenEachWriteCanLand() {
+        let first = id(1, pid: 30), second = id(2, pid: 30), other = id(1, pid: 10)
+        let actuator = seeded([first, second, other])
+        let reconciler = WindowReconciler(actuator: actuator)
+        let pass = reconciler.dispatch(
+            frames: [first: target, second: target, other: target], focused: nil, currentlyFocused: nil
+        )
+        // Claim wait (2 x 0.25 s) plus one stall per write up to and including its own.
+        XCTAssertEqual(pass.landingBounds[first]!, 0.75, accuracy: 1e-9)
+        XCTAssertEqual(pass.landingBounds[second]!, 1.0, accuracy: 1e-9)
+        XCTAssertEqual(pass.landingBounds[other]!, 0.75, accuracy: 1e-9)
+        _ = reconciler.collect(pass)
+        let serial = WindowReconciler(actuator: actuator, concurrency: .serial)
+        let done = serial.dispatch(frames: [first: target], focused: nil, currentlyFocused: nil)
+        XCTAssertEqual(done.landingBounds[first], 0, "a serial pass has written before dispatch returns")
+        _ = serial.collect(done)
+    }
+
+    func testALaneWaitingForItsClaimIsNotAbandonedAndWritesWhenItWins() {
+        let holder = id(2, pid: 30), window = id(1, pid: 30)
+        let actuator = seeded([holder, window])
+        // The motion write holds the app 0.4 s: past the 0.25 s stall, inside the 0.5 s claim wait.
+        actuator.windowDelay = [holder: 0.4]
+        let reconciler = WindowReconciler(actuator: actuator)
+        XCTAssertTrue(reconciler.submitMotion(pid: 30, writes: [MotionWrite(id: holder, from: stale, to: target)]))
+        Thread.sleep(forTimeInterval: 0.02)
+        let pass = reconciler.dispatch(frames: [window: target], focused: nil, currentlyFocused: nil)
+        let report = reconciler.collect(pass)
+        XCTAssertEqual(report.applied, [window], "claim-wait time is not a stall")
+        XCTAssertTrue(report.failed.isEmpty)
+        XCTAssertEqual(actuator.current(window), target)
     }
 }

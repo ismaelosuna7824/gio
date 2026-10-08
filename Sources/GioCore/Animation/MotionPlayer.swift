@@ -45,13 +45,17 @@ public struct MotionSummary: Equatable, Sendable {
     public let appStats: [pid_t: MotionWriteStats]
     /// SM-04: `ax` (frames written through Accessibility) or `snapshot` (GPU overlay).
     public let renderer: String
+    /// SM-12: snapshot flights only, display-link intervals over 1.5 refresh
+    /// intervals; nil (and absent from the line) for AX motion.
+    public let hitches: Int?
 
     public init(
         windows: Int, frames: Int, dropped: Int, duration: TimeInterval,
         slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out",
         sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:], renderer: String = "ax",
-        grewAtStart: Int = 0
+        grewAtStart: Int = 0, hitches: Int? = nil
     ) {
+        self.hitches = hitches
         self.grewAtStart = grewAtStart
         self.renderer = renderer
         self.curve = curve
@@ -67,15 +71,28 @@ public struct MotionSummary: Equatable, Sendable {
     public static func == (lhs: MotionSummary, rhs: MotionSummary) -> Bool {
         lhs.windows == rhs.windows && lhs.curve == rhs.curve && lhs.frames == rhs.frames && lhs.dropped == rhs.dropped
             && lhs.duration == rhs.duration && lhs.slowest?.app == rhs.slowest?.app
-            && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds
+            && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds && lhs.hitches == rhs.hitches
     }
 
-    /// `anim done windows=N frames=F dropped=D duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|snapshot grewAtStart=G`
-    /// `frames` counts sampled display ticks, `dropped` counts per-app frames
-    /// skipped because that app was still writing. IDs and app names only.
+    /// SM-12: a finished overlay flight. `frames` are the frames the display
+    /// presented during it, `dropped` the expected ones it did not; without
+    /// a measurement (no display link) both are 0 and `hitches` is absent.
+    public static func snapshotFlight(windows: Int, duration: TimeInterval, frames: FlightFrameStats?) -> MotionSummary {
+        MotionSummary(
+            windows: windows, frames: frames?.presented ?? 0, dropped: frames?.dropped ?? 0, duration: duration,
+            slowest: nil, curve: "spring", renderer: "snapshot", hitches: frames?.hitches
+        )
+    }
+
+    /// `anim done windows=N frames=F dropped=D [hitches=H] duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|snapshot grewAtStart=G`
+    /// AX: `frames` counts sampled display ticks, `dropped` counts per-app
+    /// frames skipped because that app was still writing. Snapshot (SM-12):
+    /// presented frames, expected minus presented, and hitches. IDs and app
+    /// names only.
     public var logLine: String {
         let slowestText = slowest.map { "\($0.app) \(Int($0.milliseconds.rounded()))ms" } ?? "none"
-        return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) "
+        let hitchText = hitches.map { "hitches=\($0) " } ?? ""
+        return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) \(hitchText)"
             + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated) renderer=\(renderer) grewAtStart=\(grewAtStart)"
     }
 }

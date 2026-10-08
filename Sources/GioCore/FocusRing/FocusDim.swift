@@ -82,9 +82,6 @@ public func subtractRect(_ base: CGRect, _ hole: CGRect) -> [CGRect] {
     return pieces.filter { $0.width > 0 && $0.height > 0 }
 }
 
-/// A window with less than this much of its width or height inside a
-/// display counts as off-screen (parked windows keep a 1 pt sliver).
-private let dimMinimumVisibleExtent: CGFloat = 24
 /// Largest per-edge difference between Gio's frame and the WindowServer
 /// bounds that still names the same window (apps round or clamp a little).
 private let dimMatchTolerance: CGFloat = 12
@@ -108,27 +105,20 @@ private func serverIndex(of window: DimWindow, in frontToBack: [ServerWindow], u
         .min { $0.1 < $1.1 }?.0
 }
 
-private func isVisible(_ frame: CGRect, on displays: [CGRect]) -> Bool {
-    displays.contains { display in
-        let overlap = display.intersection(frame)
-        return !overlap.isNull && overlap.width >= dimMinimumVisibleExtent
-            && overlap.height >= dimMinimumVisibleExtent
-    }
-}
-
 /// Pure NF-06 model. `windows` are the visible unfocused tiled windows (Gio
 /// frames); `frontToBack` is the WindowServer's on-screen normal-layer list
 /// in z-order, every app included (floating, popovers, other apps, Gio's own
 /// windows). Each window is dimmed where it is drawn (its matched server
 /// bounds) minus every entry in front of it and minus the focused window,
 /// then split per display. Windows the server does not list (minimized,
-/// hidden, other Space) or that are off-screen contribute nothing, and
-/// nothing dims without a visible focused window (no window to keep lit).
+/// hidden, other Space) or that are off-screen (`focusIndicatorVisible`)
+/// contribute nothing, and nothing dims without a visible focused window
+/// (no window to keep lit).
 public func focusDimRegions(
     focused: DimWindow?, windows: [DimWindow], frontToBack: [ServerWindow], displays: [CGRect]
 ) -> [FocusDimDisplay] {
     guard let focused, let focusedIndex = serverIndex(of: focused, in: frontToBack, used: []),
-          isVisible(frontToBack[focusedIndex].bounds, on: displays)
+          focusIndicatorVisible(frontToBack[focusedIndex].bounds, on: displays)
     else {
         return []
     }
@@ -141,7 +131,7 @@ public func focusDimRegions(
         }
         used.insert(index)
         let bounds = frontToBack[index].bounds
-        guard isVisible(bounds, on: displays) else {
+        guard focusIndicatorVisible(bounds, on: displays) else {
             continue
         }
         var pieces = [bounds]
@@ -164,6 +154,8 @@ public func focusDimRegions(
 public enum FocusDimHideReason: String, Equatable, Sendable {
     case disabled
     case motion
+    /// SM-08: a snapshot flight draws the dim on its own layers.
+    case flight
     case zoom
     case drag
     case noFocus = "no-focus"
@@ -221,14 +213,18 @@ public enum FocusDimDecision: Equatable, Sendable {
     case retryAfterRelease
 }
 
-/// Pure timing rule: the dim is never visible during motion (AX or snapshot
-/// flight), a native zoom or between a user drag and its snap-back reflow,
-/// and never recomputed while a button is down.
+/// Pure timing rule: the dim is never visible during motion (AX, or a
+/// snapshot flight, whose overlay draws it itself), a native zoom or between
+/// a user drag and its snap-back reflow, and never recomputed while a button
+/// is down.
 public func focusDimDecision(indicator: FocusIndicatorKind, activity: FocusDimActivity) -> FocusDimDecision {
     guard indicator == .dim else {
         return .hide(.disabled)
     }
-    if activity.motion || activity.flight {
+    if activity.flight {
+        return .hide(.flight)
+    }
+    if activity.motion {
         return .hide(.motion)
     }
     if activity.nativeZoom {
@@ -248,9 +244,11 @@ public func focusDimAlpha(strength: Double, darkAppearance: Bool) -> Double {
     return darkAppearance ? clamped * 0.8 : clamped
 }
 
-/// Fade in 150 ms at settle, out 80 ms at motion start; none with Reduce Motion.
-public func focusDimFadeDuration(showing: Bool, reduceMotion: Bool) -> TimeInterval {
-    guard !reduceMotion else {
+/// Fade in 150 ms at settle, out 80 ms at motion start; none with Reduce
+/// Motion. After a snapshot flight (`afterFlight`) the overlay already drew
+/// the dim at full strength, so the live one appears in place, no fade.
+public func focusDimFadeDuration(showing: Bool, reduceMotion: Bool, afterFlight: Bool = false) -> TimeInterval {
+    guard !reduceMotion, !(showing && afterFlight) else {
         return 0
     }
     return showing ? 0.15 : 0.08

@@ -117,36 +117,47 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         focusDim.stop()
     }
 
-    /// SM-04: the session queue drives the overlay through hooks that hop to
-    /// the main thread; the overlay reports landed springs back to the host.
+    /// SM-04/SM-08: the session queue drives the overlay through hooks that
+    /// hop to the main thread; the overlay reports the prime and the landed
+    /// tracks back to the host (main never waits on the session queue).
     private func wireSnapshotOverlay() {
         let overlay = snapshotOverlay
         overlay.start()
-        overlay.onFlightFinished = { [host] token in host.snapshotLayersFinished(token) }
+        overlay.onFlightFinished = { [host] token, frames in host.snapshotLayersFinished(token, frames: frames) }
         overlay.onFlightAborted = { [host] _, reason in host.snapshotFlightAborted(reason) }
+        overlay.onDeadlineArmed = { [host] token, deadline in host.snapshotDeadlineArmed(token, at: deadline) }
         // The tap callback runs on the main run loop; never assume it blindly.
         host.overlayAbortForMouseDown = {
             Thread.isMainThread ? MainActor.assumeIsolated { overlay.abortForMouseDown() } : false
         }
-        host.overlayWallpapers = overlay.wallpapers
-        host.overlayBegin = { [host] token, spring, flights in
+        host.overlayBegin = { [host] token, spring, flights, holes, decorations in
+            DispatchQueue.main.async {
+                let ok = MainActor.assumeIsolated {
+                    overlay.begin(token: token, spring: spring, flights: flights, holes: holes, decorations: decorations)
+                }
+                // One more main pass after the flush, so the panel's first
+                // frame is committed before the real windows move. On
+                // failure nothing is on screen and the pass runs through AX.
+                DispatchQueue.main.async { host.snapshotPrimed(token, ok: ok) }
+            }
+        }
+        host.overlayFly = { token in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.fly(token: token) }
+            }
+        }
+        host.overlayRetarget = { token, targets, flights, holes, decorations in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    // No wallpaper yet: nothing shown, settle right away.
-                    if !overlay.begin(token: token, spring: spring, flights: flights) {
-                        host.snapshotLayersFinished(token)
-                    }
+                    overlay.retarget(
+                        token: token, targets: targets, adding: flights, holes: holes, decorations: decorations
+                    )
                 }
             }
         }
-        host.overlayRetarget = { token, targets, flights in
+        host.overlayEnd = {
             DispatchQueue.main.async {
-                MainActor.assumeIsolated { overlay.retarget(token: token, targets: targets, adding: flights) }
-            }
-        }
-        host.overlayEnd = { fadeOut in
-            DispatchQueue.main.async {
-                MainActor.assumeIsolated { overlay.end(fadeOut: fadeOut) }
+                MainActor.assumeIsolated { overlay.end() }
             }
         }
         // NA-03: the close ghost, a window-sized layer that removes itself.

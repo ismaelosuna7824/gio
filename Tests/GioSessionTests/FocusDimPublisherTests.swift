@@ -89,7 +89,7 @@ final class FocusDimPublisherTests: XCTestCase {
         fixture.zoomActive = true
         publisher.update()
         hop.drain()
-        XCTAssertEqual(delivered.values, [.hidden(.motion), .hidden(.zoom)], "equal states are deduplicated")
+        XCTAssertEqual(delivered.values, [.hidden(.motion), .hidden(.flight), .hidden(.zoom)], "equal states are deduplicated")
         XCTAssertEqual(scheduler.pendingCount, 0)
         XCTAssertEqual(probe.serverQueries, 0)
     }
@@ -159,5 +159,25 @@ final class FocusDimPublisherTests: XCTestCase {
         }
         XCTAssertEqual(strength, fixture.session.config.focus.dimStrength)
         XCTAssertEqual(regions.flatMap(\.windows).map(\.bounds), [right])
+    }
+
+    /// SM-08: at the end of a flight the dim is computed at once (no 50 ms
+    /// coalescing) so the live dim is up in the frame the overlay leaves.
+    func testPublishNowComputesWithoutWaitingForTheCoalescedRecompute() {
+        let publisher = makePublisher()
+        fixture.flightActive = true
+        publisher.update()
+        hop.drain()
+        XCTAssertEqual(delivered.values, [.hidden(.flight)])
+        fixture.flightActive = false
+        publisher.publishNow()
+        XCTAssertEqual(probe.serverQueries, 1, "queried on the session queue right away")
+        hop.drain()
+        XCTAssertTrue(isShown)
+        XCTAssertEqual(scheduler.pendingCount, 0, "no recompute left behind")
+        fixture.motionActive = true
+        publisher.publishNow()
+        hop.drain()
+        XCTAssertEqual(delivered.values.last, .hidden(.motion), "the timing rule still applies")
     }
 }

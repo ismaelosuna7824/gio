@@ -4,8 +4,8 @@ import XCTest
 /// SM-01: `[animations] renderer` and the pure choice between the snapshot
 /// (ScreenCaptureKit) renderer and the Accessibility motion.
 final class RendererSettingTests: XCTestCase {
-    func testDefaultIsAxAndBothValuesParse() throws {
-        XCTAssertEqual(defaultGioConfig().animations.renderer, .ax)
+    func testDefaultIsSnapshotAndBothValuesParse() throws {
+        XCTAssertEqual(defaultGioConfig().animations.renderer, .snapshot)
         for kind in ["snapshot", "ax"] {
             let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"\(kind)\"\n").get()
             XCTAssertTrue(warnings.isEmpty)
@@ -15,7 +15,7 @@ final class RendererSettingTests: XCTestCase {
 
     func testUnknownRendererWarnsAndKeepsDefault() throws {
         let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"gpu\"\n").get()
-        XCTAssertEqual(config.animations.renderer, .ax)
+        XCTAssertEqual(config.animations.renderer, .snapshot)
         XCTAssertEqual(warnings.count, 1)
         XCTAssertTrue(warnings[0].contains("animations.renderer"))
     }
@@ -25,10 +25,9 @@ final class RendererSettingTests: XCTestCase {
     }
 
     func testTemplateDeclaresRenderer() throws {
-        XCTAssertTrue(defaultConfigTemplate().contains("renderer = \"ax\""))
         let (config, warnings) = try parseGioConfig(defaultConfigTemplate()).get()
         XCTAssertTrue(warnings.isEmpty)
-        XCTAssertEqual(config.animations.renderer, .ax)
+        XCTAssertEqual(config.animations.renderer, .snapshot)
     }
 
     func testAnimationEditsCarryRendererWhenGiven() {

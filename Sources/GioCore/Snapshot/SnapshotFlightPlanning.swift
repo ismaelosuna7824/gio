@@ -2,18 +2,20 @@ import CoreGraphics
 import Foundation
 
 // SM-04: the pure decisions of the snapshot renderer at motion start and on
-// retarget. The overlay is opaque (wallpaper backdrop), so every window that
-// is visible at the start or at the end of the motion on an involved display
-// must have a layer: a window without an image would vanish for the flight.
-// The simplest artifact-free rule is therefore all-or-nothing at the start
-// (AX motion for the whole run when any image is missing) and, mid-flight,
-// windows without an image are written once and revealed when the overlay
-// ends.
+// retarget. The overlay draws an opaque picture (wallpaper backdrop) over
+// every involved display. SM-16: a window without an image does not force
+// the AX renderer any more. It is written once to its final frame and, when
+// it is visible there, the backdrop gets a hole at that frame
+// (`snapshotHoles`): the real window (painting, the panel does not occlude
+// it, SM-14) shows through, and the image layers still draw above it. The
+// motion falls back to AX only when no moving window has an image.
 
 public enum SnapshotFallbackReason: String, Equatable, Sendable {
     case cacheMiss = "cache-miss"
     case noBackdrop = "no-backdrop"
     case nothingVisible = "nothing-visible"
+    /// SM-08: the overlay could not be put on screen before the real writes.
+    case primeFailed = "prime-failed"
 }
 
 public struct SnapshotFlightItem: Equatable, Sendable {
@@ -30,16 +32,37 @@ public struct SnapshotFlightItem: Equatable, Sendable {
     }
 }
 
+/// SM-16: a window that flies without a layer and is visible at its target
+/// on an overlaid display: the backdrop is cut at `frame` (its target) so
+/// the real window shows through.
+public struct SnapshotHole: Equatable, Sendable {
+    public let id: WindowID
+    public let frame: CGRect
+    public let displayIndex: Int
+
+    public init(id: WindowID, frame: CGRect, displayIndex: Int) {
+        self.id = id
+        self.frame = frame
+        self.displayIndex = displayIndex
+    }
+}
+
 public enum SnapshotFlightDecision: Equatable, Sendable {
-    case snapshot(items: [SnapshotFlightItem])
+    /// `items` fly an image; `holes` are the windows without one that land
+    /// visible (SM-16).
+    case snapshot(items: [SnapshotFlightItem], holes: [SnapshotHole])
     case fallback(reason: SnapshotFallbackReason, missing: [WindowID])
 
     /// The one write each real window gets, at motion start.
     public var finalFrames: [WindowID: CGRect] {
-        guard case .snapshot(let items) = self else {
+        guard case .snapshot(let items, let holes) = self else {
             return [:]
         }
-        return Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.to) })
+        var frames = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.to) })
+        for hole in holes {
+            frames[hole.id] = hole.frame
+        }
+        return frames
     }
 }
 
@@ -68,15 +91,52 @@ public func planSnapshotFlight(
     guard !animatedDisplays.isEmpty else {
         return .fallback(reason: .nothingVisible, missing: [])
     }
-    let items = entries.filter { animatedDisplays.contains($0.displayIndex) }
-    let missing = items.filter { !hasImage($0.id) }.map(\.id)
-    guard missing.isEmpty else {
+    let involved = entries.filter { animatedDisplays.contains($0.displayIndex) }
+    var items: [SnapshotFlightItem] = []
+    var missing: [WindowID] = []
+    for item in involved {
+        if hasImage(item.id) {
+            items.append(item)
+        } else {
+            missing.append(item.id)
+        }
+    }
+    // SM-16: holes show the rest, but something must fly.
+    guard items.contains(where: { moves($0.from, $0.to) }) else {
         return .fallback(reason: .cacheMiss, missing: missing)
     }
     guard animatedDisplays.allSatisfy(backdropReady) else {
         return .fallback(reason: .noBackdrop, missing: [])
     }
-    return .snapshot(items: items)
+    let holes = snapshotHoles(
+        layered: Set(items.map(\.id)), targets: targets, displays: displays, activeDisplays: animatedDisplays
+    )
+    return .snapshot(items: items, holes: holes)
+}
+
+/// SM-16: every window without a layer that is visible at its target on an
+/// overlaid display (`activeDisplays`), sorted by id. Parked windows (their
+/// 1 pt sliver included) and windows on displays without an overlay have no
+/// hole. Recomputed on every retarget with the latest targets: a window that
+/// got a layer loses its hole, one uncovered at the retarget gains one.
+public func snapshotHoles(
+    layered: Set<WindowID>, targets: [WindowID: CGRect], displays: [CGRect], activeDisplays: Set<Int>
+) -> [SnapshotHole] {
+    targets.keys.sorted().compactMap { id in
+        let frame = targets[id]!
+        guard !layered.contains(id),
+              let index = overlayDisplayIndex(from: frame, to: frame, displays: displays),
+              activeDisplays.contains(index)
+        else {
+            return nil
+        }
+        return SnapshotHole(id: id, frame: frame, displayIndex: index)
+    }
+}
+
+/// `snapshot holes ids=N` (debug): windows shown through the backdrop.
+public func snapshotHolesLine(count: Int) -> String {
+    "snapshot holes ids=\(count)"
 }
 
 public struct SnapshotRetargetPlan: Equatable, Sendable {
@@ -84,8 +144,8 @@ public struct SnapshotRetargetPlan: Equatable, Sendable {
     public var retargets: [WindowID: CGRect]
     /// Newly involved windows that have an image: new layers.
     public var adds: [SnapshotFlightItem]
-    /// Newly involved windows without an image: written once, hidden under
-    /// the overlay, revealed when it ends.
+    /// Newly involved windows without an image: written once under the
+    /// overlay; visible at their target, they show through a hole (SM-16).
     public var uncovered: [WindowID]
 }
 
@@ -172,9 +232,14 @@ public struct SnapshotFlightGate: Equatable, Sendable {
     }
 }
 
-/// `snapshot flight layers=N cacheAgeMs=M duration=Xms` (counts and timings).
-public func snapshotFlightLine(layers: Int, cacheAgeMilliseconds: Int, duration: TimeInterval) -> String {
-    "snapshot flight layers=\(layers) cacheAgeMs=\(cacheAgeMilliseconds) duration=\(Int((duration * 1000).rounded()))ms"
+/// `snapshot flight layers=N cacheAgeMs=M duration=Xms [fps=F]` (counts and
+/// timings). `fps` is presented frames over the measured flight time (SM-12),
+/// absent when nothing was measured.
+public func snapshotFlightLine(
+    layers: Int, cacheAgeMilliseconds: Int, duration: TimeInterval, frames: FlightFrameStats? = nil
+) -> String {
+    let fps = frames.map { " fps=\(Int($0.framesPerSecond.rounded()))" } ?? ""
+    return "snapshot flight layers=\(layers) cacheAgeMs=\(cacheAgeMilliseconds) duration=\(Int((duration * 1000).rounded()))ms\(fps)"
 }
 
 /// `snapshot fallback reason=cache-miss ids=N`
