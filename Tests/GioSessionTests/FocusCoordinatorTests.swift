@@ -27,6 +27,7 @@ final class FocusCoordinatorTests: XCTestCase {
         var ringPublishes = 0
         var reflows = 0
         var shownWorkspaces: [WorkspaceID] = []
+        var revealCauses: [MotionCause] = []
         var windowWorkAllowed = true
         var logs: [(LogLevel, String)] = []
 
@@ -93,9 +94,10 @@ final class FocusCoordinatorTests: XCTestCase {
                 publishFocusRing: { world.ringPublishes += 1 },
                 reflowAll: { world.reflows += 1 },
                 workspaceFocusPlan: { planFocusWindow($0, in: fixture.session.manager) },
-                showWorkspace: {
-                    world.shownWorkspaces.append($0)
-                    _ = fixture.session.manager.focus($0)
+                showWorkspace: { workspace, cause in
+                    world.shownWorkspaces.append(workspace)
+                    world.revealCauses.append(cause)
+                    _ = fixture.session.manager.focus(workspace)
                 },
                 log: { world.logs.append(($0, $1)) },
                 now: { scheduler.now },
@@ -260,6 +262,7 @@ final class FocusCoordinatorTests: XCTestCase {
         focus.requestAdoption(.focusChanged, pid: 2, element: element(2))
 
         XCTAssertEqual(world.shownWorkspaces, [hiddenWorkspace])
+        XCTAssertEqual(world.revealCauses, [.workspaceSwitch])
         XCTAssertEqual(fixture.session.manager.current, 2)
         XCTAssertEqual(focused, ids[2])
         XCTAssertEqual(world.reflows, 1)
@@ -268,6 +271,28 @@ final class FocusCoordinatorTests: XCTestCase {
         })
         let settle = focus.takeSettleFocus(parked: [])
         XCTAssertNil(settle.target)
+    }
+
+    func testRevealOnAnotherDisplaysShownWorkspaceIsNotAWorkspaceSwitch() {
+        // MM-01: the window's workspace is already on screen on display 2;
+        // only the focused display changes, so nothing slides.
+        let other = DisplayID(2)
+        fixture.session.manager.syncDisplays([SessionFixture.display, other])
+        var current = fixture.session.manager.currentWorkspace()
+        current.stripWindows([ids[2]])
+        fixture.session.manager.update(current)
+        let shownOnOther = fixture.session.manager.activeID(on: other)!
+        var target = fixture.session.manager.workspace(id: shownOnOther)!
+        target.columns = [Column(id: ColumnID(1), width: 0, windows: [ids[2]])]
+        fixture.session.manager.update(target)
+        world.frontmost = 2
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(2))
+
+        XCTAssertEqual(world.shownWorkspaces, [shownOnOther])
+        XCTAssertEqual(world.revealCauses, [.passive])
+        XCTAssertEqual(fixture.session.manager.focusedDisplay, other)
+        XCTAssertEqual(focused, ids[2])
     }
 
     func testActivationRevealsTheAppsFocusedWindowNotTheFirstOfItsPid() {
@@ -446,6 +471,22 @@ final class FocusCoordinatorTests: XCTestCase {
         world.mouseFollowsFocus = false
         focus.warpCursorToFocus(ids[2], plans: plans(2))
         XCTAssertEqual(world.warps.count, 1)
+    }
+
+    func testFocusOnAnEmptyDisplayPutsTheCursorInItsMiddle() {
+        // MM-02: `focus-monitor-*` onto a display with no window to focus.
+        let display = CGRect(x: 1800, y: 0, width: 1600, height: 1000)
+        focus.warpCursor(toDisplay: display)
+        XCTAssertEqual(world.warps, [CGPoint(x: 2600, y: 500)])
+
+        world.mouseLocation = CGPoint(x: 2000, y: 300)
+        focus.warpCursor(toDisplay: display)
+        XCTAssertEqual(world.warps.count, 1, "the cursor is already on that display")
+
+        world.mouseLocation = CGPoint(x: 100, y: 100)
+        world.mouseFollowsFocus = false
+        focus.warpCursor(toDisplay: display)
+        XCTAssertEqual(world.warps.count, 1, "mouse-follows-focus is off")
     }
 
     func testPassiveReflowFocusesNothing() {

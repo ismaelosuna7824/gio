@@ -12,7 +12,9 @@ final class ActionApplierTests: XCTestCase {
             .moveColumnLeft, .moveColumnRight, .moveUp, .moveDown, .workspace(2), .moveToWorkspace(2),
             .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
             .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-            .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview
+            .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview,
+            .focusMonitor(.right), .moveColumnToMonitor(.right), .moveWindowToMonitor(.right),
+            .moveWorkspaceToMonitor(.right)
         ]
         for action in actions {
             switch action {
@@ -20,7 +22,8 @@ final class ActionApplierTests: XCTestCase {
                  .moveColumnLeft, .moveColumnRight, .moveUp, .moveDown, .workspace, .moveToWorkspace,
                  .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
                  .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-                 .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview:
+                 .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview,
+                 .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor:
                 break
             }
         }
@@ -266,5 +269,95 @@ final class ActionApplierTests: XCTestCase {
             CGRect(x: 0, y: 0, width: 1500, height: 900)
         )
         XCTAssertNil(apply(.fullscreen).fullscreenToggle, "no display, no fullscreen")
+    }
+
+    func testAWorkspaceNoDisplayShowsYetResolvesOnTheFocusedDisplay() {
+        // MM-01: between a switch and the next `syncShownWorkspace`, the
+        // current workspace is on no display; the focused display, not the
+        // first one, is where it is about to show.
+        world = ReflowWorld(twoDisplays: true)
+        world.addColumns(2, on: ReflowWorld.right)
+        let manager = world.session.manager
+        XCTAssertTrue(world.session.manager.focus(manager.activeID(on: ReflowWorld.right)!))
+        world.session.manager.switchTo(2)
+        XCTAssertFalse(world.displays.allDisplays().contains { $0.workspace == world.session.manager.currentID })
+        XCTAssertEqual(
+            ActionApplier.focusedViewport(manager: world.session.manager, context: context()),
+            world.visibleFrames[ReflowWorld.right]
+        )
+    }
+
+    // MARK: Monitors (MM-02)
+
+    private static let directions: [FocusDirection] = [.left, .right, .up, .down]
+    private static let monitorActions: [@Sendable (FocusDirection) -> HotkeyAction] = [
+        { .focusMonitor($0) }, { .moveColumnToMonitor($0) },
+        { .moveWindowToMonitor($0) }, { .moveWorkspaceToMonitor($0) },
+    ]
+
+    /// The left display (focused) with three columns, the right one empty.
+    private func twoDisplays() {
+        world = ReflowWorld(twoDisplays: true)
+        ids = world.addColumns(3)
+        world.focusColumn(1)
+    }
+
+    func testMonitorActionsWithoutANeighbourLeaveTheManagerAlone() {
+        for make in Self.monitorActions {
+            for direction in Self.directions {
+                setUp()
+                let before = world.session.manager
+                let effect = apply(make(direction))
+                XCTAssertEqual(world.session.manager, before, "\(make(direction)): one display")
+                XCTAssertFalse(effect.syncsShownWorkspace, "\(make(direction))")
+                XCTAssertNil(effect.warpsToDisplay, "\(make(direction))")
+            }
+            for direction in [FocusDirection.left, .up, .down] {
+                twoDisplays()
+                let before = world.session.manager
+                let effect = apply(make(direction))
+                XCTAssertEqual(world.session.manager, before, "\(make(direction)): nothing that way")
+                XCTAssertFalse(effect.syncsShownWorkspace, "\(make(direction))")
+            }
+        }
+    }
+
+    func testFocusMonitorGoesToTheNeighbourAndAnEmptyOneTakesTheCursor() {
+        twoDisplays()
+        let before = world.session.manager
+        let effect = apply(.focusMonitor(.right))
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right)
+        XCTAssertEqual(world.session.manager.currentID, before.activeID(on: ReflowWorld.right))
+        XCTAssertTrue(effect.syncsShownWorkspace)
+        XCTAssertTrue(effect.carriesFocusIntent)
+        XCTAssertEqual(
+            effect.warpsToDisplay, world.visibleFrames[ReflowWorld.right],
+            "no window to focus there: mouse-follows-focus takes the cursor to the display"
+        )
+
+        let back = apply(.focusMonitor(.left))
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left)
+        XCTAssertEqual(current.focusedWindow, ids[1])
+        XCTAssertNil(back.warpsToDisplay, "the focused window takes the cursor")
+    }
+
+    func testMovesToMonitorMatchCoreAndFocusFollows() {
+        let cases: [((FocusDirection) -> HotkeyAction, (inout WorkspaceManager) -> Bool)] = [
+            (HotkeyAction.moveColumnToMonitor, { $0.moveColumn(toDisplay: ReflowWorld.right) }),
+            (HotkeyAction.moveWindowToMonitor, { $0.moveWindow(toDisplay: ReflowWorld.right) }),
+            (HotkeyAction.moveWorkspaceToMonitor, { $0.moveWorkspace(toDisplay: ReflowWorld.right) }),
+        ]
+        for (make, move) in cases {
+            twoDisplays()
+            var expected = world.session.manager
+            XCTAssertTrue(move(&expected), "\(make(.right))")
+            let effect = apply(make(.right))
+            XCTAssertEqual(world.session.manager, expected, "\(make(.right))")
+            XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right, "\(make(.right))")
+            XCTAssertEqual(current.focusedWindow, ids[1], "\(make(.right)): the moved window keeps focus")
+            XCTAssertTrue(effect.syncsShownWorkspace, "\(make(.right))")
+            XCTAssertTrue(effect.carriesFocusIntent, "\(make(.right))")
+            XCTAssertNil(effect.warpsToDisplay, "\(make(.right))")
+        }
     }
 }

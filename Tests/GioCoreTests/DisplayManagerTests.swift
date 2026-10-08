@@ -75,4 +75,13 @@ final class DisplayManagerTests: XCTestCase {
         manager.connect(main, frame: frameA, workspace: WorkspaceID(1))
         XCTAssertEqual(manager.allDisplays().map(\.id), [main, external])
     }
+
+    func testAllDisplaysFollowGeometryNotIDs() {
+        // MM-01: left to right, then top to bottom; the raw ID is irrelevant.
+        var manager = DisplayManager()
+        manager.connect(DisplayID(1), frame: frameA, workspace: WorkspaceID(1))
+        manager.connect(DisplayID(2), frame: CGRect(x: -2560, y: 0, width: 2560, height: 1440), workspace: WorkspaceID(2))
+        manager.connect(DisplayID(3), frame: CGRect(x: 0, y: 1169, width: 1800, height: 1000), workspace: WorkspaceID(3))
+        XCTAssertEqual(manager.allDisplays().map(\.id), [DisplayID(2), DisplayID(3), DisplayID(1)])
+    }
 }

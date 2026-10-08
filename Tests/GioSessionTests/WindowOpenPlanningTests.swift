@@ -16,7 +16,8 @@ final class WindowOpenPlanningTests: XCTestCase {
             storePhysicalFrame: { world.physicalFrames[$0] = $1 }
         ))
         let inactive = planner.planInactiveWorkspaces(
-            displays: world.displays.allDisplays(), manager: world.session.manager, registry: world.session.registry
+            displays: world.displays.allDisplays(), visibleFrames: world.visibleFrames,
+            manager: world.session.manager, registry: world.session.registry
         )
         return planner.plan(
             .init(

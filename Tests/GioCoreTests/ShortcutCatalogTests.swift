@@ -37,7 +37,7 @@ final class ShortcutCatalogTests: XCTestCase {
     func testCategoriesCoverEveryEntryAndAreOrdered() {
         XCTAssertEqual(
             ShortcutCategory.allCases.map(\.title),
-            ["Focus", "Move", "Columns", "Windows", "Workspaces", "App"]
+            ["Focus", "Move", "Columns", "Windows", "Workspaces", "Monitors", "App"]
         )
         let entries = shortcutCatalog(configKeybindings: [])
         for category in ShortcutCategory.allCases {
@@ -62,6 +62,24 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(keys("move-window-to-workspace-down"), ["Alt+Shift+U"])
         XCTAssertEqual(keys("move-window-to-workspace-up"), ["Alt+Shift+I"])
         XCTAssertEqual(entries.first { $0.configName == "focus-workspace-down" }?.category, .workspaces)
+    }
+
+    func testMonitorEntriesOnePerDirectionWithCtrlAltDefaults() {
+        let entries = shortcutCatalog(configKeybindings: [])
+        func keys(_ name: String) -> [String] {
+            entries.first { $0.configName == name }?.bindings.map { $0.combo.describe() } ?? ["missing"]
+        }
+        for (suffix, key) in [("left", "H"), ("down", "J"), ("up", "K"), ("right", "L")] {
+            XCTAssertEqual(keys("focus-monitor-\(suffix)"), ["Ctrl+Alt+\(key)"])
+            XCTAssertEqual(keys("move-column-to-monitor-\(suffix)"), ["Ctrl+Alt+Shift+\(key)"])
+            XCTAssertEqual(keys("move-window-to-monitor-\(suffix)"), [], "unbound")
+            XCTAssertEqual(keys("move-workspace-to-monitor-\(suffix)"), [], "unbound")
+        }
+        let monitors = entries.filter { $0.category == .monitors }.compactMap(\.configName)
+        XCTAssertEqual(monitors.count, 16)
+        XCTAssertEqual(Array(monitors.prefix(4)), [
+            "focus-monitor-left", "focus-monitor-right", "focus-monitor-up", "focus-monitor-down",
+        ])
     }
 
     func testAltShiftHLMoveColumnsAndOldStackingMovesAreUnbound() {

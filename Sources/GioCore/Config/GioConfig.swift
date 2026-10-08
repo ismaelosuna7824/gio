@@ -191,22 +191,17 @@ public struct GioConfig: Sendable {
         self.rules = rules
     }
 
-    /// Resolve to engine input. Fraction wins when set, else absolute,
-    /// else engine default (nil).
-    public func resolveDefaultColumnWidth(viewportWidth: CGFloat) -> CGFloat? {
-        if let fraction = layout.defaultColumnWidthFraction {
-            return proportionalColumnWidth(
-                fraction, viewportWidth: viewportWidth, padding: layout.padding, gap: layout.gaps
-            )
-        }
-        return layout.defaultColumnWidthPoints
-    }
-
-    public func makeLayoutConfig(viewportWidth: CGFloat) -> LayoutConfig {
-        LayoutConfig(
+    /// Engine input, independent of any display: a fraction stays a
+    /// proportion that each display resolves against its own viewport
+    /// (MM-01); points are absolute. The fraction wins when both are set;
+    /// neither leaves the engine default (half the viewport).
+    public func makeLayoutConfig() -> LayoutConfig {
+        let fraction = layout.defaultColumnWidthFraction
+        return LayoutConfig(
             padding: layout.padding,
             gap: layout.gaps,
-            defaultColumnWidth: resolveDefaultColumnWidth(viewportWidth: viewportWidth),
+            defaultColumnWidth: fraction == nil ? layout.defaultColumnWidthPoints : nil,
+            defaultColumnProportion: fraction ?? 0.5,
             fullscreenGap: layout.resolvedFullscreenGap,
             maximizeSingleWindow: layout.maximizeSingleWindow
         )

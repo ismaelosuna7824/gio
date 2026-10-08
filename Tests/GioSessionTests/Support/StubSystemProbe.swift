@@ -8,8 +8,8 @@ final class StubSystemProbe: SystemProbe, @unchecked Sendable {
     var pressedMouseButtons = 0
     var mouseLocation = CGPoint.zero
     var frontmostPID: pid_t?
-    var mainScreenFrame: CGRect? = CGRect(x: 0, y: 0, width: 1800, height: 1169)
-    var mainScreenVisibleFrame: CGRect? = CGRect(x: 0, y: 0, width: 1800, height: 1130)
+    var primaryScreenFrame: CGRect? = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+    var primaryScreenVisibleFrame: CGRect? = CGRect(x: 0, y: 0, width: 1800, height: 1130)
     var regularPIDs: Set<pid_t> = []
     var names: [pid_t: String] = [:]
     var serverWindows: [ServerWindow] = []

@@ -136,6 +136,12 @@ public func defaultConfigTemplate() -> String {
     # window to the neighbouring column instead.
     # "toggle-overview" (Alt+O) shows every workspace of the display as a row
     # of window thumbnails (thumbnails need Screen Recording).
+    # Multiple displays: "focus-monitor-left|right|up|down" (Ctrl+Alt+H / L /
+    # K / J) focuses the neighbouring display; "move-column-to-monitor-..."
+    # (Ctrl+Alt+Shift+H / L / K / J) sends the focused column there and
+    # follows it. Unbound: "move-window-to-monitor-..." (only the focused
+    # window) and "move-workspace-to-monitor-..." (the whole workspace), e.g.
+    # "Ctrl+Alt+Cmd+L" = "move-workspace-to-monitor-right"
 
     # Named workspaces always exist (even when empty), come first in their
     # display's stack in this order (Alt+1 is the first), and keep their

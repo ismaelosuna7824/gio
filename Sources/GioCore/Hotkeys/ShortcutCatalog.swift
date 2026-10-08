@@ -2,7 +2,7 @@ import Foundation
 
 /// Reference grouping for the Shortcuts screen, in display order.
 public enum ShortcutCategory: CaseIterable, Sendable {
-    case focus, move, columns, windows, workspaces, app
+    case focus, move, columns, windows, workspaces, monitors, app
 
     public var title: String {
         switch self {
@@ -11,6 +11,7 @@ public enum ShortcutCategory: CaseIterable, Sendable {
         case .columns: return "Columns"
         case .windows: return "Windows"
         case .workspaces: return "Workspaces"
+        case .monitors: return "Monitors"
         case .app: return "App"
         }
     }
@@ -101,6 +102,38 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "consume-or-expel-window-right", name: "Consume or expel right", summary: "Pull the window into the right column, or push it out into its own column.", category: .columns)
     case .toggleOverview:
         return ActionInfo(id: "toggle-overview", name: "Workspace overview", summary: "Show every workspace of this display as a row of window thumbnails; pick one to go there.", category: .workspaces)
+    case .focusMonitor(let direction):
+        let side = monitorSide(direction)
+        return ActionInfo(id: "focus-monitor-\(side)", name: "Focus monitor \(side)", summary: "Focus the display \(monitorPlace(direction)) and the workspace it shows (no display there: nothing happens).", category: .monitors)
+    case .moveColumnToMonitor(let direction):
+        let side = monitorSide(direction)
+        return ActionInfo(id: "move-column-to-monitor-\(side)", name: "Move column to monitor \(side)", summary: "Send the focused column, with all its windows and its width, to the workspace the display \(monitorPlace(direction)) shows, next to its focused column, and follow it.", category: .monitors)
+    case .moveWindowToMonitor(let direction):
+        let side = monitorSide(direction)
+        return ActionInfo(id: "move-window-to-monitor-\(side)", name: "Move window to monitor \(side)", summary: "Send only the focused window, as its own column, to the workspace the display \(monitorPlace(direction)) shows, and follow it (unbound by default).", category: .monitors)
+    case .moveWorkspaceToMonitor(let direction):
+        let side = monitorSide(direction)
+        return ActionInfo(id: "move-workspace-to-monitor-\(side)", name: "Move workspace to monitor \(side)", summary: "Send the current workspace to the stack of the display \(monitorPlace(direction)), shown there, and follow it; named workspaces stay where config puts them (unbound by default).", category: .monitors)
+    }
+}
+
+/// The config-name suffix of a monitor direction.
+private func monitorSide(_ direction: FocusDirection) -> String {
+    switch direction {
+    case .left: return "left"
+    case .right: return "right"
+    case .up: return "up"
+    case .down: return "down"
+    }
+}
+
+/// Where the neighbouring display sits, for the summaries.
+private func monitorPlace(_ direction: FocusDirection) -> String {
+    switch direction {
+    case .left: return "on the left"
+    case .right: return "on the right"
+    case .up: return "above"
+    case .down: return "below"
     }
 }
 
@@ -120,6 +153,13 @@ private let catalogActions: [HotkeyAction] = [
     .workspace(1), .moveToWorkspace(1),
     .focusWorkspaceDown, .focusWorkspaceUp,
     .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp, .toggleOverview,
+    .focusMonitor(.left), .focusMonitor(.right), .focusMonitor(.up), .focusMonitor(.down),
+    .moveColumnToMonitor(.left), .moveColumnToMonitor(.right),
+    .moveColumnToMonitor(.up), .moveColumnToMonitor(.down),
+    .moveWindowToMonitor(.left), .moveWindowToMonitor(.right),
+    .moveWindowToMonitor(.up), .moveWindowToMonitor(.down),
+    .moveWorkspaceToMonitor(.left), .moveWorkspaceToMonitor(.right),
+    .moveWorkspaceToMonitor(.up), .moveWorkspaceToMonitor(.down),
 ]
 
 /// Alt+Space is handled by the app before the action table.

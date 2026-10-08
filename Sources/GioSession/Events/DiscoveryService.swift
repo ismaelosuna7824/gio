@@ -49,7 +49,10 @@ public final class DiscoveryService: @unchecked Sendable {
         public var knownDisplayIDs: () -> [DisplayID]
         public var connectDisplay: (DisplaySnapshot, WorkspaceID) -> Void
         public var disconnectDisplay: (DisplayID) -> Void
-        public var mainScreenFrame: () -> CGRect?
+        /// MM-01: usable frame of every connected display (startup windows
+        /// land on the display holding most of them).
+        public var displayFrames: () -> [DisplayID: CGRect]
+        /// The global AX flip height (the primary display's height).
         public var updateDisplayHeight: (CGFloat) -> Void
         /// Topology changed: nothing placed before it is trusted.
         public var displaysChanged: () -> Void
@@ -95,7 +98,7 @@ public final class DiscoveryService: @unchecked Sendable {
             reflowAll: @escaping () -> Void,
             displaySnapshots: @escaping () -> [DisplaySnapshot], knownDisplayIDs: @escaping () -> [DisplayID],
             connectDisplay: @escaping (DisplaySnapshot, WorkspaceID) -> Void,
-            disconnectDisplay: @escaping (DisplayID) -> Void, mainScreenFrame: @escaping () -> CGRect?,
+            disconnectDisplay: @escaping (DisplayID) -> Void, displayFrames: @escaping () -> [DisplayID: CGRect],
             updateDisplayHeight: @escaping (CGFloat) -> Void, displaysChanged: @escaping () -> Void,
             windowOpened: @escaping (WindowID) -> Void = { _ in },
             windowsClosing: @escaping ([WindowID]) -> Void = { _ in },
@@ -136,7 +139,7 @@ public final class DiscoveryService: @unchecked Sendable {
             self.knownDisplayIDs = knownDisplayIDs
             self.connectDisplay = connectDisplay
             self.disconnectDisplay = disconnectDisplay
-            self.mainScreenFrame = mainScreenFrame
+            self.displayFrames = displayFrames
             self.updateDisplayHeight = updateDisplayHeight
             self.displaysChanged = displaysChanged
             self.windowOpened = windowOpened
@@ -184,6 +187,9 @@ public final class DiscoveryService: @unchecked Sendable {
         }
         let registry = context.registry()
         let flip = AXVerticalFlip(displayHeight: context.displayHeight())
+        // MM-01: a full scan (startup, resync) places each new window on the
+        // display it sits on; a launch scan is a live arrival (focused display).
+        let placement = onlyPID == nil ? context.displayFrames() : nil
         var liveIDs = Set<WindowID>()
         var focusCandidates: [FocusCandidate] = []
         // Minimized windows are candidates too: they stay registered (and
@@ -212,7 +218,7 @@ public final class DiscoveryService: @unchecked Sendable {
             }
             // NW-02: a launched app's windows may take the user to their
             // workspace; a full scan (startup, resync) only places them.
-            if let id = registerNew(candidate, mayFollow: onlyPID != nil) {
+            if let id = registerNew(candidate, mayFollow: onlyPID != nil, placement: placement) {
                 liveIDs.insert(id)
             }
         }
@@ -422,9 +428,12 @@ public final class DiscoveryService: @unchecked Sendable {
     /// nothing registered) for Gio's own pid. NW-02: an `open-on-workspace`
     /// rule sends it to that named workspace; when `mayFollow` (a live
     /// arrival) and the rule's follow policy agrees, the user goes there too.
+    /// MM-01: with `placement` (a full scan's display frames), a window no
+    /// rule routes lands on the display holding most of it, not the focused one.
     @discardableResult
     func registerNew(
         _ candidate: DiscoveredSystemWindow, mayFollow: Bool = false,
+        placement: [DisplayID: CGRect]? = nil,
         createdAt: TimeInterval? = nil, retries: Int = 0,
         queueWait: TimeInterval = 0, classify: TimeInterval = 0
     ) -> WindowID? {
@@ -472,7 +481,8 @@ public final class DiscoveryService: @unchecked Sendable {
         var destinationShown = false
         var workspaceLabel = ""
         context.updateManager { manager in
-            let destID = manager.arrivalDestination(outcome)
+            let display = placement.flatMap { displayFor(frame: window.frame, displays: $0) }
+            let destID = manager.arrivalDestination(outcome, onDisplay: display)
             destinationShown = manager.activeIDs.contains(destID)
             var dest = manager.workspace(id: destID)!
             workspaceLabel = dest.name ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
@@ -590,13 +600,16 @@ public final class DiscoveryService: @unchecked Sendable {
 
     /// Each display owns a workspace stack: register them first so a
     /// vanished display's windows merge into a survivor before anything is
-    /// laid out.
+    /// laid out. MM-01: displays register in position order, and the
+    /// primary display (Cocoa origin) is both the main display and the AX
+    /// flip reference.
     public func syncDisplays() {
-        let snapshot = context.displaySnapshots()
+        let raw = context.displaySnapshots()
+        let byID = Dictionary(raw.map { ($0.id, $0) }) { first, _ in first }
+        let snapshot = displaysByPosition(byID.mapValues(\.frame)).compactMap { byID[$0] }
         let seen = Set(snapshot.map(\.id))
-        // NW-02: the main display sits at the Cocoa origin.
-        let main = snapshot.first { $0.frame.origin == .zero }?.id
-        context.updateManager { $0.syncDisplays(snapshot.map(\.id), main: main) }
+        let primary = primaryDisplayIndex(snapshot.map(\.frame)).map { snapshot[$0] }
+        context.updateManager { $0.syncDisplays(snapshot.map(\.id), main: primary?.id) }
         for display in snapshot {
             let manager = context.manager()
             context.connectDisplay(display, manager.activeID(on: display.id) ?? manager.currentID)
@@ -604,8 +617,8 @@ public final class DiscoveryService: @unchecked Sendable {
         for known in context.knownDisplayIDs() where !seen.contains(known) {
             context.disconnectDisplay(known)
         }
-        if let main = context.mainScreenFrame() {
-            context.updateDisplayHeight(main.height)
+        if let primary {
+            context.updateDisplayHeight(primary.frame.height)
         }
         // A topology change can move windows behind our back and changes
         // every parking target: nothing placed before it is trusted.

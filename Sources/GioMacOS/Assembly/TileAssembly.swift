@@ -119,9 +119,7 @@ public func runTileReflow(
         let (loaded, messages) = loadGioConfig()
         return (loaded, messages)
     }()
-    let engine = engine ?? ScrollableLayoutEngine(
-        config: loaded.makeLayoutConfig(viewportWidth: display.width)
-    )
+    let engine = engine ?? ScrollableLayoutEngine(config: loaded.makeLayoutConfig())
     let flip = AXVerticalFlip(displayHeight: displayHeight)
     let actuator = actuator ?? AXWindowActuator(displayHeight: displayHeight)
     let found = try discoverSystemWindows()

@@ -16,14 +16,16 @@ public func shouldFollowArrival(
 extension WorkspaceManager {
     /// Where an arriving window goes: its rule's named workspace (on that
     /// workspace's display) when it exists, else the rule's index on the
-    /// focused display (`workspace = N`), else the current workspace.
-    public func arrivalDestination(_ outcome: RuleOutcome) -> WorkspaceID {
+    /// focused display (`workspace = N`), else the shown workspace of
+    /// `display` (MM-01: a startup window's own display), else the current
+    /// workspace (live arrivals pass nil: they land on the focused display).
+    public func arrivalDestination(_ outcome: RuleOutcome, onDisplay display: DisplayID? = nil) -> WorkspaceID {
         if let name = outcome.openOnWorkspace, let named = namedWorkspaceID(name) {
             return named
         }
         if let index = outcome.workspace, let target = ruleTarget(index) {
             return target
         }
-        return currentID
+        return display.flatMap { activeID(on: $0) } ?? currentID
     }
 }

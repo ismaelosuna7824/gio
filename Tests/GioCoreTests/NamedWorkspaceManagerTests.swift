@@ -207,6 +207,47 @@ final class NamedWorkspaceManagerTests: XCTestCase {
         assertInvariants(manager)
     }
 
+    // MARK: - Monitor actions (MM-02)
+
+    func testNamedWorkspacesStayOnTheirDisplayButTheirColumnsMove() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.applyNamedWorkspaces(defs("Code"))
+        manager.syncDisplays([a, b], main: a)
+        XCTAssertEqual(manager.currentWorkspace().name, "Code")
+        put(&manager, 1)
+        let before = manager
+        XCTAssertFalse(manager.moveWorkspace(toDisplay: b), "a named workspace lives where config puts it")
+        XCTAssertEqual(manager, before)
+        XCTAssertTrue(manager.moveColumn(toDisplay: b))
+        XCTAssertEqual(names(manager, on: a), ["Code", nil], "the emptied named workspace persists")
+        XCTAssertEqual(manager.currentWorkspace().columns.first?.windows, [id(1)])
+        assertInvariants(manager)
+    }
+
+    func testAWorkspaceMovedOntoANamedStackLandsAfterTheNamedOnes() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.applyNamedWorkspaces([
+            WorkspaceDefinition(name: "Code", display: .index(2)),
+            WorkspaceDefinition(name: "Chat", display: .index(2)),
+        ])
+        manager.syncDisplays([a, b], main: a)
+        XCTAssertEqual(names(manager, on: b), ["Code", "Chat", nil])
+        XCTAssertEqual(manager.activeID(on: b), manager.namedWorkspaceID("Code"))
+        put(&manager, 1)
+        let moving = manager.currentID
+        XCTAssertTrue(manager.moveWorkspace(toDisplay: b))
+        XCTAssertEqual(names(manager, on: b), ["Code", "Chat", nil, nil])
+        XCTAssertEqual(manager.stack(on: b)[2].id, moving)
+        XCTAssertEqual(manager.currentID, moving)
+        XCTAssertEqual(manager.current, 3)
+        assertInvariants(manager)
+        manager.syncDisplays([a, b], main: a)
+        XCTAssertEqual(manager.stack(on: b)[2].id, moving, "a resync keeps it on its new display")
+        assertInvariants(manager)
+    }
+
     func testSummariesCarryNamesIconsAndColors() {
         var manager = WorkspaceManager()
         manager.applyNamedWorkspaces([WorkspaceDefinition(name: "Code", icon: "hammer", color: "#ff0000")])
@@ -271,6 +312,22 @@ final class NamedWorkspaceManagerTests: XCTestCase {
         XCTAssertEqual(manager.arrivalDestination(.none), manager.currentID)
     }
 
+    func testAStartupWindowLandsOnItsDisplayUnlessARuleRoutesIt() {
+        // MM-01: a startup window goes to the shown workspace of the display
+        // it sits on; named and indexed rules keep their precedence.
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(1), DisplayID(2))
+        manager.syncDisplays([a, b], main: a)
+        manager.applyNamedWorkspaces(defs("Code"))
+        let code = manager.namedWorkspaceID("Code")!
+        let onB = manager.activeID(on: b)!
+        XCTAssertEqual(manager.arrivalDestination(.none, onDisplay: b), onB)
+        XCTAssertEqual(manager.arrivalDestination(RuleOutcome(openOnWorkspace: "Code"), onDisplay: b), code)
+        XCTAssertEqual(manager.arrivalDestination(RuleOutcome(workspace: 1), onDisplay: b), manager.ruleTarget(1))
+        XCTAssertEqual(manager.arrivalDestination(.none, onDisplay: DisplayID(9)), manager.currentID)
+        XCTAssertEqual(manager.arrivalDestination(.none, onDisplay: nil), manager.currentID)
+    }
+
     func testReloadKeepsBundleRuleFloats() {
         let window = ManagedWindow(
             id: id(1), pid: 10, application: "Code", bundleID: "com.microsoft.VSCode", title: "",
@@ -301,7 +358,7 @@ final class NamedWorkspaceManagerTests: XCTestCase {
         let pool = ["A", "B", "C", "D"]
         manager.syncDisplays(displays, main: displays[0])
         for step in 0..<3000 {
-            switch Int.random(in: 0..<12, using: &rng) {
+            switch Int.random(in: 0..<15, using: &rng) {
             case 0, 1:
                 put(&manager, nextWindow)
                 live.insert(id(nextWindow))
@@ -340,6 +397,9 @@ final class NamedWorkspaceManagerTests: XCTestCase {
                 manager.syncDisplays(
                     Bool.random(using: &rng) ? displays : [displays[0]], main: displays[0]
                 )
+            case 12: manager.moveColumn(toDisplay: displays.randomElement(using: &rng)!)
+            case 13: manager.moveWindow(toDisplay: displays.randomElement(using: &rng)!)
+            case 14: manager.moveWorkspace(toDisplay: displays.randomElement(using: &rng)!)
             default:
                 let target = manager.displayIDs.randomElement(using: &rng)!
                 manager.focus(manager.activeID(on: target)!)

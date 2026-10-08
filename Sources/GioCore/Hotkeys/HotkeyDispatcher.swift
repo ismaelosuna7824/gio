@@ -49,6 +49,19 @@ public enum HotkeyAction: Equatable, Sendable {
     /// Niri `toggle-overview` (Alt+O): open or close the workspace overview.
     /// The app handles it (a panel); the session state is left unchanged.
     case toggleOverview
+    /// Niri `focus-monitor-<direction>` (Ctrl+Alt+H/J/K/L): focus the
+    /// neighbouring display (`displayNeighbour`) and its shown workspace.
+    case focusMonitor(FocusDirection)
+    /// Niri `move-column-to-monitor-<direction>` (Ctrl+Alt+Shift+H/J/K/L):
+    /// the focused column moves to the neighbouring display's shown
+    /// workspace and focus follows it.
+    case moveColumnToMonitor(FocusDirection)
+    /// Niri `move-window-to-monitor-<direction>` (unbound): only the focused
+    /// window moves, as its own column; focus follows it.
+    case moveWindowToMonitor(FocusDirection)
+    /// Niri `move-workspace-to-monitor-<direction>` (unbound): the current
+    /// workspace moves to the neighbouring display's stack; focus follows it.
+    case moveWorkspaceToMonitor(FocusDirection)
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -85,7 +98,8 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
 /// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
-/// floating, Alt+O the workspace overview (Alt+Space stays the launcher; exact-match combos never collide).
+/// floating, Alt+O the workspace overview, Ctrl+Alt+H/J/K/L focus the neighbouring display and
+/// Ctrl+Alt+Shift+H/J/K/L move the column there (Alt+Space stays the launcher; exact-match combos never collide).
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -117,6 +131,11 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))
         bindings.append((combo([.alt, .shift], "\(number)"), .moveToWorkspace(number)))
+    }
+    let monitorKeys: [(String, FocusDirection)] = [("H", .left), ("J", .down), ("K", .up), ("L", .right)]
+    for (key, direction) in monitorKeys {
+        bindings.append((combo([.ctrl, .alt], key), .focusMonitor(direction)))
+        bindings.append((combo([.ctrl, .alt, .shift], key), .moveColumnToMonitor(direction)))
     }
     return bindings
 }

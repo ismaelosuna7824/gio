@@ -22,11 +22,16 @@ final class ReflowWorld: @unchecked Sendable {
     var reads: [WindowID] = []
     var modes: [WindowID: WindowMode] = [:]
 
-    init(twoDisplays: Bool = false) {
-        let ids = twoDisplays ? [Self.left, Self.right] : [Self.left]
-        session.manager.syncDisplays(ids)
-        for id in ids {
-            let frame = id == Self.left ? Self.leftFrame : Self.rightFrame
+    convenience init(twoDisplays: Bool = false) {
+        self.init(frames: twoDisplays
+            ? [(Self.left, Self.leftFrame), (Self.right, Self.rightFrame)]
+            : [(Self.left, Self.leftFrame)])
+    }
+
+    /// MM-03: any arrangement (`left`/`right` are just the two IDs).
+    init(frames: [(DisplayID, CGRect)]) {
+        session.manager.syncDisplays(frames.map(\.0))
+        for (id, frame) in frames {
             displays.connect(id, frame: frame, workspace: session.manager.activeID(on: id)!)
             visibleFrames[id] = frame.insetBy(dx: 0, dy: 20)
         }
@@ -82,7 +87,7 @@ final class ReflowWorld: @unchecked Sendable {
     }
 
     func engine() -> ScrollableLayoutEngine {
-        ScrollableLayoutEngine(config: session.config.makeLayoutConfig(viewportWidth: 1800))
+        ScrollableLayoutEngine(config: session.config.makeLayoutConfig())
     }
 
     func read(_ id: WindowID) -> CGRect? {
@@ -174,7 +179,7 @@ final class LegacyReflowReference {
                 let motion = planWorkspaceSwitchMotion(
                     current: world.physicalFrames, visible: motionFrames,
                     parked: displayPlan.parked, hidden: carriesSwitch ? inactive.parked : [:],
-                    viewport: visible, display: display.frame, duration: settings.duration
+                    viewport: visible, display: display.frame, otherDisplays: [], duration: settings.duration
                 )
                 animations += motion.animations
                 prepositions.merge(motion.prepositions) { _, new in new }
@@ -263,12 +268,14 @@ final class PlannerHarness {
         ))
     }
 
+    @discardableResult
     func run(
         animating: Bool, settings: AnimationsSectionConfig, centering: CenterRequest,
         zoomTargets: (ParkingPlan, CGRect) -> [WindowID: CGRect]
     ) -> (ReflowOutcome, ReflowPlan) {
         let inactive = planner.planInactiveWorkspaces(
-            displays: world.displays.allDisplays(), manager: world.session.manager, registry: world.session.registry
+            displays: world.displays.allDisplays(), visibleFrames: world.visibleFrames,
+            manager: world.session.manager, registry: world.session.registry
         )
         let pass = planner.plan(
             .init(
@@ -455,7 +462,7 @@ final class ReflowPlannerTests: XCTestCase {
         XCTAssertEqual(calls.first, world.visibleFrames[ReflowWorld.left], "judged against the usable viewport")
     }
 
-    func testTwoDisplaysMatchLegacyAndOnlyTheFirstCarriesTheSwitch() {
+    func testTwoDisplaysMatchLegacyWithoutHiddenWorkspaces() {
         let world = ReflowWorld(twoDisplays: true)
         world.addColumns(2, on: ReflowWorld.left)
         world.addColumns(2, pidBase: 200, on: ReflowWorld.right)
@@ -465,6 +472,267 @@ final class ReflowPlannerTests: XCTestCase {
         XCTAssertEqual(plan.plans.count, 3, "two displays, then the inactive plan")
     }
 
+    // MARK: Multi-display (MM-01)
+
+    /// Two displays; the right one switched from its first workspace (two
+    /// columns, physically on the right display) to an empty second one.
+    private func rightDisplaySwitched() -> (ReflowWorld, [WindowID]) {
+        let world = ReflowWorld(twoDisplays: true)
+        world.addColumns(1, on: ReflowWorld.left)
+        let hidden = world.addColumns(2, pidBase: 200, on: ReflowWorld.right)
+        for (index, id) in hidden.enumerated() {
+            world.physicalFrames[id] = CGRect(x: 1900 + 500 * CGFloat(index), y: 60, width: 450, height: 700)
+        }
+        XCTAssertTrue(world.session.manager.focus(world.session.manager.activeID(on: ReflowWorld.right)!))
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        return (world, hidden)
+    }
+
+    func testHiddenWorkspaceParksBelowTheDisplayThatOwnsIt() {
+        let (world, hidden) = rightDisplaySwitched()
+        let harness = PlannerHarness(world: world)
+        let parked = harness.planner.planInactiveWorkspaces(
+            displays: world.displays.allDisplays(), visibleFrames: world.visibleFrames,
+            manager: world.session.manager, registry: world.session.registry
+        ).parked
+        for id in hidden {
+            let target = try? XCTUnwrap(parked[id])
+            XCTAssertEqual(target?.display, ReflowWorld.rightFrame)
+            XCTAssertFalse(target.map { $0.frame.intersects(ReflowWorld.leftFrame) } ?? true)
+            XCTAssertLessThanOrEqual(target?.frame.maxY ?? .infinity, ReflowWorld.rightFrame.minY + parkingSliver)
+        }
+    }
+
+    func testTheDisplayThatSwitchedCarriesTheSwitchMotion() {
+        let (world, hidden) = rightDisplaySwitched()
+        let (_, plan) = PlannerHarness(world: world).run(
+            animating: true, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        )
+        for id in hidden {
+            let start = world.physicalFrames[id]!
+            let drop = plan.animations.first { $0.id == id }
+            XCTAssertNotNil(drop, "the right display's hidden windows drop on the right display")
+            XCTAssertEqual(drop?.to, slideDownFrame(drop?.from ?? start, display: ReflowWorld.rightFrame))
+            XCTAssertEqual(plan.kinds[id], .workspaceSwitch)
+        }
+    }
+
+    func testStandardColumnsResolveAgainstTheirOwnDisplaysWidth() {
+        let world = ReflowWorld(twoDisplays: true)
+        let left = world.addColumns(1, on: ReflowWorld.left)[0]
+        world.addColumns(1, pidBase: 150, on: ReflowWorld.left)
+        let right = world.addColumns(1, pidBase: 200, on: ReflowWorld.right)[0]
+        world.addColumns(1, pidBase: 250, on: ReflowWorld.right)
+        let (_, plan) = PlannerHarness(world: world).run(
+            animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        )
+        let layout = world.session.config.layout
+        func half(_ display: DisplayID) -> CGFloat {
+            proportionalColumnWidth(
+                0.5, viewportWidth: world.visibleFrames[display]!.width, padding: layout.padding, gap: layout.gaps
+            )
+        }
+        XCTAssertEqual(plan.plans[0].visible[left]?.width, half(ReflowWorld.left))
+        XCTAssertEqual(plan.plans[1].visible[right]?.width, half(ReflowWorld.right))
+    }
+
+    /// MM-02 end to end: the hotkey action through `ActionApplier` and the
+    /// host's shown-workspace sync.
+    private func apply(_ action: HotkeyAction, in world: ReflowWorld) {
+        var manager = world.session.manager
+        let effect = ActionApplier.apply(action, manager: &manager, context: .init(
+            registry: world.session.registry, displays: world.displays.allDisplays(),
+            visibleFrames: world.visibleFrames, layout: world.session.config.layout,
+            engine: { world.engine() }, modes: { world.modes }, fallbackViewport: { nil }
+        ))
+        world.session.manager = manager
+        XCTAssertTrue(effect.syncsShownWorkspace)
+        world.syncShown()
+    }
+
+    /// `apply`, then one pass.
+    private func applyAndPlan(_ action: HotkeyAction, in world: ReflowWorld) -> ReflowPlan {
+        apply(action, in: world)
+        return PlannerHarness(world: world).run(
+            animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        ).1
+    }
+
+    private func visibleFrame(_ id: WindowID, in plan: ReflowPlan) -> CGRect? {
+        plan.plans.lazy.compactMap { $0.visible[id] }.first
+    }
+
+    func testAColumnMovedToTheRightDisplayIsLaidOutThere() {
+        let world = ReflowWorld(twoDisplays: true)
+        let ids = world.addColumns(2)
+        let plan = applyAndPlan(.moveColumnToMonitor(.right), in: world)
+        let moved = try? XCTUnwrap(visibleFrame(ids[1], in: plan))
+        XCTAssertTrue(moved.map(ReflowWorld.rightFrame.contains) ?? false, "\(String(describing: moved))")
+        let stayed = try? XCTUnwrap(visibleFrame(ids[0], in: plan))
+        XCTAssertTrue(stayed.map(ReflowWorld.leftFrame.contains) ?? false, "\(String(describing: stayed))")
+    }
+
+    func testAWorkspaceMovedToTheRightDisplayShowsThereAndTheLeftOneEmpties() {
+        let world = ReflowWorld(twoDisplays: true)
+        let ids = world.addColumns(2)
+        let plan = applyAndPlan(.moveWorkspaceToMonitor(.right), in: world)
+        XCTAssertEqual(world.displays.display(ReflowWorld.right)?.workspace, world.session.manager.currentID)
+        for id in ids {
+            let frame = visibleFrame(id, in: plan)
+            XCTAssertTrue(frame.map(ReflowWorld.rightFrame.contains) ?? false, "\(String(describing: frame))")
+        }
+    }
+
+    // MARK: MM-03 floating windows follow a monitor move
+
+    func testAFloatingWindowMovedToAnotherDisplayIsWrittenThere() {
+        for action in [HotkeyAction.moveWindowToMonitor(.right), .moveColumnToMonitor(.right), .moveWorkspaceToMonitor(.right)] {
+            let world = ReflowWorld(twoDisplays: true)
+            world.addColumns(1)
+            let floating = world.addColumns(1, pidBase: 300, mode: .floating)[0]
+            let start = CGRect(x: 300, y: 200, width: 600, height: 400)
+            world.physicalFrames[floating] = start
+            let harness = PlannerHarness(world: world)
+            harness.run(animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity)
+            apply(action, in: world)
+            XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right, "\(action)")
+            let (_, plan) = harness.run(
+                animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+            )
+            let expected = relocatedFloatingFrame(
+                start, from: world.visibleFrames[ReflowWorld.left]!, to: world.visibleFrames[ReflowWorld.right]!
+            )
+            XCTAssertEqual(visibleFrame(floating, in: plan), expected, "\(action)")
+            XCTAssertTrue(world.visibleFrames[ReflowWorld.right]!.contains(expected), "\(action)")
+            XCTAssertEqual(expected.size, start.size)
+            // Once it sits there the reflow stops writing it.
+            world.physicalFrames[floating] = expected
+            harness.run(animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity)
+            let (_, settled) = harness.run(
+                animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+            )
+            XCTAssertNil(visibleFrame(floating, in: settled), "\(action)")
+        }
+    }
+
+    func testAMovedFloatingWindowHidesWithItsNewDisplayAndReturnsThere() {
+        let world = ReflowWorld(twoDisplays: true)
+        world.addColumns(1)
+        let floating = world.addColumns(1, pidBase: 300, mode: .floating)[0]
+        world.physicalFrames[floating] = CGRect(x: 300, y: 200, width: 600, height: 400)
+        let harness = PlannerHarness(world: world)
+        harness.run(animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity)
+        apply(.moveWindowToMonitor(.right), in: world)
+        let landed = harness.run(
+            animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        ).1.plans.last!.visible[floating]!
+        world.physicalFrames[floating] = landed
+        harness.run(animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity)
+        // The right display switches away: the window parks under it.
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        let hidden = harness.run(
+            animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        ).1.plans.last!.parked[floating]
+        XCTAssertEqual(hidden?.display, ReflowWorld.rightFrame)
+        world.physicalFrames[floating] = hidden?.frame
+        // And back: it returns to its frame on the right display.
+        world.session.manager.switchTo(1)
+        world.syncShown()
+        let (_, back) = harness.run(
+            animating: false, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        )
+        XCTAssertEqual(back.plans.last?.visible[floating], landed)
+    }
+
+    // MARK: MM-03 vertically stacked displays
+
+    private static let lowerFrame = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+    private static let upperFrames = [
+        CGRect(x: 0, y: 1169, width: 1920, height: 1080),
+        CGRect(x: 0, y: 1169, width: 1800, height: 1080),
+    ]
+
+    /// `left` is the laptop below, `right` the display above it; the upper
+    /// one shows two columns physically on it.
+    private func stackedWorld(upper: CGRect) -> (ReflowWorld, [WindowID]) {
+        let world = ReflowWorld(frames: [(ReflowWorld.left, Self.lowerFrame), (ReflowWorld.right, upper)])
+        world.addColumns(1, on: ReflowWorld.left)
+        let ids = world.addColumns(2, pidBase: 200, on: ReflowWorld.right)
+        for (index, id) in ids.enumerated() {
+            world.physicalFrames[id] = CGRect(x: 40 + 500 * CGFloat(index), y: 1229, width: 450, height: 700)
+        }
+        XCTAssertTrue(world.session.manager.focus(world.session.manager.activeID(on: ReflowWorld.right)!))
+        return (world, ids)
+    }
+
+    private func assertStaysOff(
+        _ lower: CGRect, ids: [WindowID], plan: ReflowPlan, file: StaticString = #filePath, line: UInt = #line
+    ) {
+        for animation in plan.animations where ids.contains(animation.id) {
+            XCTAssertFalse(
+                animation.from.union(animation.to).intersects(lower),
+                "flight \(animation.from) -> \(animation.to)", file: file, line: line
+            )
+        }
+        for (id, frame) in plan.prepositions where ids.contains(id) {
+            XCTAssertFalse(frame.intersects(lower), "preposition \(frame)", file: file, line: line)
+        }
+        for id in ids {
+            if let target = plan.plans.last?.parked[id] {
+                XCTAssertFalse(target.frame.intersects(lower), "parked \(target.frame)", file: file, line: line)
+            }
+        }
+    }
+
+    func testTheUpperDisplaysSwitchNeverSlidesOntoTheDisplayBelow() {
+        for upper in Self.upperFrames {
+            let (world, ids) = stackedWorld(upper: upper)
+            let harness = PlannerHarness(world: world)
+            world.session.manager.switchTo(2)
+            world.syncShown()
+            let (_, hiding) = harness.run(
+                animating: true, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+            )
+            for id in ids {
+                XCTAssertNotNil(hiding.plans.last?.parked[id], "\(upper)")
+            }
+            assertStaysOff(Self.lowerFrame, ids: ids, plan: hiding)
+            // They land where they were parked; then the display switches back.
+            for id in ids {
+                world.physicalFrames[id] = hiding.plans.last?.parked[id]?.frame
+            }
+            world.session.manager.switchTo(1)
+            world.syncShown()
+            let (_, showing) = harness.run(
+                animating: true, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+            )
+            assertStaysOff(Self.lowerFrame, ids: ids, plan: showing)
+            for id in ids {
+                let frame = visibleFrame(id, in: showing)
+                XCTAssertTrue(frame.map(upper.contains) ?? false, "\(upper): \(String(describing: frame))")
+            }
+        }
+    }
+
+    func testTheLowerDisplayStillSlidesThroughItsFreeBottomEdge() throws {
+        let world = ReflowWorld(frames: [(ReflowWorld.left, Self.lowerFrame), (ReflowWorld.right, Self.upperFrames[1])])
+        world.addColumns(1, pidBase: 200, on: ReflowWorld.right)
+        let ids = world.addColumns(2, on: ReflowWorld.left)
+        XCTAssertTrue(world.session.manager.focus(world.session.manager.activeID(on: ReflowWorld.left)!))
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        let (_, plan) = PlannerHarness(world: world).run(
+            animating: true, settings: AnimationsSectionConfig(), centering: .none, zoomTargets: identity
+        )
+        for id in ids {
+            let drop = try XCTUnwrap(plan.animations.first { $0.id == id })
+            XCTAssertEqual(drop.to, slideDownFrame(drop.from, display: Self.lowerFrame))
+            XCTAssertEqual(plan.kinds[id], .workspaceSwitch)
+        }
+    }
+
     func testParkingMemoRecomputesAfterInvalidation() {
         let world = ReflowWorld()
         let first = world.addColumns(1)
@@ -472,12 +740,14 @@ final class ReflowPlannerTests: XCTestCase {
         world.syncShown()
         let harness = PlannerHarness(world: world)
         let parked = harness.planner.planInactiveWorkspaces(
-            displays: world.displays.allDisplays(), manager: world.session.manager, registry: world.session.registry
+            displays: world.displays.allDisplays(), visibleFrames: world.visibleFrames,
+            manager: world.session.manager, registry: world.session.registry
         ).parked
         XCTAssertNotNil(parked[first[0]])
         harness.planner.invalidateParking()
         let again = harness.planner.planInactiveWorkspaces(
-            displays: world.displays.allDisplays(), manager: world.session.manager, registry: world.session.registry
+            displays: world.displays.allDisplays(), visibleFrames: world.visibleFrames,
+            manager: world.session.manager, registry: world.session.registry
         ).parked
         XCTAssertEqual(again, parked)
     }

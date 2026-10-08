@@ -96,7 +96,8 @@ public final class ReflowPlanner: @unchecked Sendable {
         }
     }
 
-    /// PA-04: parking plan of hidden windows, recomputed only when its inputs change.
+    /// PA-04: parking plan of one display's hidden windows, recomputed only
+    /// when its inputs change.
     private struct InactiveParkKey: Equatable {
         var frames: [WindowID: CGRect]
         var display: CGRect
@@ -104,9 +105,14 @@ public final class ReflowPlanner: @unchecked Sendable {
     }
 
     private let context: Context
-    private var inactiveParking = PlanMemo<InactiveParkKey, [WindowID: ParkedTarget]>()
-    /// NC-06: the pre-hide frames of floating windows.
+    /// MM-01: one memo per display that hides windows.
+    private var inactiveParking: [DisplayID: PlanMemo<InactiveParkKey, [WindowID: ParkedTarget]>] = [:]
+    /// NC-06: the pre-hide frames of floating windows; MM-03: also the frame
+    /// a floating window moves to when its workspace changed display.
     private(set) var hiddenBook = HiddenWindowBook()
+    /// MM-03: the connected display whose stack held each floating window
+    /// at the last pass.
+    private var floatingDisplays: [WindowID: DisplayID] = [:]
 
     public init(context: Context) {
         self.context = context
@@ -114,17 +120,22 @@ public final class ReflowPlanner: @unchecked Sendable {
 
     /// Events the parking key cannot see (display change, config reload).
     public func invalidateParking() {
-        inactiveParking.invalidate()
+        inactiveParking.removeAll()
     }
 
-    /// Windows of workspaces no display shows hang off a corner of the first
-    /// display (size kept); floating windows of shown workspaces that were
-    /// hidden return to the frame they had. Minimized windows are untouched.
+    /// Windows of workspaces no display shows hang off a corner of the
+    /// display whose stack holds them (MM-01; a stack without a connected
+    /// display uses the first one), size kept, never on another display
+    /// (MM-03); floating windows of shown workspaces that were hidden return
+    /// to the frame they had, and floating windows whose workspace now lives
+    /// on another display (move-column/window/workspace-to-monitor) are
+    /// written onto it (MM-03). Minimized windows are untouched.
     public func planInactiveWorkspaces(
-        displays all: [DisplayState], manager: WorkspaceManager, registry: WindowRegistry
+        displays all: [DisplayState], visibleFrames: [DisplayID: CGRect],
+        manager: WorkspaceManager, registry: WindowRegistry
     ) -> ParkingPlan {
         var plan = ParkingPlan(visible: [:], parked: [:])
-        guard let hiddenDisplay = all.first else {
+        guard let fallback = all.first else {
             return plan
         }
         let shown = Set(all.map(\.workspace))
@@ -132,23 +143,40 @@ public final class ReflowPlanner: @unchecked Sendable {
         let hidden = manager.windows(outside: shown).filter {
             windows[$0].map { !$0.isMinimized } ?? false
         }
+        let connected = Set(all.map(\.id))
+        var owners: [WindowID: DisplayID] = [:]
+        for display in manager.displayIDs {
+            let owner = connected.contains(display) ? display : fallback.id
+            for workspace in manager.stack(on: display) where !shown.contains(workspace.id) {
+                for id in workspace.columns.flatMap(\.windows) {
+                    owners[id] = owner
+                }
+            }
+        }
         learnPhysicalFrames(of: hidden)
         let physical = context.physicalFrames()
-        var frames: [WindowID: CGRect] = [:]
+        var frames: [DisplayID: [WindowID: CGRect]] = [:]
         for id in hidden {
             guard let frame = physical[id] else {
                 continue
             }
-            frames[id] = frame
+            frames[owners[id] ?? fallback.id, default: [:]][id] = frame
             if windows[id]?.mode == .floating {
                 hiddenBook.hide(id, from: frame)
             }
         }
-        let others = all.filter { $0.id != hiddenDisplay.id }.map(\.frame)
-        plan.parked = inactiveParking.value(
-            for: InactiveParkKey(frames: frames, display: hiddenDisplay.frame, others: others)
-        ) {
-            planHiddenWindows(frames: frames, display: hiddenDisplay.frame, otherDisplays: others)
+        relocateFloatingWindows(
+            displays: all, visibleFrames: visibleFrames, manager: manager, windows: windows, physical: physical
+        )
+        for display in all {
+            let own = frames[display.id] ?? [:]
+            let others = all.filter { $0.id != display.id }.map(\.frame)
+            var memo = inactiveParking[display.id] ?? PlanMemo()
+            let parked = memo.value(for: InactiveParkKey(frames: own, display: display.frame, others: others)) {
+                planHiddenWindows(frames: own, display: display.frame, otherDisplays: others)
+            }
+            inactiveParking[display.id] = memo
+            plan.parked.merge(parked) { _, new in new }
         }
         let active = shown.flatMap { id in
             (manager.workspace(id: id)?.columns ?? []).flatMap(\.windows)
@@ -167,6 +195,38 @@ public final class ReflowPlanner: @unchecked Sendable {
         return plan
     }
 
+    /// MM-03: a floating window follows its workspace to another display:
+    /// the book takes its frame translated onto the new display, which the
+    /// shown-floating path below writes (or keeps for when it is shown).
+    private func relocateFloatingWindows(
+        displays all: [DisplayState], visibleFrames: [DisplayID: CGRect], manager: WorkspaceManager,
+        windows: [WindowID: ManagedWindow], physical: [WindowID: CGRect]
+    ) {
+        var current: [WindowID: DisplayID] = [:]
+        var visible: [DisplayID: CGRect] = [:]
+        for display in all {
+            visible[display.id] = visibleFrames[display.id] ?? display.frame
+            for workspace in manager.stack(on: display.id) {
+                for id in workspace.columns.flatMap(\.windows) where windows[id]?.mode == .floating {
+                    current[id] = display.id
+                }
+            }
+        }
+        let movable = current.keys.filter { windows[$0].map { !$0.isMinimized } ?? false }
+        var frames: [WindowID: CGRect] = [:]
+        for id in movable {
+            frames[id] = physical[id]
+        }
+        frames.merge(hiddenBook.frames(of: movable)) { _, remembered in remembered }
+        let moves = planFloatingRelocations(
+            frames: frames, previous: floatingDisplays, current: current, visibleFrames: visible
+        )
+        for (id, frame) in moves {
+            hiddenBook.move(id, to: frame)
+        }
+        floatingDisplays = current
+    }
+
     /// Lay out every display. `zoomTargets` judges the native zooms that
     /// ended against a display's plan and returns its visible frames with
     /// accepted zoom frames substituted (the host's native-zoom hook, called
@@ -178,7 +238,7 @@ public final class ReflowPlanner: @unchecked Sendable {
         var result = ReflowPlan()
         // Mirrors the host's manager: the host applies `displays` in order.
         var manager = input.manager
-        for (index, display) in input.displays.enumerated() {
+        for display in input.displays {
             guard let workspace = manager.workspace(id: display.workspace) else {
                 continue
             }
@@ -197,12 +257,14 @@ public final class ReflowPlanner: @unchecked Sendable {
             result.plans.append(displayPlan)
             result.hovered.merge(displayPlan.visible) { first, _ in first }
             if input.animating {
-                // NC-07: the first display also carries the workspace switch:
-                // hidden windows drop below its bottom edge, revealed ones rise.
-                let carriesSwitch = index == 0
-                let motionFrames = carriesSwitch
-                    ? displayPlan.visible.merging(inactive.visible) { first, _ in first }
-                    : displayPlan.visible
+                // NC-07 / MM-01: each display carries its own part of a
+                // workspace switch: the hidden windows parked below it drop
+                // under its bottom edge, the floating windows it shows again
+                // rise. A display whose workspace did not change has none.
+                let shownHere = Set(workspace.columns.flatMap(\.windows))
+                let hiddenHere = inactive.parked.filter { $0.value.display == display.frame }
+                let revealedHere = inactive.visible.filter { shownHere.contains($0.key) }
+                let motionFrames = displayPlan.visible.merging(revealedHere) { first, _ in first }
                 learnPhysicalFrames(of: motionFrames.keys)
                 var current = context.physicalFrames()
                 // NA-02: a new window is pre-positioned just below its tile
@@ -219,8 +281,9 @@ public final class ReflowPlanner: @unchecked Sendable {
                 }
                 let motion = planWorkspaceSwitchMotion(
                     current: current, visible: motionFrames,
-                    parked: displayPlan.parked, hidden: carriesSwitch ? inactive.parked : [:],
-                    viewport: visible, display: display.frame, duration: input.duration
+                    parked: displayPlan.parked, hidden: hiddenHere,
+                    viewport: visible, display: display.frame, otherDisplays: others,
+                    duration: input.duration
                 )
                 result.animations += motion.animations
                 result.prepositions.merge(motion.prepositions) { _, new in new }
@@ -229,9 +292,7 @@ public final class ReflowPlanner: @unchecked Sendable {
                 // NA-04: risers (pre-positioned below) and hidden windows that
                 // drop are the workspace switch; entries are window-open.
                 var switching = Set(motion.prepositions.keys)
-                if carriesSwitch {
-                    switching.formUnion(motion.animations.map(\.id).filter { inactive.parked[$0] != nil })
-                }
+                switching.formUnion(motion.animations.map(\.id).filter { hiddenHere[$0] != nil })
                 result.kinds.merge(classifyAnimationKinds(
                     motion.animations.map(\.id), cause: input.cause,
                     opening: Set(entries.keys), switching: switching

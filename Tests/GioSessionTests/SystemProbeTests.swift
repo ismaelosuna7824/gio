@@ -11,12 +11,20 @@ final class SystemProbeTests: XCTestCase {
         XCTAssertTrue(probe.isMouseDown)
     }
 
-    func testMainScreenHeightFallsBackWithoutAScreen() {
+    func testPrimaryScreenHeightFallsBackWithoutAScreen() {
         let probe = StubSystemProbe()
-        probe.mainScreenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
-        XCTAssertEqual(probe.mainScreenHeight, 900)
-        probe.mainScreenFrame = nil
-        XCTAssertEqual(probe.mainScreenHeight, 1169)
+        probe.primaryScreenFrame = CGRect(x: 0, y: 0, width: 1440, height: 900)
+        XCTAssertEqual(probe.primaryScreenHeight, 900)
+        probe.primaryScreenFrame = nil
+        XCTAssertEqual(probe.primaryScreenHeight, 1169)
+    }
+
+    func testLivePrimaryScreenSitsAtTheCocoaOrigin() {
+        // MM-01: the flip reference is the primary display, never the
+        // key-window screen (`NSScreen.main`).
+        if let frame = LiveSystemProbe().primaryScreenFrame {
+            XCTAssertEqual(frame.origin, .zero)
+        }
     }
 
     func testApplicationLabelFallsBackToPid() {

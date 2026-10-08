@@ -20,12 +20,56 @@ final class WorkspaceSwitchMotionTests: XCTestCase {
 
     private func plan(
         current: [WindowID: CGRect], visible: [WindowID: CGRect] = [:],
-        parked: [WindowID: ParkedTarget] = [:], hidden: [WindowID: ParkedTarget] = [:]
+        parked: [WindowID: ParkedTarget] = [:], hidden: [WindowID: ParkedTarget] = [:],
+        otherDisplays: [CGRect] = []
     ) -> WorkspaceSwitchMotion {
         planWorkspaceSwitchMotion(
             current: current, visible: visible, parked: parked, hidden: hidden,
-            viewport: display, display: display, duration: 0.25
+            viewport: display, display: display, otherDisplays: otherDisplays, duration: 0.25
         )
+    }
+
+    // MARK: MM-03 a display below
+
+    /// A display stacked under `display`, overlapping its x range.
+    private let below = CGRect(x: 0, y: -1169, width: 1600, height: 1169)
+
+    func testTheBandBelowIsBlockedOnlyByADisplayThere() {
+        XCTAssertTrue(canSlideBelow(display, otherDisplays: []))
+        XCTAssertFalse(canSlideBelow(display, otherDisplays: [below]))
+        // A side neighbour that only touches the display's edge, even one
+        // reaching further down, leaves the band free.
+        XCTAssertTrue(canSlideBelow(display, otherDisplays: [CGRect(x: 1800, y: -600, width: 1600, height: 1600)]))
+    }
+
+    func testOutgoingWindowDoesNotDropOntoADisplayBelow() {
+        let out = id(1)
+        let result = plan(
+            current: [out: column(100)], hidden: [out: hiddenTargetFor(column(100))], otherDisplays: [below]
+        )
+        XCTAssertTrue(result.animations.isEmpty, "it jumps at the final pass")
+        XCTAssertTrue(result.prepositions.isEmpty)
+    }
+
+    func testIncomingWindowFromBelowSnapsWhenADisplayIsBelow() {
+        let incoming = id(2)
+        let corner = hiddenTargetFor(column(0))
+        let result = plan(
+            current: [incoming: corner.frame], visible: [incoming: column(500)], otherDisplays: [below]
+        )
+        XCTAssertTrue(result.prepositions.isEmpty, "no riser is written onto the display below")
+        XCTAssertTrue(result.animations.isEmpty, "no diagonal flight across the display below either")
+    }
+
+    func testADisplayBelowLeavesScrollingAndSideEntriesAlone() throws {
+        let entering = id(3)
+        let result = plan(
+            current: [entering: CGRect(x: 1799, y: 8, width: 800, height: 984)],
+            visible: [entering: column(900)], otherDisplays: [below]
+        )
+        let animation = try XCTUnwrap(result.animations.first { $0.id == entering })
+        XCTAssertEqual(animation.to, column(900))
+        XCTAssertTrue(result.prepositions.isEmpty)
     }
 
     func testSlideDownFrameKeepsXAndSizeAndDropsBelowTheBottomEdge() {

@@ -204,7 +204,7 @@ final class SessionHost: @unchecked Sendable {
                 isNativeZoomActive: { [unowned self] in nativeZoom.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
                 isShuttingDown: { [unowned self] in isShuttingDown },
-                frontToBack: { [unowned self] in probe.windowServerWindows(displayHeight: mainHeight()) },
+                frontToBack: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 mainHop: mainQueueHop,
                 deliver: { [unowned self] in onFocusDim?($0) }
             ),
@@ -239,7 +239,7 @@ final class SessionHost: @unchecked Sendable {
                 isReady: { [unowned self] in reconciler != nil },
                 visibleTargets: { [unowned self] in focus.hoverFrames },
                 viewports: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
-                serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: mainHeight()) },
+                serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 nudge: { [unowned self] in reconciler?.nudge(steps: $0) ?? [] },
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 appName: { [unowned self] in appName($0) },
@@ -324,7 +324,7 @@ final class SessionHost: @unchecked Sendable {
                 trust: { [unowned self] in trustedFrames.trust($0, frame: $1) },
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 windowServerID: { [unowned self] id, frame in
-                    let candidates = windowServerSnapshotCandidates(pids: [id.pid], displayHeight: mainHeight())
+                    let candidates = windowServerSnapshotCandidates(pids: [id.pid], displayHeight: primaryHeight())
                     guard case .matched(let windowID)? = matchSnapshotCandidates(
                         managed: [id: frame], candidates: candidates
                     )[id] else {
@@ -332,7 +332,7 @@ final class SessionHost: @unchecked Sendable {
                     }
                     return windowID
                 },
-                windowServerBounds: { [unowned self] in windowServerBounds(windowID: $0, displayHeight: mainHeight()) },
+                windowServerBounds: { [unowned self] in windowServerBounds(windowID: $0, displayHeight: primaryHeight()) },
                 zoomAvailability: { [unowned self] in
                     reconciler?.zoomAvailability(of: $0) ?? .unavailable("no reconciler")
                 },
@@ -359,7 +359,7 @@ final class SessionHost: @unchecked Sendable {
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 matchWindows: { [unowned self] managed in
                     let candidates = windowServerSnapshotCandidates(
-                        pids: Set(managed.keys.map(\.pid)), displayHeight: mainHeight()
+                        pids: Set(managed.keys.map(\.pid)), displayHeight: primaryHeight()
                     )
                     return matchSnapshotCandidates(managed: managed, candidates: candidates)
                 },
@@ -428,7 +428,7 @@ final class SessionHost: @unchecked Sendable {
                     )
                 },
                 watchWindow: { [unowned self] in events.watch(window: $0, pid: $1) },
-                displayHeight: { [unowned self] in mainHeight() },
+                displayHeight: { [unowned self] in primaryHeight() },
                 isRunning: { [unowned self] in probe.isRunning($0) },
                 frontmostPID: { [unowned self] in probe.frontmostPID },
                 currentClick: { [unowned self] in focus.currentClick() },
@@ -466,7 +466,9 @@ final class SessionHost: @unchecked Sendable {
                     displays.disconnect(id)
                     visibleFrames.removeValue(forKey: id)
                 },
-                mainScreenFrame: { [unowned self] in probe.mainScreenFrame },
+                displayFrames: { [unowned self] in
+                    displays.allDisplays().reduce(into: [:]) { $0[$1.id] = visibleFrames[$1.id] ?? $1.frame }
+                },
                 updateDisplayHeight: { [unowned self] in actuator?.updateDisplayHeight($0) },
                 displaysChanged: { [unowned self] in
                     trustedFrames.removeAll()
@@ -546,10 +548,10 @@ final class SessionHost: @unchecked Sendable {
                 publishFocusRing: { [unowned self] in publishFocusRing() },
                 reflowAll: { [unowned self] in reflowAll() },
                 workspaceFocusPlan: { [unowned self] in planFocusWindow($0, in: session.manager) },
-                showWorkspace: { [unowned self] in
-                    _ = session.manager.focus($0)
+                showWorkspace: { [unowned self] workspace, cause in
+                    _ = session.manager.focus(workspace)
                     syncShownWorkspace()
-                    motionCauses.note(.workspaceSwitch)
+                    motionCauses.note(cause)
                 },
                 log: { GioLog.record($0, $1) },
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork }
@@ -747,7 +749,7 @@ final class SessionHost: @unchecked Sendable {
                 }
                 let request = SnapshotCaptureRequest(
                     windows: frames, displays: screens,
-                    primaryDisplayHeight: NSScreen.screens.first?.frame.height ?? 1169,
+                    primaryDisplayHeight: primaryScreen()?.frame.height ?? 1169,
                     measure: true
                 )
                 Task.detached { [snapshotCapturer] in
@@ -923,17 +925,21 @@ final class SessionHost: @unchecked Sendable {
 
     // MARK: - Sync
 
-    private func mainHeight() -> CGFloat {
-        probe.mainScreenHeight
+    /// MM-01: the global AX/WindowServer flip height is the primary
+    /// display's, whichever screen holds the key window.
+    private func primaryHeight() -> CGFloat {
+        probe.primaryScreenHeight
     }
 
     private func initialSync() {
         if actuator == nil {
-            actuator = AXWindowActuator(displayHeight: mainHeight())
+            actuator = AXWindowActuator(displayHeight: primaryHeight())
         }
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
-        discovery.enumerateAndPlace()
+        // MM-01: displays first, so every startup window lands in the stack
+        // of the display it sits on (not all in the first one).
         discovery.syncDisplays()
+        discovery.enumerateAndPlace()
         // The first layout is instant (`instantPlacement` starts armed for
         // `.startup`): windows land on their tiles instead of flying there.
         // Leftovers of a crashed session: windows that will not be tiled
@@ -967,11 +973,10 @@ final class SessionHost: @unchecked Sendable {
     // MARK: - Reflow
 
     private func engine() -> ScrollableLayoutEngine {
-        // Rebuilt per pass so config reloads apply instantly.
+        // Rebuilt per pass so config reloads apply instantly. Display
+        // independent (MM-01): default widths resolve per display viewport.
         ScrollableLayoutEngine(
-            config: session.config.makeLayoutConfig(
-                viewportWidth: probe.mainScreenVisibleFrame?.width ?? 1800
-            ),
+            config: session.config.makeLayoutConfig(),
             minimumSizes: minimumSizes.sizes
         )
     }
@@ -1168,7 +1173,8 @@ final class SessionHost: @unchecked Sendable {
         let centering = focus.takeCenterRequest()
         let sizingTarget = focus.takeSizingFocus()
         let inactive = reflowPlanner.planInactiveWorkspaces(
-            displays: displays.allDisplays(), manager: session.manager, registry: session.registry
+            displays: displays.allDisplays(), visibleFrames: visibleFrames,
+            manager: session.manager, registry: session.registry
         )
         // Native zoom: windows whose zoom ended since the last pass get their
         // verdict against this pass's layout target.
@@ -1407,8 +1413,8 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func resyncAndReflow() {
-        if let main = probe.mainScreenFrame {
-            actuator?.updateDisplayHeight(main.height)
+        if let primary = probe.primaryScreenFrame {
+            actuator?.updateDisplayHeight(primary.height)
         }
         // The tap starts once at launch; if permission arrived later it
         // stayed deaf — retry here so granting + any window event heals it
@@ -1450,7 +1456,7 @@ final class SessionHost: @unchecked Sendable {
             }
             return SnapshotDisplay(id: number.uint32Value, frame: screen.frame, scale: screen.backingScaleFactor)
         }
-        let primary = NSScreen.screens.first?.frame.height ?? 1169
+        let primary = primaryScreen()?.frame.height ?? 1169
         displayParameters.store(refreshes: snapshot, captureScreens: screens, primaryHeight: primary)
     }
 
@@ -1548,7 +1554,7 @@ final class SessionHost: @unchecked Sendable {
             registry: session.registry, displays: displays.allDisplays(), visibleFrames: visibleFrames,
             layout: session.config.layout, engine: { [unowned self] in engine() },
             modes: { [unowned self] in tileableModes() },
-            fallbackViewport: { [probe] in probe.mainScreenVisibleFrame }
+            fallbackViewport: { [probe] in probe.primaryScreenVisibleFrame }
         ))
         session.manager = manager
         if effect.syncsShownWorkspace {
@@ -1564,6 +1570,9 @@ final class SessionHost: @unchecked Sendable {
         focus.requestIntent(if: effect.carriesFocusIntent, previous: effect.previousFocus)
         if effect.growsFocusedWindow {
             focus.noteSizingFocus(session.manager.currentWorkspace().focusedWindow)
+        }
+        if let frame = effect.warpsToDisplay {
+            focus.warpCursor(toDisplay: frame)
         }
         reflowAll()
     }

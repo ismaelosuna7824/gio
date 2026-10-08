@@ -5,7 +5,7 @@ import GioCore
 import GioMacOS
 
 /// The system state the session reads on its queue: mouse, frontmost app,
-/// main screen, running apps and the on-screen window list. One seam so
+/// primary screen, running apps and the on-screen window list. One seam so
 /// components can be driven by a fake in tests; the live probe reads
 /// AppKit/WindowServer exactly as the session always did (no caching).
 public protocol SystemProbe: Sendable {
@@ -15,10 +15,12 @@ public protocol SystemProbe: Sendable {
     var mouseLocation: CGPoint { get }
     /// The frontmost application's pid, if any.
     var frontmostPID: pid_t? { get }
-    /// `NSScreen.main?.frame`.
-    var mainScreenFrame: CGRect? { get }
-    /// `NSScreen.main?.visibleFrame`.
-    var mainScreenVisibleFrame: CGRect? { get }
+    /// The primary screen's frame (`primaryDisplayIndex`: the one at the
+    /// Cocoa origin), the reference of the global AX/WindowServer flip.
+    /// Never `NSScreen.main`, which follows the key window (MM-01).
+    var primaryScreenFrame: CGRect? { get }
+    /// The primary screen's visible frame.
+    var primaryScreenVisibleFrame: CGRect? { get }
     /// Pids of running apps with the `.regular` activation policy.
     func runningRegularPIDs() -> Set<pid_t>
     /// A running application exists for `pid`.
@@ -36,9 +38,10 @@ public extension SystemProbe {
         pressedMouseButtons != 0
     }
 
-    /// Height of the main screen, or the session's historical fallback.
-    var mainScreenHeight: CGFloat {
-        mainScreenFrame?.height ?? 1169
+    /// Height of the primary screen (the flip height), or the session's
+    /// historical fallback.
+    var primaryScreenHeight: CGFloat {
+        primaryScreenFrame?.height ?? 1169
     }
 
     /// Name for log lines: the app name, or `pid<n>` when unknown.
@@ -64,12 +67,12 @@ public struct LiveSystemProbe: SystemProbe {
         NSWorkspace.shared.frontmostApplication?.processIdentifier
     }
 
-    public var mainScreenFrame: CGRect? {
-        NSScreen.main?.frame
+    public var primaryScreenFrame: CGRect? {
+        primaryScreen()?.frame
     }
 
-    public var mainScreenVisibleFrame: CGRect? {
-        NSScreen.main?.visibleFrame
+    public var primaryScreenVisibleFrame: CGRect? {
+        primaryScreen()?.visibleFrame
     }
 
     public func runningRegularPIDs() -> Set<pid_t> {

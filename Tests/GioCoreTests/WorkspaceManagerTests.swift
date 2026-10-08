@@ -245,6 +245,19 @@ final class WorkspaceManagerTests: XCTestCase {
         assertInvariants(manager)
     }
 
+    func testTheMainDisplayAdoptsThePlaceholderStackWhateverItsPosition() {
+        // MM-01: displays arrive ordered by geometry, so the leftmost may be
+        // an external one; the session still starts on the main display.
+        var manager = WorkspaceManager()
+        put(&manager, 1)
+        let (left, main) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([left, main], main: main)
+        XCTAssertEqual(manager.focusedDisplay, main)
+        XCTAssertEqual(windowCounts(manager, on: main), [1, 0])
+        XCTAssertEqual(windowCounts(manager, on: left), [0])
+        assertInvariants(manager)
+    }
+
     func testEachDisplayKeepsItsOwnStack() {
         var manager = WorkspaceManager()
         let (a, b) = (DisplayID(11), DisplayID(12))
@@ -304,6 +317,264 @@ final class WorkspaceManagerTests: XCTestCase {
         XCTAssertEqual(summaries[0].activeIndex, 1)
     }
 
+    // MARK: - Monitor actions (MM-02)
+
+    /// Focus the display's shown workspace (the session's click path).
+    private func show(_ manager: inout WorkspaceManager, _ display: DisplayID) {
+        XCTAssertTrue(manager.focus(manager.activeID(on: display)!))
+    }
+
+    /// Make column `index` of the current workspace the focused one.
+    private func focusColumn(_ manager: inout WorkspaceManager, _ index: Int) {
+        var workspace = manager.currentWorkspace()
+        workspace.focusedColumn = index
+        workspace.focusedWindow = workspace.columns[index].focusedWindowID
+        manager.update(workspace)
+    }
+
+    /// Stack window `n` under the focused window's column, focused, with
+    /// height weight `weight`.
+    private func stack(_ manager: inout WorkspaceManager, _ n: UInt64, weight: CGFloat) {
+        var workspace = manager.currentWorkspace()
+        workspace.columns[workspace.focusedColumn].windows.append(id(n))
+        workspace.columns[workspace.focusedColumn].heightWeights[id(n)] = weight
+        workspace.columns[workspace.focusedColumn].focusedWindowIndex =
+            workspace.columns[workspace.focusedColumn].windows.count - 1
+        workspace.focusedWindow = id(n)
+        manager.update(workspace)
+    }
+
+    private func layout(_ workspace: Workspace?) -> [[WindowID]] {
+        workspace?.columns.map(\.windows) ?? []
+    }
+
+    func testFocusDisplayShowsItsWorkspaceAndRefusesNoOps() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        put(&manager, 1)
+        let before = manager
+        XCTAssertFalse(manager.focusDisplay(a), "already focused")
+        XCTAssertFalse(manager.focusDisplay(DisplayID(99)), "unknown display")
+        XCTAssertEqual(manager, before)
+
+        XCTAssertTrue(manager.focusDisplay(b))
+        XCTAssertEqual(manager.focusedDisplay, b)
+        XCTAssertEqual(manager.currentID, before.activeID(on: b))
+        XCTAssertNil(manager.currentWorkspace().focusedWindow, "an empty display: no window to focus")
+        XCTAssertEqual(windowCounts(manager, on: a), [1, 0], "the other stack is untouched")
+        assertInvariants(manager)
+
+        XCTAssertTrue(manager.focusDisplay(a))
+        XCTAssertEqual(manager.currentWorkspace().focusedWindow, id(1))
+        assertInvariants(manager)
+    }
+
+    func testMoveColumnToDisplayLandsAfterTheTargetsFocusedColumnAndFollows() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        show(&manager, b)
+        put(&manager, 3)
+        put(&manager, 4)
+        focusColumn(&manager, 0)
+        show(&manager, a)
+        put(&manager, 1)
+        put(&manager, 2)
+        stack(&manager, 5, weight: 2)
+        let source = manager.currentID
+        let moving = manager.currentWorkspace().columns[1]
+
+        XCTAssertTrue(manager.moveColumn(toDisplay: b))
+        XCTAssertEqual(manager.focusedDisplay, b, "focus follows the column")
+        let target = manager.currentWorkspace()
+        XCTAssertEqual(layout(target), [[id(3)], [id(2), id(5)], [id(4)]])
+        XCTAssertEqual(target.focusedColumn, 1)
+        XCTAssertEqual(target.focusedWindow, id(5))
+        XCTAssertEqual(target.columns[1].widthSpec, moving.widthSpec, "the column keeps its width")
+        XCTAssertEqual(target.columns[1].heightWeights, moving.heightWeights)
+        XCTAssertEqual(target.columns[1].focusedWindowIndex, 1)
+        XCTAssertEqual(Set(target.columns.map(\.id)).count, 3, "column ids stay unique")
+
+        let left = manager.workspace(id: source)
+        XCTAssertEqual(layout(left), [[id(1)]])
+        XCTAssertEqual(left?.focusedColumn, 0)
+        XCTAssertEqual(left?.focusedWindow, id(1), "the source keeps a valid focus")
+        XCTAssertEqual(manager.activeID(on: a), source)
+        assertInvariants(manager)
+    }
+
+    func testMoveColumnIntoAnEmptyDisplayKeepsTheEmptiedSourceShown() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        put(&manager, 1)
+        let source = manager.currentID
+        XCTAssertTrue(manager.moveColumn(toDisplay: b))
+        XCTAssertEqual(layout(manager.currentWorkspace()), [[id(1)]])
+        XCTAssertEqual(manager.currentWorkspace().focusedWindow, id(1))
+        XCTAssertEqual(windowCounts(manager, on: b), [1, 0], "the filled spare grows a new spare")
+        // Like niri, the emptied workspace stays on its display until you leave it.
+        XCTAssertEqual(manager.activeID(on: a), source)
+        XCTAssertNil(manager.workspace(id: source)?.focusedWindow)
+        XCTAssertEqual(manager.workspace(id: source)?.focusedColumn, 0)
+        assertInvariants(manager)
+    }
+
+    func testMoveColumnAndWindowToDisplayRefuseNoOps() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        var before = manager
+        XCTAssertFalse(manager.moveColumn(toDisplay: b), "nothing to move")
+        XCTAssertFalse(manager.moveWindow(toDisplay: b), "nothing to move")
+        put(&manager, 1)
+        before = manager
+        XCTAssertFalse(manager.moveColumn(toDisplay: a), "same display")
+        XCTAssertFalse(manager.moveWindow(toDisplay: a), "same display")
+        XCTAssertFalse(manager.moveColumn(toDisplay: DisplayID(99)), "unknown display")
+        XCTAssertFalse(manager.moveWindow(toDisplay: DisplayID(99)), "unknown display")
+        XCTAssertEqual(manager, before)
+    }
+
+    func testMoveWindowToDisplayMovesOnlyTheFocusedWindowAsItsOwnColumn() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        show(&manager, b)
+        put(&manager, 3)
+        put(&manager, 4)
+        focusColumn(&manager, 0)
+        show(&manager, a)
+        put(&manager, 1)
+        put(&manager, 2)
+        stack(&manager, 5, weight: 2)
+        let source = manager.currentID
+
+        XCTAssertTrue(manager.moveWindow(toDisplay: b))
+        XCTAssertEqual(manager.focusedDisplay, b)
+        let target = manager.currentWorkspace()
+        XCTAssertEqual(layout(target), [[id(3)], [id(5)], [id(4)]])
+        XCTAssertEqual(target.focusedColumn, 1)
+        XCTAssertEqual(target.focusedWindow, id(5))
+        XCTAssertEqual(target.columns[1].widthSpec, .standard, "a new column at the default width")
+        XCTAssertEqual(Set(target.columns.map(\.id)).count, 3)
+
+        let left = manager.workspace(id: source)
+        XCTAssertEqual(layout(left), [[id(1)], [id(2)]], "the rest of the column stays")
+        XCTAssertEqual(left?.focusedColumn, 1)
+        XCTAssertEqual(left?.focusedWindow, id(2))
+        assertInvariants(manager)
+    }
+
+    func testMoveWindowToDisplayWithoutAFocusedWindowIsRefused() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        put(&manager, 1)
+        var workspace = manager.currentWorkspace()
+        workspace.focusedWindow = nil
+        manager.update(workspace)
+        let before = manager
+        XCTAssertFalse(manager.moveWindow(toDisplay: b))
+        XCTAssertEqual(manager, before)
+    }
+
+    func testThreeDisplaysMoveAcrossLeavesTheMiddleAlone() {
+        var manager = WorkspaceManager()
+        let (a, b, c) = (DisplayID(11), DisplayID(12), DisplayID(13))
+        manager.syncDisplays([a, b, c])
+        show(&manager, b)
+        put(&manager, 2)
+        show(&manager, a)
+        put(&manager, 1)
+        let middle = manager.stack(on: b)
+
+        XCTAssertTrue(manager.moveColumn(toDisplay: c))
+        XCTAssertEqual(manager.focusedDisplay, c)
+        XCTAssertEqual(windowCounts(manager, on: c), [1, 0])
+        XCTAssertEqual(manager.stack(on: b), middle)
+        assertInvariants(manager)
+
+        XCTAssertTrue(manager.moveWorkspace(toDisplay: a))
+        XCTAssertEqual(manager.focusedDisplay, a)
+        XCTAssertEqual(layout(manager.currentWorkspace()), [[id(1)]])
+        XCTAssertEqual(windowCounts(manager, on: c), [0])
+        XCTAssertEqual(manager.stack(on: b), middle)
+        XCTAssertEqual(windows(manager), [id(1), id(2)])
+        assertInvariants(manager)
+    }
+
+    func testMoveWorkspaceToDisplayLandsAfterTheTargetsActiveAndShowsTheOneBelow() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        show(&manager, b)
+        put(&manager, 3)
+        XCTAssertTrue(manager.focusDown())
+        put(&manager, 4)
+        XCTAssertTrue(manager.focusUp())                     // b: [3]*, [4], spare
+        show(&manager, a)
+        put(&manager, 1)
+        XCTAssertTrue(manager.focusDown())
+        put(&manager, 2)
+        XCTAssertTrue(manager.focusUp())                     // a: [1]*, [2], spare
+        let moving = manager.currentID
+        let below = manager.workspace(2)!.id
+
+        XCTAssertTrue(manager.moveWorkspace(toDisplay: b))
+        XCTAssertEqual(manager.focusedDisplay, b)
+        XCTAssertEqual(manager.currentID, moving, "the moved workspace is shown and focused")
+        XCTAssertEqual(manager.currentWorkspace().focusedWindow, id(1))
+        XCTAssertEqual(manager.stack(on: b).map(layout), [[[id(3)]], [[id(1)]], [[id(4)]], []])
+        XCTAssertEqual(manager.current, 2)
+        XCTAssertEqual(manager.activeID(on: a), below, "the source shows its neighbour below")
+        XCTAssertEqual(windowCounts(manager, on: a), [1, 0])
+        assertInvariants(manager)
+    }
+
+    func testMoveWorkspaceShowsTheOneAboveWhenOnlyTheSpareIsBelow() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        put(&manager, 1)
+        let above = manager.currentID
+        XCTAssertTrue(manager.focusDown())
+        put(&manager, 2)                                     // a: [1], [2]*, spare
+        XCTAssertTrue(manager.moveWorkspace(toDisplay: b))
+        XCTAssertEqual(manager.activeID(on: a), above)
+        XCTAssertEqual(windowCounts(manager, on: a), [1, 0])
+        assertInvariants(manager)
+    }
+
+    func testMovingTheOnlyNonEmptyWorkspaceLeavesTheSourceOnItsEmptyOne() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        put(&manager, 1)
+        let moving = manager.currentID
+        XCTAssertTrue(manager.moveWorkspace(toDisplay: b))
+        XCTAssertEqual(windowCounts(manager, on: a), [0], "only the empty spare is left")
+        XCTAssertEqual(manager.stack(on: b).first?.id, moving, "above the target's spare")
+        XCTAssertEqual(windowCounts(manager, on: b), [1, 0])
+        XCTAssertEqual(manager.currentID, moving)
+        assertInvariants(manager)
+    }
+
+    func testMoveWorkspaceToDisplayRefusesNoOps() {
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(11), DisplayID(12))
+        manager.syncDisplays([a, b])
+        var before = manager
+        XCTAssertFalse(manager.moveWorkspace(toDisplay: b), "an empty workspace carries nothing")
+        XCTAssertEqual(manager, before)
+        put(&manager, 1)
+        before = manager
+        XCTAssertFalse(manager.moveWorkspace(toDisplay: a), "same display")
+        XCTAssertFalse(manager.moveWorkspace(toDisplay: DisplayID(99)), "unknown display")
+        XCTAssertEqual(manager, before)
+    }
+
     // MARK: - Property
 
     private struct SeededGenerator: RandomNumberGenerator {
@@ -319,10 +590,10 @@ final class WorkspaceManagerTests: XCTestCase {
         var manager = WorkspaceManager()
         var live = Set<WindowID>()
         var nextWindow: UInt64 = 1
-        let displays = [DisplayID(21), DisplayID(22)]
+        let displays = [DisplayID(21), DisplayID(22), DisplayID(23)]
         manager.syncDisplays(displays)
         for step in 0..<3000 {
-            switch Int.random(in: 0..<10, using: &rng) {
+            switch Int.random(in: 0..<14, using: &rng) {
             case 0, 1:
                 put(&manager, nextWindow)
                 live.insert(id(nextWindow))
@@ -351,6 +622,10 @@ final class WorkspaceManagerTests: XCTestCase {
                     }
                     live.remove(victim)
                 }
+            case 10: manager.focusDisplay(displays.randomElement(using: &rng)!)
+            case 11: manager.moveColumn(toDisplay: displays.randomElement(using: &rng)!)
+            case 12: manager.moveWindow(toDisplay: displays.randomElement(using: &rng)!)
+            case 13: manager.moveWorkspace(toDisplay: displays.randomElement(using: &rng)!)
             default:
                 let target = displays.randomElement(using: &rng)!
                 manager.focus(manager.activeID(on: target)!)

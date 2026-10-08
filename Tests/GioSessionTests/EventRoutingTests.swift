@@ -144,7 +144,7 @@ final class EventWorld: @unchecked Sendable {
                 self.displays.disconnect(id)
                 self.visibleFrames.removeValue(forKey: id)
             },
-            mainScreenFrame: { Self.screen },
+            displayFrames: { self.visibleFrames },
             updateDisplayHeight: { self.displayHeights.append($0) },
             displaysChanged: { self.displayChanges += 1 },
             windowOpened: { self.opened.append($0) },
@@ -453,6 +453,85 @@ final class DiscoveryServiceTests: XCTestCase {
         XCTAssertEqual(world.displays.allDisplays().map(\.id), [DisplayID(2)])
         XCTAssertNil(world.visibleFrames[DisplayID(1)])
         XCTAssertEqual(world.displayChanges, 2)
+    }
+
+    // MARK: Multi-display (MM-01)
+
+    private static let leftExternal = DisplaySnapshot(
+        id: DisplayID(1), frame: CGRect(x: -2560, y: 0, width: 2560, height: 1440),
+        visibleFrame: CGRect(x: -2560, y: 0, width: 2560, height: 1415)
+    )
+    private static let primary = DisplaySnapshot(
+        id: DisplayID(2), frame: CGRect(x: 0, y: 0, width: 1512, height: 982),
+        visibleFrame: CGRect(x: 0, y: 0, width: 1512, height: 950)
+    )
+    private static let rightExternal = DisplaySnapshot(
+        id: DisplayID(3), frame: CGRect(x: 1512, y: 0, width: 1600, height: 1000),
+        visibleFrame: CGRect(x: 1512, y: 0, width: 1600, height: 975)
+    )
+
+    /// A world whose displays have not been synced yet (the startup state).
+    private func freshDiscovery() -> (EventWorld, DiscoveryService) {
+        let fresh = EventWorld()
+        return (fresh, DiscoveryService(context: fresh.discoveryContext(), scheduler: scheduler))
+    }
+
+    func testDisplaySyncFlipsWithThePrimaryDisplayHeight() {
+        // The AX flip is global: the primary display (Cocoa origin) sets it,
+        // whatever display holds the key window or comes first.
+        world.displaySnapshots = [Self.leftExternal, Self.primary]
+        discovery.syncDisplays()
+        XCTAssertEqual(world.displayHeights.last, 982)
+    }
+
+    func testDisplaySyncOrdersDisplaysByPositionAndFocusesTheMainOne() {
+        let (fresh, service) = freshDiscovery()
+        fresh.displaySnapshots = [Self.rightExternal, Self.primary, Self.leftExternal]
+        service.syncDisplays()
+        XCTAssertEqual(fresh.session.manager.displayIDs, [DisplayID(1), DisplayID(2), DisplayID(3)])
+        XCTAssertEqual(fresh.session.manager.mainDisplay, DisplayID(2))
+        XCTAssertEqual(fresh.session.manager.focusedDisplay, DisplayID(2))
+    }
+
+    func testStartupScanPlacesEachWindowOnTheDisplayItSitsOn() {
+        let (fresh, service) = freshDiscovery()
+        fresh.displaySnapshots = [Self.primary, Self.rightExternal]
+        service.syncDisplays()
+        // AX frames (top-left origin, flipped with the 1169 test height).
+        let onPrimary = discovered(pid: 7, frame: CGRect(x: 100, y: 300, width: 800, height: 600))
+        let onRight = discovered(pid: 8, frame: CGRect(x: 1700, y: 300, width: 1200, height: 600))
+        let straddling = discovered(pid: 9, frame: CGRect(x: 1300, y: 300, width: 600, height: 600))
+        let offscreen = discovered(pid: 10, frame: CGRect(x: 9000, y: 300, width: 600, height: 600))
+        fresh.scan = SystemWindowDiscoveryResult(
+            windows: [onPrimary, onRight, straddling, offscreen], completePIDs: [7, 8, 9, 10]
+        )
+        fresh.running = [7, 8, 9, 10]
+
+        service.enumerateAndPlace()
+
+        let manager = fresh.session.manager
+        func pids(on display: DisplayID) -> [pid_t] {
+            manager.workspace(id: manager.activeID(on: display)!)!.columns.flatMap(\.windows).map(\.pid)
+        }
+        // The straddling window has more of itself on the right display;
+        // a window on no display stays on the focused one.
+        XCTAssertEqual(pids(on: DisplayID(2)), [7, 10])
+        XCTAssertEqual(pids(on: DisplayID(3)), [8, 9])
+    }
+
+    func testALiveArrivalGoesToTheFocusedDisplayWhereverItOpens() {
+        world.displaySnapshots = [Self.primary, Self.rightExternal]
+        discovery.syncDisplays()
+        let focusedDisplay = world.session.manager.focusedDisplay
+        world.running = [7]
+        world.classify[7] = [discovered(pid: 7, frame: CGRect(x: 1700, y: 300, width: 1200, height: 600))]
+
+        discovery.registerAppeared(AXUIElementCreateApplication(1), pid: 7)
+
+        let manager = world.session.manager
+        XCTAssertEqual(
+            manager.workspace(id: manager.activeID(on: focusedDisplay)!)!.columns.flatMap(\.windows).map(\.pid), [7]
+        )
     }
 }
 

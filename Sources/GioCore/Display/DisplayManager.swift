@@ -18,8 +18,10 @@ public struct DisplayManager: Equatable, Sendable {
         displays[id]
     }
 
+    /// MM-01: in position order (left to right, then top to bottom), the
+    /// order every pass lays displays out in.
     public func allDisplays() -> [DisplayState] {
-        displays.keys.sorted { $0.rawValue < $1.rawValue }.compactMap { displays[$0] }
+        displaysByPosition(displays.mapValues(\.frame)).compactMap { displays[$0] }
     }
 
     /// New display, or refreshed frame for a known one (resolution/scale

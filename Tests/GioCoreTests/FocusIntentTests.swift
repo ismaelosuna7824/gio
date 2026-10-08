@@ -18,6 +18,8 @@ final class FocusIntentTests: XCTestCase {
             .consumeOrExpelLeft, .consumeOrExpelRight,
             .focusWorkspaceDown, .focusWorkspaceUp,
             .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
+            .focusMonitor(.left), .moveColumnToMonitor(.right),
+            .moveWindowToMonitor(.up), .moveWorkspaceToMonitor(.down),
         ]
         let passive: [HotkeyAction] = [
             .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,

@@ -42,6 +42,24 @@ final class FocusWindowPlanTests: XCTestCase {
         XCTAssertFalse(plan.switchesWorkspace)
     }
 
+    func testRevealingAHiddenWorkspaceIsAWorkspaceSwitch() throws {
+        let plan = try XCTUnwrap(planFocusWindow(id(4), in: manager()))
+        XCTAssertEqual(plan.revealCause, .workspaceSwitch)
+    }
+
+    func testFocusingAnotherDisplaysShownWorkspaceSwitchesNothing() throws {
+        // MM-01: only the focused display changes; no workspace slides.
+        var manager = WorkspaceManager()
+        let (a, b) = (DisplayID(1), DisplayID(2))
+        manager.syncDisplays([a, b], main: a)
+        var shownOnB = manager.workspace(id: manager.activeID(on: b)!)!
+        shownOnB.columns = [Column(id: ColumnID(1), width: 0, windows: [id(7)])]
+        manager.update(shownOnB)
+        let plan = try XCTUnwrap(planFocusWindow(id(7), in: manager))
+        XCTAssertTrue(plan.switchesWorkspace, "the session's current workspace changes")
+        XCTAssertEqual(plan.revealCause, .passive)
+    }
+
     func testUnknownWindowHasNoPlan() {
         XCTAssertNil(planFocusWindow(id(99), in: manager()))
     }

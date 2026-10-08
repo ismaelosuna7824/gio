@@ -42,11 +42,73 @@ final class WorkspaceVisibilityTests: XCTestCase {
         XCTAssertFalse(right.intersects(target.frame))
     }
 
-    func testAllCornersBlockedFallsBackToBottomRight() {
+    // MARK: MM-03 hidden windows never land on another display
+
+    func testBothBottomCornersBlockedHangOffTheFreeSide() {
         let below = CGRect(x: -3000, y: -2000, width: 8000, height: 2000)
         let target = hiddenTarget(for: frame, display: display, otherDisplays: [below])
-        XCTAssertEqual(target.edge, .corner)
+        XCTAssertEqual(target.edge, .right)
+        XCTAssertEqual(target.display, display)
+        XCTAssertEqual(target.frame.size, frame.size)
         XCTAssertEqual(target.frame.minX, display.maxX - parkingSliver)
+        XCTAssertEqual(target.frame.maxY, display.maxY, "level with the display's top")
+        XCTAssertFalse(below.intersects(target.frame))
+        XCTAssertTrue(isParked(target.frame, target, 1))
+    }
+
+    func testBottomCornersAndRightSideBlockedHangOffTheLeftSide() {
+        let below = CGRect(x: -3000, y: -2000, width: 8000, height: 2000)
+        let right = CGRect(x: 1800, y: 0, width: 1200, height: 1000)
+        let target = hiddenTarget(for: frame, display: display, otherDisplays: [below, right])
+        XCTAssertEqual(target.edge, .left)
+        XCTAssertEqual(target.frame.maxX, display.minX + parkingSliver)
+        XCTAssertFalse([below, right].contains { $0.intersects(target.frame) })
+        XCTAssertTrue(isParked(target.frame, target, 1))
+    }
+
+    func testEverySideBlockedHangsOffTheBottomRightOfAllDisplays() {
+        let others = [
+            CGRect(x: -3000, y: -2000, width: 8000, height: 2000),
+            CGRect(x: -3000, y: 0, width: 3000, height: 1000),
+            CGRect(x: 1800, y: 0, width: 3000, height: 1000),
+        ]
+        let target = hiddenTarget(for: frame, display: display, otherDisplays: others)
+        let union = others.reduce(display) { $0.union($1) }
+        XCTAssertEqual(target.edge, .corner)
+        XCTAssertEqual(target.frame.size, frame.size)
+        XCTAssertEqual(target.frame.minX, union.maxX - parkingSliver)
+        XCTAssertEqual(target.frame.maxY, union.minY + parkingSliver)
+        for other in others {
+            let overlap = other.intersection(target.frame)
+            XCTAssertTrue(overlap.isNull || overlap.width * overlap.height <= parkingSliver * parkingSliver)
+        }
+        XCTAssertTrue(isParked(target.frame, target, 1))
+    }
+
+    func testHiddenWindowsOfAnUpperDisplayNeverLandOnTheDisplayBelow() {
+        let lower = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let window = CGRect(x: 100, y: 1177, width: 900, height: 1000)
+        for upper in [
+            CGRect(x: 0, y: 1169, width: 1920, height: 1080),
+            CGRect(x: 0, y: 1169, width: 1800, height: 1080),
+            CGRect(x: -200, y: 1169, width: 2400, height: 1080),
+        ] {
+            let target = hiddenTarget(for: window, display: upper, otherDisplays: [lower])
+            XCTAssertFalse(lower.intersects(target.frame), "\(upper) -> \(target.frame)")
+            XCTAssertTrue(isParked(target.frame, target, 1), "\(upper)")
+        }
+    }
+
+    func testSideBySideDisplaysKeepTheBottomCorners() {
+        let right = CGRect(x: 1800, y: 0, width: 1600, height: 1000)
+        XCTAssertEqual(
+            hiddenTarget(for: frame, display: display, otherDisplays: [right]).frame.maxX,
+            display.minX + parkingSliver
+        )
+        let target = hiddenTarget(for: frame, display: right, otherDisplays: [display])
+        XCTAssertEqual(target.edge, .corner)
+        XCTAssertEqual(target.frame.minX, right.maxX - parkingSliver)
+        XCTAssertEqual(target.frame.maxY, right.minY + parkingSliver)
     }
 
     func testPlanHiddenKeepsEachWindowsOwnSize() {
@@ -153,6 +215,66 @@ final class WorkspaceVisibilityTests: XCTestCase {
         XCTAssertEqual(book.frames(of: [id(1), id(9)]), [id(1): frame])
         XCTAssertEqual(book.frames(of: [id(1)]), [id(1): frame])
         XCTAssertEqual(book.reveal([id(1)]), [id(1): frame])
+    }
+
+    func testBookMoveReplacesTheRememberedFrame() {
+        var book = HiddenWindowBook()
+        let moved = CGRect(x: 1900, y: 100, width: 700, height: 984)
+        book.hide(id(1), from: frame)
+        book.move(id(1), to: moved)
+        XCTAssertEqual(book.frames(of: [id(1)]), [id(1): moved])
+        book.move(id(2), to: moved)
+        XCTAssertTrue(book.isHidden(id(2)), "a shown window that must move is remembered too")
+        XCTAssertEqual(book.reveal([id(1), id(2)]), [id(1): moved, id(2): moved])
+    }
+
+    // MARK: MM-03 floating windows follow their workspace to another display
+
+    private let leftVisible = CGRect(x: 0, y: 25, width: 1800, height: 1100)
+    private let rightVisible = CGRect(x: 1800, y: 25, width: 1600, height: 950)
+
+    func testRelocatedFloatingFrameKeepsSizeAndOffsetFromTheVisibleOrigin() {
+        let window = CGRect(x: 100, y: 100, width: 600, height: 400)
+        XCTAssertEqual(
+            relocatedFloatingFrame(window, from: leftVisible, to: rightVisible),
+            CGRect(x: 1900, y: 100, width: 600, height: 400)
+        )
+    }
+
+    func testRelocatedFloatingFrameIsClampedInsideTheTarget() {
+        let window = CGRect(x: 1500, y: 800, width: 600, height: 400)
+        XCTAssertEqual(
+            relocatedFloatingFrame(window, from: leftVisible, to: rightVisible),
+            CGRect(x: 2800, y: 575, width: 600, height: 400)
+        )
+        let huge = CGRect(x: 0, y: 25, width: 2000, height: 1100)
+        let landed = relocatedFloatingFrame(huge, from: leftVisible, to: rightVisible)
+        XCTAssertEqual(landed.size, huge.size, "size is kept even when it does not fit")
+        XCTAssertEqual(landed.minX, rightVisible.minX)
+        XCTAssertEqual(landed.maxY, rightVisible.maxY, "the title bar stays reachable")
+    }
+
+    func testOnlyFloatingWindowsWhoseDisplayChangedAreRelocated() {
+        let left = DisplayID(1), right = DisplayID(2), gone = DisplayID(3)
+        let window = CGRect(x: 100, y: 100, width: 600, height: 400)
+        let alreadyThere = CGRect(x: 2000, y: 100, width: 600, height: 400)
+        let moves = planFloatingRelocations(
+            frames: [id(1): window, id(2): window, id(3): alreadyThere, id(4): window, id(6): window],
+            previous: [id(1): left, id(2): left, id(3): left, id(4): gone, id(5): left, id(6): right],
+            current: [id(1): right, id(2): left, id(3): right, id(4): right, id(5): right, id(6): right],
+            visibleFrames: [left: leftVisible, right: rightVisible]
+        )
+        // 2 and 6 stayed, 3 is already on the target, 4 left a display that
+        // is gone, 5 has no frame.
+        XCTAssertEqual(moves, [id(1): CGRect(x: 1900, y: 100, width: 600, height: 400)])
+    }
+
+    func testANewlySeenFloatingWindowIsNotRelocated() {
+        let moves = planFloatingRelocations(
+            frames: [id(1): frame], previous: [:], current: [id(1): DisplayID(2)],
+            visibleFrames: [DisplayID(1): leftVisible, DisplayID(2): rightVisible]
+        )
+        XCTAssertTrue(moves.isEmpty)
     }
 
     // MARK: display follows the current workspace

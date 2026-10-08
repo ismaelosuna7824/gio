@@ -51,7 +51,7 @@ public struct DisplayStackSummary: Equatable, Sendable {
 }
 
 extension WorkspaceManager {
-    /// Every display's stack, in display registration order.
+    /// Every display's stack, in display order (`displayIDs`).
     public func stackSummaries() -> [DisplayStackSummary] {
         displayIDs.map { display in
             let active = activeID(on: display)

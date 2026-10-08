@@ -29,12 +29,26 @@ public func slideDownFrame(_ frame: CGRect, display: CGRect) -> CGRect {
     )
 }
 
+/// MM-03: whether a switch may slide through `display`'s bottom edge: the
+/// band straight below it (its width, one display height deep) touches no
+/// other display. A display stacked above another one overlaps that band.
+/// Edges that only touch (side by side) do not count.
+public func canSlideBelow(_ display: CGRect, otherDisplays: [CGRect]) -> Bool {
+    let band = CGRect(
+        x: display.minX, y: display.minY - display.height, width: display.width, height: display.height
+    )
+    return !otherDisplays.contains { $0.intersects(band) }
+}
+
 /// Outgoing windows (`hidden`, the targets `planHiddenWindows` chose) drop
 /// straight down from where they are; the final exact pass then writes the
 /// true hidden corner while they are out of sight. Incoming windows that were
 /// hidden rise from directly below their target; incoming windows already in
 /// view (a retarget in flight) continue from their sampled frame, so nothing
 /// snaps. Everything else follows `planMotion` (edge entries, scrolling).
+/// MM-03: when a display lies below (`canSlideBelow` is false), nothing
+/// moves through that band: windows coming from below and outgoing ones are
+/// left to the final pass, which jumps them (no pre-position, no flight).
 public func planWorkspaceSwitchMotion(
     current: [WindowID: CGRect],
     visible: [WindowID: CGRect],
@@ -42,11 +56,13 @@ public func planWorkspaceSwitchMotion(
     hidden: [WindowID: ParkedTarget],
     viewport: CGRect,
     display: CGRect,
+    otherDisplays: [CGRect],
     duration: TimeInterval,
     easing: AnimationEasing = .easeInOut,
     tolerance: CGFloat = 1
 ) -> WorkspaceSwitchMotion {
     var result = WorkspaceSwitchMotion()
+    let slides = canSlideBelow(display, otherDisplays: otherDisplays)
     var ordinary = visible
     for id in visible.keys.sorted() {
         guard let start = current[id], let target = visible[id],
@@ -56,18 +72,21 @@ public func planWorkspaceSwitchMotion(
         else {
             continue
         }
+        ordinary.removeValue(forKey: id)
+        guard slides else {
+            continue
+        }
         let launch = slideDownFrame(target, display: display)
         result.prepositions[id] = launch
         result.animations.append(
             WindowAnimation(id: id, from: launch, to: target, duration: duration, easing: easing)
         )
-        ordinary.removeValue(forKey: id)
     }
     result.animations += planMotion(
         current: current, visible: ordinary, parked: parked, viewport: viewport,
         duration: duration, easing: easing, tolerance: tolerance
     )
-    for id in hidden.keys.sorted() {
+    for id in hidden.keys.sorted() where slides {
         guard let start = current[id], isOnScreen(start, viewport: viewport) else {
             continue
         }

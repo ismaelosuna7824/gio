@@ -786,6 +786,22 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-window-to-workspace-down": return .moveWindowToWorkspaceDown
     case "move-window-to-workspace-up": return .moveWindowToWorkspaceUp
     case "toggle-overview": return .toggleOverview
+    case "focus-monitor-left": return .focusMonitor(.left)
+    case "focus-monitor-right": return .focusMonitor(.right)
+    case "focus-monitor-up": return .focusMonitor(.up)
+    case "focus-monitor-down": return .focusMonitor(.down)
+    case "move-column-to-monitor-left": return .moveColumnToMonitor(.left)
+    case "move-column-to-monitor-right": return .moveColumnToMonitor(.right)
+    case "move-column-to-monitor-up": return .moveColumnToMonitor(.up)
+    case "move-column-to-monitor-down": return .moveColumnToMonitor(.down)
+    case "move-window-to-monitor-left": return .moveWindowToMonitor(.left)
+    case "move-window-to-monitor-right": return .moveWindowToMonitor(.right)
+    case "move-window-to-monitor-up": return .moveWindowToMonitor(.up)
+    case "move-window-to-monitor-down": return .moveWindowToMonitor(.down)
+    case "move-workspace-to-monitor-left": return .moveWorkspaceToMonitor(.left)
+    case "move-workspace-to-monitor-right": return .moveWorkspaceToMonitor(.right)
+    case "move-workspace-to-monitor-up": return .moveWorkspaceToMonitor(.up)
+    case "move-workspace-to-monitor-down": return .moveWorkspaceToMonitor(.down)
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -814,6 +830,13 @@ public func validActionNames() -> [String] {
         "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
         "maximize-column", "center-column",
         "consume-or-expel-window-left", "consume-or-expel-window-right",
+        "focus-monitor-left", "focus-monitor-right", "focus-monitor-up", "focus-monitor-down",
+        "move-column-to-monitor-left", "move-column-to-monitor-right",
+        "move-column-to-monitor-up", "move-column-to-monitor-down",
+        "move-window-to-monitor-left", "move-window-to-monitor-right",
+        "move-window-to-monitor-up", "move-window-to-monitor-down",
+        "move-workspace-to-monitor-left", "move-workspace-to-monitor-right",
+        "move-workspace-to-monitor-up", "move-workspace-to-monitor-down",
     ]
 }
 

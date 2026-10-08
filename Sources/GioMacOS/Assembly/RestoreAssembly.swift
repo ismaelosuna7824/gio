@@ -30,7 +30,8 @@ public func restoreDisplays() -> [RestoreDisplay] {
 /// are skipped; nothing on screen is touched.
 public func runRestoreOffscreen() throws -> RestoreReport {
     let found = try discoverSystemWindows()
-    let actuator = AXWindowActuator(displayHeight: NSScreen.main?.frame.height ?? 0)
+    // MM-01: the AX flip is global; its reference is the primary display.
+    let actuator = AXWindowActuator(displayHeight: primaryScreen()?.frame.height ?? 0)
     var ids: [WindowID] = []
     for (index, candidate) in (found.windows + found.floating).enumerated()
     where !candidate.window.isMinimized {

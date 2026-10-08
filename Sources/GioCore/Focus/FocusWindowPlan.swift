@@ -21,7 +21,20 @@ public struct WindowFocusPlan: Equatable, Sendable {
     /// 1-based index in the owning display's stack (stable id: `workspace.id`).
     public var index: Int
     public var workspace: Workspace
+    /// The session's current workspace changes (another workspace, possibly
+    /// one already shown on another display).
     public var switchesWorkspace: Bool
+    /// MM-01: the workspace is not on screen yet, so a display really
+    /// switches; false when it is shown on another display and only the
+    /// focused display changes.
+    public var revealsHiddenWorkspace: Bool
+
+    /// The motion cause of applying the plan: a slide only when a display
+    /// switches; moving the focus to another display's shown workspace
+    /// moves nothing by itself.
+    public var revealCause: MotionCause {
+        revealsHiddenWorkspace ? .workspaceSwitch : .passive
+    }
 }
 
 /// Nil when no workspace holds `id`.
@@ -30,7 +43,8 @@ public func planFocusWindow(_ id: WindowID, in manager: WorkspaceManager) -> Win
         if let adopted = adoptingFocus(id, in: workspace), let place = manager.location(of: workspace.id) {
             return WindowFocusPlan(
                 index: place.index, workspace: adopted,
-                switchesWorkspace: workspace.id != manager.currentID
+                switchesWorkspace: workspace.id != manager.currentID,
+                revealsHiddenWorkspace: !manager.activeIDs.contains(workspace.id)
             )
         }
     }

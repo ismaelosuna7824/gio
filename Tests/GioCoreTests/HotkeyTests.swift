@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 40)
+        XCTAssertEqual(dispatcher.bindingCount, 48)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -100,6 +100,40 @@ final class HotkeyTests: XCTestCase {
             "move-window-to-workspace-down", "move-window-to-workspace-up",
         ] {
             XCTAssertTrue(validActionNames().contains(name), name)
+        }
+    }
+
+    func testMonitorActionDefaultsAndNames() {
+        let dispatcher = HotkeyDispatcher()
+        func action(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyAction? {
+            dispatcher.action(for: HotkeyCombo(modifiers: modifiers, key: key))
+        }
+        let keys: [(String, FocusDirection)] = [("H", .left), ("J", .down), ("K", .up), ("L", .right)]
+        for (key, direction) in keys {
+            XCTAssertEqual(action([.alt, .ctrl], key), .focusMonitor(direction), key)
+            XCTAssertEqual(action([.alt, .ctrl, .shift], key), .moveColumnToMonitor(direction), key)
+        }
+        // Alt+H/L keep focusing columns.
+        XCTAssertEqual(action([.alt], "H"), .focusLeft)
+        XCTAssertEqual(action([.alt], "L"), .focusRight)
+        let directions: [(String, FocusDirection)] = [("left", .left), ("right", .right), ("up", .up), ("down", .down)]
+        for (suffix, direction) in directions {
+            let named: [(String, HotkeyAction)] = [
+                ("focus-monitor-\(suffix)", .focusMonitor(direction)),
+                ("move-column-to-monitor-\(suffix)", .moveColumnToMonitor(direction)),
+                ("move-window-to-monitor-\(suffix)", .moveWindowToMonitor(direction)),
+                ("move-workspace-to-monitor-\(suffix)", .moveWorkspaceToMonitor(direction)),
+            ]
+            for (name, expected) in named {
+                XCTAssertEqual(parseActionName(name), expected, name)
+                XCTAssertTrue(validActionNames().contains(name), name)
+            }
+        }
+        // Window and workspace moves ship unbound.
+        let bound = defaultHotkeyBindings().map(\.1)
+        for direction in [FocusDirection.left, .right, .up, .down] {
+            XCTAssertFalse(bound.contains(.moveWindowToMonitor(direction)))
+            XCTAssertFalse(bound.contains(.moveWorkspaceToMonitor(direction)))
         }
     }
 

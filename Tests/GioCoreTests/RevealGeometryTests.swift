@@ -70,8 +70,8 @@ final class RevealGeometryTests: XCTestCase {
         config.layout.gaps = 8
         config.layout.defaultColumnWidthFraction = 0.5
         // 0.5 * (1000 - 2*12 + 8) - 8 = 484; 2*484 + 8 + 2*12 = 1000.
-        XCTAssertEqual(config.resolveDefaultColumnWidth(viewportWidth: 1000), 484)
+        XCTAssertEqual(config.makeLayoutConfig().resolvedWidth(of: .standard, viewportWidth: 1000), 484)
         config.layout.defaultColumnWidthFraction = 1
-        XCTAssertEqual(config.resolveDefaultColumnWidth(viewportWidth: 1000), 976)
+        XCTAssertEqual(config.makeLayoutConfig().resolvedWidth(of: .standard, viewportWidth: 1000), 976)
     }
 }

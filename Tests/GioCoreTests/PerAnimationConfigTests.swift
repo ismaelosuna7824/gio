@@ -234,6 +234,11 @@ final class PerAnimationConfigTests: XCTestCase {
         XCTAssertEqual(motionCause(for: .maximizeColumn).kind, .windowResize)
         XCTAssertEqual(motionCause(for: .fullscreen).kind, .windowResize)
         XCTAssertEqual(motionCause(for: .growColumnWidth).kind, .windowResize)
+        // MM-02: windows crossing displays move; focus and workspaces switch.
+        XCTAssertEqual(motionCause(for: .moveColumnToMonitor(.left)).kind, .windowMovement)
+        XCTAssertEqual(motionCause(for: .moveWindowToMonitor(.right)).kind, .windowMovement)
+        XCTAssertEqual(motionCause(for: .focusMonitor(.up)).kind, .workspaceSwitch)
+        XCTAssertEqual(motionCause(for: .moveWorkspaceToMonitor(.down)).kind, .workspaceSwitch)
         XCTAssertEqual(MotionCause.windowOpen.kind, .windowOpen)
         XCTAssertEqual(MotionCause.windowClose.kind, .windowClose)
         XCTAssertEqual(MotionCause.passive.kind, .windowMovement)

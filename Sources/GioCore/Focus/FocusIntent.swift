@@ -12,7 +12,8 @@ extension HotkeyAction {
              .workspace, .moveToWorkspace, .fullscreen,
              .focusWorkspaceDown, .focusWorkspaceUp,
              .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
-             .consumeOrExpelLeft, .consumeOrExpelRight:
+             .consumeOrExpelLeft, .consumeOrExpelRight,
+             .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
              .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview:

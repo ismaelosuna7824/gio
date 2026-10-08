@@ -77,7 +77,7 @@ final class SessionFactsBuilderTests: XCTestCase {
             visibleFrame: { fixture.visibleFrames[$0] },
             configMessages: { ["warning: x"] },
             engine: {
-                ScrollableLayoutEngine(config: fixture.session.config.makeLayoutConfig(viewportWidth: 1800))
+                ScrollableLayoutEngine(config: fixture.session.config.makeLayoutConfig())
             },
             tileableModes: {
                 Dictionary(uniqueKeysWithValues: fixture.session.registry.managedWindows().map { ($0.id, $0.mode) })

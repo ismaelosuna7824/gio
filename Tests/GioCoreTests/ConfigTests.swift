@@ -67,18 +67,37 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "J")), .focusDown
         )
-        XCTAssertEqual(config.resolveDefaultColumnWidth(viewportWidth: 1000), 484)
-        let layout = config.makeLayoutConfig(viewportWidth: 1000)
+        let layout = config.makeLayoutConfig()
+        XCTAssertEqual(layout.resolvedWidth(of: .standard, viewportWidth: 1000), 484)
         XCTAssertEqual(layout.gap, 8)
         XCTAssertEqual(layout.padding, 12)
-        XCTAssertEqual(layout.defaultColumnWidth, 484)
+        XCTAssertNil(layout.defaultColumnWidth, "a fraction resolves per display, not once")
+        XCTAssertEqual(layout.defaultColumnProportion, 0.5)
     }
 
     func testAbsoluteWidthResolves() throws {
         let (config, _) = try parseGioConfig("[layout]\ndefault-column-width = 640\n").get()
         XCTAssertNil(config.layout.defaultColumnWidthFraction)
         XCTAssertEqual(config.layout.defaultColumnWidthPoints, 640)
-        XCTAssertEqual(config.resolveDefaultColumnWidth(viewportWidth: 1000), 640)
+        XCTAssertEqual(config.makeLayoutConfig().resolvedWidth(of: .standard, viewportWidth: 1000), 640)
+        XCTAssertEqual(config.makeLayoutConfig().resolvedWidth(of: .standard, viewportWidth: 2000), 640)
+    }
+
+    func testDefaultFractionResolvesAgainstEachViewport() throws {
+        // MM-01: one config, two displays of different widths.
+        let layout = GioConfig().makeLayoutConfig()
+        XCTAssertEqual(layout.resolvedWidth(of: .standard, viewportWidth: 1800), 888)
+        XCTAssertEqual(layout.resolvedWidth(of: .standard, viewportWidth: 1600), 788)
+        let engine = ScrollableLayoutEngine(config: layout)
+        var workspace = Workspace(id: WorkspaceID(1))
+        for index in 1...2 {
+            let id = WindowID(pid: pid_t(index), elementID: UInt64(index))
+            workspace.columns.append(Column(id: ColumnID(UInt64(index)), width: 0, windows: [id]))
+        }
+        let narrow = try engine.calculate(workspace: workspace, viewport: CGRect(x: 1800, y: 0, width: 1600, height: 1000))
+        XCTAssertEqual(narrow.contentWidth, 1600, accuracy: 0.5, "two default columns fill each display exactly")
+        let wide = try engine.calculate(workspace: workspace, viewport: CGRect(x: 0, y: 0, width: 1800, height: 1000))
+        XCTAssertEqual(wide.contentWidth, 1800, accuracy: 0.5)
     }
 
     func testInvalidValuesFallBackToDefaultsWithMessages() {

@@ -67,11 +67,11 @@ final class FullscreenTests: XCTestCase {
 
     func testConfigFullscreenGapDefaultsToGapsAndCanBeOverridden() throws {
         var config = GioConfig()
-        XCTAssertEqual(config.makeLayoutConfig(viewportWidth: 1800).fullscreenGap, 8)
+        XCTAssertEqual(config.makeLayoutConfig().fullscreenGap, 8)
         config = try parseGioConfig("[layout]\ngaps = 5\n").get().0
-        XCTAssertEqual(config.makeLayoutConfig(viewportWidth: 1800).fullscreenGap, 5)
+        XCTAssertEqual(config.makeLayoutConfig().fullscreenGap, 5)
         config = try parseGioConfig("[layout]\ngaps = 5\nfullscreen-gap = 0\n").get().0
-        XCTAssertEqual(config.makeLayoutConfig(viewportWidth: 1800).fullscreenGap, 0)
+        XCTAssertEqual(config.makeLayoutConfig().fullscreenGap, 0)
         config = try parseGioConfig("[layout]\nfullscreen-gap = 20\n").get().0
         XCTAssertEqual(config.layout.fullscreenGap, 20)
     }

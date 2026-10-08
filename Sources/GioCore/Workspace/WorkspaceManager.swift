@@ -50,7 +50,7 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// NW-02: the `[[workspace]]` entries in config order.
     public private(set) var namedDefinitions: [WorkspaceDefinition] = []
     /// The display `display = "main"` (and a missing display) resolves to;
-    /// nil uses the first registered display.
+    /// nil uses the first display in the host's order.
     public private(set) var mainDisplay: DisplayID?
 
     public init() {
@@ -94,7 +94,7 @@ public struct WorkspaceManager: Equatable, Sendable {
         workspaces[id]
     }
 
-    /// Displays in registration order.
+    /// Displays in the host's order (MM-01: position order, left to right).
     public var displayIDs: [DisplayID] {
         order
     }
@@ -131,8 +131,9 @@ public struct WorkspaceManager: Equatable, Sendable {
     // MARK: - Displays
 
     /// Reconcile the stacks with the connected displays (in the host's
-    /// order). The placeholder stack is adopted by the first real display;
-    /// new displays get a single empty workspace; a removed display's
+    /// order). The placeholder stack is adopted by the main display (the
+    /// first one without a connected main), which takes the focus; new
+    /// displays get a single empty workspace; a removed display's
     /// non-empty workspaces merge into the first surviving stack, above its
     /// trailing spare. An empty list changes nothing (a transient probe).
     /// `main` (NW-02) is the display named workspaces default to; named
@@ -149,7 +150,7 @@ public struct WorkspaceManager: Equatable, Sendable {
             wanted.append(id)
         }
         if order == [Self.placeholderDisplay], !wanted.contains(Self.placeholderDisplay) {
-            let adopter = wanted[0]
+            let adopter = mainDisplay.flatMap { wanted.contains($0) ? $0 : nil } ?? wanted[0]
             stacks[adopter] = stacks.removeValue(forKey: Self.placeholderDisplay)
             order = [adopter]
             focusedDisplay = adopter
@@ -178,7 +179,8 @@ public struct WorkspaceManager: Equatable, Sendable {
                 focusedDisplay = target
             }
         }
-        order = order.filter { wanted.contains($0) }
+        // MM-01: the host's order (position order), not registration order.
+        order = wanted
         focusedDisplay = wanted.contains(focusedDisplay) ? focusedDisplay : target
         for display in order {
             normalize(display)
@@ -347,6 +349,19 @@ public struct WorkspaceManager: Equatable, Sendable {
         return true
     }
 
+    /// MM-02 niri `focus-monitor-*`: make `display` the focused display. The
+    /// workspace it shows becomes current (its focused window, if any, is
+    /// what the keyboard follows); the previous display keeps showing its
+    /// workspace. False for the focused display or an unknown one.
+    @discardableResult
+    public mutating func focusDisplay(_ display: DisplayID) -> Bool {
+        guard display != focusedDisplay, stacks[display] != nil else {
+            return false
+        }
+        focusedDisplay = display
+        return true
+    }
+
     // MARK: - Writing
 
     /// Write back a modified workspace. Unknown IDs are ignored: the manager
@@ -401,6 +416,84 @@ public struct WorkspaceManager: Equatable, Sendable {
         return transfer(id, to: stack.ids[stack.active - 1], follow: true)
     }
 
+    /// MM-02 niri `move-column-to-monitor-*`: the current workspace's focused
+    /// column (its windows, width and height weights) moves to the workspace
+    /// `display` shows, right after that workspace's focused column (first
+    /// when it is empty), focused, and focus follows it to `display`. The
+    /// column that takes its place keeps the source's focus; the source stays
+    /// shown on its display, even emptied, until you leave it. False without
+    /// a focused column, for the focused display or an unknown one.
+    @discardableResult
+    public mutating func moveColumn(toDisplay display: DisplayID) -> Bool {
+        let sourceID = currentID
+        guard display != focusedDisplay, let destinationID = activeID(on: display),
+              var source = workspaces[sourceID], let column = source.focusedColumnRef
+        else {
+            return false
+        }
+        source.columns.remove(at: source.focusedColumn)
+        if source.columns.isEmpty {
+            source.focusedColumn = 0
+            source.focusedWindow = nil
+        } else {
+            source.focusedColumn = min(source.focusedColumn, source.columns.count - 1)
+            source.focusedWindow = source.columns[source.focusedColumn].focusedWindowID
+        }
+        workspaces[sourceID] = source
+        insert(column, into: destinationID, afterFocused: true)
+        crossFocus(to: display)
+        return true
+    }
+
+    /// MM-02 niri `move-window-to-monitor-*`: only the focused window leaves
+    /// its column (repairs as `moveWindow(_:to:)`) and lands as its own new
+    /// column after the focused column of the workspace `display` shows;
+    /// focus follows it. False without a focused window, for the focused
+    /// display or an unknown one.
+    @discardableResult
+    public mutating func moveWindow(toDisplay display: DisplayID) -> Bool {
+        guard display != focusedDisplay, let destinationID = activeID(on: display),
+              let id = currentWorkspace().focusedWindow,
+              let column = detach(id, from: currentID)
+        else {
+            return false
+        }
+        insert(column, into: destinationID, afterFocused: true)
+        crossFocus(to: display)
+        return true
+    }
+
+    /// MM-02 niri `move-workspace-to-monitor-*`: the current workspace moves
+    /// to `display`'s stack, right after its active workspace (after its
+    /// named workspaces, never after the trailing spare), shown there, and
+    /// focus follows it. The source display shows the workspace below, or
+    /// the one above when only the spare is below (so the spare when nothing
+    /// else is left). False for an empty workspace (nothing to carry), a
+    /// named one (it lives on the display config gives it), the focused
+    /// display or an unknown one.
+    @discardableResult
+    public mutating func moveWorkspace(toDisplay display: DisplayID) -> Bool {
+        let sourceDisplay = focusedDisplay
+        guard display != sourceDisplay, var target = stacks[display], var source = stacks[sourceDisplay],
+              let moving = workspaces[currentID], moving.name == nil, !moving.columns.isEmpty
+        else {
+            return false
+        }
+        source.ids.remove(at: source.active)
+        // The trailing spare is always last and never the moved workspace.
+        if source.active == source.ids.count - 1, source.active > 0 {
+            source.active -= 1
+        }
+        stacks[sourceDisplay] = source
+        let named = target.ids.prefix { workspaces[$0]?.name != nil }.count
+        let position = min(max(target.active + 1, named), target.ids.count - 1)
+        target.ids.insert(moving.id, at: position)
+        target.active = position
+        stacks[display] = target
+        crossFocus(to: display)
+        return true
+    }
+
     /// The workspace a window rule `workspace = N` targets: index N of the
     /// focused display's stack, or the trailing empty one when N is beyond it.
     /// Nil for indices below 1.
@@ -451,13 +544,35 @@ public struct WorkspaceManager: Equatable, Sendable {
         stacks[display] = stack
     }
 
+    /// Focus moved to `display` with a column, window or workspace: both
+    /// stacks restore their invariants.
+    private mutating func crossFocus(to display: DisplayID) {
+        let source = focusedDisplay
+        focusedDisplay = display
+        normalize(source)
+        normalize(display)
+    }
+
     private mutating func transfer(_ id: WindowID, to destinationID: WorkspaceID, follow: Bool) -> Bool {
-        let sourceID = currentID
-        guard destinationID != sourceID,
-              var source = workspaces[sourceID],
-              let (colIdx, rowIdx) = locate(id, in: source)
-        else {
+        guard destinationID != currentID, let column = detach(id, from: currentID) else {
             return false
+        }
+        insert(column, into: destinationID, afterFocused: false)
+        if follow, let place = location(of: destinationID) {
+            activate(place.index - 1, on: place.display)
+        } else {
+            normalize(focusedDisplay)
+        }
+        return true
+    }
+
+    /// Take window `id` out of its column in workspace `sourceID` (an
+    /// emptied column is removed, the source focus repaired) and return it
+    /// as a single-window column carrying its height weight. Nil when the
+    /// window is not there.
+    private mutating func detach(_ id: WindowID, from sourceID: WorkspaceID) -> Column? {
+        guard var source = workspaces[sourceID], let (colIdx, rowIdx) = locate(id, in: source) else {
+            return nil
         }
         var scol = source.columns[colIdx]
         let weight = scol.heightWeights[id]
@@ -487,27 +602,34 @@ public struct WorkspaceManager: Equatable, Sendable {
             }
         }
         workspaces[sourceID] = source
+        var detached = Column(id: ColumnID(0), width: 0, windows: [id])
+        if let weight {
+            detached.heightWeights[id] = weight
+        }
+        return detached
+    }
 
+    /// Put `column` (windows, width, weights, maximize state) into workspace
+    /// `destinationID` under a fresh column id, focused: after the focused
+    /// column, or last.
+    private mutating func insert(_ column: Column, into destinationID: WorkspaceID, afterFocused: Bool) {
         var dest = workspaces[destinationID]!
-        var created = Column(
+        var placed = Column(
             id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
             width: 0,
-            windows: [id]
+            windows: column.windows,
+            focusedWindowIndex: column.focusedWindowIndex,
+            heightWeights: column.heightWeights,
+            widthSpec: column.widthSpec
         )
-        if let weight {
-            created.heightWeights[id] = weight
-        }
-        dest.columns.append(created)
-        dest.focusedColumn = dest.columns.count - 1
-        dest.focusedWindow = id
+        placed.savedWidthSpec = column.savedWidthSpec
+        let position = afterFocused && !dest.columns.isEmpty
+            ? min(dest.focusedColumn + 1, dest.columns.count)
+            : dest.columns.count
+        dest.columns.insert(placed, at: position)
+        dest.focusedColumn = position
+        dest.focusedWindow = placed.focusedWindowID
         workspaces[destinationID] = dest
-
-        if follow, let place = location(of: destinationID) {
-            activate(place.index - 1, on: place.display)
-        } else {
-            normalize(focusedDisplay)
-        }
-        return true
     }
 
     private func locate(_ id: WindowID, in workspace: Workspace) -> (Int, Int)? {

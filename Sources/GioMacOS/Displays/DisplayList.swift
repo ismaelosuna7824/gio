@@ -19,21 +19,28 @@ public struct DisplaySnapshot: Equatable, Sendable {
     }
 }
 
+/// Every screen, in position order (MM-01: left to right, then top to
+/// bottom; `displaysByPosition`), never by raw display ID.
 public func snapshotDisplayList() -> [DisplaySnapshot] {
-    var result: [DisplaySnapshot] = []
+    var result: [DisplayID: DisplaySnapshot] = [:]
     for screen in NSScreen.screens {
         guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")]
             as? NSNumber
         else {
             continue
         }
-        result.append(DisplaySnapshot(
-            id: DisplayID(CGDirectDisplayID(number.uint32Value)),
-            frame: screen.frame,
-            visibleFrame: screen.visibleFrame
-        ))
+        let id = DisplayID(CGDirectDisplayID(number.uint32Value))
+        result[id] = DisplaySnapshot(id: id, frame: screen.frame, visibleFrame: screen.visibleFrame)
     }
-    return result.sorted { $0.id.rawValue < $1.id.rawValue }
+    return displaysByPosition(result.mapValues(\.frame)).compactMap { result[$0] }
+}
+
+/// MM-01: the primary screen (`primaryDisplayIndex`: the one at the Cocoa
+/// origin), whose height is the global AX/WindowServer flip reference.
+/// Never `NSScreen.main`, which follows the key window.
+public func primaryScreen() -> NSScreen? {
+    let screens = NSScreen.screens
+    return primaryDisplayIndex(screens.map(\.frame)).map { screens[$0] }
 }
 
 /// PA-03: each screen's frame and refresh rate. AppKit state: call on the

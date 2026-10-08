@@ -5,7 +5,7 @@ import GioCore
 /// What a hotkey action asks of the session once its logical change is
 /// stored. The host applies it in field order: shown workspace sync, the
 /// native-zoom request, the fullscreen toggle, the focus intent, the sizing
-/// focus, then one reflow.
+/// focus, the cursor warp to an empty display, then one reflow.
 public struct ActionEffect: Equatable, Sendable {
     /// A fullscreen toggle of `id`, filling `frame` (the host's book flips it).
     public struct FullscreenToggle: Equatable, Sendable {
@@ -24,6 +24,10 @@ public struct ActionEffect: Equatable, Sendable {
     public var previousFocus: WindowID?
     /// A sizing action grew the focused window (focused-grow at start).
     public var growsFocusedWindow = false
+    /// MM-02: focus moved to another display that has no window to focus:
+    /// its usable frame, for `mouse-follows-focus` to put the cursor there
+    /// (a focused window takes the cursor after the pass as usual).
+    public var warpsToDisplay: CGRect?
 }
 
 /// `SessionHost.apply(_:)`: maps a hotkey action onto the pure Core use
@@ -41,7 +45,7 @@ public enum ActionApplier {
         public var layout: LayoutSectionConfig
         public var engine: () -> ScrollableLayoutEngine
         public var modes: () -> [WindowID: WindowMode]
-        /// The main screen's usable frame, used without any display.
+        /// The primary screen's usable frame, used without any display.
         public var fallbackViewport: () -> CGRect?
 
         public init(
@@ -65,6 +69,7 @@ public enum ActionApplier {
         var effect = ActionEffect()
         var workspace = manager.currentWorkspace()
         effect.previousFocus = workspace.focusedWindow
+        let startDisplay = manager.focusedDisplay
         switch action {
         case .focusLeft:
             focus(in: &workspace, .left, manager: &manager)
@@ -150,6 +155,27 @@ public enum ActionApplier {
             // The app's panel; `SessionHost.handleCombo` hands it over before
             // this table, and the session state stays as it is.
             break
+        case .focusMonitor(let direction):
+            effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
+                $0.focusDisplay($1)
+            }
+        case .moveColumnToMonitor(let direction):
+            effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
+                $0.moveColumn(toDisplay: $1)
+            }
+        case .moveWindowToMonitor(let direction):
+            effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
+                $0.moveWindow(toDisplay: $1)
+            }
+        case .moveWorkspaceToMonitor(let direction):
+            effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
+                $0.moveWorkspace(toDisplay: $1)
+            }
+        }
+        if manager.focusedDisplay != startDisplay, manager.currentWorkspace().focusedWindow == nil,
+           let display = context.displays.first(where: { $0.id == manager.focusedDisplay })
+        {
+            effect.warpsToDisplay = context.visibleFrames[display.id] ?? display.frame
         }
         effect.carriesFocusIntent = action.carriesFocusIntent
         effect.growsFocusedWindow = action.growsFocusedWindow
@@ -162,9 +188,27 @@ public enum ActionApplier {
             ?? context.fallbackViewport() ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
     }
 
+    /// The display showing the current workspace; before the next
+    /// `syncShownWorkspace` (a switch just happened) the focused display,
+    /// where it is about to show (MM-01: never just the first display).
     private static func focusedDisplay(manager: WorkspaceManager, context: Context) -> DisplayState? {
         let current = manager.currentID
-        return context.displays.first { $0.workspace == current } ?? context.displays.first
+        return context.displays.first { $0.workspace == current }
+            ?? context.displays.first { $0.id == manager.focusedDisplay }
+    }
+
+    /// MM-02: run `change` towards the display next to the focused one in
+    /// `direction` (`displayNeighbour` over the display frames). False when
+    /// there is no display that way or nothing changed.
+    private static func toNeighbour(
+        _ direction: FocusDirection, manager: inout WorkspaceManager, context: Context,
+        _ change: (inout WorkspaceManager, DisplayID) -> Bool
+    ) -> Bool {
+        let frames = Dictionary(context.displays.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        guard let target = displayNeighbour(of: manager.focusedDisplay, direction: direction, frames: frames) else {
+            return false
+        }
+        return change(&manager, target)
     }
 
     /// Fullscreen is a layout mode: the registry flips and the reflow places

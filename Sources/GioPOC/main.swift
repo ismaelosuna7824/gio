@@ -101,13 +101,15 @@ case .restore:
     }
 case .tile:
     guard let screen = NSScreen.main,
-          screen.visibleFrame.width > 0, screen.visibleFrame.height > 0
+          screen.visibleFrame.width > 0, screen.visibleFrame.height > 0,
+          let primary = primaryScreen()
     else {
         cliFail("tile failed: no usable main display")
     }
     do {
+        // MM-01: tile the key-window screen, flip with the primary display.
         let report = try runTileReflow(
-            display: screen.visibleFrame, displayHeight: screen.frame.height
+            display: screen.visibleFrame, displayHeight: primary.frame.height
         )
         print(report.describe())
     } catch is AXPermissionError {

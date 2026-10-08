@@ -125,10 +125,13 @@ public func motionCause(for action: HotkeyAction) -> MotionCause {
     case .focusLeft, .focusRight, .focusUp, .focusDown, .centerColumn:
         return .viewScroll
     case .moveLeft, .moveRight, .moveUp, .moveDown, .moveColumnLeft, .moveColumnRight,
-         .consumeOrExpelLeft, .consumeOrExpelRight, .toggleFloating:
+         .consumeOrExpelLeft, .consumeOrExpelRight, .toggleFloating,
+         .moveColumnToMonitor, .moveWindowToMonitor:
+        // MM-02: windows crossing to another display move like any window.
         return .windowMovement
     case .workspace, .moveToWorkspace, .focusWorkspaceDown, .focusWorkspaceUp,
-         .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp:
+         .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
+         .focusMonitor, .moveWorkspaceToMonitor:
         return .workspaceSwitch
     case .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .maximizeColumn:
         return .windowResize

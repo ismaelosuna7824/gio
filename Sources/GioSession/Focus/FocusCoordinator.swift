@@ -48,7 +48,10 @@ public final class FocusCoordinator: @unchecked Sendable {
         public var publishFocusRing: () -> Void
         public var reflowAll: () -> Void
         public var workspaceFocusPlan: (WindowID) -> WindowFocusPlan?
-        public var showWorkspace: (WorkspaceID) -> Void
+        /// Focus the workspace and show it; the cause is the motion the
+        /// pass carries (MM-01: `.passive` when only the focused display
+        /// changes, `.workspaceSwitch` when a display really switches).
+        public var showWorkspace: (WorkspaceID, MotionCause) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
         public var allowsWindowWork: () -> Bool
@@ -72,7 +75,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             centerMode: @escaping () -> CenterFocusedColumnMode,
             publishFocusRing: @escaping () -> Void, reflowAll: @escaping () -> Void,
             workspaceFocusPlan: @escaping (WindowID) -> WindowFocusPlan?,
-            showWorkspace: @escaping (WorkspaceID) -> Void,
+            showWorkspace: @escaping (WorkspaceID, MotionCause) -> Void,
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             allowsWindowWork: @escaping () -> Bool = { true }
@@ -389,7 +392,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             return false
         }
         focusIntent.cancel()
-        context.showWorkspace(plan.workspace.id)
+        context.showWorkspace(plan.workspace.id, plan.revealCause)
         context.updateWorkspace(plan.workspace)
         context.log(
             .info,
@@ -505,6 +508,20 @@ public final class FocusCoordinator: @unchecked Sendable {
         hoverFocus.noteWarp(now: context.now())
         context.warpCursor(target)
         context.log(.debug, "cursor warped to focus id=\(id.pid):\(id.elementID)")
+    }
+
+    /// MM-02 `mouse-follows-focus` for `focus-monitor-*` onto a display with
+    /// no window to focus: put the cursor in the middle of its usable frame
+    /// (unless already on it), so the cursor follows the focused display.
+    public func warpCursor(toDisplay frame: CGRect) {
+        guard let target = mouseFollowsFocusTarget(
+            enabled: context.mouseFollowsFocus(), frame: frame, pointer: context.mouseLocation()
+        ) else {
+            return
+        }
+        hoverFocus.noteWarp(now: context.now())
+        context.warpCursor(target)
+        context.log(.debug, "cursor warped to the focused display")
     }
 
     // MARK: Focus follows mouse (HD-04)

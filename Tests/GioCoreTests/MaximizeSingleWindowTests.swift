@@ -50,10 +50,10 @@ final class MaximizeSingleWindowTests: XCTestCase {
 
     func testConfigKeyIsOnByDefaultAndReachesTheEngine() throws {
         XCTAssertTrue(GioConfig().layout.maximizeSingleWindow)
-        XCTAssertTrue(GioConfig().makeLayoutConfig(viewportWidth: 1000).maximizeSingleWindow)
+        XCTAssertTrue(GioConfig().makeLayoutConfig().maximizeSingleWindow)
         let (off, warnings) = try parseGioConfig("[layout]\nmaximize-single-window = false\n").get()
         XCTAssertFalse(off.layout.maximizeSingleWindow)
-        XCTAssertFalse(off.makeLayoutConfig(viewportWidth: 1000).maximizeSingleWindow)
+        XCTAssertFalse(off.makeLayoutConfig().maximizeSingleWindow)
         XCTAssertTrue(warnings.isEmpty)
         guard case .failure = parseGioConfig("[layout]\nmaximize-single-window = \"yes\"\n") else {
             return XCTFail("a non-boolean must be rejected")

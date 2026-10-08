@@ -1,12 +1,15 @@
 import CoreGraphics
 import Foundation
 
-/// Plan §9 tuning. All values are points. `defaultColumnWidth` applies to
-/// columns with non-positive width; nil means half the viewport width.
+/// Plan §9 tuning. All values are points. `defaultColumnWidth` (points)
+/// applies to `.standard` columns; nil means `defaultColumnProportion` of
+/// the viewport the column is laid out on (MM-01: each display's own width).
 public struct LayoutConfig: Equatable, Sendable {
     public var padding: CGFloat
     public var gap: CGFloat
     public var defaultColumnWidth: CGFloat?
+    /// Niri proportion of a `.standard` column without a points width.
+    public var defaultColumnProportion: CGFloat
     public var minimumColumnWidth: CGFloat
     /// Inset of a fullscreen window from the display edges and the menu bar.
     public var fullscreenGap: CGFloat
@@ -19,6 +22,7 @@ public struct LayoutConfig: Equatable, Sendable {
         padding: CGFloat = 8,
         gap: CGFloat = 8,
         defaultColumnWidth: CGFloat? = nil,
+        defaultColumnProportion: CGFloat = 0.5,
         minimumColumnWidth: CGFloat = 200,
         fullscreenGap: CGFloat = 0,
         maximizeSingleWindow: Bool = false
@@ -26,6 +30,7 @@ public struct LayoutConfig: Equatable, Sendable {
         self.padding = padding
         self.gap = gap
         self.defaultColumnWidth = defaultColumnWidth
+        self.defaultColumnProportion = defaultColumnProportion
         self.minimumColumnWidth = minimumColumnWidth
         self.fullscreenGap = fullscreenGap
         self.maximizeSingleWindow = maximizeSingleWindow
@@ -41,7 +46,7 @@ extension LayoutConfig {
         switch spec {
         case .standard:
             raw = defaultColumnWidth ?? proportionalColumnWidth(
-                0.5, viewportWidth: viewportWidth, padding: padding, gap: gap
+                defaultColumnProportion, viewportWidth: viewportWidth, padding: padding, gap: gap
             )
         case .proportion(let value):
             raw = proportionalColumnWidth(value, viewportWidth: viewportWidth, padding: padding, gap: gap)
@@ -126,7 +131,8 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         guard config.padding.isFinite, config.gap.isFinite,
               config.padding >= 0, config.gap >= 0,
               config.minimumColumnWidth.isFinite, config.minimumColumnWidth > 0,
-              config.defaultColumnWidth.map({ $0.isFinite && $0 > 0 }) ?? true
+              config.defaultColumnWidth.map({ $0.isFinite && $0 > 0 }) ?? true,
+              config.defaultColumnProportion.isFinite, config.defaultColumnProportion > 0
         else {
             throw LayoutError.invalidConfiguration
         }
