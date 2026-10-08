@@ -88,6 +88,7 @@ An invalid config never stops the window manager.
 | `default-column-width` | number | `0.5` | Positive. `<= 1` is a **proportion** of the strip (Niri semantics, `p * (viewport - 2*padding + gap) - gap`, so two `0.5` columns fill the screen exactly). `> 1` is an absolute width in points. Columns are never narrower than 200 pt. |
 | `preset-column-widths` | list of numbers | `[0.33333, 0.5, 0.66667]` | Non-empty list of positive numbers, same `<= 1` proportion vs points rule. `Alt+R` cycles through them. |
 | `center-focused-column` | `"never"`, `"always"`, `"on-overflow"` | `"never"` | Niri semantics, applied on keyboard/IPC focus changes only. `never` scrolls minimally; `always` centers the focused column; `on-overflow` centers only when it does not fit on screen together with the previously focused column. The old boolean still parses (`true` = `always`, `false` = `never`). Any other value is an error and the default applies. |
+| `maximize-single-window` | bool | `true` | A workspace whose only tiled window is alone shows it at the full strip width, the same frame `Alt+F` gives (floating windows do not count). The column keeps its own width: a second window (or a second window stacked in the column) brings the normal widths back. While a window is alone, width actions (`Alt+R`, `Alt+Minus`/`Alt+Equal`, `Alt+F`) change its stored width without a visible change. `false` keeps the column width. Settings > Layout > **Full width when alone**. |
 
 ### `[behavior]`
 

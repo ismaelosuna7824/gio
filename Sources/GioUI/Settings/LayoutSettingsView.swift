@@ -100,10 +100,17 @@ struct LayoutSettingsView: View {
                     )
                 }
             }
-            CardRow(divider: false) {
+            CardRow {
                 SettingRow("Preset widths", caption: "Percent of the screen, or a fixed width in points.") {
                     PresetWidthChips(text: form.presetsText)
                 }
+            }
+            CardRow(divider: false) {
+                ToggleRow(
+                    "Full width when alone",
+                    caption: "A workspace with one window shows it at full width, like Alt+F; a second window brings the widths back.",
+                    isOn: form.maximizeSingleWindow
+                )
             }
             problems(matching: ["Default width", "Preset"])
         }

@@ -10,19 +10,25 @@ public struct LayoutConfig: Equatable, Sendable {
     public var minimumColumnWidth: CGFloat
     /// Inset of a fullscreen window from the display edges and the menu bar.
     public var fullscreenGap: CGFloat
+    /// SW-01: a strip holding exactly one window lays it out at the full
+    /// strip width (what `maximize-column` gives), without touching the
+    /// column's stored width, so a second window brings it back.
+    public var maximizeSingleWindow: Bool
 
     public init(
         padding: CGFloat = 8,
         gap: CGFloat = 8,
         defaultColumnWidth: CGFloat? = nil,
         minimumColumnWidth: CGFloat = 200,
-        fullscreenGap: CGFloat = 0
+        fullscreenGap: CGFloat = 0,
+        maximizeSingleWindow: Bool = false
     ) {
         self.padding = padding
         self.gap = gap
         self.defaultColumnWidth = defaultColumnWidth
         self.minimumColumnWidth = minimumColumnWidth
         self.fullscreenGap = fullscreenGap
+        self.maximizeSingleWindow = maximizeSingleWindow
     }
 }
 
@@ -129,10 +135,14 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
             throw LayoutError.invalidViewport
         }
 
+        let alone = config.maximizeSingleWindow
+            && workspace.columns.filter { !$0.windows.isEmpty }.map(\.windows.count) == [1]
         var widths: [CGFloat] = []
         var framedColumns: [Column] = []
         for column in workspace.columns where !column.windows.isEmpty {
-            let spec = config.resolvedWidth(of: column.widthSpec, viewportWidth: viewport.width)
+            let spec = alone
+                ? config.resolvedWidth(of: .proportion(1), viewportWidth: viewport.width)
+                : config.resolvedWidth(of: column.widthSpec, viewportWidth: viewport.width)
             let learned = column.windows.map { minimumSizes[$0]?.width ?? 0 }.max() ?? 0
             let usableWidth = max(viewport.width - config.padding * 2, config.minimumColumnWidth)
             widths.append(max(spec, min(learned, usableWidth)))

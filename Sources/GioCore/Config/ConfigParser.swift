@@ -330,6 +330,10 @@ func applyLayoutKey(
                 "line \(line): layout.center-focused-column expects \"never\", \"always\" or \"on-overflow\""
             )
         }
+    case "maximize-single-window":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
+            config.layout.maximizeSingleWindow = $0
+        }
     default:
         warnings.append("line \(line): unknown layout key '\(key)', ignored")
     }

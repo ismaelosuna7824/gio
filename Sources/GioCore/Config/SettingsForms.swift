@@ -32,6 +32,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var widthValue: Double
     public var presetsText: String
     public var centerFocusedColumn: CenterFocusedColumnMode
+    public var maximizeSingleWindow: Bool
 
     public init(config: LayoutSectionConfig) {
         gaps = Double(config.gaps)
@@ -54,6 +55,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             }
         }.joined(separator: ", ")
         centerFocusedColumn = config.centerFocusedColumn
+        maximizeSingleWindow = config.maximizeSingleWindow
     }
 
     private static func text(_ value: Double) -> String {
@@ -95,6 +97,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
                 : .set(table: "layout", key: "fullscreen-gap", value: .number(fullscreenGap)),
             .set(table: "layout", key: "default-column-width", value: .number(widthValue)),
             .set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue)),
+            .set(table: "layout", key: "maximize-single-window", value: .bool(maximizeSingleWindow)),
             .set(
                 table: "layout", key: "preset-column-widths",
                 value: .numbers(parsePresetList(presetsText) ?? [])

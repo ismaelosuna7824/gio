@@ -23,6 +23,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// Widths `switch-preset-column-width` cycles through (Niri
     /// `preset-column-widths`): fractions when ≤ 1, points otherwise.
     public var presetColumnWidths: [ColumnWidthSpec]
+    /// SW-01: a workspace with one tiled window shows it at the full strip
+    /// width, like `maximize-column`; consumed by the layout engine.
+    public var maximizeSingleWindow: Bool
 
     public init(
         gaps: CGFloat = 8,
@@ -31,7 +34,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         defaultColumnWidthPoints: CGFloat? = nil,
         centerFocusedColumn: CenterFocusedColumnMode = .never,
         presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths,
-        fullscreenGap: CGFloat? = nil
+        fullscreenGap: CGFloat? = nil,
+        maximizeSingleWindow: Bool = true
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -40,6 +44,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.defaultColumnWidthPoints = defaultColumnWidthPoints
         self.centerFocusedColumn = centerFocusedColumn
         self.presetColumnWidths = presetColumnWidths
+        self.maximizeSingleWindow = maximizeSingleWindow
     }
 }
 
@@ -202,7 +207,8 @@ public struct GioConfig: Sendable {
             padding: layout.padding,
             gap: layout.gaps,
             defaultColumnWidth: resolveDefaultColumnWidth(viewportWidth: viewportWidth),
-            fullscreenGap: layout.resolvedFullscreenGap
+            fullscreenGap: layout.resolvedFullscreenGap,
+            maximizeSingleWindow: layout.maximizeSingleWindow
         )
     }
 

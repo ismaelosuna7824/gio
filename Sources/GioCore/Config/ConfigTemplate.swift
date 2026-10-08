@@ -21,6 +21,9 @@ public func defaultConfigTemplate() -> String {
     center-focused-column = "never"
     # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
     preset-column-widths = [0.33333, 0.5, 0.66667]
+    # A workspace with a single window shows it at full width (like Alt+F);
+    # a second window brings the column widths back. false keeps the width.
+    maximize-single-window = true
 
     [behavior]
     # Focus the window the pointer rests on (~100 ms); never scrolls.
