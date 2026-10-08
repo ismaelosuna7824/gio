@@ -126,4 +126,32 @@ final class RegistrationRetryGuardTests: XCTestCase {
         discovery.registerAppeared(element, pid: 4321)
         XCTAssertEqual(asked, [1], "after the cooldown the element gets a fresh round")
     }
+
+    func testAGoneOrRejectedElementIsTriedOnceAndRejectedOnesCoolDown() {
+        world.running = [4321]
+        for outcome in [SingleWindowDiscovery.gone, .rejected] {
+            world.logs = []
+            var context = world.discoveryContext()
+            let clock = scheduler!
+            context.now = { clock.now }
+            var asked = 0
+            context.discoverAttempt = { _, _ in
+                asked += 1
+                return outcome
+            }
+            discovery = DiscoveryService(context: context, scheduler: scheduler)
+            let element = AXUIElementCreateApplication(4300)
+
+            discovery.registerAppeared(element, pid: 4321)
+            scheduler.advance(by: 5)
+            XCTAssertEqual(asked, 1, "\(outcome): no retry round")
+            XCTAssertTrue(lines("window register retry").isEmpty, "\(world.logs)")
+            XCTAssertTrue(lines("window register gave up").isEmpty, "\(world.logs)")
+            XCTAssertEqual(lines("window register dropped pid=4321").map(\.0), [.debug])
+
+            discovery.registerAppeared(element, pid: 4321)
+            XCTAssertEqual(asked, 1, "\(outcome): the same element waits out the cooldown")
+            scheduler.advance(by: WindowRegistrationRetry.abandonCooldown)
+        }
+    }
 }

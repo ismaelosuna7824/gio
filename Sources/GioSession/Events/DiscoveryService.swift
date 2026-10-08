@@ -375,6 +375,12 @@ public final class DiscoveryService: @unchecked Sendable {
             reason = .frameUnreadable
         case .unclassified:
             reason = .unclassified
+        case .gone:
+            dropFinal(element, pid: pid, reason: .gone, attempts: attempt + 1)
+            return
+        case .rejected:
+            dropFinal(element, pid: pid, reason: .rejected, attempts: attempt + 1)
+            return
         }
         // A pid that is no longer (or never was) a running app has no window
         // to wait for: one debug line, no retry schedule.
@@ -401,6 +407,13 @@ public final class DiscoveryService: @unchecked Sendable {
         let now = context.now()
         abandoned.removeAll { $0.until <= now }
         return abandoned.contains { CFEqual($0.element, element) }
+    }
+
+    /// PF-E: a destroyed element or a readable rejection: one debug line and
+    /// the cooldown, no retry round.
+    private func dropFinal(_ element: AXUIElement, pid: pid_t, reason: WindowRegistrationFailure, attempts: Int) {
+        context.log(.debug, "window register dropped pid=\(pid) reason=\(reason.rawValue) attempts=\(attempts)")
+        abandoned.append((element, context.now() + WindowRegistrationRetry.abandonCooldown))
     }
 
     /// Register a genuinely new window: fresh ID, retained AX handles,

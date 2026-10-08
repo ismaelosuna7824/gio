@@ -150,6 +150,31 @@ public enum WindowRegistrationFailure: String, Equatable, Sendable {
     case frameUnreadable
     /// Ignored by admission, untrusted, or unknown (the original schedule).
     case unclassified
+    /// PF-E: the element no longer exists (closed before it could be read).
+    case gone
+    /// PF-E: admission said no with every fact readable (a tooltip, menu,
+    /// popover or sheet): asking again changes nothing.
+    case rejected
+}
+
+/// PF-E: which failure an unregistered element is. Only a missing role or
+/// frame is worth waiting for; a destroyed element or a readable "not a
+/// window" verdict is final.
+public func registrationFailure(
+    elementGone: Bool, roleReadable: Bool, frameReadable: Bool, ignore: IgnoreReason?
+) -> WindowRegistrationFailure {
+    if elementGone {
+        return .gone
+    }
+    if !frameReadable {
+        return .frameUnreadable
+    }
+    switch ignore {
+    case .notAWindow where roleReadable, .sheetOrPopover:
+        return .rejected
+    default:
+        return .unclassified
+    }
 }
 
 /// A new window's attributes are often not readable in the very first
@@ -168,7 +193,12 @@ public enum WindowRegistrationRetry {
     public static func delay(
         afterFailedAttempt attempt: Int, reason: WindowRegistrationFailure = .unclassified
     ) -> TimeInterval? {
-        let schedule = reason == .frameUnreadable ? frameUnreadableDelays : delays
+        let schedule: [TimeInterval]
+        switch reason {
+        case .frameUnreadable: schedule = frameUnreadableDelays
+        case .unclassified: schedule = delays
+        case .gone, .rejected: return nil
+        }
         guard attempt >= 0, attempt < schedule.count else {
             return nil
         }

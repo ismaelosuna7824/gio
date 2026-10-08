@@ -137,4 +137,28 @@ final class WindowEventPolicyTests: XCTestCase {
         XCTAssertEqual(delays, delays.sorted())
         XCTAssertNil(WindowRegistrationRetry.delay(afterFailedAttempt: WindowRegistrationRetry.maxRetries))
     }
+
+    /// Live 2026-10-08: 1730 retry lines in 76 min from Chrome's transient
+    /// windows. A destroyed element or a definitive admission verdict is
+    /// never retried.
+    func testGoneAndRejectedElementsAreNeverRetried() {
+        XCTAssertNil(WindowRegistrationRetry.delay(afterFailedAttempt: 0, reason: .gone))
+        XCTAssertNil(WindowRegistrationRetry.delay(afterFailedAttempt: 0, reason: .rejected))
+        XCTAssertNotNil(WindowRegistrationRetry.delay(afterFailedAttempt: 0, reason: .frameUnreadable))
+    }
+
+    func testWhichFailuresAreDefinitive() {
+        func failure(gone: Bool = false, role: Bool = true, frame: Bool = true, ignore: IgnoreReason?) -> WindowRegistrationFailure {
+            registrationFailure(elementGone: gone, roleReadable: role, frameReadable: frame, ignore: ignore)
+        }
+        XCTAssertEqual(failure(gone: true, role: false, frame: false, ignore: .notAWindow), .gone)
+        // A tooltip, menu or popover: its role says it is not a window.
+        XCTAssertEqual(failure(ignore: .notAWindow), .rejected)
+        XCTAssertEqual(failure(ignore: .sheetOrPopover), .rejected)
+        // A brand-new window may not answer yet: keep retrying.
+        XCTAssertEqual(failure(role: false, ignore: .notAWindow), .unclassified)
+        XCTAssertEqual(failure(frame: false, ignore: .invalidFrame), .frameUnreadable)
+        XCTAssertEqual(failure(frame: false, ignore: nil), .frameUnreadable)
+        XCTAssertEqual(failure(ignore: nil), .unclassified)
+    }
 }

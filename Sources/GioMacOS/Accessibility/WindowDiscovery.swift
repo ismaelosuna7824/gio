@@ -227,7 +227,10 @@ public enum SingleWindowDiscovery {
     case frameUnreadable
     /// Ignored by admission, untrusted, or not a manageable process.
     case unclassified
-
+    /// PF-E: the element was destroyed before it could be read.
+    case gone
+    /// PF-E: readable, and admission says it is not a window to manage.
+    case rejected
 }
 
 /// PF-02: `discoverSystemWindow` with the failure reason.
@@ -240,6 +243,7 @@ public func discoverSystemWindowAttempt(element: AXUIElement, pid: pid_t) -> Sin
     let appElement = AXUIElementCreateApplication(pid)
     let app = NSRunningApplication(processIdentifier: pid)
     let appName = app?.localizedName ?? "unknown"
+    let ignore: IgnoreReason?
     switch classifyElement(
         element, pid: pid, appName: appName, bundleID: app?.bundleIdentifier, appElement: appElement,
         focused: axFocusedWindow(of: appElement), index: 0
@@ -247,10 +251,26 @@ public func discoverSystemWindowAttempt(element: AXUIElement, pid: pid_t) -> Sin
     case .tile(let discovered), .float(let discovered):
         return .found(discovered)
     case .skipped:
-        return .frameUnreadable
-    case .ignored:
-        // A brand-new window often reads no frame at all yet.
-        return axFrame(of: element) == nil ? .frameUnreadable : .unclassified
+        ignore = nil
+    case .ignored(let excluded):
+        if case .ignore(let reason) = excluded.admission {
+            ignore = reason
+        } else {
+            ignore = nil
+        }
+    }
+    // One more read tells a destroyed element (closed before it could be
+    // read: never retry) from one that does not answer yet.
+    var role: CFTypeRef?
+    let roleStatus = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
+    switch registrationFailure(
+        elementGone: roleStatus == .invalidUIElement, roleReadable: roleStatus == .success,
+        frameReadable: axFrame(of: element) != nil, ignore: ignore
+    ) {
+    case .gone: return .gone
+    case .rejected: return .rejected
+    case .frameUnreadable: return .frameUnreadable
+    case .unclassified: return .unclassified
     }
 }
 
