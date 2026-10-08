@@ -80,6 +80,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `motion.md` | Timing, lean writes, per-app lanes, AX-driven animation (MO-01..MO-04). |
 | `niri-controls.md` | Width presets, maximize, fullscreen, center, consume/expel, hidden workspaces, animated switch (NC-01..NC-07). |
 | `desktop-app.md` | Main window, menu-bar lifecycle, settings, logs, diagnostics (DA-01..DA-05). |
+| `workspace-overview.md` | Mission Control workaround, `toggle-overview` panel (WO-00..WO-01). |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 
 ## How to verify a change
