@@ -808,7 +808,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   intact); after `level=critical`/`level=normal`, the next settle's `snapshot capture ... reason=settle` covers
   the shown strip (staged by 12) and holes stay ≈ 0; `snapshot cache cap exceeded by strip` rare.
 
-- [ ] SM-22 (uncommitted) — Hidden workspaces at half resolution; cap tied to physical RAM.
+- [x] SM-22 (`fdca808`) — Hidden workspaces at half resolution; cap tied to physical RAM.
   Evidence (live 2026-10-08 21:57-21:59 UTC): 79/80 flights as images but 8 holes after `snapshot coverage
   stopped cap reached images=12 pixels=56439696`: on the user's 1800 x 1169 pt @2x display the cap (8
   display-fulls, 67,334,400 px, ~270 MB) could not hold the windows of hidden workspaces at full resolution, so
@@ -914,3 +914,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-08: live session (21:41 UTC) showed a system-wide memory-pressure warning purge the shown strip (43 holes in 34 flights after it, none before) and the dropped windows never re-captured (`tried`); SM-21 (warning is not a purge, strip coverage regardless of `tried`, recovery on normal, cap never evicts the strip) uncommitted, all bundles green. Next: signed build, then the SM-21 LIVE PENDING list.
 - 2026-10-08: SM-08..SM-21 committed as `fa27a03` (with PF-I) and pushed to `main`. Last live session (21:57-21:59 UTC, 293 presses, 79/80 flights as images): fps median 117 (min 110), single flights with a hitch 20 %, hand-off wait 0 ms (max 12), 8 holes (after `snapshot coverage stopped cap reached images=12`), cache 259 MB. Open: hidden-workspace images vs the cap (half resolution or a higher cap), Xcode window `31952:13` refusing focus (-25201).
 - 2026-10-08: SM-22 (hidden workspaces at half resolution, cap min(8 display-fulls, 3 % RAM), coverage stops only when a half image goes) uncommitted, all bundles green. Next: signed build, then the SM-22 LIVE PENDING list.
+- 2026-10-08: SM-22 committed as `fdca808` and pushed. Live (22:33-22:35 UTC, 332 presses, 70 workspace switches): 93/94 flights as images (1 fallback: first motion after launch), fps median 117 (min 108), single flights with a hitch 15 %, 0 holes, no `coverage stopped`, cache 255-267 MB, cap `pixels=67334400 ramMB=24576`, Chrome matched `by=order`.
