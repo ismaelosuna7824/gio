@@ -32,7 +32,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         padding: CGFloat = 8,
         defaultColumnWidthFraction: CGFloat? = 0.5,
         defaultColumnWidthPoints: CGFloat? = nil,
-        centerFocusedColumn: CenterFocusedColumnMode = .never,
+        centerFocusedColumn: CenterFocusedColumnMode = .onOverflow,
         presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths,
         fullscreenGap: CGFloat? = nil,
         maximizeSingleWindow: Bool = true

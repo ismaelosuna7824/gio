@@ -40,7 +40,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.layout.padding, 8)
         XCTAssertEqual(config.layout.defaultColumnWidthFraction, 0.5)
         XCTAssertNil(config.layout.defaultColumnWidthPoints)
-        XCTAssertEqual(config.layout.centerFocusedColumn, .never)
+        XCTAssertEqual(config.layout.centerFocusedColumn, .onOverflow)
         XCTAssertFalse(config.behavior.focusFollowsMouse)
         XCTAssertTrue(config.behavior.mouseFollowsFocus)
         XCTAssertTrue(config.animations.enabled)

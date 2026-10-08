@@ -18,7 +18,7 @@ public func defaultConfigTemplate() -> String {
     # Niri semantics: "never" scrolls minimally, "always" centers the focused
     # column on every keyboard focus change, "on-overflow" centers only when it
     # does not fit next to the previously focused column.
-    center-focused-column = "never"
+    center-focused-column = "on-overflow"
     # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
     preset-column-widths = [0.33333, 0.5, 0.66667]
     # A workspace with a single window shows it at full width (like Alt+F);

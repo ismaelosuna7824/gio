@@ -34,8 +34,10 @@ final class CenterFocusedColumnModeTests: XCTestCase {
 
     // MARK: Config
 
-    func testDefaultIsNever() {
-        XCTAssertEqual(LayoutSectionConfig().centerFocusedColumn, .never)
+    func testDefaultIsOnOverflow() throws {
+        XCTAssertEqual(LayoutSectionConfig().centerFocusedColumn, .onOverflow)
+        let (config, _) = try parseGioConfig("[layout]\ngaps = 8\n").get()
+        XCTAssertEqual(config.layout.centerFocusedColumn, .onOverflow)
     }
 
     func testParsesTheThreeStrings() throws {
