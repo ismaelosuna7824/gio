@@ -69,6 +69,7 @@ Baseline at the time of writing, all with 0 failures:
 Two environment notes:
 
 - `IPCTests` bind temporary Unix sockets. Earlier, a live Gio session holding the real socket made two tests fail; the suite was made daemon-agnostic, but keep the rule: **tests must never depend on, or write to, the real `~/.config/gio/` files**.
+- Logging is isolated automatically (HD-08): under XCTest the global `GioLog` defaults to a per-process temp file, `$TMPDIR/gio-xctest-<pid>.log`, instead of `~/.config/gio/gio.log`, so a suite that never sets `GioLog.logFilePath` cannot leak fixture lines (such as `app=pid30`) into the log users send for analysis. Suites that assert on file contents still set their own temp path (`GioLogTests`, `LogSinkTests`).
 - A test count that differs from the number of `func test` declarations is worth investigating (a past mismatch of 210 executed against 247 declared was recorded in `odd/tasks/window-coverage.md`).
 
 ## Strict TDD workflow

@@ -103,14 +103,42 @@ final class LogStore: @unchecked Sendable {
 /// Global log. `logFilePath` is assignable so tests isolate file output;
 /// production uses `~/.config/gio/gio.log`. Set once at startup (or per
 /// test) and only read afterwards — hence the escape hatch, not a lock.
+/// Under XCTest the default is a per-process temp file (HD-08), so no test
+/// bundle can append fixture lines to the user's real log by forgetting it.
 ///
 /// Lines below `minimumLevel` (default `.info`) cost one compare: the
 /// message autoclosure is never evaluated. File writes go through a
 /// persistent, batched, rotating `LogFileSink`; call `flush()` before exit.
 public enum GioLog {
     private static let store = LogStore()
-    public nonisolated(unsafe) static var logFilePath: String =
-        FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/gio.log"
+    public nonisolated(unsafe) static var logFilePath: String = defaultLogFilePath
+    /// Resolved once per process: the real log, or a throwaway file in tests.
+    static let defaultLogFilePath: String = resolveDefaultLogFilePath(
+        home: FileManager.default.homeDirectoryForCurrentUser.path,
+        temporaryDirectory: NSTemporaryDirectory(),
+        underXCTest: isRunningUnderXCTest,
+        pid: ProcessInfo.processInfo.processIdentifier
+    )
+    /// XCTest is loaded in every test bundle process (`swift test`, Xcode)
+    /// and never in the app, the guardian or the CLI.
+    static let isRunningUnderXCTest: Bool =
+        ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+
+    static func resolveDefaultLogFilePath(
+        home: String, temporaryDirectory: String, underXCTest: Bool, pid: Int32
+    ) -> String {
+        guard underXCTest else {
+            return home + "/.config/gio/gio.log"
+        }
+        return (temporaryDirectory as NSString).appendingPathComponent("gio-xctest-\(pid).log")
+    }
+
+    /// Path of the open file sink, nil before the first recorded line.
+    static var activeSinkPath: String? {
+        lock.withLock { state.sink?.path }
+    }
+
     /// Gio and its guardian append to the same file; only Gio rotates it.
     /// The guardian sets this to false before its first line.
     public nonisolated(unsafe) static var rotatesLogFile = true

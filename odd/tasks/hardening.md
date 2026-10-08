@@ -41,6 +41,8 @@ exists); signing team stays a documented per-collaborator step.
 - [x] HD-06 (`c1671dc`) — Launcher searches managed windows too; choosing one focuses and reveals it.
 - [x] HD-07 (`14369e3`) — Guardian process: launched by Gio, watches Gio's pid, restores off-screen
   windows if Gio exits without a clean shutdown (crash, SIGKILL, Force Quit).
+- [x] HD-08 (uncommitted) — Test bundles never write the real log: under XCTest the global
+  `GioLog` defaults to a per-process temp file (`$TMPDIR/gio-xctest-<pid>.log`).
 
 Evidence HD-01..03 (route: one delegated writer): FocusIntent table (focus/move/workspace/
 fullscreen/consume-expel/IPC carry intent; width/maximize/center/floating don't), applied on
@@ -64,6 +66,24 @@ bundles 20/7/19/23/616 all 0 failures (parent re-ran); signed build OK; smoke te
 exit 0 in 0.33s. Parent fixed TESTING.md kill command (`pgrep -x Gio` also matches the guardian).
 TCC inheritance assumption LIVE PENDING. Review: UNAVAILABLE.
 
+Evidence HD-08 (2026-10-08, route: one delegated writer): the user's real `~/.config/gio/gio.log`
+held test fixture lines (`app=pid30 kind=timeout` 68x, `app=pid20` 12x, `app=pid10` 2x): suites
+that log before any suite sets `GioLog.logFilePath` appended to the production default. Fix in
+`GioLog`: `defaultLogFilePath` is resolved once per process by
+`resolveDefaultLogFilePath(home:temporaryDirectory:underXCTest:pid:)`; `isRunningUnderXCTest`
+is `XCTestConfigurationFilePath` in the environment or `NSClassFromString("XCTestCase")`, so no
+bundle or new test file can forget it. Suites that test the file sink (`GioLogTests`,
+`LogSinkTests`, `ReconcileFailureTests`) keep their explicit temp paths.
+`TestLogIsolationTests` (5): RED (compile) on the missing members, then RED (assertion) with the
+old default (`testProcessDefaultIsNotTheRealLog`: "/Users/.../.config/gio/gio.log" equal;
+`testThisProcessIsDetectedAsXCTest`, `testUnderXCTestTheDefaultIsAPerProcessTempFile` failed),
+GREEN. Full `swift test`: GioCoreTests 1415, GioSessionTests 338, GioMacOSTests 48, GioMacTests
+19, GioPOCTests 7 with 0 failures; GioUITests 274 with 3 failures, all from the in-flight renderer
+default change (`AdvancedPresentationTests` x2, `SettingsPresentationTests` x1), not HD-08.
+Real log stat (read-only) before and after the full run: 927558 bytes, mtime 12:51:18 both;
+fixture counts unchanged (68/12/2). Each bundle process wrote only `gio-xctest-<pid>.log` in
+`$TMPDIR`. `git diff --check` clean.
+
 ## Acceptance criteria
 - Alt+H/L changes keyboard focus live; config binding on e.g. Alt+Y fires.
 - Killing Gio with `kill -9` restores windows within ~1s.
@@ -82,3 +102,4 @@ TCC inheritance assumption LIVE PENDING. Review: UNAVAILABLE.
 - 2026-09-29: HD-01..HD-03 done, pushed. Next: HD-04..HD-06.
 - 2026-09-29: HD-04..HD-06 done, pushed. Next: HD-07 guardian.
 - 2026-09-29: HD-07 done, pushed. All hardening tasks code-complete. Next: user live test.
+- 2026-10-08: HD-08 done (uncommitted): tests no longer pollute the real log.
