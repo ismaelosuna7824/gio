@@ -140,7 +140,7 @@ detection on secondary displays (documented only), legacy `GioMac`/`GioApp`.
     and the book already held per-window floating frames.
 
 ## Tasks
-- [x] MM-01 — Multi-display foundations. Uncommitted (left for review).
+- [x] MM-01 — Multi-display foundations. Commit `ecfd426` (MM-01..MM-03 in one commit).
   - [x] 1. Flip with the primary display height: `GioCore/Display/DisplayGeometry.swift`
     (`primaryDisplayIndex`), `GioSession/Seams/SystemProbe.swift`,
     `GioMacOS/Displays/DisplayList.swift` (`primaryScreen()`),
@@ -163,8 +163,7 @@ detection on secondary displays (documented only), legacy `GioMac`/`GioApp`.
     `WindowFocusPlan.revealCause`, `FocusCoordinator`, `SessionHost.showWorkspace`.
   - [x] 9. Docs: `docs/ARCHITECTURE.md` (Multiple displays, parking table, coordinate spaces),
     `docs/TESTING.md` (manual check 14, known limitations), this file.
-- [x] MM-02 — Niri monitor actions on `displayNeighbour`. Uncommitted (left for review);
-  LIVE PENDING.
+- [x] MM-02 — Niri monitor actions on `displayNeighbour`. Commit `ecfd426`; LIVE PENDING.
   - [x] 1. Actions and config: `GioCore/Hotkeys/HotkeyDispatcher.swift` (cases, defaults),
     `ShortcutCatalog.swift` (Monitors category, entries), `Config/ConfigParser.swift`
     (`parseActionName`, `validActionNames`), `Focus/FocusIntent.swift`
@@ -179,8 +178,8 @@ detection on secondary displays (documented only), legacy `GioMac`/`GioApp`.
     concept, shortcuts rows, 48 bindings, action names, Monitors category),
     `docs/ARCHITECTURE.md` (MM-02 paragraph), `docs/TESTING.md` (check 14b, limitation),
     `docs/CONTRIBUTING.md` (binding count), this file.
-- [x] MM-03 — Review fixes: stacked displays and floating monitor moves. Uncommitted (left for
-  review); LIVE PENDING.
+- [x] MM-03 — Review fixes: stacked displays and floating monitor moves. Commit `ecfd426`;
+  LIVE PENDING.
   - [x] 1. Switch motion off the display below: `GioCore/Animation/WorkspaceSwitchMotion.swift`
     (`canSlideBelow`, `planWorkspaceSwitchMotion(otherDisplays:)`),
     `GioSession/Reflow/ReflowPlanner.swift` (passes the other displays).
@@ -312,7 +311,6 @@ detection on secondary displays (documented only), legacy `GioMac`/`GioApp`.
   - The union-corner fallback (every side of a display touching another) has not been seen.
 
 ## Progress
-- 2026-10-07: MM-01 implemented and verified automatically; uncommitted; live check pending.
-- 2026-10-07: MM-02 implemented and verified automatically; uncommitted; live check pending.
-- 2026-10-07: MM-03 (review fixes) implemented and verified automatically; uncommitted; live
-  check pending.
+- 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
+  live check pending.
+- 2026-10-08: committed as `ecfd426` and pushed to `main`; still not tested on real displays.

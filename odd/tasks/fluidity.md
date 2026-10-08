@@ -39,6 +39,14 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
 - PF-C: a failed position nudge escalates once to a size nudge (1 pt narrower, then the
   target); only a failed size nudge makes the window render-unverifiable. No `AXRaise` (it
   would reorder windows on a passive path, HD-01).
+- PF-F (reverted): a dim that stayed on and followed AX motions per tick (regions from Gio's
+  sampled frames, stacking from one WindowServer query per motion, 120 ms crossfade of the
+  two windows of a focus change). The user tried it live and preferred the previous look
+  ("now the dim looks odd, before it felt better"), so the code went back to HEAD: the dim
+  hides during motions (80 ms out, 150 ms in after the settle). Never committed.
+- PF-G: `layout.center-focused-column` defaults to `on-overflow` (was `never`): a neighbour
+  already in view only takes focus, the strip scrolls and centers only when the column does
+  not fit next to the previous one. Chosen by the user after trying it live in Settings.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -64,6 +72,30 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   neighbour": the running session (old build, started 01:10 UTC) registered Tern transient
   dialogs while the user worked (`float(dialog)`, `window open id=5683:23` at 01:48,
   `5683:24/25` at 01:52). `FloatingArrivalFocusTests` now covers `.dialog` as well.
+- [x] PF-E — Transient windows no longer cost retry rounds (log, session 02:42-03:58 UTC:
+  1730 `window register` lines in 76 min, 1702 from Chrome pid 17232, 363 give-ups, up to
+  111 lines a minute; every round is AX reads on the session queue next to the animations).
+  Cause: an element destroyed before it could be read read as `frameUnreadable` (4 retries)
+  and a readable admission rejection (tooltip/popover, role not `AXWindow`) as
+  `unclassified` (3 retries). Fix: `registrationFailure(elementGone:roleReadable:
+  frameReadable:ignore:)` (GioCore) classifies `.gone` (role read returns
+  `kAXErrorInvalidUIElement`) and `.rejected` (readable `notAWindow`, or `sheetOrPopover`),
+  `WindowRegistrationRetry.delay` returns nil for both, `discoverSystemWindowAttempt`
+  reports them (one extra role read on failure only), and `DiscoveryService` logs one debug
+  `window register dropped ... reason=gone|rejected` and puts the element in the 30 s
+  cooldown. RED: compile (`WindowRegistrationFailure` had no `gone`/`rejected`, no
+  `registrationFailure`) for `WindowEventPolicyTests.testGoneAndRejectedElementsAreNeverRetried`,
+  `testWhichFailuresAreDefinitive` and `RegistrationRetryGuardTests
+  .testAGoneOrRejectedElementIsTriedOnceAndRejectedOnesCoolDown`; GREEN. LIVE PENDING: the
+  `window register retry` rate with Chrome in use should drop to near zero.
+  Commit `dd729b4`.
+- [x] PF-G — `center-focused-column` defaults to `on-overflow`. RED:
+  `CenterFocusedColumnModeTests.testDefaultIsOnOverflow` (got `never` for both the default
+  section and a parsed config without the key); `ConfigTests.testDefaultsMirrorPlanExample`
+  updated to the new default. Commit `a59f85d`. Existing configs keep their value.
+- [~] PF-F — Dim follows motions instead of pulsing. Implemented, tried live by the user,
+  reverted at their request (2026-10-08): the previous fade out/in looked better to them.
+  No code left behind; see Decisions (PF-F).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -83,3 +115,5 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
 ## Progress
 - 2026-10-08: log analysis, three fixes implemented and verified automatically; live check
   pending.
+- 2026-10-08: PF-E (no retries for gone/rejected elements) and PF-G (on-overflow default)
+  committed. PF-F implemented, tried live, reverted at the user's request (never committed).
