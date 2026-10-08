@@ -463,7 +463,11 @@ public final class DiscoveryService: @unchecked Sendable {
             destinationShown = manager.activeIDs.contains(destID)
             var dest = manager.workspace(id: destID)!
             workspaceLabel = dest.name ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
-            Self.appendColumn(id, to: &dest, focus: !minimized)
+            // A floating arrival (a dialog, or a transient popup such as
+            // Chrome's address-bar suggestions, re-created on every key) must
+            // not take the strip's focus: closing it would leave the focus on
+            // the last column. If the OS focuses it, focus adoption follows.
+            Self.appendColumn(id, to: &dest, focus: !minimized && window.mode != .floating)
             manager.update(dest)
             guard decision != .stay,
                   manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID
