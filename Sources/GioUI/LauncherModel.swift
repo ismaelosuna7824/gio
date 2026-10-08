@@ -233,6 +233,7 @@ func describeAction(_ command: CLICommand) -> String {
     case .uninstall: return "uninstall"
     case .logs(let level): return level.map { "logs --level \($0.name)" } ?? "logs"
     case .help: return "help"
+    case .toggleOverview: return "overview"
     }
 }
 

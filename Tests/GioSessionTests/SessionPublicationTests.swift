@@ -132,4 +132,24 @@ final class SessionFactsBuilderTests: XCTestCase {
         fixture.displays.disconnect(SessionFixture.display)
         XCTAssertNil(make(fixture, logs: Recorder(), prefetches: Recorder()).workspaceStrip())
     }
+
+    func testOverviewLaysOutEveryWorkspaceOfTheFocusedDisplay() {
+        let fixture = SessionFixture(
+            frames: [CGRect(x: 0, y: 0, width: 900, height: 1000), CGRect(x: 900, y: 0, width: 900, height: 1000)],
+            focus: 0
+        )
+        XCTAssertTrue(fixture.session.manager.moveWindow(SessionFixture.id(1, pid: 2), to: 2))
+        let overview = make(fixture, logs: Recorder(), prefetches: Recorder()).workspaceOverview()
+        XCTAssertEqual(overview?.displayID, 1)
+        XCTAssertEqual(overview?.activeWorkspace, 1)
+        XCTAssertEqual(overview?.strips.map(\.workspace), [1, 2, 3])
+        XCTAssertEqual(overview?.strips.map(overviewWindowOrder), [["1:1"], ["2:2"], []])
+        XCTAssertEqual(overview?.strips.first?.focusedWindowID, "1:1")
+    }
+
+    func testNoOverviewWithoutTheFocusedDisplay() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        fixture.displays.disconnect(SessionFixture.display)
+        XCTAssertNil(make(fixture, logs: Recorder(), prefetches: Recorder()).workspaceOverview())
+    }
 }

@@ -2,7 +2,7 @@
 
 How to use Gio day to day: shortcuts, configuration, window rules, the desktop app and the command line. Everything here is derived from `defaultHotkeyBindings`, `ShortcutCatalog`, the config parser and the command grammar in the source.
 
-Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#configuration-reference) · [Rules](#window-rules) · [Desktop app](#desktop-app) · [Launcher](#launcher) · [CLI](#command-line-gio) · [gio-poc](#gio-poc)
+Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#configuration-reference) · [Rules](#window-rules) · [Desktop app](#desktop-app) · [Launcher](#launcher) · [Overview](#workspace-overview) · [CLI](#command-line-gio) · [gio-poc](#gio-poc)
 
 ## Concepts
 
@@ -10,6 +10,7 @@ Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#
 - **Workspaces.** Niri-style dynamic vertical stack, one per display. You start with one empty workspace. Putting a window in the last (empty) workspace opens a new empty one below it, so there is always exactly one empty workspace at the bottom. An empty workspace you are not on is removed: leave it and it disappears, and the indices below it shift up. Windows are never lost when a workspace disappears (it only ever disappears when it is empty), and a display that is unplugged hands its windows to a remaining display's stack. `Alt+1` to `Alt+9` address the workspace at that position in the focused display's stack; a number past the end of the stack goes to the empty workspace at the bottom. Windows of workspaces that no display shows are hidden off the bottom corner of the display. Every switch, up or down, animates vertically through the bottom edge because macOS cannot place windows above the menu bar. When macOS itself focuses a window on a hidden workspace (App Exposé with Control+Down, Mission Control, the Dock), Gio switches to that workspace and shows the window.
 - **Named workspaces.** Each `[[workspace]]` in the config is a named workspace. It always exists, even empty (it is never removed when you leave it), and named workspaces come first in their display's stack in config order, so `Alt+1` is the first one; dynamic workspaces follow them with the rules above (the empty one at the bottom is always dynamic). On a display that shows an empty dynamic workspace when named ones first appear (at startup), Gio opens on the first named one. Window rules with `open-on-workspace` send an app's new windows there (see [Window rules](#window-rules)). Without `[[workspace]]` nothing changes.
 - **Modes.** A window is `tiled` (in the strip), `floating` (managed but outside the strip, keeps its own frame) or `fullscreen` (Gio's layout mode filling the display under the menu bar with a small gap around it, see `fullscreen-gap`; not a native macOS fullscreen Space).
+- **Mission Control.** Control+Up shows every window Gio parks off-screen too, so the thumbnails come out tiny. Turn on **System Settings > Desktop & Dock > Group windows by application** (`defaults write com.apple.dock expose-group-apps -bool true && killall Dock`) to get them back to a usable size, or use Gio's own overview (`toggle-overview`, `Alt+O`), which shows each workspace as a row.
 - **Alt** means the **Option** key.
 
 ## Default shortcuts
@@ -41,9 +42,10 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+Shift+I` | `move-window-to-workspace-up` | Send the focused window one workspace up and follow it. |
 | `Alt+1` ... `Alt+9` | `workspace N` | Focus the workspace at position N of this display's stack; past the end goes to the empty one at the bottom. |
 | `Alt+Shift+1` ... `Alt+Shift+9` | `move-to-workspace N` | Send the focused window to position N (past the end: the empty one at the bottom). Focus stays where it was. |
+| `Alt+O` | `toggle-overview` | Open or close the [workspace overview](#workspace-overview): every workspace of this display as a row of window thumbnails. |
 | `Alt+Space` | (launcher, fixed) | Summon the launcher panel. Handled by the app before the action table; not configurable. |
 
-That is 39 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`).
+That is 40 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`).
 
 Notes:
 
@@ -280,6 +282,21 @@ Title `Gio` (or `workspace · windows`), pushed by the session when it changes; 
 | `> <verb>` | Run a Gio command over IPC, for example `> workspace 2` or `> reload`. |
 | `! <command>` | Run a shell command with `/bin/zsh -c`. |
 
+## Workspace overview
+
+`Alt+O` (or `gio overview`) covers the focused display with a dimmed panel that shows every workspace of its stack as a row, top to bottom, like niri's overview. Each row draws the workspace's strip to scale: the frame is the screen (what the workspace shows when it is the display's), windows outside it are faded, and a strip wider than the screen shrinks to fit. Named workspaces show their icon and `1 · Code` title; the display's current workspace is marked **Current**.
+
+Windows show a live thumbnail captured when the panel opens (parked windows included). Thumbnails need **Screen Recording** and macOS 14; without them each window shows its app icon on the app's color. Window titles appear only in the panel, never in the log.
+
+| Input | Effect |
+| --- | --- |
+| Arrows or `H`/`J`/`K`/`L` | Left/right walk the row's windows (column by column, top to bottom); up/down move one workspace and land on the window in the same place on screen. An empty workspace is selected as a whole. |
+| `Return` or click | Close the panel and go there: a window switches to its workspace and takes keyboard focus (like the launcher); an empty workspace (or a click on a row's screen frame) switches to the workspace like `Alt+N`. |
+| `1` ... `9` | Go to that workspace of the stack. |
+| `Esc`, `Alt+O`, a click on the background, or switching apps | Close without changing anything. |
+
+The panel shows the stack as it was when it opened; floating windows are not drawn (they are not part of any strip).
+
 ## Command line (`gio`)
 
 The client is the SwiftPM executable target **`GioCLI`** (its usage text prints `gio`). It sends the arguments to the running app over `~/.config/gio/gio.sock`; parsing and execution happen in the app. Without arguments it prints the usage and exits 2; if no app is running it prints an error and exits 1.
@@ -299,6 +316,7 @@ swift run GioCLI status
 | `gio focus left\|right\|up\|down` | Move focus like `Alt+H/L/K/J`. |
 | `gio move left\|right\|up\|down` | Move the focused column (left/right) or window (up/down) like `Alt+Shift+H/L/K/J`. (The built-in usage text prints `up/down`; the parser wants `up` or `down`.) |
 | `gio workspace 1...9` | Focus the workspace at this position of the focused display's stack (past the end: the empty one at the bottom). |
+| `gio overview` | Open or close the workspace overview, like `Alt+O`. |
 | `gio layout info` | Current workspace columns, viewport offset, focused column and column widths. |
 | `gio status` | JSON snapshot: `workspace` (index of the current workspace in its stack), `stacks` (per display: `display`, `focused`, `active`, and `workspaces` with `index`, `windows`, `columns`, `active`, plus `name`, `icon` and `color` for named workspaces), `focusedWindow`, `columns`, `windows`, `modes`, `floatingWindows`, `minimizedWindows`. Used by scripts and the menu bar. |
 | `gio setup` | Checks permission, writes the config template if none exists, reports bindings and themes. |

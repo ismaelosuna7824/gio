@@ -20,6 +20,8 @@ public enum CLICommand: Equatable, Sendable {
     case uninstall
     case logs(LogLevel?)
     case help
+    /// Niri `toggle-overview`: the app opens or closes the workspace overview.
+    case toggleOverview
 }
 
 public enum CLICommandError: Error, Equatable, Sendable {
@@ -89,6 +91,8 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
             return .failure(.invalidLevel(args[2]))
         }
         return .success(.logs(level))
+    case "overview":
+        return .success(.toggleOverview)
     case "help", "--help", "-h":
         return .success(.help)
     default:
@@ -109,6 +113,7 @@ public func cliUsage() -> String {
       gio move left|right|up/down
       gio workspace 1...9
       gio layout info
+      gio overview
       gio status
       gio setup
       gio update

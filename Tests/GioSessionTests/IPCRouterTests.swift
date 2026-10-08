@@ -43,6 +43,7 @@ final class IPCRouterTests: XCTestCase {
             publishBar: { world.calls.append("publishBar") },
             mainAfter: { delay, block in world.mainBlocks.append((delay, block)) },
             restart: { world.restarts += 1 },
+            toggleOverview: { world.calls.append("toggleOverview") },
             log: { _, line in world.logs.append(line) }
         ))
     }
@@ -76,6 +77,13 @@ final class IPCRouterTests: XCTestCase {
         withExtendedLifetime(router) {}
     }
 
+    func testOverviewHandsTheToggleToTheApp() {
+        let response = makeRouter().handle(["overview"])
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(world.calls, ["dispatch", "toggleOverview", "publishBar"])
+        XCTAssertTrue(world.intents.isEmpty, "opening the panel moves no focus")
+    }
+
     func testFocusCommandsCarryIntentWithThePreviousFocusAndReflow() {
         let previous = world.focused
         let router = makeRouter()
@@ -98,7 +106,7 @@ final class IPCRouterTests: XCTestCase {
                 return IPCResponse(ok: true, output: "")
             },
             applyReloadedConfig: {}, requestFocusIntent: { world.intents.append(($0, $1)) },
-            reflow: {}, publishBar: {}, mainAfter: { _, _ in }, restart: {}, log: { _, _ in }
+            reflow: {}, publishBar: {}, mainAfter: { _, _ in }, restart: {}, toggleOverview: {}, log: { _, _ in }
         ))
         router.handle(["focus", "right"])
         XCTAssertEqual(world.intents.first?.1, before)

@@ -99,6 +99,8 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "consume-or-expel-window-left", name: "Consume or expel left", summary: "Pull the window into the left column, or push it out into its own column.", category: .columns)
     case .consumeOrExpelRight:
         return ActionInfo(id: "consume-or-expel-window-right", name: "Consume or expel right", summary: "Pull the window into the right column, or push it out into its own column.", category: .columns)
+    case .toggleOverview:
+        return ActionInfo(id: "toggle-overview", name: "Workspace overview", summary: "Show every workspace of this display as a row of window thumbnails; pick one to go there.", category: .workspaces)
     }
 }
 
@@ -117,7 +119,7 @@ private let catalogActions: [HotkeyAction] = [
     .toggleFloating, .fullscreen,
     .workspace(1), .moveToWorkspace(1),
     .focusWorkspaceDown, .focusWorkspaceUp,
-    .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
+    .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp, .toggleOverview,
 ]
 
 /// Alt+Space is handled by the app before the action table.

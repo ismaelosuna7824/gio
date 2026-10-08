@@ -28,6 +28,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private lazy var launcher = LauncherPanelController(
         focusWindow: { [host] in host.focusWindow($0) }, catalog: launcherCatalog
     )
+    /// WO-01: Alt+O / `gio overview`.
+    private lazy var overview = WorkspaceOverviewController(
+        load: { [host] completion in host.workspaceOverview(completion: completion) },
+        snapshot: { [host] in host.snapshot() },
+        capture: { [host] ids, completion in host.captureOverviewThumbnails(ids, completion: completion) },
+        focusWindow: { [host] in host.focusWindow($0) },
+        focusWorkspace: { [host] in host.focusWorkspace($0) }
+    )
     private lazy var mainWindow = MainWindowController(
         model: DesktopModel(
             fetch: { [host] in host.snapshot() },
@@ -68,6 +76,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.requestBarState()
         self.bar = bar
         host.onSummonLauncher = { [weak self] firedAt in self?.showLauncher(source: .hotkey, requestedAt: firedAt) }
+        host.onToggleOverview = { [weak self] in self?.overview.toggle() }
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it

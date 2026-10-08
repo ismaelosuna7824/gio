@@ -12,7 +12,7 @@ final class ActionApplierTests: XCTestCase {
             .moveColumnLeft, .moveColumnRight, .moveUp, .moveDown, .workspace(2), .moveToWorkspace(2),
             .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
             .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-            .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight
+            .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview
         ]
         for action in actions {
             switch action {
@@ -20,7 +20,7 @@ final class ActionApplierTests: XCTestCase {
                  .moveColumnLeft, .moveColumnRight, .moveUp, .moveDown, .workspace, .moveToWorkspace,
                  .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
                  .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-                 .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight:
+                 .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview:
                 break
             }
         }
@@ -108,6 +108,15 @@ final class ActionApplierTests: XCTestCase {
             XCTAssertEqual(modeCalls, action == .centerColumn ? 1 : 0, "\(action)")
             XCTAssertEqual(fallbackCalls, 0, "\(action): a display exists")
         }
+    }
+
+    func testOverviewLeavesTheSessionUntouched() {
+        let before = world.session.manager
+        let effect = apply(.toggleOverview)
+        XCTAssertEqual(world.session.manager, before)
+        XCTAssertFalse(effect.carriesFocusIntent)
+        XCTAssertNil(effect.zoomRequest)
+        XCTAssertNil(effect.fullscreenToggle)
     }
 
     // MARK: Focus and moves

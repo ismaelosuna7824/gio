@@ -132,6 +132,9 @@ public func motionCause(for action: HotkeyAction) -> MotionCause {
         return .workspaceSwitch
     case .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .maximizeColumn:
         return .windowResize
+    case .toggleOverview:
+        // The app opens a panel; nothing moves.
+        return .passive
     }
 }
 

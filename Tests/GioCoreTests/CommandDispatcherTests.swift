@@ -14,6 +14,7 @@ final class CommandDispatcherTests: XCTestCase {
         XCTAssertEqual(try parseCLICommand(["workspace", "3"]).get(), .workspace(3))
         XCTAssertEqual(try parseCLICommand(["layout", "info"]).get(), .layoutInfo)
         XCTAssertEqual(try parseCLICommand(["help"]).get(), .help)
+        XCTAssertEqual(try parseCLICommand(["overview"]).get(), .toggleOverview)
     }
 
     func testParseRejectsJunk() {

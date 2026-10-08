@@ -154,6 +154,9 @@ final class SessionHost: @unchecked Sendable {
     /// `gio restart` (HD-05): invoked on the main thread shortly after the
     /// IPC reply left; the app shuts the session down and relaunches itself.
     var onRestart: (() -> Void)?
+    /// WO-01: Alt+O or `gio overview`; invoked on the main thread. The app
+    /// opens or closes the workspace overview panel.
+    var onToggleOverview: (() -> Void)?
 
     func requestRestart() {
         onRestart?()
@@ -580,6 +583,9 @@ final class SessionHost: @unchecked Sendable {
             publishBar: { [unowned self] in barPublisher.publish() },
             mainAfter: { delay, block in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block) },
             restart: { [weak self] in self?.onRestart?() },
+            toggleOverview: { [weak self] in
+                DispatchQueue.main.async { self?.onToggleOverview?() }
+            },
             log: { GioLog.record($0, $1) }
         ))
     }
@@ -777,6 +783,67 @@ final class SessionHost: @unchecked Sendable {
             reflowAll()
         }
         return true
+    }
+
+    /// WO-01: the focused display's stack for the overview, built on the
+    /// session queue and handed back on the main thread (nil without a
+    /// focused display).
+    func workspaceOverview(completion: @escaping @Sendable (WorkspaceOverviewFacts?) -> Void) {
+        queue.async { [weak self] in
+            let facts = self?.factsBuilder.workspaceOverview()
+            DispatchQueue.main.async { completion(facts) }
+        }
+    }
+
+    /// WO-01: one capture of the given windows (`WindowFact.id`s) at their
+    /// current physical frames, parked ones included, without a backdrop and
+    /// at most `overviewThumbnailScale`. Empty without Screen Recording or
+    /// before macOS 14; the panel then keeps the app icons. Main-thread
+    /// completion; the capture logs its own summary (counts only).
+    func captureOverviewThumbnails(
+        _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, SnapshotCapturer.isSupported, hasScreenRecordingPermission() else {
+                DispatchQueue.main.async { completion([:]) }
+                return
+            }
+            var frames: [WindowID: CGRect] = [:]
+            for text in ids {
+                if let id = WindowID(text: text), session.registry.find(id)?.isMinimized == false,
+                   let frame = physicalFrames[id] {
+                    frames[id] = frame
+                }
+            }
+            guard !frames.isEmpty else {
+                DispatchQueue.main.async { completion([:]) }
+                return
+            }
+            let (screens, primaryHeight) = displayParameters.captureScreens
+            let request = SnapshotCaptureRequest(
+                windows: frames,
+                displays: screens.map {
+                    SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
+                },
+                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500
+            )
+            Task.detached { [snapshotCapturer] in
+                let result = await snapshotCapturer.capture(request)
+                var thumbnails: [String: OverviewThumbnail] = [:]
+                for (id, snapshot) in result.snapshots {
+                    thumbnails[windowFactID(id)] = OverviewThumbnail(image: snapshot.image)
+                }
+                DispatchQueue.main.async { completion(thumbnails) }
+            }
+        }
+    }
+
+    /// WO-01: the overview picked a workspace row with no window; same path
+    /// as `workspace N` (past the end lands on the empty one at the bottom).
+    func focusWorkspace(_ index: Int) {
+        queue.async { [weak self] in
+            self?.apply(.workspace(index))
+        }
     }
 
     /// Same effect as the IPC `reload` verb, driven by the app.
@@ -1446,6 +1513,12 @@ final class SessionHost: @unchecked Sendable {
         }
         guard let action = configCoordinator.currentDispatcher().action(for: combo) else {
             return false
+        }
+        if action == .toggleOverview {
+            DispatchQueue.main.async { [weak self] in
+                self?.onToggleOverview?()
+            }
+            return true
         }
         queue.async { [weak self] in
             self?.apply(action)

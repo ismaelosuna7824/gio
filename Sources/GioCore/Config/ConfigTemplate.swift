@@ -131,6 +131,8 @@ public func defaultConfigTemplate() -> String {
     # "move-column-left" / "move-column-right" (Alt+Shift+H / L) swap whole
     # columns; "move-window-left" / "move-window-right" (unbound) append the
     # window to the neighbouring column instead.
+    # "toggle-overview" (Alt+O) shows every workspace of the display as a row
+    # of window thumbnails (thumbnails need Screen Recording).
 
     # Named workspaces always exist (even when empty), come first in their
     # display's stack in this order (Alt+1 is the first), and keep their

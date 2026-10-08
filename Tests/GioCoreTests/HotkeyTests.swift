@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 39)
+        XCTAssertEqual(dispatcher.bindingCount, 40)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -80,6 +80,14 @@ final class HotkeyTests: XCTestCase {
         XCTAssertEqual(action([.alt], "I"), .focusWorkspaceUp)
         XCTAssertEqual(action([.alt, .shift], "U"), .moveWindowToWorkspaceDown)
         XCTAssertEqual(action([.alt, .shift], "I"), .moveWindowToWorkspaceUp)
+    }
+
+    func testOverviewDefaultsToAltOLikeNiri() {
+        let dispatcher = HotkeyDispatcher()
+        XCTAssertEqual(dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "O")), .toggleOverview)
+        XCTAssertEqual(parseActionName("toggle-overview"), .toggleOverview)
+        XCTAssertTrue(validActionNames().contains("toggle-overview"))
+        XCTAssertFalse(HotkeyAction.toggleOverview.carriesFocusIntent)
     }
 
     func testNiriWorkspaceActionNamesParse() {

@@ -146,6 +146,10 @@ public enum ActionApplier {
                 ),
                 over: workspace, manager: &manager
             )
+        case .toggleOverview:
+            // The app's panel; `SessionHost.handleCombo` hands it over before
+            // this table, and the session state stays as it is.
+            break
         }
         effect.carriesFocusIntent = action.carriesFocusIntent
         effect.growsFocusedWindow = action.growsFocusedWindow

@@ -23,6 +23,9 @@ public final class IPCRouter: @unchecked Sendable {
         public var mainAfter: (TimeInterval, @escaping @Sendable () -> Void) -> Void
         /// Main thread: the app shuts the session down and relaunches itself.
         public var restart: () -> Void
+        /// WO-01: the app opens or closes the workspace overview (the host
+        /// hops to the main thread).
+        public var toggleOverview: () -> Void
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -30,7 +33,8 @@ public final class IPCRouter: @unchecked Sendable {
             applyReloadedConfig: @escaping () -> Void, requestFocusIntent: @escaping (Bool, WindowID?) -> Void,
             reflow: @escaping () -> Void, publishBar: @escaping () -> Void,
             mainAfter: @escaping (TimeInterval, @escaping @Sendable () -> Void) -> Void,
-            restart: @escaping () -> Void, log: @escaping (LogLevel, String) -> Void
+            restart: @escaping () -> Void, toggleOverview: @escaping () -> Void,
+            log: @escaping (LogLevel, String) -> Void
         ) {
             self.focusedWindow = focusedWindow
             self.dispatch = dispatch
@@ -40,6 +44,7 @@ public final class IPCRouter: @unchecked Sendable {
             self.publishBar = publishBar
             self.mainAfter = mainAfter
             self.restart = restart
+            self.toggleOverview = toggleOverview
             self.log = log
         }
     }
@@ -69,6 +74,8 @@ public final class IPCRouter: @unchecked Sendable {
             case .focus, .move, .workspace:
                 context.requestFocusIntent(command.carriesFocusIntent, previousFocus)
                 context.reflow()
+            case .toggleOverview:
+                context.toggleOverview()
             default:
                 break
             }

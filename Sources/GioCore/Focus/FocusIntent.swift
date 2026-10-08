@@ -15,7 +15,7 @@ extension HotkeyAction {
              .consumeOrExpelLeft, .consumeOrExpelRight:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
-             .growColumnWidth, .maximizeColumn, .centerColumn:
+             .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview:
             return false
         }
     }

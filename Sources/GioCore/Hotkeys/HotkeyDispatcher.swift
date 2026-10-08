@@ -46,6 +46,9 @@ public enum HotkeyAction: Equatable, Sendable {
     case consumeOrExpelLeft
     /// Niri `consume-or-expel-window-right` (Alt+BracketRight).
     case consumeOrExpelRight
+    /// Niri `toggle-overview` (Alt+O): open or close the workspace overview.
+    /// The app handles it (a panel); the session state is left unchanged.
+    case toggleOverview
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -82,7 +85,7 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
 /// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
-/// floating (Alt+Space stays the launcher; exact-match combos never collide).
+/// floating, Alt+O the workspace overview (Alt+Space stays the launcher; exact-match combos never collide).
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -109,6 +112,7 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt], "I"), .focusWorkspaceUp),
         (combo([.alt, .shift], "U"), .moveWindowToWorkspaceDown),
         (combo([.alt, .shift], "I"), .moveWindowToWorkspaceUp),
+        (combo([.alt], "O"), .toggleOverview),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))

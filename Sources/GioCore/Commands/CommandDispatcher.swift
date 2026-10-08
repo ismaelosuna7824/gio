@@ -145,5 +145,8 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return runDoctor(session: &session)
     case .uninstall:
         return runUninstall()
+    case .toggleOverview:
+        // The panel is the app's; `IPCRouter` hands the toggle to it.
+        return "overview toggled"
     }
 }

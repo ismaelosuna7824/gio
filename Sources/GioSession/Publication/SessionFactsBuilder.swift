@@ -111,14 +111,43 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         guard let display = context.displays().first(where: { $0.id == focused }) else {
             return nil
         }
+        return strip(session.manager.currentWorkspace(), index: session.manager.current, on: display, session: session)
+    }
+
+    /// WO-01: every workspace of the focused display's stack as a strip, in
+    /// stack order, for the workspace overview. Built on demand (not on
+    /// every publication): one layout pass per workspace.
+    public func workspaceOverview() -> WorkspaceOverviewFacts? {
+        let session = context.session()
+        let focused = session.manager.focusedDisplay
+        guard let display = context.displays().first(where: { $0.id == focused }) else {
+            return nil
+        }
+        let stack = session.manager.stack(on: focused)
+        let active = session.manager.activeID(on: focused)
+        let strips = stack.enumerated().compactMap { offset, workspace in
+            strip(workspace, index: offset + 1, on: display, session: session)
+        }
+        return WorkspaceOverviewFacts(
+            displayID: display.id.rawValue,
+            activeWorkspace: (stack.firstIndex { $0.id == active } ?? 0) + 1,
+            strips: strips
+        )
+    }
+
+    /// Pure layout math on session state: the workspace's tiled windows laid
+    /// out against the display's usable frame.
+    private func strip(
+        _ workspace: Workspace, index: Int, on display: DisplayState, session: CommandSession
+    ) -> WorkspaceStripFact? {
         let viewport = context.visibleFrame(display.id) ?? display.frame
-        let workspace = tilingWorkspace(from: session.manager.currentWorkspace(), modes: context.tileableModes())
-        guard let layout = try? context.engine().calculate(workspace: workspace, viewport: viewport) else {
+        let tiling = tilingWorkspace(from: workspace, modes: context.tileableModes())
+        guard let layout = try? context.engine().calculate(workspace: tiling, viewport: viewport) else {
             return nil
         }
         return makeWorkspaceStrip(
-            workspace: workspace, layout: layout, viewport: viewport, displayID: display.id.rawValue,
-            index: session.manager.current,
+            workspace: tiling, layout: layout, viewport: viewport, displayID: display.id.rawValue,
+            index: index,
             application: { session.registry.find($0)?.application ?? "" }
         )
     }
