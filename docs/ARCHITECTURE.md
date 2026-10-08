@@ -181,7 +181,7 @@ The first pass may fail once (`min size learned` is logged and one relayout is s
 
 ### Reveal and scroll
 
-The focused column is always revealed by the smallest possible scroll (`revealOffset` with `Viewport.ensureVisible`). A column wider than the viewport pins to its start. Offsets are clamped to `[0, contentWidth - viewportWidth]`. Center-column (`Alt+C`) sets the offset so the focused column is centered, clamped at the strip edges.
+The focused column is always revealed by the smallest possible scroll (`revealOffset` with `Viewport.ensureVisible`) that keeps the layout `padding` between the column and the screen edge, like the strip's own ends (PF-H): a column scrolled in from the right stops `padding` short of the right edge, and a maximized column (`Alt+F`, width = viewport minus twice the padding) lands exactly between both paddings. A column too wide for the padding, or wider than the viewport, pins to its start. Offsets are clamped to `[0, contentWidth - viewportWidth]`. Center-column (`Alt+C`) sets the offset so the focused column is centered, clamped at the strip edges.
 
 ### Parking
 

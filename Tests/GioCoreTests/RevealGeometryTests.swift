@@ -43,7 +43,7 @@ final class RevealGeometryTests: XCTestCase {
         let frame = try XCTUnwrap(layout.frames[id(3)])
         XCTAssertTrue(viewport.contains(frame), "precondition: column 2 is visible")
 
-        XCTAssertNil(revealOffset(workspace: clicked, layout: layout, viewport: viewport))
+        XCTAssertNil(revealOffset(workspace: clicked, layout: layout, viewport: viewport, edgeMargin: 8))
     }
 
     func testRevealWorksInAViewportThatDoesNotStartAtZero() throws {
@@ -51,7 +51,7 @@ final class RevealGeometryTests: XCTestCase {
         let engine = engine()
         let ws = workspace(columns: 4, focus: 0, offset: 0)
         let layout = try engine.calculate(workspace: ws, viewport: shifted)
-        XCTAssertNil(revealOffset(workspace: ws, layout: layout, viewport: shifted))
+        XCTAssertNil(revealOffset(workspace: ws, layout: layout, viewport: shifted, edgeMargin: 8))
     }
 
     // Live log: `column=1 visible ... scroll=0->16`. Two half-width columns
@@ -61,7 +61,7 @@ final class RevealGeometryTests: XCTestCase {
         let ws = workspace(columns: 2, focus: 1, offset: 0)
         let layout = try engine.calculate(workspace: ws, viewport: viewport)
         XCTAssertEqual(layout.contentWidth, viewport.width, accuracy: 0.5)
-        XCTAssertNil(revealOffset(workspace: ws, layout: layout, viewport: viewport))
+        XCTAssertNil(revealOffset(workspace: ws, layout: layout, viewport: viewport, edgeMargin: 8))
     }
 
     func testFractionResolvesWithNiriProportionSemantics() {
@@ -73,5 +73,37 @@ final class RevealGeometryTests: XCTestCase {
         XCTAssertEqual(config.makeLayoutConfig().resolvedWidth(of: .standard, viewportWidth: 1000), 484)
         config.layout.defaultColumnWidthFraction = 1
         XCTAssertEqual(config.makeLayoutConfig().resolvedWidth(of: .standard, viewportWidth: 1000), 976)
+    }
+
+    // Live 2026-10-08 (Xcode, `Alt+F` on the middle column): the maximized
+    // column was scrolled in minimally, flush with the right edge of the
+    // screen and twice the padding on the left, until a focus round trip
+    // re-centered it. A revealed column keeps the padding to the edge.
+    func testAMaximizedColumnRevealedFromEitherSideKeepsThePadding() throws {
+        let engine = engine(padding: 8, gap: 8)
+        for (offset, label) in [(CGFloat(0), "from the left"), (CGFloat(3000), "from the right")] {
+            var ws = workspace(columns: 4, focus: 1, offset: offset)
+            ws.columns[1].widthSpec = .proportion(1)
+            let plan = try planDisplayLayout(
+                workspace: ws, modes: [:], engine: engine, viewport: viewport, display: viewport, otherDisplays: []
+            )
+            let frame = try XCTUnwrap(plan.layout.frames[id(2)])
+            XCTAssertEqual(frame.minX, viewport.minX + 8, accuracy: 0.5, label)
+            XCTAssertEqual(frame.maxX, viewport.maxX - 8, accuracy: 0.5, label)
+        }
+    }
+
+    func testANeighbourScrolledInStopsAtThePaddingNotTheScreenEdge() throws {
+        let engine = engine(padding: 8, gap: 8)
+        // Columns 0 and 1 fill the screen; focusing column 2 scrolls right.
+        let ws = workspace(columns: 4, focus: 2, offset: 0)
+        let plan = try planDisplayLayout(
+            workspace: ws, modes: [:], engine: engine, viewport: viewport, display: viewport, otherDisplays: []
+        )
+        let revealed = try XCTUnwrap(plan.layout.frames[id(3)])
+        XCTAssertEqual(revealed.maxX, viewport.maxX - 8, accuracy: 0.5)
+        // The previous column is now exactly in view on the left, padding included.
+        let previous = try XCTUnwrap(plan.layout.frames[id(2)])
+        XCTAssertEqual(previous.minX, viewport.minX + 8, accuracy: 0.5)
     }
 }

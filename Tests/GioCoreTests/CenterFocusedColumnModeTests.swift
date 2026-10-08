@@ -27,7 +27,7 @@ final class CenterFocusedColumnModeTests: XCTestCase {
         let ws = workspace(focusedColumn: focus, offset: offset)
         let layout = try engine.calculate(workspace: ws, viewport: viewport)
         return revealOffset(
-            workspace: ws, layout: layout, viewport: viewport,
+            workspace: ws, layout: layout, viewport: viewport, edgeMargin: engine.config.padding,
             centering: CenterRequest(mode: mode, previouslyFocused: previous.map { id(UInt64($0 + 1)) })
         )
     }
@@ -65,7 +65,8 @@ final class CenterFocusedColumnModeTests: XCTestCase {
     // MARK: Reveal
 
     func testNeverKeepsTheMinimalScroll() throws {
-        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .never)), 864, accuracy: 0.001)
+        // Column 2 ends at 2664; the minimal scroll keeps the 8 pt padding.
+        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .never)), 2664 + 8 - 1800, accuracy: 0.001)
     }
 
     func testAlwaysCentersTheFocusedColumn() throws {
@@ -84,7 +85,7 @@ final class CenterFocusedColumnModeTests: XCTestCase {
 
     func testOnOverflowScrollsMinimallyWhenBothColumnsFit() throws {
         // Columns 1 and 2 together span 896...2664 = 1768 <= 1800.
-        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .onOverflow, previous: 1)), 864, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .onOverflow, previous: 1)), 872, accuracy: 0.001)
     }
 
     func testOnOverflowCentersWhenTheyDoNotFitTogether() throws {
@@ -93,8 +94,8 @@ final class CenterFocusedColumnModeTests: XCTestCase {
     }
 
     func testOnOverflowWithoutAPreviousColumnIsMinimal() throws {
-        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .onOverflow)), 864, accuracy: 0.001)
-        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .onOverflow, previous: 2)), 864, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .onOverflow)), 872, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(reveal(focus: 2, mode: .onOverflow, previous: 2)), 872, accuracy: 0.001)
     }
 
     func testPlannerAppliesTheCentering() throws {
@@ -109,10 +110,10 @@ final class CenterFocusedColumnModeTests: XCTestCase {
 
     func testCenteringNeverAffectsAPassiveReflow() throws {
         let planned = try planDisplayLayout(
-            workspace: workspace(focusedColumn: 2, offset: 864), modes: [:], engine: engine,
+            workspace: workspace(focusedColumn: 2, offset: 872), modes: [:], engine: engine,
             viewport: viewport, display: viewport, otherDisplays: []
         )
-        XCTAssertEqual(planned.workspace.viewportOffset, 864, accuracy: 0.001)
+        XCTAssertEqual(planned.workspace.viewportOffset, 872, accuracy: 0.001)
     }
 
     func testFormEditWritesTheStringValue() {

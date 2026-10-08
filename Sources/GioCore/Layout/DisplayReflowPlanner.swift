@@ -48,7 +48,10 @@ public func planDisplayLayout(
         workspace.viewportOffset = layout.viewportOffset
         return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)
     }
-    if let revealed = revealOffset(workspace: workspace, layout: layout, viewport: viewport, centering: centering),
+    if let revealed = revealOffset(
+        workspace: workspace, layout: layout, viewport: viewport, edgeMargin: engine.config.padding,
+        centering: centering
+    ),
        revealed != workspace.viewportOffset
     {
         var scrolled = workspace
@@ -105,11 +108,13 @@ private func modesKeepingFullscreenInColumns(_ modes: [WindowID: WindowMode]) ->
 }
 
 /// Focused column's content range revealed into the viewport. Nil when
-/// nothing needs scrolling (or no focused window to reveal). `centering`
+/// nothing needs scrolling (or no focused window to reveal). A minimal
+/// scroll stops `edgeMargin` (the strip padding) short of the screen edge,
+/// like the strip's own ends, unless the column is too wide for it. `centering`
 /// (keyboard focus changes only) swaps the minimal scroll for a centered one
 /// when the mode asks for it (Niri `center-focused-column`).
 public func revealOffset(
-    workspace: Workspace, layout: LayoutResult, viewport: CGRect,
+    workspace: Workspace, layout: LayoutResult, viewport: CGRect, edgeMargin: CGFloat,
     centering: CenterRequest = .none
 ) -> CGFloat? {
     guard let focused = workspace.focusedWindow,
@@ -130,8 +135,10 @@ public func revealOffset(
         let maxOffset = max(0, layout.contentWidth - viewport.width)
         target = min(max((range.lowerBound + range.upperBound) / 2 - viewport.width / 2, 0), maxOffset)
     } else {
+        let padded = (range.lowerBound - edgeMargin)..<(range.upperBound + edgeMargin)
+        let reveal = padded.upperBound - padded.lowerBound <= viewport.width ? padded : range
         target = Viewport(offset: layout.viewportOffset, width: viewport.width)
-            .ensureVisible(range: range, contentWidth: layout.contentWidth).offset
+            .ensureVisible(range: reveal, contentWidth: layout.contentWidth).offset
     }
     return target == layout.viewportOffset ? nil : target
 }

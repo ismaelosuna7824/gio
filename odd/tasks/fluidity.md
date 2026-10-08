@@ -96,6 +96,23 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
 - [~] PF-F — Dim follows motions instead of pulsing. Implemented, tried live by the user,
   reverted at their request (2026-10-08): the previous fade out/in looked better to them.
   No code left behind; see Decisions (PF-F).
+- [ ] PF-H — `Alt+F` sometimes left the maximized window flush with one screen edge and
+  twice the padding on the other, until a focus round trip re-centered it (user screenshot
+  2026-10-08 05:05Z, Xcode; log `native zoom ... result=corrected verified=true`, so the
+  frame matched a wrong target). Cause: the minimal reveal (`revealOffset` with
+  `ensureVisible`) scrolled the column's bare range into view, flush with the screen edge;
+  a maximized column is the viewport minus twice the padding, so it landed at `x = 2p` or
+  `maxX = W`. The same flush edge happened to any neighbour scrolled in with `never` /
+  `on-overflow`. Fix: `revealOffset(edgeMargin:)` reveals the range widened by the layout
+  padding (bare range when that is wider than the viewport); `planDisplayLayout` passes
+  `engine.config.padding`. RED: `RevealGeometryTests
+  .testAMaximizedColumnRevealedFromEitherSideKeepsThePadding` (`minX 16` / `maxX 1800`
+  from the left, `minX 0` from the right, expected 8 / 1792) and
+  `testANeighbourScrolledInStopsAtThePaddingNotTheScreenEdge` (`maxX 1800`, previous column
+  at 16). `CenterFocusedColumnModeTests` minimal-scroll expectations moved from 864 (flush)
+  to 872 (padding kept). GREEN: Core 1318, Session 300, UI 250 (53 skipped), MacOS 40,
+  Mac 19, POC 7, 0 failures; signed build succeeded. LIVE PENDING: `Alt+F` on a middle or
+  last column shows the padding on both sides at once.
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
