@@ -456,6 +456,16 @@ final class LauncherPanel: NSPanel {
         super.setFrame(frame, display: flag)
     }
 
+    /// Slides to `frame` inside the current animation group. The animator
+    /// proxy is reached as a plain `NSWindow` so the call goes through
+    /// Objective-C dispatch: called on the Swift subclass, the `setFrame`
+    /// override above runs with the proxy as `self` and reads `anchoredTop`
+    /// from foreign memory (2026-10-07: frame y = 3e59, AppKit assertion).
+    func animateFrame(to frame: NSRect) {
+        let window: NSWindow = animator()
+        window.setFrame(frame, display: true)
+    }
+
     override func sendEvent(_ event: NSEvent) {
         if event.type == .keyDown, let key = launcherKey(event), keyHandler?(key) == true {
             return
@@ -595,7 +605,7 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             panel.animator().alphaValue = 1
             if plan.offset != 0 {
-                panel.animator().setFrame(final, display: true)
+                panel.animateFrame(to: final)
             }
         } completionHandler: { [weak self] in
             MainActor.assumeIsolated { self?.settleAppear(token, top: top) }
