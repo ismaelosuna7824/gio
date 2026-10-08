@@ -81,6 +81,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `niri-controls.md` | Width presets, maximize, fullscreen, center, consume/expel, hidden workspaces, animated switch (NC-01..NC-07). |
 | `desktop-app.md` | Main window, menu-bar lifecycle, settings, logs, diagnostics (DA-01..DA-05). |
 | `workspace-overview.md` | Mission Control workaround, `toggle-overview` panel (WO-00..WO-01). |
+| `fluidity.md` | Slow apps vs. the final pass, registration storms, unpainted windows, floating popups stealing focus (PF-A..PF-D). |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 
 ## How to verify a change
