@@ -105,6 +105,7 @@ final class SnapshotFlightTests: XCTestCase {
                 },
                 prefetch: { _, _ in },
                 log: { world.logs.append(($0, $1)) },
+                physicalMemory: 64 << 30,
                 now: {
                     if world.cacheDriftPerRead > 0 {
                         world.cacheReads += 1

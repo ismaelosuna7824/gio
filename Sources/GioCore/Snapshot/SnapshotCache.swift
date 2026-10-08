@@ -12,13 +12,52 @@ public struct SnapshotCacheEntry<Image> {
     public let capturedAt: TimeInterval
     public var lastUsed: TimeInterval
     public let pixels: Int
+    /// SM-22: the resolution the image was captured at.
+    public let resolution: SnapshotResolution
 
-    public init(image: Image, frame: CGRect, capturedAt: TimeInterval, lastUsed: TimeInterval, pixels: Int) {
+    public init(
+        image: Image, frame: CGRect, capturedAt: TimeInterval, lastUsed: TimeInterval, pixels: Int,
+        resolution: SnapshotResolution = .full
+    ) {
         self.image = image
         self.frame = frame
         self.capturedAt = capturedAt
         self.lastUsed = lastUsed
         self.pixels = pixels
+        self.resolution = resolution
+    }
+}
+
+/// SM-22: the resolution of a window image relative to the backing scale
+/// of its display. The shown strips are captured at full resolution; the
+/// windows of hidden workspaces (seen only during a ~350 ms switch slide,
+/// then replaced by the real window) at half, a quarter of the pixels.
+public enum SnapshotResolution: String, Equatable, Sendable {
+    case full, half
+
+    /// Factor applied to the backing scale for the capture size.
+    public var scale: CGFloat {
+        switch self {
+        case .full: return 1
+        case .half: return 0.5
+        }
+    }
+}
+
+/// SM-22: full resolution for a window of a shown strip (`shown`), half for
+/// any other (a hidden workspace's).
+public func snapshotCaptureResolution(_ id: WindowID, shown: Set<WindowID>) -> SnapshotResolution {
+    shown.contains(id) ? .full : .half
+}
+
+/// SM-22: one image the cap evicted, and the resolution it had.
+public struct SnapshotEviction: Equatable, Sendable {
+    public let id: WindowID
+    public let resolution: SnapshotResolution
+
+    public init(id: WindowID, resolution: SnapshotResolution) {
+        self.id = id
+        self.resolution = resolution
     }
 }
 
@@ -30,9 +69,20 @@ public struct SnapshotCacheEntry<Image> {
 /// the remaining 2 hold coverage of other workspaces. SM-11: every image
 /// counts, both sizes of a window included. SM-13: windows off screen and
 /// away from the viewport are evicted first, then sizes a window is not at
-/// now; backdrops count but are never evicted.
-public func snapshotCacheCapPixels(displayPixels: Int) -> Int {
-    displayPixels * 8
+/// now; backdrops count but are never evicted. SM-22: never above 3 % of
+/// the physical memory at 4 bytes a pixel (an 8 GB Mac with a large
+/// display); the shown strips still win over it (`enforce` pins them).
+public func snapshotCacheCapPixels(displayPixels: Int, physicalMemory: UInt64) -> Int {
+    let ram = physicalMemory * snapshotCacheRAMPercent / 100 / 4
+    return min(displayPixels * 8, Int(clamping: ram))
+}
+
+/// SM-22: share of the physical memory the window images may use.
+public let snapshotCacheRAMPercent: UInt64 = 3
+
+/// SM-22: `snapshot cache cap pixels=N ramMB=N`, logged once at start.
+public func snapshotCacheCapLogLine(capPixels: Int, physicalMemory: UInt64) -> String {
+    "snapshot cache cap pixels=\(capPixels) ramMB=\(physicalMemory / 1_048_576)"
 }
 
 /// SM-11: images kept per window, one per size (Alt+F toggles between two).
@@ -152,7 +202,10 @@ public struct SnapshotCache<Image> {
 
     /// Stores the image as the window's image of its size. A third size
     /// replaces the least recently used one of the window.
-    public mutating func store(_ id: WindowID, image: Image, frame: CGRect, pixels: Int, at now: TimeInterval) {
+    public mutating func store(
+        _ id: WindowID, image: Image, frame: CGRect, pixels: Int, at now: TimeInterval,
+        resolution: SnapshotResolution = .full
+    ) {
         var list = entries[id] ?? []
         list.removeAll { snapshotSameSize($0.frame, frame, tolerance: 2) }
         while list.count >= snapshotSizesPerWindow, let oldest = list.indices.min(by: {
@@ -160,7 +213,9 @@ public struct SnapshotCache<Image> {
         }) {
             list.remove(at: oldest)
         }
-        list.append(SnapshotCacheEntry(image: image, frame: frame, capturedAt: now, lastUsed: now, pixels: pixels))
+        list.append(SnapshotCacheEntry(
+            image: image, frame: frame, capturedAt: now, lastUsed: now, pixels: pixels, resolution: resolution
+        ))
         entries[id] = list
     }
 
@@ -207,20 +262,23 @@ public struct SnapshotCache<Image> {
     /// image but the newest), then least recently used first. SM-21: the
     /// primary image of a `pinned` window (the shown strips) is never
     /// evicted: the cap yields and the total may stay above it (pinned
-    /// windows count as protected for the order). Returns the window of
-    /// every evicted image.
+    /// windows count as protected for the order). SM-22: within each class,
+    /// a full-resolution image of a window outside `pinned` (a workspace
+    /// that was shown and is hidden now) goes before any half-resolution
+    /// image: coverage captures it again at half. Returns every evicted
+    /// image's window and resolution, in eviction order.
     @discardableResult
     public mutating func enforce(
         capPixels: Int, protected: Set<WindowID> = [], pinned: Set<WindowID> = [],
         currentFrame: (WindowID) -> CGRect? = { _ in nil }
-    ) -> [WindowID] {
+    ) -> [SnapshotEviction] {
         var total = totalPixels + backdropPixels
         guard total > capPixels else {
             return []
         }
         var candidates: [(
             id: WindowID, capturedAt: TimeInterval, lastUsed: TimeInterval, pixels: Int, secondary: Bool,
-            protected: Bool
+            protected: Bool, resolution: SnapshotResolution, overResolved: Bool
         )] = []
         for (id, list) in entries {
             let current = currentFrame(id)
@@ -231,16 +289,20 @@ public struct SnapshotCache<Image> {
                 if pinned.contains(id), !secondary {
                     continue
                 }
-                candidates.append((id, item.capturedAt, item.lastUsed, item.pixels, secondary, isProtected))
+                candidates.append((
+                    id, item.capturedAt, item.lastUsed, item.pixels, secondary, isProtected, item.resolution,
+                    item.resolution == .full && !pinned.contains(id)
+                ))
             }
         }
         candidates.sort { lhs, rhs in
             if lhs.protected != rhs.protected { return rhs.protected }
             if lhs.secondary != rhs.secondary { return lhs.secondary }
+            if lhs.overResolved != rhs.overResolved { return lhs.overResolved }
             if lhs.lastUsed != rhs.lastUsed { return lhs.lastUsed < rhs.lastUsed }
             return lhs.id != rhs.id ? lhs.id < rhs.id : lhs.capturedAt < rhs.capturedAt
         }
-        var evicted: [WindowID] = []
+        var evicted: [SnapshotEviction] = []
         for candidate in candidates where total > capPixels {
             guard var list = entries[candidate.id],
                   let index = list.firstIndex(where: { $0.capturedAt == candidate.capturedAt })
@@ -249,7 +311,7 @@ public struct SnapshotCache<Image> {
             }
             list.remove(at: index)
             entries[candidate.id] = list.isEmpty ? nil : list
-            evicted.append(candidate.id)
+            evicted.append(SnapshotEviction(id: candidate.id, resolution: candidate.resolution))
             total -= candidate.pixels
         }
         return evicted
@@ -521,7 +583,11 @@ public func snapshotStripSelection<Image>(
         guard let entry = cache.entry(item.id, matching: item.frame, tolerance: tolerance) else {
             return (item.id, .sizeChanged)
         }
-        return now - entry.capturedAt > maxAge ? (item.id, .stale) : nil
+        if now - entry.capturedAt > maxAge {
+            return (item.id, .stale)
+        }
+        // SM-22: captured while its workspace was hidden.
+        return entry.resolution == .half ? (item.id, .halfResolution) : nil
     }
 }
 
@@ -532,6 +598,8 @@ public enum SnapshotRefreshCause: Equatable, Sendable {
     case dirty(SnapshotCaptureReason)
     /// Older than the soft age.
     case stale
+    /// SM-22: a half-resolution image of a window that wants full.
+    case halfResolution
 }
 
 /// Which of the wanted windows a refresh must capture: those without an
@@ -539,11 +607,13 @@ public enum SnapshotRefreshCause: Equatable, Sendable {
 /// of that size is older than `softAge`. A
 /// window that only moved keeps its image (layers fly from the current
 /// frame). Wanted order. A missing image that was marked dirty (a new
-/// window) reports the mark, so the run is logged with its reason.
+/// window) reports the mark, so the run is logged with its reason. SM-22:
+/// a window in `fullResolution` (a shown strip) whose image of its size is
+/// half resolution is captured again; any other keeps it.
 public func snapshotRefreshSelection<Image>(
     cache: SnapshotCache<Image>, wanted: [(id: WindowID, frame: CGRect)],
     dirty: [WindowID: SnapshotCaptureReason], now: TimeInterval,
-    softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2
+    softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2, fullResolution: Set<WindowID> = []
 ) -> [(id: WindowID, cause: SnapshotRefreshCause)] {
     wanted.compactMap { item in
         guard cache.entry(item.id) != nil else {
@@ -555,6 +625,9 @@ public func snapshotRefreshSelection<Image>(
         }
         if let reason = dirty[item.id] {
             return (item.id, .dirty(reason))
+        }
+        if entry.resolution == .half, fullResolution.contains(item.id) {
+            return (item.id, .halfResolution)
         }
         if now - entry.capturedAt > softAge {
             return (item.id, .stale)
@@ -573,7 +646,7 @@ public func snapshotRefreshReason(causes: [SnapshotRefreshCause], backdrop: Bool
         case .sizeChanged: return 4
         case .dirty(.focus): return 3
         case .dirty(.typing): return 2
-        case .dirty, .missing, .stale: return 1
+        case .dirty, .missing, .stale, .halfResolution: return 1
         }
     }
     switch causes.map(rank).max() {

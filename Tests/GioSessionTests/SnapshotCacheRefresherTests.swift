@@ -43,6 +43,11 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         scheduler = ManualScheduler()
         idA = SessionFixture.id(0, pid: 1)
         idB = SessionFixture.id(1, pid: 2)
+        makeCache()
+    }
+
+    /// SM-22: 64 GB by default, so the display-based cap governs.
+    private func makeCache(physicalMemory: UInt64 = 64 << 30) {
         let world = world!
         let fixture = fixture!
         let scheduler = scheduler!
@@ -71,16 +76,19 @@ final class SnapshotCacheRefresherTests: XCTestCase {
                 ownPid: 999,
                 log: { world.logs.append(($0, $1)) },
                 appName: { "app\($0)" },
+                physicalMemory: physicalMemory,
                 now: { scheduler.now }
             ),
             scheduler: scheduler
         )
     }
 
-    private func image(for frame: CGRect? = nil) -> CGImage {
+    /// SM-22: `half` images have half the width and height, like the capturer's.
+    private func image(for frame: CGRect? = nil, half: Bool = false) -> CGImage {
+        let factor = half ? SnapshotResolution.half.scale : 1
         let size = frame.flatMap { frame in
-            world.imageScale.map { snapshotPixelSize(points: frame.size, scale: $0) }
-        } ?? world.imageSize
+            world.imageScale.map { snapshotPixelSize(points: frame.size, scale: $0 * factor) }
+        } ?? (half ? (width: max(1, world.imageSize.width / 2), height: max(1, world.imageSize.height / 2)) : world.imageSize)
         let context = CGContext(
             data: nil, width: size.width, height: size.height, bitsPerComponent: 8, bytesPerRow: 0,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
@@ -93,8 +101,11 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         _ images: [WindowID: CGRect], backdrop: Bool = true, misses: [WindowID: SnapshotMiss] = [:]
     ) {
         let done = world.completions.removeLast()
+        let half = lastRequest?.halfResolution ?? []
         done(SnapshotCaptureOutcome(
-            images: images.mapValues { CapturedImage(image: image(for: $0), frame: $0) },
+            images: Dictionary(uniqueKeysWithValues: images.map { id, frame in
+                (id, CapturedImage(image: image(for: frame, half: half.contains(id)), frame: frame))
+            }),
             backdrops: backdrop ? [CapturedBackdropImage(image: image(for: screen), displayFrame: screen)] : [],
             misses: misses
         ))
@@ -438,19 +449,25 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     }
 
     /// SM-13: under the cap the coverage images go first, never the
-    /// visible ones; once the cap cannot hold coverage it stops (logged
-    /// once) and resumes when a window leaves the cache.
+    /// visible ones; SM-22: once the cap cannot hold even half-resolution
+    /// coverage images it stops (logged once) and resumes when a window
+    /// leaves the cache.
     func testCoverageNeverEvictsTheVisibleImagesAndStopsAtTheCap() throws {
         // 1800 x 1169 at 0.01: 18 x 11 pixels per display, cap 1584 (SM-20:
-        // eight displays, the 200-pixel backdrop counted): six 200-pixel images.
+        // eight displays, the 200-pixel backdrop counted): 400 for the
+        // strip, room for nineteen 50-pixel half-resolution images.
         world.captureScale = 0.01
         world.imageSize = (20, 10)
         refresh([idA: a, idB: b])
         scheduler.advance(by: 1)
-        let hidden = try addWindows(20, workspace: 2)
+        let hidden = try addWindows(30, workspace: 2)
         cache.schedule()
         scheduler.advance(by: 0.3)
         XCTAssertEqual(lastRequest?.windows.count, 12, "one coverage stage")
+        completeAll(backdrop: false)
+        XCTAssertEqual(scheduler.pendingCount, 1, "half resolution fits: the next stage")
+        scheduler.advance(by: SnapshotCacheRefresher.stageDelay)
+        XCTAssertEqual(lastRequest?.windows.count, 12)
         completeAll(backdrop: false)
         XCTAssertNotNil(cache.flightImage(idA, startFrame: a, at: scheduler.now), "the visible images stay")
         XCTAssertNotNil(cache.flightImage(idB, startFrame: b, at: scheduler.now))
@@ -460,13 +477,13 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertEqual(stopped.count, 1)
         cache.schedule()
         scheduler.advance(by: 0.3)
-        XCTAssertEqual(world.captures.count, 2, "no coverage while stopped")
+        XCTAssertEqual(world.captures.count, 3, "no coverage while stopped")
         XCTAssertEqual(world.logs.filter { $0.1.hasPrefix("snapshot coverage stopped") }.count, 1, "logged once")
 
         cache.evict([hidden[0]])
         cache.schedule()
         scheduler.advance(by: 0.3)
-        XCTAssertEqual(world.captures.count, 3, "a window left the cache: coverage resumes")
+        XCTAssertEqual(world.captures.count, 4, "a window left the cache: coverage resumes")
     }
 
     /// A window that misses while parked is not retried on every settle and
@@ -538,6 +555,123 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         cache.schedule()
         scheduler.advance(by: 0.3)
         XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [hidden], "moved: tried again")
+    }
+
+    // MARK: Half-resolution hidden workspaces, RAM cap (SM-22)
+
+    /// Puts workspace `index` on the display, its windows at `frames` (the
+    /// rest parked).
+    private func show(workspace index: Int, frames: [WindowID: CGRect]) throws {
+        XCTAssertTrue(fixture.session.manager.switchTo(index))
+        XCTAssertTrue(fixture.displays.assign(SessionFixture.display, workspace: fixture.session.manager.currentID))
+        for id in fixture.physicalFrames.keys {
+            fixture.physicalFrames[id] = frames[id] ?? parked
+        }
+    }
+
+    /// The shown strip is captured at full resolution, the windows of
+    /// hidden workspaces at half; a half image flies like any other.
+    func testHiddenWorkspaceWindowsAreRequestedAtHalfResolutionAndTheShownStripAtFull() throws {
+        let hidden = try addWindows(3, workspace: 2)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        let request = try XCTUnwrap(lastRequest)
+        XCTAssertEqual(Set(request.windows.keys), Set([idA!, idB!] + hidden))
+        XCTAssertEqual(request.halfResolution, Set(hidden))
+        completeAll()
+        for id in hidden {
+            XCTAssertEqual(cache.cache.entry(id)?.resolution, .half)
+            XCTAssertNotNil(cache.flightImage(id, startFrame: parked, at: scheduler.now), "a switch flies it")
+        }
+        XCTAssertEqual(cache.cache.entry(idA)?.resolution, .full)
+        XCTAssertEqual(cache.cache.entry(idB)?.resolution, .full)
+    }
+
+    /// A switch slides the half images in; the settle after it captures
+    /// the now-shown strip at full resolution, once. The workspace left
+    /// keeps its full images (nothing captured for it).
+    func testASwitchedToWorkspaceIsCapturedAtFullResolutionAfterTheSettle() throws {
+        let hidden = try addWindows(2, workspace: 2)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        completeAll()
+        try show(workspace: 2, frames: [hidden[0]: a, hidden[1]: b])
+        XCTAssertNotNil(cache.flightImage(hidden[0], startFrame: a, at: scheduler.now), "the slide never holes")
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        let request = try XCTUnwrap(lastRequest)
+        XCTAssertEqual(Set(request.windows.keys), Set(hidden))
+        XCTAssertEqual(request.halfResolution, [], "shown now: full resolution")
+        completeAll()
+        XCTAssertEqual(hidden.map { cache.cache.entry($0)?.resolution }, [.full, .full])
+        XCTAssertEqual(cache.cache.entry(idA)?.resolution, .full, "the workspace left keeps its image")
+        let captures = world.captures.count
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, captures, "fresh at full resolution: nothing more")
+    }
+
+    /// Coverage resumes under the cap: the full images a workspace kept
+    /// from when it was shown go before any half image, and coverage
+    /// brings the window back at half resolution without stopping.
+    func testAnEvictedFullImageOfAHiddenWindowComesBackAtHalfWithoutStoppingCoverage() throws {
+        // 18 x 11 pixels per display: cap 1584; full images 200, half 50.
+        world.captureScale = 0.01
+        world.imageSize = (20, 10)
+        let second = try addWindows(4, workspace: 2)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        completeAll()
+        try show(workspace: 2, frames: [second[0]: a, second[1]: b])
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        completeAll(backdrop: false)
+        XCTAssertEqual(cache.cache.totalPixels + cache.cache.backdropPixels, 1400, "six full images and the backdrop")
+        try show(workspace: 1, frames: [idA: a, idB: b])
+        let third = try addWindows(4, workspace: 3)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(lastRequest?.halfResolution, Set(third))
+        completeAll(backdrop: false)
+        let gone = second.filter { cache.cache.entry($0) == nil }
+        XCTAssertEqual(gone.count, 1, "1600 > 1584: one full image of a hidden window goes")
+        XCTAssertEqual(third.map { cache.cache.entry($0)?.resolution }, [.half, .half, .half, .half])
+        XCTAssertEqual(scheduler.pendingCount, 1, "coverage goes on")
+        scheduler.advance(by: SnapshotCacheRefresher.stageDelay)
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), Set(gone))
+        XCTAssertEqual(lastRequest?.halfResolution, Set(gone))
+        completeAll(backdrop: false)
+        XCTAssertEqual(cache.cache.entry(gone[0])?.resolution, .half)
+        XCTAssertLessThanOrEqual(cache.cache.totalPixels + cache.cache.backdropPixels, 1584)
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot coverage stopped") })
+        XCTAssertEqual(scheduler.pendingCount, 0, "covered")
+    }
+
+    /// The cap is computed from the display and the RAM and logged once.
+    func testTheCapIsLoggedOnceAtStart() {
+        makeCache(physicalMemory: 8 << 30)
+        world.captureScale = 0.01
+        refresh([idA: a, idB: b])
+        scheduler.advance(by: 31)
+        refresh([idA: a, idB: b])
+        let lines = world.logs.filter { $0.1.hasPrefix("snapshot cache cap pixels=") }
+        XCTAssertEqual(lines.map(\.1), ["snapshot cache cap pixels=1584 ramMB=8192"])
+        XCTAssertEqual(lines.map(\.0), [.debug])
+    }
+
+    /// A small machine: 3 % of the RAM is below eight display-fulls, so the
+    /// RAM cap governs; the shown strip still wins over it.
+    func testATightRAMCapDropsHiddenImagesButNeverTheStrip() throws {
+        makeCache(physicalMemory: 40_000)
+        world.captureScale = 0.01
+        world.imageSize = (20, 10)
+        _ = try addWindows(2, workspace: 2)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        completeAll()
+        XCTAssertEqual(cache.cache.ids, [idA, idB], "the strip stays, the hidden images go")
+        XCTAssertTrue(world.logs.contains { $0.1 == "snapshot cache cap pixels=300 ramMB=0" })
+        XCTAssertTrue(world.logs.contains { $0.1 == "snapshot cache cap exceeded by strip images=2" })
     }
 
     // MARK: Pruning, memory pressure, cap (SM-20)
@@ -856,7 +990,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         let displayPixels = 180 * 116
         let used = cache.cache.totalPixels + cache.cache.backdropPixels
         XCTAssertLessThanOrEqual(used, 6 * displayPixels, "five window images and the backdrop")
-        XCTAssertLessThanOrEqual(used + 2 * displayPixels, snapshotCacheCapPixels(displayPixels: displayPixels))
+        XCTAssertLessThanOrEqual(used + 2 * displayPixels, snapshotCacheCapPixels(displayPixels: displayPixels, physicalMemory: 64 << 30))
         XCTAssertTrue(world.logs.contains { $0.1.contains("evicted=0") })
         XCTAssertEqual(cache.cache.ids, wanted)
     }

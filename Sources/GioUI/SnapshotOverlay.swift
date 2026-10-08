@@ -117,6 +117,10 @@ private final class WindowLayers {
         shadow.shadowOffset = overlayWindowShadow.offset
         image.zPosition = 1
         image.contents = contents
+        // `.resize` stretches the image to the layer bounds whatever its
+        // pixel size, so `contentsScale` (the screen's, for the shadow,
+        // dim and ring) never sizes it: SM-22 half-resolution images and
+        // SM-11 other-size images fill the window frame like full ones.
         image.contentsGravity = .resize
         image.cornerRadius = overlayWindowCornerRadius
         image.masksToBounds = true

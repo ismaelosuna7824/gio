@@ -43,7 +43,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(3), image: "c", frame: frame, pixels: 60, at: 3)
         cache.touch([id(1)], at: 10)   // 1 is now the freshest
         let evicted = cache.enforce(capPixels: 130)
-        XCTAssertEqual(evicted, [id(2)])
+        XCTAssertEqual(evicted.map(\.id), [id(2)])
         XCTAssertNotNil(cache.entry(id(1)))
         XCTAssertNotNil(cache.entry(id(3)))
         XCTAssertLessThanOrEqual(cache.totalPixels, 130)
@@ -52,12 +52,94 @@ final class SnapshotCacheTests: XCTestCase {
     func testEnforceKeepsEverythingWhenUnderTheCap() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "a", frame: frame, pixels: 60, at: 1)
-        XCTAssertEqual(cache.enforce(capPixels: 60), [])
+        XCTAssertEqual(cache.enforce(capPixels: 60).map(\.id), [])
     }
 
     /// SM-20: eight display-fulls, backdrops counted (see the cap doc).
+    /// SM-22: never above 3 % of the physical memory at 4 bytes a pixel.
     func testCapIsEightDisplaysOfPixels() {
-        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: 1000), 8_000)
+        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: 1000, physicalMemory: 64 << 30), 8_000)
+    }
+
+    /// SM-22: the cap is the smaller of eight display-fulls and 3 % of the
+    /// RAM (4 bytes a pixel). MacBook Air 13" (1470 x 956 pt @2x) and the
+    /// user's display (1800 x 1169 pt @2x) on 8, 16 and 24 GB.
+    func testCapIsTheSmallerOfEightDisplaysAndThreePercentOfTheRAM() {
+        let air = 2940 * 1912
+        let user = 3600 * 2338
+        let gb: UInt64 = 1 << 30
+        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: air, physicalMemory: 8 * gb), 44_970_240, "Air 8 GB: display")
+        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: air, physicalMemory: 16 * gb), 44_970_240)
+        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: air, physicalMemory: 24 * gb), 44_970_240)
+        XCTAssertEqual(
+            snapshotCacheCapPixels(displayPixels: user, physicalMemory: 8 * gb), 64_424_509, "user's display 8 GB: RAM"
+        )
+        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: user, physicalMemory: 16 * gb), 67_334_400)
+        XCTAssertEqual(snapshotCacheCapPixels(displayPixels: user, physicalMemory: 24 * gb), 67_334_400)
+        XCTAssertEqual(
+            snapshotCacheCapLogLine(capPixels: 64_424_509, physicalMemory: 8 * gb),
+            "snapshot cache cap pixels=64424509 ramMB=8192"
+        )
+    }
+
+    /// SM-22: the shown strips at full resolution, every other window (a
+    /// hidden workspace, seen only during a switch slide) at half the
+    /// backing scale: a quarter of the pixels.
+    func testShownStripWindowsAreCapturedAtFullAndHiddenOnesAtHalfResolution() {
+        XCTAssertEqual(snapshotCaptureResolution(id(1), shown: [id(1)]), .full)
+        XCTAssertEqual(snapshotCaptureResolution(id(2), shown: [id(1)]), .half)
+        XCTAssertEqual(SnapshotResolution.full.scale, 1)
+        XCTAssertEqual(SnapshotResolution.half.scale, 0.5)
+        let full = snapshotPixelSize(points: frame.size, scale: 2 * SnapshotResolution.full.scale)
+        let half = snapshotPixelSize(points: frame.size, scale: 2 * SnapshotResolution.half.scale)
+        XCTAssertEqual(full.width * full.height, 4 * half.width * half.height, "a quarter of the pixels")
+    }
+
+    /// SM-22: a half-resolution image flies like any other (a switch never
+    /// falls back because of it); once its window is in a shown strip the
+    /// image is selected for a full-resolution capture, by the strip and by
+    /// the refresh set alike. A hidden window keeps it.
+    func testAHalfResolutionImageFliesAndIsRefreshedOnceItsWindowIsShown() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "half", frame: frame, pixels: 1, at: 100, resolution: .half)
+        cache.store(id(2), image: "full", frame: frame, pixels: 1, at: 100)
+        XCTAssertEqual(cache.entry(id(1))?.resolution, .half)
+        XCTAssertEqual(cache.entry(id(2))?.resolution, .full, "full unless said otherwise")
+        let use = cache.usableEntry(id(1), startFrame: frame, now: 101)
+        XCTAssertEqual(use?.entry.image, "half")
+        XCTAssertEqual(use?.scaled, false)
+        let strip = snapshotStripSelection(
+            cache: cache, strip: [(id(1), frame), (id(2), frame)], dirty: [:], excluded: [], now: 101
+        )
+        XCTAssertEqual(strip.map(\.id), [id(1)])
+        XCTAssertEqual(strip.map(\.cause), [.halfResolution])
+        let wanted: [(id: WindowID, frame: CGRect)] = [(id(1), frame), (id(2), frame)]
+        let shown = snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: [:], now: 101, fullResolution: [id(1)])
+        XCTAssertEqual(shown.map(\.cause), [.halfResolution])
+        XCTAssertTrue(
+            snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: [:], now: 101).isEmpty,
+            "hidden: the half-resolution image is what it wants"
+        )
+        XCTAssertEqual(snapshotRefreshReason(causes: [.halfResolution], backdrop: false), .settle)
+    }
+
+    /// SM-22: the cap drops full-resolution images of windows outside the
+    /// shown strips (coverage brings them back at half) before any
+    /// half-resolution image, and says which resolution each eviction was.
+    func testEnforceEvictsFullImagesOfHiddenWindowsBeforeHalfOnes() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "strip", frame: frame, pixels: 40, at: 1)
+        cache.store(id(2), image: "hidden-half", frame: frame, pixels: 10, at: 2, resolution: .half)
+        cache.store(id(3), image: "hidden-full", frame: frame, pixels: 40, at: 3)
+        cache.store(id(4), image: "hidden-half", frame: frame, pixels: 10, at: 4, resolution: .half)
+        let evicted = cache.enforce(capPixels: 60, pinned: [id(1)]) { _ in self.frame }
+        XCTAssertEqual(evicted, [SnapshotEviction(id: id(3), resolution: .full)], "the full image of a hidden window")
+        XCTAssertEqual(cache.ids, [id(1), id(2), id(4)])
+        let more = cache.enforce(capPixels: 50, pinned: [id(1)]) { _ in self.frame }
+        XCTAssertEqual(more, [SnapshotEviction(id: id(2), resolution: .half)], "then half images, LRU")
+        let strip = cache.enforce(capPixels: 10, pinned: [id(1)]) { _ in self.frame }
+        XCTAssertEqual(strip.map(\.id), [id(4)], "the strip pin still wins over the cap")
+        XCTAssertEqual(cache.ids, [id(1)])
     }
 
     /// SM-20: backdrops count against the cap but are never evicted.
@@ -66,7 +148,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(1), image: "a", frame: frame, pixels: 60, at: 1)
         cache.store(id(2), image: "b", frame: frame, pixels: 60, at: 2)
         cache.storeBackdrop(image: "d", displayFrame: frame, pixels: 50, at: 3)
-        XCTAssertEqual(cache.enforce(capPixels: 130), [id(1)], "120 + 50 > 130: one image goes")
+        XCTAssertEqual(cache.enforce(capPixels: 130).map(\.id), [id(1)], "120 + 50 > 130: one image goes")
         XCTAssertEqual(cache.totalPixels + cache.backdropPixels, 110)
         XCTAssertNotNil(cache.backdrop(for: frame))
     }
@@ -275,7 +357,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(2), image: "b", frame: frame, pixels: 60, at: 2)
         cache.store(id(2), image: "b-max", frame: maximized, pixels: 60, at: 3)
         let evicted = cache.enforce(capPixels: 130)
-        XCTAssertEqual(evicted, [id(2)])
+        XCTAssertEqual(evicted.map(\.id), [id(2)])
         XCTAssertEqual(cache.entries(of: id(2)).map(\.image), ["b-max"], "the window keeps its newest image")
         XCTAssertNotNil(cache.entry(id(1)))
     }
@@ -288,7 +370,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(2), image: "b", frame: frame, pixels: 60, at: 2)
         cache.store(id(2), image: "b-max", frame: maximized, pixels: 60, at: 3)
         let evicted = cache.enforce(capPixels: 130, protected: []) { _ in self.frame }
-        XCTAssertEqual(evicted, [id(2)])
+        XCTAssertEqual(evicted.map(\.id), [id(2)])
         XCTAssertEqual(cache.entries(of: id(2)).map(\.image), ["b"], "the current size stays")
     }
 
@@ -301,7 +383,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(3), image: "hidden", frame: frame, pixels: 60, at: 10)
         cache.store(id(4), image: "hidden", frame: frame, pixels: 60, at: 10)
         let evicted = cache.enforce(capPixels: 130, protected: [id(1), id(2)]) { _ in self.frame }
-        XCTAssertEqual(Set(evicted), [id(3), id(4)])
+        XCTAssertEqual(Set(evicted.map(\.id)), [id(3), id(4)])
         XCTAssertNotNil(cache.entry(id(1)))
         XCTAssertNotNil(cache.entry(id(2)))
     }
@@ -311,7 +393,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(1), image: "visible", frame: frame, pixels: 60, at: 1)
         cache.store(id(2), image: "visible", frame: frame, pixels: 60, at: 2)
         cache.store(id(3), image: "hidden", frame: frame, pixels: 60, at: 10)
-        XCTAssertEqual(cache.enforce(capPixels: 60, protected: [id(1), id(2)]) { _ in nil }, [id(3), id(1)])
+        XCTAssertEqual(cache.enforce(capPixels: 60, protected: [id(1), id(2)]) { _ in nil }.map(\.id), [id(3), id(1)])
     }
 
     func testRefreshSelectionAcceptsAFreshImageOfEitherSize() {
@@ -468,7 +550,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(2), image: "strip-max", frame: maximized, pixels: 60, at: 3)
         cache.store(id(3), image: "hidden", frame: frame, pixels: 60, at: 10)
         let evicted = cache.enforce(capPixels: 60, protected: [], pinned: [id(1), id(2)]) { _ in self.frame }
-        XCTAssertEqual(evicted, [id(3), id(2)], "the hidden window, then the strip's other size")
+        XCTAssertEqual(evicted.map(\.id), [id(3), id(2)], "the hidden window, then the strip's other size")
         XCTAssertEqual(cache.entries(of: id(1)).map(\.image), ["strip"])
         XCTAssertEqual(cache.entries(of: id(2)).map(\.image), ["strip"])
         XCTAssertEqual(cache.totalPixels, 120, "over the cap: the strip wins")

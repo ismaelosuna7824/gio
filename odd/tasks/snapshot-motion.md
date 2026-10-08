@@ -808,6 +808,67 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   intact); after `level=critical`/`level=normal`, the next settle's `snapshot capture ... reason=settle` covers
   the shown strip (staged by 12) and holes stay ≈ 0; `snapshot cache cap exceeded by strip` rare.
 
+- [ ] SM-22 (uncommitted) — Hidden workspaces at half resolution; cap tied to physical RAM.
+  Evidence (live 2026-10-08 21:57-21:59 UTC): 79/80 flights as images but 8 holes after `snapshot coverage
+  stopped cap reached images=12 pixels=56439696`: on the user's 1800 x 1169 pt @2x display the cap (8
+  display-fulls, 67,334,400 px, ~270 MB) could not hold the windows of hidden workspaces at full resolution, so
+  workspace switches showed static holes. Raising the cap was rejected for 8 GB Macs (user approved 2026-10-08).
+  1. Resolution per window (pure `SnapshotResolution`, `snapshotCaptureResolution(_:shown:)`): the shown strips
+     (`stripPlan`) at the backing scale, every other window (adjacent focused windows, coverage) at half of it,
+     a quarter of the pixels. `SnapshotCacheEntry.resolution` records it (`store(..., resolution:)`, default
+     full); `SnapshotCaptureRequest.halfResolution` carries the set; `SnapshotCapturer` multiplies the backing
+     scale by `resolution.scale` before `snapshotPixelSize` (the `SCStreamConfiguration` width/height).
+  2. A half image flies like any other (`usableEntry` ignores resolution; no fallback or hole because of it).
+     The overlay's image layer uses `contentsGravity = .resize`, which fills the layer bounds whatever the
+     image's pixel size, so `contentsScale` (the screen's, shared with shadow/dim/ring) never sizes it: no
+     change, comment added (the close ghost already sets `contentsScale` from the image, `CloseGhostOverlay`).
+  3. Refresh: a shown-strip window whose current-size image is half resolution is selected
+     (`SnapshotRefreshCause.halfResolution`, rank of a plain settle) by `snapshotStripSelection` and by
+     `snapshotRefreshSelection(fullResolution:)` (the refresher passes the strip ids), so the settle after a
+     switch re-captures the newly shown strip at full; a hidden window keeps any image it has (a full one from
+     when it was shown stays).
+  4. Cap: `snapshotCacheCapPixels(displayPixels:physicalMemory:)` = min(8 display-fulls, 3 % of the RAM at 4
+     bytes a pixel); `SessionHost` passes `ProcessInfo.processInfo.physicalMemory` once
+     (`SnapshotCacheRefresher.Context.physicalMemory`); debug `snapshot cache cap pixels=N ramMB=N` when first
+     computed (again only if the displays change the value). Values: Air 13" (1470 x 956 @2x) 44,970,240 px
+     (display-bound) on 8/16/24 GB; user's display 64,424,509 px on 8 GB (RAM-bound), 67,334,400 on 16/24 GB.
+     The SM-21 strip pin still wins over it.
+  5. Coverage: `enforce` evicts, within each protected/secondary class, full images of windows outside the
+     strips before any half image and returns `[SnapshotEviction]` (id, resolution). A hidden window whose full
+     image went is un-`tried`, so coverage captures it again at half; `snapshot coverage stopped` only when a
+     half image had to go. `snapshot capture ...` gains `half=N` (half-resolution windows captured,
+     `makeSnapshotSummary(half:)`).
+  Expected memory [INFERENCE: window size from the last session, 56,439,696 px / 12 images = 4.70 Mpx, 0.56 of
+  a display-full; 3 shown windows]: user's setup, 12 windows over 4-5 workspaces: shown 3 x 4.70 = 14.1 Mpx,
+  hidden 9 x 1.18 = 10.6 Mpx, backdrop 8.4 Mpx: ~33 Mpx, ~132 MB (was ~65 Mpx at full, over the cap with any
+  second size); after visiting every workspace hidden windows may keep full images up to ~65 Mpx (~260 MB),
+  under the 67.3 Mpx cap, and past it the full hidden images go first and come back at half. 8 GB Air, same
+  set: shown 3 x 3.14 = 9.4 Mpx, hidden 9 x 0.79 = 7.1 Mpx, backdrop 5.6 Mpx: ~22 Mpx, ~88 MB of a 45 Mpx
+  (~180 MB) cap; the user's display on an 8 GB Mac stays at ~132 MB of a 64.4 Mpx (~258 MB) cap.
+  RED (observed): `swift build --build-tests` with the Core change held back: `SnapshotPlanningTests.swift:488:36
+  extra argument 'half' in call` (and the `summary.misses` lines after it); the compiler stopped at that file,
+  so the other new tests (`SnapshotCacheTests`: `snapshotCacheCapPixels(displayPixels:physicalMemory:)`,
+  `snapshotCaptureResolution`, `SnapshotResolution`, `store(resolution:)`, `.halfResolution`, `SnapshotEviction`;
+  `SnapshotCacheRefresherTests`: `Context.physicalMemory`, `SnapshotCaptureRequest.halfResolution`) were
+  compile failures not individually reported.
+  Tests: Core `testCapIsTheSmallerOfEightDisplaysAndThreePercentOfTheRAM`,
+  `testShownStripWindowsAreCapturedAtFullAndHiddenOnesAtHalfResolution`,
+  `testAHalfResolutionImageFliesAndIsRefreshedOnceItsWindowIsShown`,
+  `testEnforceEvictsFullImagesOfHiddenWindowsBeforeHalfOnes` (strip pin still wins), summary `half=1`; Session
+  `testHiddenWorkspaceWindowsAreRequestedAtHalfResolutionAndTheShownStripAtFull`,
+  `testASwitchedToWorkspaceIsCapturedAtFullResolutionAfterTheSettle`,
+  `testAnEvictedFullImageOfAHiddenWindowComesBackAtHalfWithoutStoppingCoverage`, `testTheCapIsLoggedOnceAtStart`,
+  `testATightRAMCapDropsHiddenImagesButNeverTheStrip`; re-pinned `testCoverageNeverEvictsTheVisibleImagesAndStopsAtTheCap`
+  (30 hidden windows: two half-resolution stages fit, the second evicts half images and stops). The test fake
+  returns half-size images for `halfResolution` windows.
+  GREEN: full `swift test`: GioUITests 274 (53 skipped), GioSessionTests 371, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 50, GioCoreTests 1495, all 0 failures; `git diff --check` clean. Signed build: run by the parent.
+  Not unit-tested (compile-checked): `SnapshotCapturer` per-window scale, `SessionHost` `physicalMemory`.
+  LIVE PENDING: no `snapshot holes` on workspace switches (`Alt+U`/`Alt+I` through every workspace); switch slide
+  sharpness acceptable with half-resolution windows; `snapshot capture ... half=H` during coverage and `half=0`
+  for the settle after a switch; no `snapshot coverage stopped`; `snapshot cache ... pixels=P backdropPixels=B`
+  near the estimate above and under `snapshot cache cap pixels=N`.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.
@@ -852,3 +913,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-08: same session showed a 307 MB cache of mostly unusable images and Chrome windows still `ambiguous` (equal titles); SM-20 (prune at each settle, memory-pressure source, cap 8 with backdrops counted, stacking-order tie-break never learned) uncommitted, all bundles green. Next: signed build, then the SM-20 LIVE PENDING list.
 - 2026-10-08: live session (21:41 UTC) showed a system-wide memory-pressure warning purge the shown strip (43 holes in 34 flights after it, none before) and the dropped windows never re-captured (`tried`); SM-21 (warning is not a purge, strip coverage regardless of `tried`, recovery on normal, cap never evicts the strip) uncommitted, all bundles green. Next: signed build, then the SM-21 LIVE PENDING list.
 - 2026-10-08: SM-08..SM-21 committed as `fa27a03` (with PF-I) and pushed to `main`. Last live session (21:57-21:59 UTC, 293 presses, 79/80 flights as images): fps median 117 (min 110), single flights with a hitch 20 %, hand-off wait 0 ms (max 12), 8 holes (after `snapshot coverage stopped cap reached images=12`), cache 259 MB. Open: hidden-workspace images vs the cap (half resolution or a higher cap), Xcode window `31952:13` refusing focus (-25201).
+- 2026-10-08: SM-22 (hidden workspaces at half resolution, cap min(8 display-fulls, 3 % RAM), coverage stops only when a half image goes) uncommitted, all bundles green. Next: signed build, then the SM-22 LIVE PENDING list.

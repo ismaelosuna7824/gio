@@ -306,7 +306,8 @@ final class SessionHost: @unchecked Sendable {
                 serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 ownPid: getpid(),
                 log: { GioLog.record($0, $1) },
-                appName: { [unowned self] in appName($0) }
+                appName: { [unowned self] in appName($0) },
+                physicalMemory: ProcessInfo.processInfo.physicalMemory
             ),
             scheduler: scheduler
         )

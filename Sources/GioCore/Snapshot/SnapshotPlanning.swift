@@ -357,21 +357,26 @@ public struct SnapshotCaptureSummary: Equatable, Sendable {
     /// SM-09: pixels of every image captured (windows and backdrops), the cost of the run.
     public let pixels: Int
     public let reason: SnapshotCaptureReason
+    /// SM-22: windows captured at half resolution.
+    public let half: Int
 
-    /// `snapshot capture windows=N captured=M backdrop=<bool> ms=T misses=K pixels=P reason=<why>`
+    /// `snapshot capture windows=N captured=M backdrop=<bool> ms=T misses=K pixels=P half=H reason=<why>`
     /// (counts and timings only, never titles).
     public var logLine: String {
         "snapshot capture windows=\(windows) captured=\(captured) backdrop=\(backdrop) ms=\(milliseconds) "
-            + "misses=\(misses.count) pixels=\(pixels) reason=\(reason.rawValue)"
+            + "misses=\(misses.count) pixels=\(pixels) half=\(half) reason=\(reason.rawValue)"
     }
 }
 
 /// Budget and miss accounting. `backdrop` is true only when at least one
-/// backdrop was requested and every requested one arrived.
+/// backdrop was requested and every requested one arrived. SM-22: `half`
+/// is the windows requested at half resolution; the summary counts the
+/// captured ones.
 public func makeSnapshotSummary(
     requested: [WindowID], matches: [WindowID: SnapshotMatch], captured: Set<WindowID>,
     failed: Set<WindowID>, blank: Set<WindowID> = [], backdropsRequested: Int, backdropsCaptured: Int,
-    elapsedMilliseconds: Double, pixels: Int = 0, reason: SnapshotCaptureReason = .settle
+    elapsedMilliseconds: Double, pixels: Int = 0, reason: SnapshotCaptureReason = .settle,
+    half: Set<WindowID> = []
 ) -> SnapshotCaptureSummary {
     var misses: [WindowID: SnapshotMiss] = [:]
     for id in requested where !captured.contains(id) {
@@ -385,6 +390,7 @@ public func makeSnapshotSummary(
     return SnapshotCaptureSummary(
         windows: requested.count, captured: requested.filter { captured.contains($0) }.count,
         backdrop: backdropsRequested > 0 && backdropsCaptured == backdropsRequested,
-        milliseconds: Int(elapsedMilliseconds.rounded()), misses: misses, pixels: pixels, reason: reason
+        milliseconds: Int(elapsedMilliseconds.rounded()), misses: misses, pixels: pixels, reason: reason,
+        half: requested.filter { captured.contains($0) && half.contains($0) }.count
     )
 }

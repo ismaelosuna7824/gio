@@ -23,7 +23,8 @@ import GioCore
 // the Accessibility motion.
 
 /// One captured window image. `frame` is the Cocoa frame the window had when
-/// requested and `scale` the backing scale the image was rendered at.
+/// requested and `scale` the scale the image was rendered at (SM-22: half the
+/// backing scale for a half-resolution window).
 public struct CapturedSnapshot: @unchecked Sendable {
     public let id: WindowID
     public let image: CGImage
@@ -42,6 +43,9 @@ public struct CapturedBackdrop: @unchecked Sendable {
 public struct SnapshotCaptureRequest: Sendable {
     /// Managed windows to capture and their current Cocoa frames.
     public var windows: [WindowID: CGRect]
+    /// SM-22: windows captured at half the backing scale (hidden
+    /// workspaces); the others at the backing scale.
+    public var halfResolution: Set<WindowID>
     public var displays: [SnapshotDisplay]
     /// Height of the primary display, for the top-left to Cocoa flip.
     public var primaryDisplayHeight: CGFloat
@@ -66,13 +70,15 @@ public struct SnapshotCaptureRequest: Sendable {
     public static let measureCapMilliseconds = 2000
 
     public init(
-        windows: [WindowID: CGRect], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
+        windows: [WindowID: CGRect], halfResolution: Set<WindowID> = [], displays: [SnapshotDisplay],
+        primaryDisplayHeight: CGFloat,
         includeBackdrop: Bool = true, backdropDisplayIDs: [UInt32] = [], backdropExclusions: [WindowID: CGRect] = [:],
         budgetMilliseconds: Int = SnapshotBudget.defaultMilliseconds,
         measure: Bool = false, logLevel: LogLevel = .info, reason: SnapshotCaptureReason = .settle
     ) {
         self.logLevel = logLevel
         self.windows = windows
+        self.halfResolution = halfResolution
         self.displays = displays
         self.primaryDisplayHeight = primaryDisplayHeight
         self.includeBackdrop = includeBackdrop
@@ -531,7 +537,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         for (id, image) in out.images {
             let frame = request.windows[id] ?? .zero
             snapshots[id] = CapturedSnapshot(
-                id: id, image: image, frame: frame, scale: backingScale(for: frame, displays: request.displays)
+                id: id, image: image, frame: frame, scale: captureScale(request, id: id, frame: frame)
             )
         }
         var backdrops: [UInt32: CapturedBackdrop] = [:]
@@ -548,7 +554,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         let summary = makeSnapshotSummary(
             requested: ids, matches: matches, captured: Set(snapshots.keys), failed: out.failed, blank: out.blank,
             backdropsRequested: backdropDisplays.count, backdropsCaptured: backdrops.count,
-            elapsedMilliseconds: elapsed, pixels: pixels, reason: request.reason
+            elapsedMilliseconds: elapsed, pixels: pixels, reason: request.reason, half: request.halfResolution
         )
         var measurement: SnapshotMeasurement?
         if request.measure {
@@ -631,7 +637,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 continue
             }
             let frame = request.windows[job.id] ?? .zero
-            let scale = backingScale(for: frame, displays: request.displays)
+            let scale = captureScale(request, id: job.id, frame: frame)
             let boxed = Box(value: window)
             Task {
                 let began = DispatchTime.now().uptimeNanoseconds
@@ -673,6 +679,13 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 collector.complete(display: displayID, image: image)
             }
         }
+    }
+
+    /// SM-22: the backing scale of the window's display, halved for a
+    /// window the request wants at half resolution.
+    private func captureScale(_ request: SnapshotCaptureRequest, id: WindowID, frame: CGRect) -> CGFloat {
+        let resolution: SnapshotResolution = request.halfResolution.contains(id) ? .half : .full
+        return backingScale(for: frame, displays: request.displays) * resolution.scale
     }
 
     /// The cached shareable content. The hot path only refreshes when a

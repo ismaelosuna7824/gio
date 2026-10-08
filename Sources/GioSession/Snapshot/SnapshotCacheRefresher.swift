@@ -67,8 +67,15 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 /// without a usable image of its current size, tried or not (staged, each
 /// window once per settle), pressure never drops their current-size
 /// images, the cap never evicts them, and pressure back to normal starts
-/// one recovery run. Session queue only; the capture itself runs off the
-/// queue and its completion hops back.
+/// one recovery run. SM-22: the shown strips are captured at full
+/// resolution, every other window at half (a hidden workspace is seen only
+/// during a switch slide); a half image flies like any other and a shown
+/// strip window with one is captured again at full by the next settle. The
+/// cap is the smaller of eight display-fulls and 3 % of the RAM (logged
+/// once); it evicts the full images of hidden windows first, coverage
+/// brings those back at half, and coverage stops only when a half image
+/// had to go. Session queue only; the capture itself runs off the queue
+/// and its completion hops back.
 public final class SnapshotCacheRefresher: @unchecked Sendable {
     public struct Context {
         public var session: () -> CommandSession
@@ -96,6 +103,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         public var log: (LogLevel, String) -> Void
         /// SM-11: app name for the miss line (never a title).
         public var appName: (pid_t) -> String
+        /// SM-22: bytes of RAM, read once by the host; bounds the cap.
+        public var physicalMemory: UInt64
         public var now: () -> TimeInterval
 
         public init(
@@ -111,6 +120,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             ownPid: pid_t = 0,
             log: @escaping (LogLevel, String) -> Void,
             appName: @escaping (pid_t) -> String = { _ in "?" },
+            physicalMemory: UInt64,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         ) {
             self.session = session
@@ -128,6 +138,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             self.ownPid = ownPid
             self.log = log
             self.appName = appName
+            self.physicalMemory = physicalMemory
             self.now = now
         }
     }
@@ -188,6 +199,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     private var underPressure = false
     /// SM-21: the strip alone exceeds the cap; logged once until it fits.
     private var stripCapLogged = false
+    /// SM-22: the cap last logged (once at start; again only if the
+    /// displays change it).
+    private var loggedCapPixels: Int?
     private var missThrottle = SnapshotMissLogThrottle()
     /// SM-02b: managed set the shareable content was last prefetched for,
     /// and whether a prefetch is running.
@@ -628,6 +642,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         let capturable = refreshIDs.union(coverage.map(\.id))
         dirty = dirty.filter { capturable.contains($0.key) }
         let wanted = (full ? refresh : refresh.filter { dirty[$0.id] != nil }).filter { !parkedMisses.contains($0.id) }
+        // SM-22: the shown strips want full resolution, everything else half.
+        let shown = Set(stripPlan().strip.map(\.id))
         // SM-21: the rest of the shown strips, every window without a
         // usable current-size image whether tried or not (parked misses
         // excluded), after the refresh set.
@@ -643,9 +659,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         // SM-21: a coverage stage does not ask again for a window this
         // pass already asked for (unless it is dirty again).
         let selected = Array((
-            snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, now: now)
+            snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, now: now, fullResolution: shown)
                 + snapshotStripSelection(cache: cache, strip: strip, dirty: dirty, excluded: parkedMisses, now: now)
-                + snapshotRefreshSelection(cache: cache, wanted: extra, dirty: dirty, now: now)
+                + snapshotRefreshSelection(cache: cache, wanted: extra, dirty: dirty, now: now, fullResolution: shown)
         ).filter { !full || !stripPass.contains($0.id) || dirty[$0.id] != nil }.prefix(Self.maxWindows))
         let managed = managedFrames()
         let backdrops = backdropFrames(full: full, managed: managed, now: now)
@@ -660,10 +676,11 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         let reason = snapshotRefreshReason(causes: selected.map(\.cause), backdrop: !backdropIDs.isEmpty)
         let frames = Dictionary((wanted + strip + extra).map { ($0.id, $0.frame) }) { first, _ in first }
         let requested = Dictionary(uniqueKeysWithValues: selected.map { ($0.id, frames[$0.id]!) })
+        let half = Set(requested.keys.filter { snapshotCaptureResolution($0, shown: shown) == .half })
         tried.formUnion(requested.keys)
         stripPass.formUnion(requested.keys)
         let request = SnapshotCaptureRequest(
-            windows: requested,
+            windows: requested, halfResolution: half,
             displays: screens, primaryDisplayHeight: primary, includeBackdrop: false,
             backdropDisplayIDs: backdropIDs, backdropExclusions: managed,
             budgetMilliseconds: 1500, logLevel: .debug, reason: reason
@@ -671,7 +688,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         busy = true
         context.capture(request) { [weak self] outcome in
             self?.scheduler.async { [weak self] in
-                self?.finish(outcome, requested: requested, requestedBackdrops: backdrops)
+                self?.finish(outcome, requested: requested, half: half, requestedBackdrops: backdrops)
             }
         }
     }
@@ -726,7 +743,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     }
 
     private func finish(
-        _ outcome: SnapshotCaptureOutcome, requested: [WindowID: CGRect], requestedBackdrops: [CGRect]
+        _ outcome: SnapshotCaptureOutcome, requested: [WindowID: CGRect], half: Set<WindowID>,
+        requestedBackdrops: [CGRect]
     ) {
         busy = false
         guard !context.isShuttingDown(), cacheWanted() else {
@@ -736,7 +754,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         for (id, snapshot) in outcome.images {
             cache.store(
                 id, image: snapshot.image, frame: snapshot.frame,
-                pixels: snapshot.image.width * snapshot.image.height, at: now
+                pixels: snapshot.image.width * snapshot.image.height, at: now,
+                resolution: half.contains(id) ? .half : .full
             )
             dirty.removeValue(forKey: id)
         }
@@ -765,7 +784,11 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         // SM-21: the shown strips' current-size images are never evicted.
         let pinned = Set(stripPlan().strip.map(\.id))
         let protected = Set(refreshSet().map(\.id))
-        let capPixels = snapshotCacheCapPixels(displayPixels: displayPixels)
+        let capPixels = snapshotCacheCapPixels(displayPixels: displayPixels, physicalMemory: context.physicalMemory)
+        if loggedCapPixels != capPixels {
+            loggedCapPixels = capPixels
+            context.log(.debug, snapshotCacheCapLogLine(capPixels: capPixels, physicalMemory: context.physicalMemory))
+        }
         let evicted = cache.enforce(
             capPixels: capPixels, protected: protected, pinned: pinned, currentFrame: context.physicalFrame
         )
@@ -778,7 +801,12 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         } else {
             stripCapLogged = false
         }
-        if !evicted.isEmpty, context.rendererAvailable(), !coverageStopped {
+        // SM-22: a hidden window whose full image went is captured again at
+        // half by coverage; only a half image going stops coverage.
+        for eviction in evicted where eviction.resolution == .full && cache.entry(eviction.id) == nil {
+            tried.remove(eviction.id)
+        }
+        if evicted.contains(where: { $0.resolution == .half }), context.rendererAvailable(), !coverageStopped {
             // The cap cannot hold more: further stages would evict each other.
             coverageStopped = true
             context.log(

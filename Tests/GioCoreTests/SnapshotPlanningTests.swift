@@ -485,7 +485,7 @@ final class SnapshotPlanningTests: XCTestCase {
         let summary = makeSnapshotSummary(
             requested: requested, matches: matches, captured: [id(1)], failed: [id(2)], blank: [id(6)],
             backdropsRequested: 1, backdropsCaptured: 1, elapsedMilliseconds: 41.6, pixels: 1_234_567,
-            reason: .typing
+            reason: .typing, half: [id(1), id(3)]
         )
         XCTAssertEqual(summary.windows, 6)
         XCTAssertEqual(summary.captured, 1)
@@ -495,9 +495,10 @@ final class SnapshotPlanningTests: XCTestCase {
         XCTAssertEqual(summary.misses[id(5)], .unmatched)
         XCTAssertEqual(summary.misses[id(6)], .blank)
         XCTAssertNil(summary.misses[id(1)])
+        XCTAssertEqual(summary.half, 1, "SM-22: half-resolution captures among the captured")
         XCTAssertEqual(
             summary.logLine,
-            "snapshot capture windows=6 captured=1 backdrop=true ms=42 misses=5 pixels=1234567 reason=typing"
+            "snapshot capture windows=6 captured=1 backdrop=true ms=42 misses=5 pixels=1234567 half=1 reason=typing"
         )
     }
 
