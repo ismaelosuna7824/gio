@@ -928,7 +928,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   no `snapshot fallback reason=cache-miss`, `snapshot holes` only for windows never captured, no
   `snapshot cache pruned ... reason=age`.
 
-- [ ] SM-25 — A placed window keeps both sizes; Alt+F back flies its own image.
+- [x] SM-25 (`1d4f7b1`) — A placed window keeps both sizes; Alt+F back flies its own image.
   Report (2026-10-09 21:39, "it happened for a moment when I had a window full and then changed it to a
   column"). Log (build with `123de82`, session 21:36:42): `hotkey maximizeColumn` 21:37:03 (Tern `4907:4` to
   full width), `snapshot cache pruned ... reason=size` at 21:37:15 and 21:37:27 (the size a window is not at
