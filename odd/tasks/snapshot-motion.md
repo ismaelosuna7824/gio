@@ -950,6 +950,30 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   LIVE PENDING: Alt+F on a column, wait over 30 s, Alt+F back, then Alt+H/L right away: no `snapshot scaled`
   for that window; `snapshot cache entries ... pixels=` stays under the cap line.
 
+- [ ] SM-26 — The cap evicts every window's other size before any window's only image.
+  Live check of SM-24/SM-25 (2026-10-09 21:43:32-21:46:52, build with `1d4f7b1`, 578 Alt+H/L, 44
+  workspace switches, 39 Alt+F): 0 `snapshot fallback`, 0 `retarget uncovered`, 0 `cache pruned`; Alt+F
+  back to a size already captured flew its own image (no `snapshot scaled` for Tern after 21:44:11, ~30
+  toggles); `snapshot scaled` only on a window's first maximize of the session (never captured at that size),
+  each followed by `snapshot capture ... reason=size`. New: `snapshot coverage stopped cap reached images=13`
+  (21:45:43) and `evicted=1..2` at 21:45:43, 21:46:02, 21:46:07, then `snapshot holes ids=1` on every Alt+2/3
+  switch from 21:46:28 to 21:46:32 (7 times; the 21:46:32 settle captured hidden `1923:2` and `50640:9` again).
+  Cause: the second sizes SM-25 keeps (images=13 for 9 windows) filled the cap, and `enforce` evicted windows
+  outside the refresh set first, so a hidden-workspace window lost its only image before a visible window lost
+  its other size.
+  Decision: `enforce` sorts secondary images (a size the window is not at now) of every window first, then
+  SM-13's unprotected-before-protected, then the rest unchanged. A second size only helps an Alt+F back; a
+  hidden window's only image serves every switch.
+  RED (observed): `SnapshotCacheTests.testAnyWindowsOtherSizeGoesBeforeAHiddenWindowsOnlyImage` (the hidden
+  window's image went first). Re-pinned: `testEnforceNeverEvictsTheStripsCurrentSizeImages` (order now the
+  strip's other size, then the hidden window).
+  GREEN: full `swift test`: GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 83, GioCoreTests 1656, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean.
+  LIVE PENDING: Alt+F on several strip windows, then Alt+1/2/3 repeatedly: `evicted=` lines may appear, but no
+  `snapshot holes` on the switches. SM-24 idle path (4+ min) still unexercised: the session had no gap over
+  120 s.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.

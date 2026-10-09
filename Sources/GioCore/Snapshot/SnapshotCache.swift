@@ -246,11 +246,11 @@ public struct SnapshotCache<Image> {
     }
 
     /// Until the total (SM-20: backdrops included, never evicted) is within
-    /// `capPixels`. SM-13 order: windows outside
-    /// `protected` (the ones on screen and next to them) before any
-    /// protected one; within each, secondary images first (a size the
-    /// window is not at now, `currentFrame`; without a current frame, any
-    /// image but the newest), then least recently used first. SM-21: the
+    /// `capPixels`. SM-25 order: secondary images of any window first (a size
+    /// the window is not at now, `currentFrame`; without a current frame, any
+    /// image but the newest: only an Alt+F back needs them), then SM-13:
+    /// windows outside `protected` (the ones on screen and next to them)
+    /// before any protected one, then least recently used first. SM-21: the
     /// primary image of a `pinned` window (the shown strips) is never
     /// evicted: the cap yields and the total may stay above it (pinned
     /// windows count as protected for the order). SM-22: within each class,
@@ -287,8 +287,8 @@ public struct SnapshotCache<Image> {
             }
         }
         candidates.sort { lhs, rhs in
-            if lhs.protected != rhs.protected { return rhs.protected }
             if lhs.secondary != rhs.secondary { return lhs.secondary }
+            if lhs.protected != rhs.protected { return rhs.protected }
             if lhs.overResolved != rhs.overResolved { return lhs.overResolved }
             if lhs.lastUsed != rhs.lastUsed { return lhs.lastUsed < rhs.lastUsed }
             return lhs.id != rhs.id ? lhs.id < rhs.id : lhs.capturedAt < rhs.capturedAt

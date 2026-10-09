@@ -555,8 +555,8 @@ final class SnapshotCacheTests: XCTestCase {
     }
 
     /// SM-21: the cap yields to the shown strip: its windows' current-size
-    /// images are never evicted, even over the cap; other windows and the
-    /// strip's other sizes go first.
+    /// images are never evicted, even over the cap; the strip's other sizes
+    /// and then other windows go first (SM-25).
     func testEnforceNeverEvictsTheStripsCurrentSizeImages() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "strip", frame: frame, pixels: 60, at: 1)
@@ -564,11 +564,28 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(2), image: "strip-max", frame: maximized, pixels: 60, at: 3)
         cache.store(id(3), image: "hidden", frame: frame, pixels: 60, at: 10)
         let evicted = cache.enforce(capPixels: 60, protected: [], pinned: [id(1), id(2)]) { _ in self.frame }
-        XCTAssertEqual(evicted.map(\.id), [id(3), id(2)], "the hidden window, then the strip's other size")
+        XCTAssertEqual(evicted.map(\.id), [id(2), id(3)], "the strip's other size, then the hidden window")
         XCTAssertEqual(cache.entries(of: id(1)).map(\.image), ["strip"])
         XCTAssertEqual(cache.entries(of: id(2)).map(\.image), ["strip"])
         XCTAssertEqual(cache.totalPixels, 120, "over the cap: the strip wins")
         XCTAssertEqual(snapshotStripCapLogLine(images: 2), "snapshot cache cap exceeded by strip images=2")
+    }
+
+    /// Live 2026-10-09 21:45-21:46: with both sizes kept (SM-25), Alt+F on
+    /// the strip filled the cap with second sizes and the cap evicted the only
+    /// images of hidden-workspace windows (`evicted=1..2`); the next Alt+1/2/3
+    /// switches showed one window through a hole each time. A second size is
+    /// only needed for an Alt+F back; a hidden window's only image for every
+    /// switch.
+    func testAnyWindowsOtherSizeGoesBeforeAHiddenWindowsOnlyImage() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "visible", frame: frame, pixels: 60, at: 1)
+        cache.store(id(1), image: "visible-max", frame: maximized, pixels: 60, at: 2)
+        cache.store(id(2), image: "hidden", frame: frame, pixels: 60, at: 3)
+        let evicted = cache.enforce(capPixels: 120, protected: [id(1)]) { _ in self.frame }
+        XCTAssertEqual(evicted.map(\.id), [id(1)])
+        XCTAssertEqual(cache.entries(of: id(1)).map(\.image), ["visible"])
+        XCTAssertEqual(cache.entry(id(2))?.image, "hidden", "the hidden window keeps its only image")
     }
 
     func testPressureLineCarriesTheLevelAndTheFreedImages() {
