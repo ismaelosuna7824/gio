@@ -111,7 +111,7 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   `CenterFocusedColumnModeTests.testDefaultIsOnOverflow` (got `never` for both the default
   section and a parsed config without the key); `ConfigTests.testDefaultsMirrorPlanExample`
   updated to the new default. Commit `a59f85d`. Existing configs keep their value.
-- [ ] PF-J — `center-focused-column` defaults to `never`. RED:
+- [x] PF-J (`994a74d`) — `center-focused-column` defaults to `never`. RED:
   `CenterFocusedColumnModeTests.testDefaultIsNever` (got `onOverflow` for the default section
   and a parsed config without the key); `ConfigTests.testDefaultsMirrorPlanExample` (same).
   `ConfigTemplate` writes `"never"`; `docs/USER_GUIDE.md` default updated. Existing configs keep

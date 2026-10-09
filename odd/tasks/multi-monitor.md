@@ -531,9 +531,10 @@ stuck, and sometimes windows move or rearrange when they should not."
 - GREEN: `swift test`, all bundles 0 failures: GioUITests 306 (53 skipped), GioSessionTests 393,
   GioPOCTests 7, GioMacTests 19, GioMacOSTests 83, GioCoreTests 1654. Signed `xcodebuild` BUILD
   SUCCEEDED. `git diff --check` clean.
-- LIVE PENDING: with Gio running, move a workspace between displays of different column widths
-  (or plug/unplug the external): no `min size learned` in the pass after `layout instant
-  reason=displays`; Alt+H/L between two columns that fit together moves nothing.
+- LIVE PENDING: move a workspace between displays of different column widths (or plug/unplug the
+  external): no `min size learned` in the pass after `layout instant reason=displays`. The
+  2026-10-09 21:20 session had one display only: `min size learned` only for WhatsApp 970 and
+  LoopOps 1024 (the real minimums), nothing for Slack or OrbStack.
 - Not addressed here (report part 1, the per-key delay): see the issue triage; not reproduced.
 
 ## Progress

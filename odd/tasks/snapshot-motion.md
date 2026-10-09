@@ -891,8 +891,12 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   GREEN: full `swift test`: GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19,
   GioMacOSTests 83, GioCoreTests 1655, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
   clean.
-  LIVE PENDING: with `[logging] level = "debug"`, rapid Alt+H/L: the gap from each `hotkey` line to the next
-  `reconcile dispatched` line (key to retarget on the session queue) and whether bursts feel smoother.
+  LIVE (2026-10-09 21:20-21:24 UTC, build with `241deda`, one display, 398 Alt+H/J/K/L presses): the user
+  reports it feels better. Key to first dispatched write: retarget during a flight p50 3 ms, p90 4, max 7
+  (279 presses; at least 30 ms before by construction); a press that starts a flight (prime round trip) p50
+  5 ms, p90 12, max 30 (59). Flights: 125, duration p50 403 ms. Not improved: main-thread hitches, 66/125
+  flights without one (gio.log.1, before: 191/266); [INFERENCE] immediate retargets add main-thread work in
+  bursts; the layers run on the render server, so a hitch is not a visible dropped frame by itself.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
