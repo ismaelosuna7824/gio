@@ -950,7 +950,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   LIVE PENDING: Alt+F on a column, wait over 30 s, Alt+F back, then Alt+H/L right away: no `snapshot scaled`
   for that window; `snapshot cache entries ... pixels=` stays under the cap line.
 
-- [ ] SM-26 — The cap evicts every window's other size before any window's only image.
+- [x] SM-26 (`c0e6b46`) — The cap evicts every window's other size before any window's only image.
   Live check of SM-24/SM-25 (2026-10-09 21:43:32-21:46:52, build with `1d4f7b1`, 578 Alt+H/L, 44
   workspace switches, 39 Alt+F): 0 `snapshot fallback`, 0 `retarget uncovered`, 0 `cache pruned`; Alt+F
   back to a size already captured flew its own image (no `snapshot scaled` for Tern after 21:44:11, ~30
