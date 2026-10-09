@@ -88,10 +88,11 @@ public func snapshotCacheCapLogLine(capPixels: Int, physicalMemory: UInt64) -> S
 /// SM-11: images kept per window, one per size (Alt+F toggles between two).
 public let snapshotSizesPerWindow = 2
 
-/// Longest an image may be trusted. SM-09: motion start happens minutes
-/// after the last settle at rest, so this is deliberately large; the dirty
-/// signals (typing, a long focus, new window, size) keep the images that
-/// actually change fresh long before this expires.
+/// Age past which an image counts as stale: a settle re-captures a stale
+/// image of a shown strip, memory pressure drops the stale images of other
+/// workspaces, and a window without a frame loses them. SM-24: never a reason
+/// not to fly an image of the window's current size (a parked window cannot
+/// be captured again; an old picture beats a hole or the AX motion).
 public let snapshotMaxAge: TimeInterval = 180
 
 /// SM-09: a settle refresh re-captures an image older than this even when
@@ -127,16 +128,6 @@ public func snapshotBackdropUsable<Image>(
     _ entry: SnapshotBackdropEntry<Image>, now: TimeInterval, maxAge: TimeInterval = snapshotBackdropMaxAge
 ) -> Bool {
     now - entry.capturedAt <= maxAge
-}
-
-/// An entry is usable when it is fresh and its size still matches the
-/// window's current size (position does not matter: layers fly from the
-/// window's current frame).
-public func snapshotEntryUsable<Image>(
-    _ entry: SnapshotCacheEntry<Image>, currentFrame: CGRect, now: TimeInterval,
-    maxAge: TimeInterval = snapshotMaxAge, tolerance: CGFloat = 2
-) -> Bool {
-    now - entry.capturedAt <= maxAge && snapshotSameSize(entry.frame, currentFrame, tolerance: tolerance)
 }
 
 func snapshotSameSize(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
@@ -180,18 +171,18 @@ public struct SnapshotCache<Image> {
         entries[id] ?? []
     }
 
-    /// SM-11: the image a flight from `startFrame` uses: the one of that
-    /// size while younger than `maxAge`; otherwise the newest image of
+    /// SM-11: the image a flight from `startFrame` uses: the newest one of
+    /// that size, whatever its age (SM-24); otherwise the newest image of
     /// another size while younger than `softAge`, scaled. No start frame:
     /// the newest image. Nil: the flight falls back.
     public func usableEntry(
         _ id: WindowID, startFrame: CGRect?, now: TimeInterval,
-        maxAge: TimeInterval = snapshotMaxAge, softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2
+        softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2
     ) -> SnapshotCacheUse<Image>? {
         guard let startFrame else {
-            return entry(id).flatMap { now - $0.capturedAt <= maxAge ? SnapshotCacheUse(entry: $0, scaled: false) : nil }
+            return entry(id).map { SnapshotCacheUse(entry: $0, scaled: false) }
         }
-        if let match = entry(id, matching: startFrame, tolerance: tolerance), now - match.capturedAt <= maxAge {
+        if let match = entry(id, matching: startFrame, tolerance: tolerance) {
             return SnapshotCacheUse(entry: match, scaled: false)
         }
         if let newest = entry(id), now - newest.capturedAt <= softAge {
@@ -346,11 +337,11 @@ public struct SnapshotCache<Image> {
     // MARK: SM-20 pruning and memory pressure
 
     /// Drops what no flight can use any more (a flight starts from the
-    /// window's current frame, `usableEntry`): an image of the current size
-    /// older than `maxAge`, an image of another size older than `softAge`
-    /// (it only flies scaled, and only that young), any image older than
-    /// `maxAge` when the window has no current frame, and the backdrops of
-    /// displays not in `displayFrames`. Backdrops of shown displays always
+    /// window's current frame, `usableEntry`): an image of another size older
+    /// than `softAge` (it only flies scaled, and only that young), any image
+    /// older than `maxAge` when the window has no current frame, and the
+    /// backdrops of displays not in `displayFrames`. An image of the current
+    /// size stays whatever its age (SM-24). Backdrops of shown displays always
     /// stay (a stale desktop beats a fallback).
     @discardableResult
     public mutating func prune(
@@ -363,11 +354,14 @@ public struct SnapshotCache<Image> {
             let list = entries[id] ?? []
             let kept = list.filter { item in
                 let age = now - item.capturedAt
-                guard let current, !snapshotSameSize(item.frame, current, tolerance: 2) else {
+                guard let current else {
                     if age > maxAge {
                         result.images[.age, default: 0] += 1
                         return false
                     }
+                    return true
+                }
+                if snapshotSameSize(item.frame, current, tolerance: 2) {
                     return true
                 }
                 if age > softAge {
@@ -392,9 +386,9 @@ public struct SnapshotCache<Image> {
 
     /// Memory pressure. SM-21: a warning is not a purge: every image of a
     /// window in `shown` (the shown workspaces' strips) or `adjacent` (the
-    /// workspaces next to them) stays; the other windows lose only images
-    /// no flight can use or would use second (another size than the
-    /// current one; without a current frame, any image past `maxAge`).
+    /// workspaces next to them) stays; the other windows lose their images of
+    /// another size than the current one and every image past `maxAge` (a
+    /// stale image could still fly, SM-24, but a warning trades it for memory).
     /// Critical: only the `shown` windows' images of their current size
     /// stay. Both keep the backdrops of the shown displays
     /// (`displayFrames`) and drop the others. Returns the images freed,
@@ -438,7 +432,7 @@ public struct SnapshotCache<Image> {
 
 /// Why `SnapshotCache.prune` dropped an image.
 public enum SnapshotPruneReason: String, CaseIterable, Sendable {
-    /// Older than the max age at the window's current size (or without one).
+    /// Older than the max age, of a window without a current frame.
     case age
     /// Another size than the window's current one, older than the soft age.
     case size

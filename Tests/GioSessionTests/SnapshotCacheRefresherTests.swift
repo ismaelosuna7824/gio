@@ -676,9 +676,10 @@ final class SnapshotCacheRefresherTests: XCTestCase {
 
     // MARK: Pruning, memory pressure, cap (SM-20)
 
-    /// A settle drops the images no flight can use (logged by reason); a
-    /// pruned hidden-workspace window is not captured again on the next
-    /// settles (no capture loop), the visible ones are.
+    /// A settle drops the images no flight can use (logged by reason) and
+    /// keeps old images of the current size (SM-24); a stale hidden-workspace
+    /// window is not captured again on the next settles (no capture loop),
+    /// the visible ones are.
     func testSettlePrunesWhatNoFlightCanUseAndNeverRecapturesItInALoop() throws {
         let adjacent = try XCTUnwrap(addWindows(1, workspace: 2).first)
         let hidden = try XCTUnwrap(addWindows(1, workspace: 3).first)
@@ -701,9 +702,9 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         scheduler.advance(by: 140)
         cache.schedule()
         scheduler.advance(by: 0.3)
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot cache pruned images=2 reason=age") })
-        XCTAssertNil(cache.cache.entry(hidden))
-        XCTAssertNil(cache.cache.entry(adjacent))
+        XCTAssertFalse(world.logs.contains { $0.1.hasSuffix("reason=age") }, "190 s, current size: kept")
+        XCTAssertNotNil(cache.flightImage(hidden, startFrame: fixture.physicalFrames[hidden], at: scheduler.now))
+        XCTAssertNotNil(cache.flightImage(adjacent, startFrame: fixture.physicalFrames[adjacent], at: scheduler.now))
         XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA, idB], "only the refresh set is captured again")
         completeAll()
         let captures = world.captures.count
@@ -711,13 +712,13 @@ final class SnapshotCacheRefresherTests: XCTestCase {
             cache.schedule()
             scheduler.advance(by: 0.3)
         }
-        XCTAssertEqual(world.captures.count, captures, "pruned hidden windows: no capture loop")
+        XCTAssertEqual(world.captures.count, captures, "stale hidden windows: no capture loop")
         XCTAssertEqual(scheduler.pendingCount, 0, "no timers at rest")
     }
 
-    /// A pruned hidden window is captured again once its workspace becomes
-    /// adjacent to the shown one.
-    func testAPrunedHiddenWindowIsCapturedAgainWhenItsWorkspaceBecomesAdjacent() throws {
+    /// A stale hidden window (SM-24: kept, it still flies) is captured
+    /// again once its workspace becomes adjacent to the shown one.
+    func testAStaleHiddenWindowIsCapturedAgainWhenItsWorkspaceBecomesAdjacent() throws {
         let second = try XCTUnwrap(addWindows(1, workspace: 2).first)
         let hidden = try XCTUnwrap(addWindows(1, workspace: 3).first)
         cache.schedule()
@@ -727,7 +728,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         cache.schedule()
         scheduler.advance(by: 0.3)
         completeAll()
-        XCTAssertNil(cache.cache.entry(hidden), "pruned")
+        XCTAssertNotNil(cache.cache.entry(hidden), "past the max age: kept")
 
         XCTAssertTrue(fixture.session.manager.switchTo(2))
         XCTAssertTrue(fixture.displays.assign(SessionFixture.display, workspace: fixture.session.manager.currentID))
@@ -854,9 +855,10 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     }
 
     /// SM-21 (live 21:41): strip windows beyond the visible and neighbour
-    /// columns that lost their image (here: pruned past the max age) are
-    /// captured again by the next settle although they were tried; no loop.
-    func testPrunedStripWindowsBeyondTheNeighbourColumnAreCapturedAgainAlthoughTried() throws {
+    /// columns whose image went stale (past the max age; SM-24: kept, it
+    /// still flies) are captured again by the next settle although they were
+    /// tried; no loop.
+    func testStaleStripWindowsBeyondTheNeighbourColumnAreCapturedAgainAlthoughTried() throws {
         let strip = try addWindows(3, workspace: 1)
         cache.schedule()
         scheduler.advance(by: 0.3)
@@ -866,7 +868,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         scheduler.advance(by: 190)
         cache.schedule()
         scheduler.advance(by: 0.3)
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot cache pruned images=5 reason=age") })
+        XCTAssertFalse(world.logs.contains { $0.1.hasSuffix("reason=age") }, "stale strip images are kept")
         XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), Set([idA, idB] + strip), "the whole strip")
         completeAll()
         let captures = world.captures.count

@@ -153,18 +153,6 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertNotNil(cache.backdrop(for: frame))
     }
 
-    func testEntryIsUsableWhileFreshAndTheSizeStillMatches() {
-        let entry = SnapshotCacheEntry(image: "a", frame: frame, capturedAt: 100, lastUsed: 100, pixels: 1)
-        XCTAssertTrue(snapshotEntryUsable(entry, currentFrame: frame.offsetBy(dx: 900, dy: 0), now: 130, maxAge: 60))
-        XCTAssertFalse(snapshotEntryUsable(entry, currentFrame: frame, now: 161, maxAge: 60))
-        XCTAssertFalse(snapshotEntryUsable(
-            entry, currentFrame: CGRect(x: 0, y: 0, width: 700, height: 600), now: 101, maxAge: 60
-        ))
-        XCTAssertTrue(snapshotEntryUsable(
-            entry, currentFrame: CGRect(x: 0, y: 0, width: 801, height: 599), now: 101, maxAge: 60
-        ))
-    }
-
     func testAgeInMillisecondsOfTheOldestUsedEntry() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "a", frame: frame, pixels: 1, at: 10)
@@ -197,12 +185,6 @@ final class SnapshotCacheTests: XCTestCase {
     }
 
     // MARK: SM-09 freshness, backdrop, blank guard, refresh selection
-
-    func testAgesAreBoringAndLarge() {
-        XCTAssertEqual(snapshotMaxAge, 180, "a usable image survives a pause between motions")
-        XCTAssertEqual(snapshotSoftAge, 30, "a settle re-captures only images older than this")
-        XCTAssertEqual(snapshotBackdropMaxAge, 300)
-    }
 
     func testBackdropIsKeyedByDisplayFrameWithItsAge() {
         var cache = SnapshotCache<String>()
@@ -347,8 +329,25 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertEqual(use?.entry.image, "s")
         XCTAssertEqual(use?.scaled, true)
         XCTAssertNil(cache.usableEntry(id(1), startFrame: maximized, now: 131), "older than the soft age: fall back")
-        XCTAssertEqual(cache.usableEntry(id(1), startFrame: frame, now: 131)?.scaled, false, "matching size: max age")
+        XCTAssertEqual(cache.usableEntry(id(1), startFrame: frame, now: 131)?.scaled, false, "matching size: any age")
         XCTAssertNil(cache.usableEntry(id(2), startFrame: frame, now: 101))
+    }
+
+    /// Live 2026-10-09 21:27: after a 3-4 min pause the images of the strip's
+    /// parked windows had expired (`pruned ... reason=age`); the next Alt+L
+    /// burst showed them through holes and fell back to the AX motion four
+    /// times. A parked window cannot be captured again, and an old picture of
+    /// the right size for 350 ms beats a hole or an AX slide.
+    func testAnImageOfTheCurrentSizeFliesWhateverItsAge() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "old", frame: frame, pixels: 1, at: 0)
+        let use = cache.usableEntry(id(1), startFrame: frame.offsetBy(dx: 1800, dy: 0), now: 3600)
+        XCTAssertEqual(use?.entry.image, "old")
+        XCTAssertEqual(use?.scaled, false)
+        XCTAssertEqual(cache.usableEntry(id(1), startFrame: nil, now: 3600)?.entry.image, "old", "no frame: the newest")
+        let pruned = cache.prune(now: 3600, currentFrame: { _ in self.frame }, displayFrames: [])
+        XCTAssertTrue(pruned.images.isEmpty, "a settle keeps it")
+        XCTAssertEqual(cache.entry(id(1))?.image, "old")
     }
 
     func testEnforceEvictsSecondSizesBeforeAnyWindowLosesItsOnlyImage() {
@@ -422,9 +421,10 @@ final class SnapshotCacheTests: XCTestCase {
     private let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
     private let goneDisplay = CGRect(x: 1800, y: 0, width: 1440, height: 900)
 
-    /// A settle drops exactly what no flight can use: an image of the
-    /// window's current size past the max age, one of another size past
-    /// the soft age (it only flies scaled), and backdrops of gone displays.
+    /// A settle drops exactly what no flight can use: an image of another
+    /// size past the soft age (it only flies scaled), an image of a window
+    /// without a frame past the max age, and backdrops of gone displays. An
+    /// image of the current size stays whatever its age (SM-24).
     func testPruneDropsOnlyImagesNoFlightCanUse() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "old", frame: frame, pixels: 10, at: 0)
@@ -438,14 +438,14 @@ final class SnapshotCacheTests: XCTestCase {
         cache.storeBackdrop(image: "gone", displayFrame: goneDisplay, pixels: 10, at: 0)
         let current: (WindowID) -> CGRect? = { [4, 5].contains($0.elementID) ? nil : self.frame }
         let pruned = cache.prune(now: 200, currentFrame: current, displayFrames: [display])
-        XCTAssertEqual(pruned.images, [.age: 2, .size: 1, .display: 1])
-        XCTAssertEqual(pruned.emptied, [id(1), id(4)])
+        XCTAssertEqual(pruned.images, [.age: 1, .size: 1, .display: 1])
+        XCTAssertEqual(pruned.emptied, [id(4)])
         XCTAssertEqual(pruned.logLines, [
-            "snapshot cache pruned images=2 reason=age",
+            "snapshot cache pruned images=1 reason=age",
             "snapshot cache pruned images=1 reason=size",
             "snapshot cache pruned images=1 reason=display",
         ])
-        XCTAssertNil(cache.entry(id(1)))
+        XCTAssertEqual(cache.entry(id(1))?.image, "old", "the current size, past the max age: still flies")
         XCTAssertEqual(cache.entries(of: id(2)).map(\.image), ["fresh"])
         XCTAssertEqual(Set(cache.entries(of: id(3)).map(\.image)), ["small", "max-new"])
         XCTAssertNil(cache.entry(id(4)))

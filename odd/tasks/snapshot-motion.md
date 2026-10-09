@@ -898,6 +898,36 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   flights without one (gio.log.1, before: 191/266); [INFERENCE] immediate retargets add main-thread work in
   bursts; the layers run on the render server, so a hitch is not a visible dropped frame by itself.
 
+- [ ] SM-24 — An image of the window's current size flies whatever its age.
+  Report (2026-10-09 21:29, "I think it happened again"). Log (`gio.log`, build with `241deda`): fine
+  21:21-21:24 (active); then 3-4 min with only typing in one window, `snapshot cache pruned images=4 reason=age`
+  (21:26:44) and `images=2 reason=age` (21:27:38); the next burst (21:27:41-45, Alt+1 then Alt+L/H across
+  the strip) logged `snapshot retarget uncovered ids=1..3` 9 times, `snapshot holes ids=1..2` 6 times and
+  `snapshot fallback reason=cache-miss ids=3..4` 4 times (`anim done ... renderer=ax`): parked strip windows
+  without images popped in through holes or moved live through AX. A parked window cannot be captured again,
+  so the age rule turned every idle pause past 180 s into holes (SM-09 had predicted "an idle pause over 180 s
+  still falls back once"); the first settle after the burst (21:27:45.921) captured 7 windows.
+  Decision (relax, no new state): `snapshotMaxAge` only marks an image stale. `usableEntry` returns the newest
+  image of the start size at any age (another size still only within `snapshotSoftAge`, scaled); `prune` keeps
+  current-size images (age prunes only images of a window without a frame); strip selection still re-captures
+  stale strip images; coverage treats a stale hidden image like a missing one (`lacksFreshImage`, once until
+  its workspace comes near, as a pruned one was); a memory-pressure warning still drops stale images of
+  non-shown, non-adjacent workspaces. Tradeoff: a window not captured for a long time slides with old content
+  for ~350 ms, then the real window shows. Removed: `snapshotEntryUsable` (no caller outside its test).
+  RED (observed): `SnapshotCacheTests.testAnImageOfTheCurrentSizeFliesWhateverItsAge` (nil at 3600 s, pruned).
+  Re-pinned to the decision: `testPruneDropsOnlyImagesNoFlightCanUse` (id 1 kept, `.age` 1),
+  `SnapshotCacheRefresherTests.testSettlePrunesWhatNoFlightCanUseAndNeverRecapturesItInALoop` (stale hidden
+  and adjacent images kept and flyable, no loop), `testAStaleHiddenWindowIsCapturedAgainWhenItsWorkspaceBecomesAdjacent`
+  (was `testAPrunedHidden...`), `testStaleStripWindowsBeyondTheNeighbourColumnAreCapturedAgainAlthoughTried`
+  (was `testPrunedStrip...`). Deleted (constant/removed-function pins): `testEntryIsUsableWhileFreshAndTheSizeStillMatches`,
+  `testAgesAreBoringAndLarge`.
+  GREEN: full `swift test`: GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 83, GioCoreTests 1654, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean.
+  LIVE PENDING: idle 4+ min (typing in one window is fine), then Alt+L/H across the whole strip and Alt+1/2:
+  no `snapshot fallback reason=cache-miss`, `snapshot holes` only for windows never captured, no
+  `snapshot cache pruned ... reason=age`.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.

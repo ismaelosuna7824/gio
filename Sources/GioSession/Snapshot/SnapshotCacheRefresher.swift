@@ -56,15 +56,16 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 /// parked is not retried before it is visible. SM-13: under the cap the
 /// images of windows away from the screen go first; once an eviction ran,
 /// coverage stops (logged once) until a window leaves the cache. SM-20:
-/// every settle run first prunes the images no flight can use (past the max
-/// age at the current size, another size past the soft age, backdrops of
-/// gone displays); a pruned hidden-workspace window is captured again only
-/// when its workspace becomes adjacent to a shown one (the visible and
-/// adjacent windows keep their freshness rules). System memory pressure
+/// every settle run first prunes the images no flight can use (another size
+/// past the soft age, a window without a frame past the max age, backdrops of
+/// gone displays; SM-24: an image of the current size stays whatever its
+/// age). A hidden-workspace window whose image is missing or stale is
+/// captured again when its workspace becomes adjacent to a shown one (the
+/// visible and adjacent windows keep their freshness rules). System memory pressure
 /// (`noteMemoryPressure`, event-driven) drops more. SM-21: the shown strips
 /// (every tiled, non-minimized window of every shown workspace, all
 /// columns) are always covered: a settle run captures each strip window
-/// without a usable image of its current size, tried or not (staged, each
+/// without a fresh image of its current size, tried or not (staged, each
 /// window once per settle), pressure never drops their current-size
 /// images, the cap never evicts them, and pressure back to normal starts
 /// one recovery run. SM-22: the shown strips are captured at full
@@ -564,18 +565,29 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         }
     }
 
-    /// SM-11: some covered window has no image and was not tried yet
-    /// (SM-13: and the cap still has room for coverage). SM-21: or some
-    /// strip window lacks a usable current-size image and was not asked
-    /// for in this pass (the cap never stops the strip).
+    /// SM-11: some covered window has no image (SM-24: or only a stale one)
+    /// and was not tried yet (SM-13: and the cap still has room for
+    /// coverage). SM-21: or some strip window lacks a usable current-size
+    /// image and was not asked for in this pass (the cap never stops the strip).
     private func coverageDue() -> Bool {
         let stripDue = !snapshotStripSelection(
             cache: cache, strip: coverageStrip().filter { !stripPass.contains($0.id) }, dirty: [:],
             excluded: parkedMisses, now: context.now()
         ).isEmpty
+        let now = context.now()
         return stripDue || (!coverageStopped && coverageSet().contains {
-            cache.entry($0.id) == nil && !tried.contains($0.id) && !parkedMisses.contains($0.id)
+            lacksFreshImage($0.id, now: now) && !tried.contains($0.id) && !parkedMisses.contains($0.id)
         })
+    }
+
+    /// SM-24: an image past the max age still flies, so nothing prunes it;
+    /// coverage treats it like a missing one (once per window until its
+    /// workspace comes near again, as a pruned image used to be).
+    private func lacksFreshImage(_ id: WindowID, now: TimeInterval) -> Bool {
+        guard let entry = cache.entry(id) else {
+            return true
+        }
+        return now - entry.capturedAt > snapshotMaxAge
     }
 
     /// Every managed window that can fly, with its frame: left out of each
@@ -649,12 +661,12 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         // excluded), after the refresh set.
         let strip = coverageStrip().filter { !refreshIDs.contains($0.id) && (full || dirty[$0.id] != nil) }
         let stripIDs = Set(strip.map(\.id))
-        // SM-11 coverage: the other workspaces' windows without an image
-        // (once each) and the dirty ones, after the strips.
+        // SM-11 coverage: the other workspaces' windows without a fresh
+        // image (once each) and the dirty ones, after the strips.
         let extra = coverage.filter { item in
             !refreshIDs.contains(item.id) && !stripIDs.contains(item.id) && !parkedMisses.contains(item.id)
                 && (dirty[item.id] != nil
-                    || (full && !coverageStopped && cache.entry(item.id) == nil && !tried.contains(item.id)))
+                    || (full && !coverageStopped && lacksFreshImage(item.id, now: now) && !tried.contains(item.id)))
         }.map { (id: $0.id, frame: $0.frame) }
         // SM-21: a coverage stage does not ask again for a window this
         // pass already asked for (unless it is dirty again).
@@ -711,8 +723,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// SM-20: the system reports memory pressure (a `DispatchSource`
     /// memory-pressure event, delivered on the session queue; no timer).
     /// SM-21: a warning is not a purge: the shown and adjacent workspaces
-    /// keep every image, the others lose only unusable or other-size
-    /// images; critical keeps only the shown strips' current-size images.
+    /// keep every image, the others lose stale or other-size images;
+    /// critical keeps only the shown strips' current-size images.
     /// Both keep the backdrops of the shown displays. Dropped hidden
     /// windows stay tried: coverage does not bring them back before their
     /// workspace becomes adjacent. Normal after a warning or critical
