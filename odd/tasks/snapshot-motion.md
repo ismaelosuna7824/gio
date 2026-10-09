@@ -898,7 +898,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   flights without one (gio.log.1, before: 191/266); [INFERENCE] immediate retargets add main-thread work in
   bursts; the layers run on the render server, so a hitch is not a visible dropped frame by itself.
 
-- [ ] SM-24 — An image of the window's current size flies whatever its age.
+- [x] SM-24 (`123de82`) — An image of the window's current size flies whatever its age.
   Report (2026-10-09 21:29, "I think it happened again"). Log (`gio.log`, build with `241deda`): fine
   21:21-21:24 (active); then 3-4 min with only typing in one window, `snapshot cache pruned images=4 reason=age`
   (21:26:44) and `images=2 reason=age` (21:27:38); the next burst (21:27:41-45, Alt+1 then Alt+L/H across
