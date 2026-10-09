@@ -299,7 +299,7 @@ final class SnapshotFlightTests: XCTestCase {
     /// A key press during the prime leaves a coalesced request behind; the
     /// deferred writes (the host's instant pass stops the AX motion, which
     /// resets the coalescer) must not swallow it: the flight retargets to
-    /// the newest layout shortly after the fly.
+    /// the newest layout right after the fly.
     func testACoalescedReflowSurvivesTheDeferredWrites() {
         refresh([idA: a, idB: b])
         let (animation, plan) = slide(idA, from: a, by: 100)
@@ -313,16 +313,15 @@ final class SnapshotFlightTests: XCTestCase {
             },
             fallback: { overlay.events.append("fallback") }
         )
-        // The press arrived while priming: request coalesced, retarget scheduled.
+        // Main's prime report is queued first; the press that arrived while
+        // priming coalesced its request and queued the retarget behind it.
+        flight.primed(1, ok: true)
         world.coalesced = true
         flight.scheduleReflow()
 
-        flight.primed(1, ok: true)
         scheduler.runPending()
         XCTAssertEqual(overlay.events, ["prime:1", "writes", "fly:1"])
-        XCTAssertTrue(world.coalesced, "the request is put back after the writes")
-        scheduler.advance(by: SnapshotFlightController.retargetDelay)
-        XCTAssertEqual(world.reflows, 1, "the merged retarget runs on the newest layout")
+        XCTAssertEqual(world.reflows, 1, "the request is put back after the writes and retargets at once")
         XCTAssertFalse(world.coalesced)
     }
 
@@ -801,16 +800,18 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(world.logs.last { $0.1.hasPrefix("snapshot handoff") }?.1, "snapshot handoff waited ms=0 windows=0 painted=0")
     }
 
-    func testBurstDuringFlightMergesIntoOneReflow() {
+    /// Keys already queued merge into one retarget, and it runs on the next
+    /// turn of the session queue: no fixed wait between a key and its motion.
+    func testBurstDuringFlightRetargetsAtOnceInOneReflow() {
         world.coalesced = true
         flight.scheduleReflow()
         flight.scheduleReflow()
         XCTAssertEqual(scheduler.pendingCount, 1)
-        scheduler.advance(by: SnapshotFlightController.retargetDelay)
+        scheduler.runPending()
         XCTAssertEqual(world.reflows, 1)
         // Nothing coalesced: no reflow.
         flight.scheduleReflow()
-        scheduler.advance(by: SnapshotFlightController.retargetDelay)
+        scheduler.runPending()
         XCTAssertEqual(world.reflows, 1)
         XCTAssertEqual(scheduler.pendingCount, 0)
     }

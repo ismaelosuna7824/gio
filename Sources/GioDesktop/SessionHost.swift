@@ -1233,7 +1233,7 @@ final class SessionHost: @unchecked Sendable {
             if reflowCoalescer.request(motionActive: motion.isActive || flying) == .runNow {
                 performReflow()
             } else if flying {
-                // An overlay flight has no tick: one merged retarget shortly after the burst.
+                // An overlay flight has no tick: one merged retarget on the next queue turn.
                 overlayFlight.scheduleReflow()
             }
         case .poll(let delay):

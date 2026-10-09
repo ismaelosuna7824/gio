@@ -154,9 +154,6 @@ public final class SnapshotFlightController: @unchecked Sendable {
         }
     }
 
-    /// An overlay flight has no tick: one merged retarget shortly after a burst.
-    public static let retargetDelay: TimeInterval = 0.03
-
     private let context: Context
     private let scheduler: SessionScheduler
     private let cache: SnapshotCacheRefresher
@@ -208,13 +205,16 @@ public final class SnapshotFlightController: @unchecked Sendable {
         windows
     }
 
-    /// Rapid actions during a flight: one merged retarget shortly after.
+    /// Rapid actions during a flight: one merged retarget on the next turn
+    /// of the session queue. Keys already queued merge into it; none waits a
+    /// fixed delay (a 30 ms hold here added that much to every key pressed
+    /// while the overlay was up).
     public func scheduleReflow() {
         guard !reflowScheduled else {
             return
         }
         reflowScheduled = true
-        scheduler.asyncAfter(Self.retargetDelay) { [weak self] in
+        scheduler.async { [weak self] in
             guard let self else {
                 return
             }

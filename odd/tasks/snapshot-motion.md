@@ -869,6 +869,31 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   for the settle after a switch; no `snapshot coverage stopped`; `snapshot cache ... pixels=P backdropPixels=B`
   near the estimate above and under `snapshot cache cap pixels=N`.
 
+- [ ] SM-23 — No fixed wait before a retarget; log lines stamped to the millisecond.
+  Report (2026-10-09): "a small delay on each focus change, the motion looks slightly stuck". Not
+  reproduced: the log's one-second timestamps cannot show the latency between a key and its motion.
+  1. `SnapshotFlightController.scheduleReflow` retargets on the next turn of the session queue
+     (`scheduler.async`) instead of after `retargetDelay` (30 ms, removed). Keys already queued still merge
+     into one retarget (`reflowScheduled`, `takeCoalescedReflow`); every key pressed while the overlay was up
+     (flight or SM-14 hold) no longer waits 30 ms. [INFERENCE] the hold was perceptible on bursts; unproven
+     until the live latency is read from the new timestamps.
+  2. `GioLog` stamps each line to the millisecond (`2026-10-09T01:10:15.123Z`; the second's text stays
+     cached, only the milliseconds are formatted per line). `parseLogTimestamp` (GioUI) reads both forms, so
+     the Logs section keeps relative times for older files.
+  3. Intermediate focus during a burst: no change. SM-12 already lets only the newest intent focus
+     (`DispatchFocusBook`; `WriteLaneTests.testAnOlderFocusNeverLandsAfterANewerOne`,
+     `testCollectNeverRunsAnOlderFocusOverANewerOne`). The remaining intermediate activations are keys whose
+     lane focused before the next key arrived; skipping them would delay the keyboard focus (against FI-06).
+  RED (observed): `SnapshotFlightTests.testBurstDuringFlightRetargetsAtOnceInOneReflow` (reflows 0, pending 1)
+  and `testACoalescedReflowSurvivesTheDeferredWrites` (reflows 0) with the 30 ms hold;
+  `GioLogTests.testALineIsStampedToTheMillisecond` (`2026-10-09T21:17:17Z`); `AdvancedPresentationTests.testRelativeTimes`
+  (nil for a fractional stamp).
+  GREEN: full `swift test`: GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 83, GioCoreTests 1655, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean.
+  LIVE PENDING: with `[logging] level = "debug"`, rapid Alt+H/L: the gap from each `hotkey` line to the next
+  `reconcile dispatched` line (key to retarget on the session queue) and whether bursts feel smoother.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.
