@@ -495,6 +495,47 @@ Inferred (not proven):
   - Alt+O on each display (focused window there; empty workspace with the cursor there).
   - Menu bar **Move Window to Display**, `> move-window-to-display N`, `Ctrl+Alt+Cmd+H/L`.
 
+## MM-05 — No minimum sizes learned across a display change
+
+### Report
+"The focus animation feels off: a small delay on each focus change, the motion looks slightly
+stuck, and sometimes windows move or rearrange when they should not."
+
+### Cause (from `~/.config/gio/gio.log.1`, 2026-10-09)
+- 00:53:48, display change (`layout instant reason=displays`): workspace 7 came to the built-in
+  (1800 pt). Its pass asked Slack `1440:2` and OrbStack `22787:9` for 888 pt; both stayed at the
+  1068 pt of the external display's columns (`frameMismatch requested=(8,8,888,1114)
+  actual=(8,8,1068,1114)`), and FI-02 logged `min size learned ... w=1068` for both. The book
+  only grows and lives for the session, so those columns stayed 1068 wide.
+- With `center-focused-column = "on-overflow"`, a 1068 column and an 888 one span 1964 > 1800, so
+  every focus change between them centers the target: the whole strip slides on each key.
+  Throwaway check (deleted): four 888 columns on 1800, focus 1,0,1,0 with `planDisplayLayout`:
+  offsets `[0, 0, 0, 0]`; with a learned 1068 on the first column: `[628, 0, 628, 0]`.
+
+### Decision
+- A pass placed for a display change teaches no minimum (`MinimumSizeBook.learn(from:placement:)`,
+  `placement == .instant(.displays)` returns nothing). macOS and the apps re-place windows across a
+  reconfiguration, so a size that did not land then says nothing about a minimum. A real minimum
+  fails again in the next pass and is learned there (one extra failed write, bounded).
+- No new state: `SessionHost` hands the pass's `InstantPlacementDecision` it already computed to
+  `instantPass` and `foldSettle`; passes collected after an overlay flight are `.animate`.
+
+### Tasks
+- [ ] MM-05 — `MinimumSizeBook.learn(from:placement:)`, `SessionHost.instantPass` /
+  `foldSettle` / `learnMinimumSizes`, `docs/ARCHITECTURE.md` (Learned minimum sizes),
+  `docs/TESTING.md` (`min size learned` row), this file.
+
+### Evidence
+- RED by compilation: `MinimumSizeTests.testDisplayChangePassTeachesNoMinimum` (extra argument
+  `placement`).
+- GREEN: `swift test`, all bundles 0 failures: GioUITests 306 (53 skipped), GioSessionTests 393,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 83, GioCoreTests 1654. Signed `xcodebuild` BUILD
+  SUCCEEDED. `git diff --check` clean.
+- LIVE PENDING: with Gio running, move a workspace between displays of different column widths
+  (or plug/unplug the external): no `min size learned` in the pass after `layout instant
+  reason=displays`; Alt+H/L between two columns that fit together moves nothing.
+- Not addressed here (report part 1, the per-key delay): see the issue triage; not reproduced.
+
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
   live check pending.

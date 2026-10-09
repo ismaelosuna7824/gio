@@ -1114,8 +1114,8 @@ final class SessionHost: @unchecked Sendable {
     /// FI-02: a write that landed larger than asked teaches the layout that
     /// window's minimum; relayout once so neighbours make room instead of
     /// being overlapped. Bounded: only a strictly larger minimum triggers it.
-    private func learnMinimumSizes(from report: ReconcileReport) {
-        let changed = minimumSizes.learn(from: report)
+    private func learnMinimumSizes(from report: ReconcileReport, placement: InstantPlacementDecision) {
+        let changed = minimumSizes.learn(from: report, placement: placement)
         guard !changed.isEmpty else {
             return
         }
@@ -1387,7 +1387,9 @@ final class SessionHost: @unchecked Sendable {
                 // its own motion.
                 motion.stop()
                 overlayFlight.deferPass(
-                    writes: { [unowned self] in instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: true, reconciler: reconciler) },
+                    writes: { [unowned self] in
+                        instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: true, placement: placement, reconciler: reconciler)
+                    },
                     fallback: { [unowned self] in
                         axMotionPass(
                             animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
@@ -1408,7 +1410,7 @@ final class SessionHost: @unchecked Sendable {
             )
             return
         }
-        instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: snapshotFlight, reconciler: reconciler)
+        instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: snapshotFlight, placement: placement, reconciler: reconciler)
     }
 
     /// The AX renderer: pre-positions, then the motion driver writes every
@@ -1452,7 +1454,7 @@ final class SessionHost: @unchecked Sendable {
     /// write under a snapshot overlay).
     private func instantPass(
         plans: [ParkingPlan], zoomJob: NativeZoomController.Job?, snapshotFlight: Bool,
-        reconciler: WindowReconciler<AXWindowActuator>
+        placement: InstantPlacementDecision, reconciler: WindowReconciler<AXWindowActuator>
     ) {
         motion.stop()
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
@@ -1485,7 +1487,7 @@ final class SessionHost: @unchecked Sendable {
                 focused: planFocus, currentlyFocused: nil,
                 trusted: trustedFrames
             )
-            foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus)
+            foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus, placement: placement)
             zoomWriteFailures.formUnion(report.failed)
             deferred += report.deferred
         }
@@ -1553,7 +1555,10 @@ final class SessionHost: @unchecked Sendable {
         var deferred: [WindowID] = []
         for entry in passes {
             let report = reconciler.collect(entry.pass)
-            foldSettle(report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget)
+            // Passes dispatched under an overlay belong to an animated pass.
+            foldSettle(
+                report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget, placement: .animate
+            )
             failures.formUnion(report.failed)
             deferred += report.deferred
         }
@@ -1565,14 +1570,14 @@ final class SessionHost: @unchecked Sendable {
     /// render-check candidates.
     private func foldSettle(
         _ report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
-        focusTarget: WindowID?
+        focusTarget: WindowID?, placement: InstantPlacementDecision
     ) {
         // PF-I: a refused focus is logged by the reconciler, with its reason,
         // once per window per minute (one fails per key press onto it).
         if let focusTarget, report.focusChanged {
             GioLog.record(.debug, "focus intent id=\(focusTarget.pid):\(focusTarget.elementID) changed=true")
         }
-        learnMinimumSizes(from: report)
+        learnMinimumSizes(from: report, placement: placement)
         GioLog.record(
             .debug,
             "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"

@@ -69,7 +69,17 @@ public struct MinimumSizeBook: Equatable, Sendable {
 
     /// Learn from every landing mismatch of a reconcile pass. Returns the
     /// windows whose minimum grew, so the host can log and relayout.
-    public mutating func learn(from report: ReconcileReport) -> [WindowID: CGSize] {
+    /// A pass placed for a display change (`placement` is
+    /// `.instant(.displays)`) teaches nothing: macOS and the apps re-place
+    /// windows across a reconfiguration themselves, so a size that did not
+    /// land then is no evidence of a minimum (live: Slack and OrbStack kept
+    /// their 1068 from the other display and were learned 1068 wide for the
+    /// session). A real minimum fails again in the next pass and is learned
+    /// there.
+    public mutating func learn(from report: ReconcileReport, placement: InstantPlacementDecision) -> [WindowID: CGSize] {
+        guard placement != .instant(.displays) else {
+            return [:]
+        }
         var changed: [WindowID: CGSize] = [:]
         for id in report.failed.sorted() {
             guard let failure = report.failures[id], failure.kind == ReconcileFailure.frameMismatchKind,

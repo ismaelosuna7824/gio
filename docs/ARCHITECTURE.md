@@ -185,6 +185,8 @@ Apps clamp to an unpublished minimum size (asked 440 wide, got 500) and Accessib
 
 The first pass may fail once (`min size learned` is logged and one relayout is scheduled); the next pass lays the window out at its real size, so the write counts as already correct and `failed` returns to 0. Learning only ever raises a minimum, which bounds retries.
 
+A pass placed for a display change (`layout instant reason=displays`) teaches nothing (`MinimumSizeBook.learn(from:placement:)`): macOS and the apps re-place windows across a reconfiguration themselves, so a size that did not land then is no evidence. Live, Slack and OrbStack kept the 1068 pt width of the other display's columns in that pass and were learned 1068 wide for the session, so on a 1800 pt screen no column pair holding them fit and every focus change re-centered the strip. A real minimum fails again in the next pass and is learned there.
+
 ### Reveal and scroll
 
 The focused column is always revealed by the smallest possible scroll (`revealOffset` with `Viewport.ensureVisible`) that keeps the layout `padding` between the column and the screen edge, like the strip's own ends (PF-H): a column scrolled in from the right stops `padding` short of the right edge, and a maximized column (`Alt+F`, width = viewport minus twice the padding) lands exactly between both paddings. A column too wide for the padding, or wider than the viewport, pins to its start. Offsets are clamped to `[0, contentWidth - viewportWidth]`. Center-column (`Alt+C`) sets the offset so the focused column is centered, clamped at the strip edges.

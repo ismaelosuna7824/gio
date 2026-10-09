@@ -106,9 +106,33 @@ final class MinimumSizeTests: XCTestCase {
                 id(2): ReconcileFailure(kind: "timeout", requested: requested, actual: actual),
             ]
         )
-        let changed = book.learn(from: report)
+        let changed = book.learn(from: report, placement: .animate)
         XCTAssertEqual(changed, [id(1): CGSize(width: 500, height: 0)])
         XCTAssertNil(book.size(of: id(2)))
+    }
+
+    /// Live (2026-10-09): Slack and OrbStack were written from 1068 to 888
+    /// in the pass after a display change, landed at 1068 and were learned
+    /// as 1068 wide for the session; every column pair holding them then
+    /// overflowed the screen and each focus change re-centered the strip.
+    func testDisplayChangePassTeachesNoMinimum() {
+        let report = ReconcileReport(
+            failed: [id(1)],
+            failures: [
+                id(1): ReconcileFailure(
+                    kind: "frameMismatch", requested: CGRect(x: 8, y: 8, width: 888, height: 1114),
+                    actual: CGRect(x: 8, y: 8, width: 1068, height: 1114)
+                ),
+            ]
+        )
+        var book = MinimumSizeBook()
+        XCTAssertTrue(book.learn(from: report, placement: .instant(.displays)).isEmpty)
+        XCTAssertNil(book.size(of: id(1)))
+        // The same clamp in any other pass is still evidence.
+        for placement in [InstantPlacementDecision.animate, .instant(nil), .instant(.startup), .instant(.mouse)] {
+            var other = MinimumSizeBook()
+            XCTAssertEqual(other.learn(from: report, placement: placement), [id(1): CGSize(width: 1068, height: 0)])
+        }
     }
 
     // MARK: Layout
@@ -234,7 +258,7 @@ final class MinimumSizeTests: XCTestCase {
 
         let first = try pass()
         XCTAssertEqual(first.failed, [id(1)])
-        XCTAssertEqual(book.learn(from: first).keys.sorted(), [id(1)])
+        XCTAssertEqual(book.learn(from: first, placement: .instant(nil)).keys.sorted(), [id(1)])
 
         let second = try pass()
         XCTAssertTrue(second.failed.isEmpty)
@@ -248,6 +272,6 @@ final class MinimumSizeTests: XCTestCase {
         XCTAssertTrue(third.failed.isEmpty)
         XCTAssertEqual(third.alreadyCorrect.count, 2)
         XCTAssertEqual(actuator.sets, writesBefore)
-        XCTAssertTrue(book.learn(from: third).isEmpty)
+        XCTAssertTrue(book.learn(from: third, placement: .instant(nil)).isEmpty)
     }
 }
