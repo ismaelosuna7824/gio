@@ -18,7 +18,7 @@ Instructions for AI coding agents working on Gio, a Niri-style scrollable tiling
 | `odd/tasks/*.md` | Feature documents: decisions, task IDs, commit hashes, evidence. |
 | `docs/` | Architecture, testing, user guide, contributing. |
 | `Gio.xcodeproj`, `Gio.xcworkspace` | Signed app project (scheme `Gio`) and helper schemes (`gio-poc-list`, `gio-poc-tile`, `gio-poc-restore`, `gio-doctor`). |
-| `Resources/` | App icon: the artwork `AppIcon-source.jpeg`, the asset catalog built from it (`Assets.xcassets/AppIcon.appiconset`, bundled by the Xcode `Gio` target) and `make-app-icon.swift`, which fits the artwork to the macOS icon grid and writes every size (`swift Resources/make-app-icon.swift`). Replace the artwork and rerun; never edit the PNGs. |
+| `Resources/` | App icon: `AppIcon.icon`, an Icon Composer document (layers and `icon.json`) bundled by the Xcode `Gio` target; actool compiles it into `Assets.car` and `AppIcon.icns` (`ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`). Edit it in Icon Composer and replace the folder; `applyBundleAppIcon()` (GioUI) hands the Dock the bundle's `AppIcon` at launch and whenever the window shows, to bypass a stale icon cache. |
 
 ## Commands
 

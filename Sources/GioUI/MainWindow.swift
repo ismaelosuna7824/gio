@@ -31,6 +31,21 @@ public enum MainSection: String, CaseIterable, Identifiable, Sendable {
 
 /// The Dock icon and Cmd+Tab entry exist only while the main window is
 /// visible; hidden, Gio is a pure menu-bar agent again.
+/// The Dock draws the icon its cache holds for this bundle path, which can
+/// be stale after a rebuild or an icon change (live: an earlier icon after
+/// switching to `AppIcon.icon`). Hand it the icon compiled into this build,
+/// at launch and every time the Dock tile appears (the policy turns
+/// regular), since a tile created later can come from the cache again.
+@MainActor
+public func applyBundleAppIcon() {
+    if let icon = bundleAppIcon {
+        NSApplication.shared.applicationIconImage = icon
+    }
+}
+
+@MainActor
+private let bundleAppIcon: NSImage? = Bundle.main.image(forResource: "AppIcon")
+
 public func desiredActivationPolicy(windowVisible: Bool) -> NSApplication.ActivationPolicy {
     windowVisible ? .regular : .accessory
 }
@@ -215,6 +230,7 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
             window = makeWindow()
         }
         NSApplication.shared.setActivationPolicy(desiredActivationPolicy(windowVisible: true))
+        applyBundleAppIcon()
         if #available(macOS 14.0, *) {
             NSApplication.shared.activate()
         } else {

@@ -13,7 +13,7 @@
 		A00000000000000000000059 /* GioMacOS in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000057 /* GioMacOS */; };
 		A00000000000000000000060 /* GioUI in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000058 /* GioUI */; };
 		A00000000000000000000073 /* GioSession in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000072 /* GioSession */; };
-		A00000000000000000000075 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000074 /* Assets.xcassets */; };
+		A00000000000000000000075 /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000074 /* AppIcon.icon */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -26,7 +26,7 @@
 		A00000000000000000000047 /* LauncherWindow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LauncherWindow.swift; sourceTree = "<group>"; };
 		A00000000000000000000048 /* MenuBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBar.swift; sourceTree = "<group>"; };
 		A00000000000000000000071 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
-		A00000000000000000000074 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		A00000000000000000000074 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -66,7 +66,7 @@
 		A00000000000000000000076 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				A00000000000000000000074 /* Assets.xcassets */,
+				A00000000000000000000074 /* AppIcon.icon */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -160,7 +160,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				A00000000000000000000075 /* Assets.xcassets in Resources */,
+				A00000000000000000000075 /* AppIcon.icon in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
