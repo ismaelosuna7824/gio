@@ -44,16 +44,16 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
 - [x] NC-06 (`021c6bc`) — Hide inactive workspaces: windows of non-active workspaces park off-screen
   (corner/edge, display-aware), restore on switch back and on Gio exit.
 - [x] NC-07 (`fba8058`) — Animated workspace switch using the MO-04 player.
-- [ ] NC-08 (uncommitted) — Window heights in a stacked column: `switch-preset-window-height`
+- [ ] NC-08 (`e564c8d`) — Window heights in a stacked column: `switch-preset-window-height`
   (Alt+Shift+R) over new `layout.preset-window-heights` (default 1/3, 1/2, 2/3 of the usable
   height, same proportion/points rule as widths), `set-window-height-minus/plus`
   (Alt+Shift+Minus/Equal, ±10%), `reset-window-height` (Ctrl+Alt+R, equal shares); Settings >
   Layout > Window Height (same chips as the widths).
-- [ ] NC-09 (uncommitted) — Column navigation: `focus-column-first/last` (Alt+Home/End),
+- [ ] NC-09 (`e564c8d`) — Column navigation: `focus-column-first/last` (Alt+Home/End),
   `move-column-to-first/last` (Ctrl+Alt+Home/End), `swap-window-left/right` (unbound).
-- [ ] NC-10 (uncommitted) — `move-column-to-workspace N` (Ctrl+Alt+1..9) and
+- [ ] NC-10 (`e564c8d`) — `move-column-to-workspace N` (Ctrl+Alt+1..9) and
   `move-column-to-workspace-down/up` (Ctrl+Alt+U/I): the whole column, focus follows.
-- [ ] NC-11 (uncommitted) — `focus-workspace-previous` (unbound; per-display history) and
+- [ ] NC-11 (`e564c8d`) — `focus-workspace-previous` (unbound; per-display history) and
   `move-workspace-down/up` (Ctrl+Alt+Shift+U/I; named workspaces refused and logged).
 
 Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
@@ -149,4 +149,5 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: NC-01..NC-05 done. Next: NC-06..NC-07 (route: delegated writer).
 - 2026-09-29: NC-06 + NC-07 done. All tasks code-complete. Next: user live test.
 - 2026-09-29: user live feedback "si parece mejor". Feature closed; next work in odd/tasks/desktop-app.md.
-- 2026-10-08: NC-08..NC-11 code-complete (uncommitted, parent commits). LIVE PENDING.
+- 2026-10-08: NC-08..NC-11 code-complete (`e564c8d`, parent commits). LIVE PENDING.
+- 2026-10-09: NC-08..NC-11 committed as `e564c8d` and pushed to `main`. LIVE PENDING (TESTING.md 7b).

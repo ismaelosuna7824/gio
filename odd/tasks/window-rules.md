@@ -77,18 +77,18 @@ inline `(?...)`, TOML escape sequences in strings (the parser keeps strings verb
   one display or when the rule already has one.
 
 ## Tasks
-- [ ] WR-01 (uncommitted) — `title` matcher (`TitlePattern`, AND with app/bundle-id, title-only
+- [ ] WR-01 (`e564c8d`) — `title` matcher (`TitlePattern`, AND with app/bundle-id, title-only
   rules) and the one empty-title re-check (`TitleRecheckBook`, `titleRecheckOutcome`,
   `applyTitleRecheck`, `DiscoveryService.titleChanged` from `WindowEventRouter`).
-- [ ] WR-02 (uncommitted) — Parser for every new key (`buildRule`), patcher rendering
+- [ ] WR-02 (`e564c8d`) — Parser for every new key (`buildRule`), patcher rendering
   (`renderRule`, title-only rules write no `app`), template comment block.
-- [ ] WR-03 (uncommitted) — `default-column-width` and `open-maximized` shape the arrival column
+- [ ] WR-03 (`e564c8d`) — `default-column-width` and `open-maximized` shape the arrival column
   (`placeArrival`, also used by the pure `placeWindow` pipeline).
-- [ ] WR-04 (uncommitted) — `open-on-display` (`display(numbered:)`, `ruleDestination`) and
+- [ ] WR-04 (`e564c8d`) — `open-on-display` (`display(numbered:)`, `ruleDestination`) and
   `open-focused` (`arrivalTakesFocus`, no follow).
-- [ ] WR-05 (uncommitted) — `min-width` / `max-width` (`ColumnWidthLimits`, engine clamp, reload
+- [ ] WR-05 (`e564c8d`) — `min-width` / `max-width` (`ColumnWidthLimits`, engine clamp, reload
   refresh).
-- [ ] WR-06 (uncommitted) — Settings > Rules: rows and editor for every key, form round trips;
+- [ ] WR-06 (`e564c8d`) — Settings > Rules: rows and editor for every key, form round trips;
   Workspaces section leaves title rules alone.
 
 ## Evidence
@@ -132,3 +132,4 @@ docs-separated pair) is the practical split. Not committed by this task.
 - 2026-10-08: WR-01..WR-06 implemented, tested and documented (USER_GUIDE window rules table and
   Rules row, TESTING live row 8b + log line + Known limitations fix, ARCHITECTURE registration
   step, CONTRIBUTING rule recipe, config template); uncommitted; live checks pending.
+- 2026-10-09: WR-01..WR-06 committed as `e564c8d` and pushed to `main`. LIVE PENDING.

@@ -425,7 +425,7 @@ Inferred (not proven):
   hidden with one display). The config template's example moved to `Ctrl+Alt+Shift+Cmd+L`.
 
 ### Tasks
-- [x] MM-04 — Live repair. Not committed (working tree, per the session's instruction); LIVE PENDING.
+- [x] MM-04 (`e564c8d`) — Live repair. LIVE PENDING.
   - [x] 1. Instrumentation: `GioCore/Display/DisplayLog.swift` (`DisplayLogEntry`,
     `displayConfigurationLog`, `displayFlipLogLine`), `GioMacOS/Displays/DisplayList.swift`
     (`DisplaySnapshot.scale/refreshRate`), `DiscoveryService.syncDisplays` (`logDisplays`).
@@ -501,3 +501,4 @@ Inferred (not proven):
 - 2026-10-08: committed as `ecfd426` and pushed to `main`; still not tested on real displays.
 - 2026-10-08: MM-04 (live repair after the first two-display session) implemented and verified
   automatically; not committed; live check pending.
+- 2026-10-09: MM-04 committed as `e564c8d` and pushed to `main`. LIVE PENDING: hot-plug while running, the 2160x1440 left/above arrangement, Alt+O per display, Move Window to Display.

@@ -28,21 +28,21 @@ separate section (UP-xx).
 - Never push tags or create releases from an agent session.
 
 ## Tasks
-- [ ] RL-01 (uncommitted) — One version source: `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`/`GIO_UPDATE_REPOSITORY`
+- [ ] RL-01 (`e564c8d`) — One version source: `MARKETING_VERSION`/`CURRENT_PROJECT_VERSION`/`GIO_UPDATE_REPOSITORY`
   (`Config/Version.xcconfig`, project-level base configuration) feed Info.plist `CFBundleShortVersionString`,
   `CFBundleVersion`, `GioUpdateRepository`. GioCore: `gioVersion` reads the bundle through the pure
   `resolveGioVersion(infoDictionary:)`, falling back to `gioBuildVersion = "0.0.0-dev"`; `isDevBuildVersion`.
   Build phase "Stamp dev version" (`scripts/stamp-dev-version.sh`) turns a default dev build into
   `<last v* tag>+dev`. Callers updated (MainWindow, DiagnosticsView; `appVersionLabel` removed), README.
-- [ ] RL-02 (uncommitted) — `scripts/make-dmg.sh`: signature check (prints team, optional `GIO_EXPECTED_TEAM`),
+- [ ] RL-02 (`e564c8d`) — `scripts/make-dmg.sh`: signature check (prints team, optional `GIO_EXPECTED_TEAM`),
   bundle version must equal the argument, UDZO HFS+ DMG (`Gio <version>`, app plus `Applications` link),
   `hdiutil verify`, `.sha256`.
-- [ ] RL-03 (uncommitted) — `.github/workflows/release.yml`: `v*` tag (publish) or `workflow_dispatch` version
+- [ ] RL-03 (`e564c8d`) — `.github/workflows/release.yml`: `v*` tag (publish) or `workflow_dispatch` version
   (dry run, artifact only); latest stable Xcode on macos-15; `swift test` before signing; temporary keychain
   from three secrets plus Apple WWDR G3; Manual Apple Development signing, team `2CAK428VHF`, no profile,
   `CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO`; `gh release create --verify-tag` with tag-annotation notes or
   `--generate-notes`, `--prerelease` when the version has `-`; keychain deleted in an `always()` step.
-- [ ] RL-04 (uncommitted) — `docs/RELEASING.md` (secrets, cutting a release, dry run, first-run Gatekeeper,
+- [ ] RL-04 (`e564c8d`) — `docs/RELEASING.md` (secrets, cutting a release, dry run, first-run Gatekeeper,
   renewal and DR verified vs inferred, public repo), AGENTS.md map/pitfall/decision rows.
 
 Decisions:
@@ -104,13 +104,13 @@ RL-01..RL-03 local dry run (2026-10-08, Xcode 27.0, /tmp copy, nothing published
 A security review of the updater and the release workflow (`agent://UpdaterSecurity`, findings 0..7) found no
 critical or high issue; every finding below was checked against the code before fixing.
 
-- [ ] RL-05 (uncommitted, finding 0 `GIO-REL-HARDENED-RUNTIME`) — Release builds are signed with the Hardened
+- [ ] RL-05 (`e564c8d`, finding 0 `GIO-REL-HARDENED-RUNTIME`) — Release builds are signed with the Hardened
   Runtime: `ENABLE_HARDENED_RUNTIME = YES` on the `Gio` target's **Release** configuration (not identity/team,
   so allowed in the pbxproj) and `ENABLE_HARDENED_RUNTIME=YES` in the release `xcodebuild`; `make-dmg.sh` fails
   unless `codesign -dv` shows `flags=0x...(runtime)` and unless the app has an Apple-issued identity (no ad hoc).
   Cause verified: no `ENABLE_HARDENED_RUNTIME` anywhere in the project or `Config/`, and the earlier dry-run
   build showed no runtime flag.
-- [ ] RL-06 (uncommitted, finding 1 `GIO-REL-SIGNING-KEY-EXPOSURE`) — `release.yml`: every action pinned to a
+- [ ] RL-06 (`e564c8d`, finding 1 `GIO-REL-SIGNING-KEY-EXPOSURE`) — `release.yml`: every action pinned to a
   full commit SHA with the version in a comment (checkout v7.0.1, upload-artifact v7.0.2, download-artifact
   v8.0.2; `ci.yml` checkout v7.0.1 and cache v6.1.0; tags resolved with `git ls-remote` and the GitHub API,
   all lightweight tags on commits); `maxim-lobanov/setup-xcode` replaced by `sudo xcode-select -s` of the
@@ -122,11 +122,11 @@ critical or high issue; every finding below was checked against the code before 
   in the artifact. `docs/RELEASING.md`: how to create the `release` environment (required reviewer,
   `v*` tag rule, `main` for dry runs), move the secrets there (`gh secret set --env release`), the tag ruleset,
   and a leaked-key response. The environment itself is configured by the user on GitHub.
-- [ ] RL-07 (uncommitted, finding 5 `GIO-UPD-PREMOUNT-TRUST`, release side) — `make-dmg.sh` signs the DMG with
+- [ ] RL-07 (`e564c8d`, finding 5 `GIO-UPD-PREMOUNT-TRUST`, release side) — `make-dmg.sh` signs the DMG with
   the app's signing identity (`GIO_KEYCHAIN` when set) and verifies it with
   `codesign --verify --strict -R='anchor apple generic and certificate leaf[subject.OU] = "<team>" and
   certificate leaf[subject.CN] = "<authority>"'` before `hdiutil verify` and the checksum.
-- [ ] RL-08 (uncommitted, finding 7 `GIO-REL-DISPATCH-INPUT-VALIDATION`) — the version step moved to
+- [ ] RL-08 (`e564c8d`, finding 7 `GIO-REL-DISPATCH-INPUT-VALIDATION`) — the version step moved to
   `scripts/release-version.sh`: whole-string bash `[[ =~ ]]`, the tag must be `v<version>`, unknown events
   refused, `::error::` messages never contain the input. `scripts/test-release-version.sh` (12 cases).
 
@@ -264,32 +264,32 @@ Decisions:
 - `shellQuoted` (CLIInstall.swift) became public and is shared with the helper script.
 
 Tasks:
-- [ ] UP-01 (uncommitted) — `SemanticVersion`: strict parse, optional `v`, build metadata ignored,
+- [ ] UP-01 (`e564c8d`) — `SemanticVersion`: strict parse, optional `v`, build metadata ignored,
   semver 2.0 precedence incl. prerelease identifiers.
-- [ ] UP-02 (uncommitted) — `GitHubRelease(Asset)` decoding, `updateRepository(infoDictionary:)`,
+- [ ] UP-02 (`e564c8d`) — `GitHubRelease(Asset)` decoding, `updateRepository(infoDictionary:)`,
   `selectUpdate` (drafts, channels, newest), `pairUpdateAssets`, `parseChecksumFile`, `includesPrereleases`.
-- [ ] UP-03 (uncommitted) — `installEligibility`, `updateCodeRequirement`, `checkUpdateBundle`.
-- [ ] UP-04 (uncommitted) — `UpdateState`/`UpdateEvent`/`nextUpdateState`, `UpdateFailure` messages,
+- [ ] UP-03 (`e564c8d`) — `installEligibility`, `updateCodeRequirement`, `checkUpdateBundle`.
+- [ ] UP-04 (`e564c8d`) — `UpdateState`/`UpdateEvent`/`nextUpdateState`, `UpdateFailure` messages,
   `UpdateCadence` + `shouldCheckForUpdates`.
-- [ ] UP-05 (uncommitted) — `updateInstallScript`, staging/aside paths, `DetachedScriptInstaller`,
+- [ ] UP-05 (`e564c8d`) — `updateInstallScript`, staging/aside paths, `DetachedScriptInstaller`,
   `GuardianHandle.processIdentifier`, `SessionHost.guardianPID`.
-- [ ] UP-06 (uncommitted) — `gio update [--install]`: `CLICommand.update(install:)`, `parseUpdateRequest`,
+- [ ] UP-06 (`e564c8d`) — `gio update [--install]`: `CLICommand.update(install:)`, `parseUpdateRequest`,
   `describeUpdateCheck`/`describeUpdateInstall`, `SessionHost.onUpdateRequest`, launcher `describeAction`,
   usage text, `runUpdate(install:)` fallback.
-- [ ] UP-07 (uncommitted) — `GitHubReleaseSource` over `UpdateHTTPTransport`, `KeychainTokenStore`.
-- [ ] UP-08 (uncommitted) — `UpdatePreparer` (download, SHA-256 via CryptoKit, `hdiutil attach -nobrowse
+- [ ] UP-07 (`e564c8d`) — `GitHubReleaseSource` over `UpdateHTTPTransport`, `KeychainTokenStore`.
+- [ ] UP-08 (`e564c8d`) — `UpdatePreparer` (download, SHA-256 via CryptoKit, `hdiutil attach -nobrowse
   -readonly -noautoopen -mountpoint`, signature, bundle check, ditto staging, re-verify, detach, cleanup),
   `URLSessionAssetDownloader` (progress, redirect token strip), `HdiutilMounter`, `RequirementSignatureVerifier`,
   `runningAppSignature`.
-- [ ] UP-09 (uncommitted) — Token UI: Diagnostics > Updates secure field, Save/Clear, never shown back.
-- [ ] UP-10 (uncommitted) — `UpdateController` (state, toggles in UserDefaults, check/startUpdate/installAndQuit,
+- [ ] UP-09 (`e564c8d`) — Token UI: Diagnostics > Updates secure field, Save/Clear, never shown back.
+- [ ] UP-10 (`e564c8d`) — `UpdateController` (state, toggles in UserDefaults, check/startUpdate/installAndQuit,
   `NSBackgroundActivityScheduler`, `answerCLI`), `UpdateDependencies.live`, wiring in `main.swift`.
-- [ ] UP-11 (uncommitted) — UI: Overview **Updates** card (status, Check Now, Update and Restart with progress,
+- [ ] UP-11 (`e564c8d`) — UI: Overview **Updates** card (status, Check Now, Update and Restart with progress,
   Release Notes sheet with simple markdown via `releaseNoteBlocks`), menu bar **Update to vX.Y.Z…**,
   Diagnostics **Updates** card (automatic checks, betas, token); USER_GUIDE "Updates", TESTING rows 16/16b.
 
 Hardening tasks (security review findings, see RL-05..RL-08 for the release side):
-- [ ] UP-12 (uncommitted, finding 2 `GIO-UPD-STAGE-TOCTOU`) — Staging into a fresh `mkdtemp` folder
+- [ ] UP-12 (`e564c8d`, finding 2 `GIO-UPD-STAGE-TOCTOU`) — Staging into a fresh `mkdtemp` folder
   `<parent>/.gio-update-XXXXXX` (0700) holding `Gio.app` (`updateStagingTemplate`, `makeUpdateStagingDirectory`,
   `updateStagingDirectory(ofStagedApp:)`); creation failure refuses (`stagingFailed("cannot create a private
   staging folder")`), cleanup failure is logged. The helper creates its aside folder with
@@ -299,25 +299,25 @@ Hardening tasks (security review findings, see RL-05..RL-08 for the release side
   failure, removes the new app and restores the old one before any quarantine strip or relaunch. Restores refuse
   to `mv` into an existing `$TARGET`. `DetachedScriptInstaller(requirement:)` refuses without a requirement or
   for a staged app outside a `.gio-update-` folder; a failed installer start removes the whole staging folder.
-- [ ] UP-13 (uncommitted, finding 0, updater side; finding 1 revocation decision) — the verifier refuses a new
+- [ ] UP-13 (`e564c8d`, finding 0, updater side; finding 1 revocation decision) — the verifier refuses a new
   app without the Hardened Runtime flag (`codeSignatureHasHardenedRuntime(kSecCodeInfoFlags)`,
   `signatureRejected("no hardened runtime")`). The requirement language cannot test signature flags, so the flag
   is checked next to `SecStaticCodeCheckValidity`. No `kSecCSEnforceRevocationChecks` (see Decisions above).
-- [ ] UP-14 (uncommitted, finding 3 `GIO-UPD-UNSEALED-METADATA`) — staged copy made with
+- [ ] UP-14 (`e564c8d`, finding 3 `GIO-UPD-UNSEALED-METADATA`) — staged copy made with
   `ditto --noacl --noextattr --noqtn`, then `normaliseStagedTree`: `stagedEntryDecision` (pure, GioCore) gives
   `chmod -R u+rwX,go+rX,go-w` semantics, refuses items owned by another user and setuid/setgid items, never
   chmods symlinks; every ACL is replaced by an empty one, because `ditto --noacl` keeps **file** ACLs (observed:
   `everyone allow write` survived on a file, a directory ACL was dropped). All before the second verification.
   ditto (not root) already drops setuid/setgid bits (observed); the refusal is the backstop.
   `--noextattr` decision: see Decisions above.
-- [ ] UP-15 (uncommitted, finding 4 `GIO-UPD-KEYCHAIN-PRESQUAT`) — `KeychainTokenStore.save` = `SecItemDelete`
+- [ ] UP-15 (`e564c8d`, finding 4 `GIO-UPD-KEYCHAIN-PRESQUAT`) — `KeychainTokenStore.save` = `SecItemDelete`
   then `SecItemAdd` (never `SecItemUpdate`), stops when the delete fails with anything but not-found; every query
   carries `kSecAttrSynchronizable: false`. Seam: `KeychainCalls` (`.system` in the app, a fake in tests).
-- [ ] UP-16 (uncommitted, finding 5 `GIO-UPD-PREMOUNT-TRUST`, updater side) — before `hdiutil attach` the DMG's
+- [ ] UP-16 (`e564c8d`, finding 5 `GIO-UPD-PREMOUNT-TRUST`, updater side) — before `hdiutil attach` the DMG's
   own signature must satisfy `updateImageRequirement` (`anchor apple generic` + same team OU + same leaf CN as
   the running app, no identifier clause); `RunningSignature.leafCommonName` from `kSecCodeInfoCertificates`.
   `CodeSignatureVerifying` gained `verify(imageAt:)`; `RequirementSignatureVerifier(requirement:imageRequirement:)`.
-- [ ] UP-17 (uncommitted, finding 6 `GIO-UPD-TOKEN-HOST-ALLOWLIST`) — `updateTokenAllowed(for:)`: https,
+- [ ] UP-17 (`e564c8d`, finding 6 `GIO-UPD-TOKEN-HOST-ALLOWLIST`) — `updateTokenAllowed(for:)`: https,
   host `api.github.com` (any case), default port, no user info. Assets: the token goes only with an allowed API
   URL, otherwise the anonymous browser URL (`updateAssetRequest`); every redirect drops `Authorization` unless
   the new request is allowed (`updateRedirectRequest`), in the download delegate and in the release-list
@@ -368,3 +368,4 @@ LIVE PENDING (needs a published release; see TESTING rows 16 and 16b):
 - `NSBackgroundActivityScheduler` firing about daily, the 30 s launch check, menu bar item, `gio update` over
   the real socket, private-repo 404 without token and download with a token (redirect token strip) against
   GitHub, `terminate` while the notes sheet was just dismissed.
+- 2026-10-09: RL-01..RL-08 and UP-01..UP-17 committed as `e564c8d` and pushed to `main`. Next: the user adds the `release` environment and the three secrets, then the first `v*` tag (LIVE PENDING: first CI release, first real update).
