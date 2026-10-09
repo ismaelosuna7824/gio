@@ -869,7 +869,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   for the settle after a switch; no `snapshot coverage stopped`; `snapshot cache ... pixels=P backdropPixels=B`
   near the estimate above and under `snapshot cache cap pixels=N`.
 
-- [ ] SM-23 — No fixed wait before a retarget; log lines stamped to the millisecond.
+- [x] SM-23 (`5b038e0`, `241deda`) — No fixed wait before a retarget; log lines stamped to the millisecond.
   Report (2026-10-09): "a small delay on each focus change, the motion looks slightly stuck". Not
   reproduced: the log's one-second timestamps cannot show the latency between a key and its motion.
   1. `SnapshotFlightController.scheduleReflow` retargets on the next turn of the session queue
