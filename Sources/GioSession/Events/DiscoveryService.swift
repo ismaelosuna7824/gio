@@ -160,6 +160,15 @@ public final class DiscoveryService: @unchecked Sendable {
     /// may be classified again (`WindowRegistrationRetry.abandonCooldown`).
     /// Matched with `CFEqual`; expired entries are dropped on every check.
     private var abandoned: [(element: AXUIElement, until: TimeInterval)] = []
+    /// WR-01: untitled arrivals awaiting their one title re-check.
+    private var titleRechecks = TitleRecheckBook()
+    /// MM-04: the latest screen-parameter notification; only its one-shot syncs.
+    private var displayChangeGeneration = 0
+
+    /// MM-04: macOS posts several screen-parameter notifications per
+    /// connect, disconnect or arrangement change; the burst syncs once,
+    /// this long after its last notification.
+    public static let displayChangeDelay: TimeInterval = 0.25
 
     public init(context: Context, scheduler: SessionScheduler) {
         self.context = context
@@ -453,8 +462,10 @@ public final class DiscoveryService: @unchecked Sendable {
             mode: .tiled,
             isMinimized: candidate.window.isMinimized
         )
-        let outcome = evaluateRules(context.rules(), app: window.application, bundleID: window.bundleID)
+        let rules = context.rules()
+        let outcome = evaluateRules(rules, app: window.application, bundleID: window.bundleID, title: window.title)
         window.mode = outcome.mode ?? .tiled
+        window.widthLimits = outcome.widthLimits
         if outcome.mode == .floating {
             window.floatReason = .rule
         } else if let admitted = candidate.floatReason {
@@ -467,9 +478,14 @@ public final class DiscoveryService: @unchecked Sendable {
         try? context.registry().register(window)
         let minimized = window.isMinimized
         let now = context.now()
+        if titleRecheckWanted(rules: rules, title: window.title) {
+            titleRechecks.arm(id, at: now)
+        }
         // NW-02/NW-06: only a live, visible arrival routed to a named
-        // workspace may take the user there.
-        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openOnWorkspace != nil
+        // workspace may take the user there; WR-04: never one that must
+        // not take focus.
+        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused
+            && outcome.openOnWorkspace != nil
             ? decideArrivalFollow(
                 outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID(),
                 launchedAt: recentLaunches.launchedAt(window.pid, now: now), now: now
@@ -482,16 +498,19 @@ public final class DiscoveryService: @unchecked Sendable {
         var workspaceLabel = ""
         context.updateManager { manager in
             let display = placement.flatMap { displayFor(frame: window.frame, displays: $0) }
-            let destID = manager.arrivalDestination(outcome, onDisplay: display)
-            destinationShown = manager.activeIDs.contains(destID)
-            var dest = manager.workspace(id: destID)!
-            workspaceLabel = dest.name ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
             // A floating arrival (a dialog, or a transient popup such as
             // Chrome's address-bar suggestions, re-created on every key) must
             // not take the strip's focus: closing it would leave the focus on
             // the last column. If the OS focuses it, focus adoption follows.
-            Self.appendColumn(id, to: &dest, focus: !minimized && window.mode != .floating)
-            manager.update(dest)
+            // WR-04: neither does an `open-focused = false` arrival.
+            let destID = placeArrival(
+                id, outcome: outcome,
+                takesFocus: arrivalTakesFocus(outcome, mode: window.mode, minimized: minimized),
+                onDisplay: display, manager: &manager
+            )
+            destinationShown = manager.activeIDs.contains(destID)
+            workspaceLabel = manager.workspace(id: destID)?.name
+                ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
             guard decision != .stay,
                   manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID
             else {
@@ -540,17 +559,24 @@ public final class DiscoveryService: @unchecked Sendable {
         return id
     }
 
-    private static func appendColumn(_ id: WindowID, to workspace: inout Workspace, focus: Bool) {
-        var column = Column(
-            id: ColumnID((workspace.columns.map(\.id.rawValue).max() ?? 0) + 1),
-            width: 0, windows: [id]
-        )
-        column.focusedWindowIndex = 0
-        workspace.columns.append(column)
-        if focus {
-            workspace.focusedColumn = workspace.columns.count - 1
-            workspace.focusedWindow = id
+    /// WR-01: a registered window's title changed (the record already holds
+    /// it). An arrival registered untitled is re-checked once, when its
+    /// title first becomes non-empty within `TitleRecheckBook.window`: a
+    /// title rule that now wins moves or reshapes it and sets its mode and
+    /// width limits, never focusing or following. Logs carry the id only.
+    public func titleChanged(_ id: WindowID) {
+        guard context.allowsWindowWork(), let window = context.registry().find(id), !window.title.isEmpty,
+              titleRechecks.take(id, now: context.now()),
+              let outcome = titleRecheckOutcome(context.rules(), window: window)
+        else {
+            return
         }
+        let registry = context.registry()
+        context.updateManager { manager in
+            applyTitleRecheck(id, outcome: outcome, registry: registry, manager: &manager)
+        }
+        context.log(.info, "window rule recheck id=\(id.pid):\(id.elementID) reason=titleArrived")
+        context.reflowAll()
     }
 
     // MARK: Purge
@@ -582,6 +608,7 @@ public final class DiscoveryService: @unchecked Sendable {
         for id in ids.sorted() {
             registry.remove(id)
             pendingFollows.forget(id)
+            titleRechecks.forget(id)
             context.forgetWindow(id)
         }
         context.updateManager { manager in
@@ -598,6 +625,21 @@ public final class DiscoveryService: @unchecked Sendable {
 
     // MARK: Displays
 
+    /// MM-04: a screen-parameter notification (session queue). Coalesced:
+    /// the displays sync, and the session relays out, once the burst is
+    /// `displayChangeDelay` old.
+    public func noteDisplayChange() {
+        displayChangeGeneration += 1
+        let generation = displayChangeGeneration
+        scheduler.asyncAfter(Self.displayChangeDelay) { [weak self] in
+            guard let self, generation == self.displayChangeGeneration else {
+                return
+            }
+            self.syncDisplays()
+            self.context.reflowAll()
+        }
+    }
+
     /// Each display owns a workspace stack: register them first so a
     /// vanished display's windows merge into a survivor before anything is
     /// laid out. MM-01: displays register in position order, and the
@@ -607,6 +649,12 @@ public final class DiscoveryService: @unchecked Sendable {
         let raw = context.displaySnapshots()
         let byID = Dictionary(raw.map { ($0.id, $0) }) { first, _ in first }
         let snapshot = displaysByPosition(byID.mapValues(\.frame)).compactMap { byID[$0] }
+        // MM-04: macOS may list no screen for a moment mid-reconfiguration;
+        // the manager ignores that, so the connected displays stay too.
+        guard !snapshot.isEmpty else {
+            context.log(.info, "displays count=0 ignored")
+            return
+        }
         let seen = Set(snapshot.map(\.id))
         let primary = primaryDisplayIndex(snapshot.map(\.frame)).map { snapshot[$0] }
         context.updateManager { $0.syncDisplays(snapshot.map(\.id), main: primary?.id) }
@@ -620,8 +668,31 @@ public final class DiscoveryService: @unchecked Sendable {
         if let primary {
             context.updateDisplayHeight(primary.frame.height)
         }
+        logDisplays(snapshot, primary: primary)
         // A topology change can move windows behind our back and changes
         // every parking target: nothing placed before it is trusted.
         context.displaysChanged()
+    }
+
+    /// MM-04: the configuration every sync ends with (startup and each
+    /// display change), and at debug the flip height the AX conversion uses.
+    private func logDisplays(_ snapshot: [DisplaySnapshot], primary: DisplaySnapshot?) {
+        let manager = context.manager()
+        let numbers = displaysByNumber(Dictionary(snapshot.map { ($0.id, $0.frame) }) { first, _ in first })
+        let entries = snapshot.map { display in
+            DisplayLogEntry(
+                id: display.id, frame: display.frame, visibleFrame: display.visibleFrame,
+                scale: display.scale, refreshRate: display.refreshRate, isPrimary: display.id == primary?.id,
+                number: (numbers.firstIndex(of: display.id) ?? 0) + 1,
+                shownWorkspace: manager.activeID(on: display.id),
+                stack: manager.stack(on: display.id).map(\.id)
+            )
+        }
+        for line in displayConfigurationLog(entries) {
+            context.log(.info, line)
+        }
+        if let primary {
+            context.log(.debug, displayFlipLogLine(primaryHeight: primary.frame.height, primary: primary.id))
+        }
     }
 }

@@ -129,7 +129,9 @@ public struct WorkspacesDraft: Equatable, Sendable {
     public init(config: GioConfig) {
         var claimed: [WorkspaceAppAssignment] = []
         var appsByName: [String: [WorkspaceAppAssignment]] = [:]
-        for rule in config.rules {
+        // WR-01: a title rule is narrower than "this app's windows": it is
+        // the Rules section's, never a card's app.
+        for rule in config.rules where rule.title == nil {
             guard let target = rule.openOnWorkspace else {
                 continue
             }
@@ -361,7 +363,9 @@ private func workspaceRuleEdits(config: GioConfig, draft: WorkspacesDraft) -> [C
     var claimed = Set<Int>()
     for card in draft.cards {
         for app in card.apps {
-            let match = config.rules.indices.first { !claimed.contains($0) && app.isSameApp(as: config.rules[$0]) }
+            let match = config.rules.indices.first {
+                !claimed.contains($0) && config.rules[$0].title == nil && app.isSameApp(as: config.rules[$0])
+            }
             guard let index = match else {
                 additions.append(.addRule(WindowRule(
                     app: app.app, bundleID: app.bundleID, openOnWorkspace: card.trimmedName, follow: app.follow
@@ -383,9 +387,9 @@ private func workspaceRuleEdits(config: GioConfig, draft: WorkspacesDraft) -> [C
     }
     var removals: [ConfigEdit] = []
     for index in config.rules.indices.reversed()
-    where config.rules[index].openOnWorkspace != nil && !claimed.contains(index) {
+    where config.rules[index].openOnWorkspace != nil && config.rules[index].title == nil && !claimed.contains(index) {
         var rule = config.rules[index]
-        if rule.mode != nil {
+        if rule.hasOpinionsBesidesPlacement {
             rule.openOnWorkspace = nil
             rule.follow = .whenActive
             updates.append(.updateRule(index: index, rule))
@@ -394,6 +398,14 @@ private func workspaceRuleEdits(config: GioConfig, draft: WorkspacesDraft) -> [C
         }
     }
     return updates + removals + additions
+}
+
+private extension WindowRule {
+    /// Unassigning the app keeps a rule that still says something else.
+    var hasOpinionsBesidesPlacement: Bool {
+        mode != nil || columnWidth != nil || openMaximized || openOnDisplay != nil || !openFocused
+            || minWidth != nil || maxWidth != nil
+    }
 }
 
 // MARK: - Small presentation

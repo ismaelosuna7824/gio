@@ -72,7 +72,7 @@ final class ShortcutCatalogTests: XCTestCase {
         for (suffix, key) in [("left", "H"), ("down", "J"), ("up", "K"), ("right", "L")] {
             XCTAssertEqual(keys("focus-monitor-\(suffix)"), ["Ctrl+Alt+\(key)"])
             XCTAssertEqual(keys("move-column-to-monitor-\(suffix)"), ["Ctrl+Alt+Shift+\(key)"])
-            XCTAssertEqual(keys("move-window-to-monitor-\(suffix)"), [], "unbound")
+            XCTAssertEqual(keys("move-window-to-monitor-\(suffix)"), ["Ctrl+Alt+Cmd+\(key)"], "bound by MM-04")
             XCTAssertEqual(keys("move-workspace-to-monitor-\(suffix)"), [], "unbound")
         }
         let monitors = entries.filter { $0.category == .monitors }.compactMap(\.configName)
@@ -80,6 +80,38 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(Array(monitors.prefix(4)), [
             "focus-monitor-left", "focus-monitor-right", "focus-monitor-up", "focus-monitor-down",
         ])
+    }
+
+    func testNiriColumnHeightAndWorkspaceEntries() {
+        let entries = shortcutCatalog(configKeybindings: [])
+        func entry(_ name: String) -> ShortcutEntry? {
+            entries.first { $0.configName == name }
+        }
+        let expected: [(String, ShortcutCategory, [String])] = [
+            ("focus-column-first", .focus, ["Alt+Home"]),
+            ("focus-column-last", .focus, ["Alt+End"]),
+            ("move-column-to-first", .move, ["Ctrl+Alt+Home"]),
+            ("move-column-to-last", .move, ["Ctrl+Alt+End"]),
+            ("swap-window-left", .move, []),
+            ("swap-window-right", .move, []),
+            ("switch-preset-window-height", .windows, ["Alt+Shift+R"]),
+            ("set-window-height-minus", .windows, ["Alt+Shift+Minus"]),
+            ("set-window-height-plus", .windows, ["Alt+Shift+Equal"]),
+            ("reset-window-height", .windows, ["Ctrl+Alt+R"]),
+            ("move-column-to-workspace-down", .workspaces, ["Ctrl+Alt+U"]),
+            ("move-column-to-workspace-up", .workspaces, ["Ctrl+Alt+I"]),
+            ("focus-workspace-previous", .workspaces, []),
+            ("move-workspace-down", .workspaces, ["Ctrl+Alt+Shift+U"]),
+            ("move-workspace-up", .workspaces, ["Ctrl+Alt+Shift+I"]),
+        ]
+        for (name, category, keys) in expected {
+            XCTAssertEqual(entry(name)?.category, category, name)
+            XCTAssertEqual(entry(name)?.bindings.map { $0.combo.describe() }, keys, name)
+        }
+        let column = entry("move-column-to-workspace N")
+        XCTAssertEqual(column?.category, .workspaces)
+        XCTAssertEqual(column?.bindings.map { $0.combo.describe() }, (1...9).map { "Ctrl+Alt+\($0)" })
+        XCTAssertEqual(column?.action, .moveColumnToWorkspace(1))
     }
 
     func testAltShiftHLMoveColumnsAndOldStackingMovesAreUnbound() {

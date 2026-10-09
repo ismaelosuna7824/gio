@@ -31,6 +31,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var widthKind: WidthKind
     public var widthValue: Double
     public var presetsText: String
+    /// NC-08: `preset-window-heights`, the same comma-separated text.
+    public var presetHeightsText: String
     public var centerFocusedColumn: CenterFocusedColumnMode
     public var maximizeSingleWindow: Bool
 
@@ -46,20 +48,25 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             widthKind = .fraction
             widthValue = Double(config.defaultColumnWidthFraction ?? 0.5)
         }
-        presetsText = config.presetColumnWidths.compactMap { spec -> String? in
-            switch spec {
-            case .proportion(let value), .points(let value):
-                return Self.text(Double(value))
-            case .standard:
-                return nil
-            }
-        }.joined(separator: ", ")
+        presetsText = Self.text(config.presetColumnWidths)
+        presetHeightsText = Self.text(config.presetWindowHeights)
         centerFocusedColumn = config.centerFocusedColumn
         maximizeSingleWindow = config.maximizeSingleWindow
     }
 
     private static func text(_ value: Double) -> String {
         value == value.rounded() ? String(Int(value)) : "\(value)"
+    }
+
+    private static func text(_ presets: [ColumnWidthSpec]) -> String {
+        presets.compactMap { spec -> String? in
+            switch spec {
+            case .proportion(let value), .points(let value):
+                return text(Double(value))
+            case .standard:
+                return nil
+            }
+        }.joined(separator: ", ")
     }
 
     public var problems: [String] {
@@ -85,6 +92,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         if parsePresetList(presetsText) == nil {
             found.append("Preset widths must be a comma-separated list of positive numbers.")
         }
+        if parsePresetList(presetHeightsText) == nil {
+            found.append("Preset heights must be a comma-separated list of positive numbers.")
+        }
         return found
     }
 
@@ -101,6 +111,10 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             .set(
                 table: "layout", key: "preset-column-widths",
                 value: .numbers(parsePresetList(presetsText) ?? [])
+            ),
+            .set(
+                table: "layout", key: "preset-window-heights",
+                value: .numbers(parsePresetList(presetHeightsText) ?? [])
             ),
         ]
     }
@@ -254,8 +268,17 @@ public func logLevelEdits(_ level: LogLevel) -> [ConfigEdit] {
     [.set(table: "logging", key: "level", value: .string(level.name))]
 }
 
-/// Editable window rule. `mode`/`workspace` nil mean "no opinion". NW-01
-/// fields the form does not show yet are carried through unchanged.
+/// WR-06: how the Rules form sets a rule's `default-column-width`.
+public enum RuleWidthChoice: String, Equatable, Sendable, CaseIterable {
+    /// No key: the `[layout]` default width.
+    case layoutDefault
+    case fraction
+    case points
+}
+
+/// Editable window rule. `mode`/`workspace` nil mean "no opinion"; an
+/// empty `title` means no title matcher. Validation is the parser's
+/// (`TitlePattern`, `ruleColumnWidth`, `isValidRuleWidthLimit`).
 public struct RuleForm: Equatable, Sendable {
     public var app: String
     public var mode: WindowMode?
@@ -263,10 +286,23 @@ public struct RuleForm: Equatable, Sendable {
     public var bundleID: String?
     public var openOnWorkspace: String?
     public var follow: WorkspaceFollowPolicy
+    /// WR-01: the title regular expression, verbatim.
+    public var title: String
+    public var widthChoice: RuleWidthChoice
+    /// The fraction (≤ 1) or points of `widthChoice`.
+    public var widthValue: Double
+    public var openMaximized: Bool
+    public var openOnDisplay: Int?
+    public var openFocused: Bool
+    public var minWidth: Double?
+    public var maxWidth: Double?
 
     public init(
         app: String = "", mode: WindowMode? = nil, workspace: Int? = nil,
-        bundleID: String? = nil, openOnWorkspace: String? = nil, follow: WorkspaceFollowPolicy = .whenActive
+        bundleID: String? = nil, openOnWorkspace: String? = nil, follow: WorkspaceFollowPolicy = .whenActive,
+        title: String = "", widthChoice: RuleWidthChoice = .layoutDefault, widthValue: Double = 0.5,
+        openMaximized: Bool = false, openOnDisplay: Int? = nil, openFocused: Bool = true,
+        minWidth: Double? = nil, maxWidth: Double? = nil
     ) {
         self.app = app
         self.mode = mode
@@ -274,30 +310,100 @@ public struct RuleForm: Equatable, Sendable {
         self.bundleID = bundleID
         self.openOnWorkspace = openOnWorkspace
         self.follow = follow
+        self.title = title
+        self.widthChoice = widthChoice
+        self.widthValue = widthValue
+        self.openMaximized = openMaximized
+        self.openOnDisplay = openOnDisplay
+        self.openFocused = openFocused
+        self.minWidth = minWidth
+        self.maxWidth = maxWidth
     }
 
     public init(rule: WindowRule) {
+        let widthChoice: RuleWidthChoice
+        let widthValue: Double
+        switch rule.columnWidth {
+        case .proportion(let value)?:
+            widthChoice = .fraction
+            widthValue = Double(value)
+        case .points(let value)?:
+            widthChoice = .points
+            widthValue = Double(value)
+        case .standard?, nil:
+            widthChoice = .layoutDefault
+            widthValue = 0.5
+        }
         self.init(
             app: rule.app, mode: rule.mode, workspace: rule.workspace,
-            bundleID: rule.bundleID, openOnWorkspace: rule.openOnWorkspace, follow: rule.follow
+            bundleID: rule.bundleID, openOnWorkspace: rule.openOnWorkspace, follow: rule.follow,
+            title: rule.title?.pattern ?? "", widthChoice: widthChoice, widthValue: widthValue,
+            openMaximized: rule.openMaximized, openOnDisplay: rule.openOnDisplay, openFocused: rule.openFocused,
+            minWidth: rule.minWidth.map { Double($0) }, maxWidth: rule.maxWidth.map { Double($0) }
         )
+    }
+
+    /// Switch the width unit, keeping `widthValue` meaningful for it (the
+    /// fraction and points sliders have different ranges).
+    public mutating func adoptWidthChoice(_ choice: RuleWidthChoice) {
+        widthChoice = choice
+        switch choice {
+        case .fraction where !(widthValue > 0 && widthValue <= 1):
+            widthValue = 0.5
+        case .points where !isValidRuleWidthLimit(widthValue):
+            widthValue = 800
+        case .layoutDefault, .fraction, .points:
+            break
+        }
     }
 
     public var problems: [String] {
         var found: [String] = []
         let trimmed = app.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty, bundleID?.isEmpty ?? true { found.append("App name is required.") }
+        if trimmed.isEmpty, bundleID?.isEmpty ?? true, title.isEmpty {
+            found.append("App name or title pattern is required.")
+        }
         if trimmed.contains("\"") { found.append("App name cannot contain a double quote.") }
+        if title.contains("\"") {
+            found.append("Title pattern cannot contain a double quote.")
+        } else if !title.isEmpty, TitlePattern(title) == nil {
+            found.append("Title pattern is not a valid regular expression.")
+        }
         if let workspace, !WorkspaceManager.range.contains(workspace) {
             found.append("Workspace must be 1 to 9.")
+        }
+        switch widthChoice {
+        case .layoutDefault:
+            break
+        case .fraction where !(widthValue.isFinite && widthValue > 0 && widthValue <= 1):
+            found.append("Width fraction must be more than 0 and at most 1.")
+        case .points where !isValidRuleWidthLimit(widthValue):
+            found.append("Width in points must be more than 1.")
+        case .fraction, .points:
+            break
+        }
+        if let openOnDisplay, openOnDisplay < 1 { found.append("Display must be 1 or more.") }
+        if let minWidth, !isValidRuleWidthLimit(minWidth) {
+            found.append("Minimum width must be more than 1 point.")
+        }
+        if let maxWidth, !isValidRuleWidthLimit(maxWidth) {
+            found.append("Maximum width must be more than 1 point.")
+        }
+        if let minWidth, let maxWidth, isValidRuleWidthLimit(minWidth), isValidRuleWidthLimit(maxWidth),
+           minWidth > maxWidth
+        {
+            found.append("Minimum width cannot be above the maximum width.")
         }
         return found
     }
 
     public var rule: WindowRule {
         WindowRule(
-            app: app.trimmingCharacters(in: .whitespaces), bundleID: bundleID, mode: mode,
-            workspace: workspace, openOnWorkspace: openOnWorkspace, follow: follow
+            app: app.trimmingCharacters(in: .whitespaces), bundleID: bundleID, title: TitlePattern(title),
+            mode: mode, workspace: workspace, openOnWorkspace: openOnWorkspace, follow: follow,
+            columnWidth: widthChoice == .layoutDefault ? nil : ruleColumnWidth(widthValue),
+            openMaximized: openMaximized, openOnDisplay: openOnDisplay, openFocused: openFocused,
+            minWidth: minWidth.map { CGFloat($0) }, maxWidth: maxWidth.map { CGFloat($0) }
         )
     }
 }

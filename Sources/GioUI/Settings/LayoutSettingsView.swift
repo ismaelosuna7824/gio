@@ -1,7 +1,7 @@
 import GioCore
 import SwiftUI
 
-/// DD-03 Layout: spacing, column width and fullscreen gap with a live
+/// DD-03 Layout: spacing, column width, window heights (NC-08) and fullscreen gap with a live
 /// preview of a display that updates before Apply.
 struct LayoutSettingsView: View {
     @ObservedObject var model: DesktopModel
@@ -40,6 +40,7 @@ struct LayoutSettingsView: View {
             previewCard
             spacingCard
             widthCard
+            heightCard
             fullscreenCard
         }
         .onReceive(model.$snapshot) { snapshot in
@@ -112,7 +113,23 @@ struct LayoutSettingsView: View {
                     isOn: form.maximizeSingleWindow
                 )
             }
-            problems(matching: ["Default width", "Preset"])
+            problems(matching: ["Default width", "Preset widths"])
+        }
+    }
+
+    /// NC-08: the heights `switch-preset-window-height` cycles a stacked
+    /// window through (same chips as the widths).
+    private var heightCard: some View {
+        SectionCard(
+            "Window Height",
+            footer: "Windows stacked in a column share its height. Alt+Shift+R cycles the focused one through these presets, Alt+Shift+Minus / Equal step it by 10% and Ctrl+Alt+R gives every window an equal share again."
+        ) {
+            CardRow(divider: false) {
+                SettingRow("Preset heights", caption: "Percent of the screen height, or a fixed height in points.") {
+                    PresetWidthChips(text: form.presetHeightsText, axis: .height)
+                }
+            }
+            problems(matching: ["Preset heights"])
         }
     }
 

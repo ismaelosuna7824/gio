@@ -319,6 +319,25 @@ func applyLayoutKey(
             specs.append(number <= 1 ? .proportion(CGFloat(number)) : .points(CGFloat(number)))
         }
         config.layout.presetColumnWidths = specs
+    case "preset-window-heights":
+        // NC-08: same list rule as the widths.
+        guard case .array(let items) = value, !items.isEmpty else {
+            errors.append(
+                "line \(line): layout.preset-window-heights expects a non-empty list of positive numbers"
+            )
+            return
+        }
+        var specs: [ColumnWidthSpec] = []
+        for item in items {
+            guard let number = item.number, number > 0, number.isFinite else {
+                errors.append(
+                    "line \(line): layout.preset-window-heights expects a non-empty list of positive numbers"
+                )
+                return
+            }
+            specs.append(number <= 1 ? .proportion(CGFloat(number)) : .points(CGFloat(number)))
+        }
+        config.layout.presetWindowHeights = specs
     case "center-focused-column":
         // Strings since HD-04; the old boolean keeps working (true = always).
         if case .bool(let enabled) = value {
@@ -725,8 +744,21 @@ func buildRule(
         }
         bundleID = text
     }
-    guard !app.isEmpty || bundleID != nil else {
-        errors.append("line \(line): window-rules needs a non-empty app or bundle-id string")
+    var title: TitlePattern?
+    if let raw = draft["title"] {
+        guard case .string(let text) = raw, !text.isEmpty else {
+            errors.append("line \(line): window-rules title must be a non-empty regular expression string")
+            return
+        }
+        // The pattern is user config, never a window title: safe to quote.
+        guard let pattern = TitlePattern(text) else {
+            errors.append("line \(line): window-rules title is not a valid regular expression: \(text)")
+            return
+        }
+        title = pattern
+    }
+    guard !app.isEmpty || bundleID != nil || title != nil else {
+        errors.append("line \(line): window-rules needs a non-empty app or bundle-id string, or a title")
         return
     }
     var mode: WindowMode?
@@ -763,14 +795,70 @@ func buildRule(
         }
         follow = parsed
     }
+    var columnWidth: ColumnWidthSpec?
+    if let raw = draft["default-column-width"] {
+        guard let spec = raw.number.flatMap(ruleColumnWidth) else {
+            errors.append("line \(line): window-rules default-column-width expects a positive number")
+            return
+        }
+        columnWidth = spec
+    }
+    var openMaximized = false
+    if let raw = draft["open-maximized"] {
+        guard case .bool(let flag) = raw else {
+            errors.append("line \(line): window-rules open-maximized expects true or false")
+            return
+        }
+        openMaximized = flag
+    }
+    var openFocused = true
+    if let raw = draft["open-focused"] {
+        guard case .bool(let flag) = raw else {
+            errors.append("line \(line): window-rules open-focused expects true or false")
+            return
+        }
+        openFocused = flag
+    }
+    var openOnDisplay: Int?
+    if let raw = draft["open-on-display"] {
+        guard case .int(let number) = raw, number >= 1 else {
+            errors.append("line \(line): window-rules open-on-display expects a display number (1, 2, ...)")
+            return
+        }
+        openOnDisplay = number
+    }
+    var limits: [String: Double] = [:]
+    for key in ["min-width", "max-width"] {
+        if let raw = draft[key] {
+            guard let number = raw.number, isValidRuleWidthLimit(number) else {
+                errors.append("line \(line): window-rules \(key) expects points (a number above 1)")
+                return
+            }
+            limits[key] = number
+        }
+    }
+    if let low = limits["min-width"], let high = limits["max-width"], low > high {
+        errors.append(
+            "line \(line): window-rules min-width (\(renderRuleNumber(low))) is above max-width (\(renderRuleNumber(high)))"
+        )
+        return
+    }
     config.rules.append(WindowRule(
-        app: app, bundleID: bundleID, mode: mode, workspace: workspace,
-        openOnWorkspace: openOnWorkspace, follow: follow
+        app: app, bundleID: bundleID, title: title, mode: mode, workspace: workspace,
+        openOnWorkspace: openOnWorkspace, follow: follow, columnWidth: columnWidth,
+        openMaximized: openMaximized, openOnDisplay: openOnDisplay, openFocused: openFocused,
+        minWidth: limits["min-width"].map { CGFloat($0) }, maxWidth: limits["max-width"].map { CGFloat($0) }
     ))
 }
 
-/// Action vocabulary for config values: plan verbs plus `workspace N` and
-/// `move-to-workspace N` (mirroring the plan's `"workspace 1"` spelling).
+/// "900" for whole numbers, "900.5" otherwise (rule error messages).
+private func renderRuleNumber(_ value: Double) -> String {
+    value == value.rounded() && abs(value) < 1e15 ? String(Int(value)) : "\(value)"
+}
+
+/// Action vocabulary for config values: plan verbs plus `workspace N`,
+/// `move-to-workspace N` and `move-column-to-workspace N` (mirroring the
+/// plan's `"workspace 1"` spelling).
 public func parseActionName(_ text: String) -> HotkeyAction? {
     switch text {
     case "focus-left": return .focusLeft
@@ -815,6 +903,21 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-workspace-to-monitor-right": return .moveWorkspaceToMonitor(.right)
     case "move-workspace-to-monitor-up": return .moveWorkspaceToMonitor(.up)
     case "move-workspace-to-monitor-down": return .moveWorkspaceToMonitor(.down)
+    case "switch-preset-window-height": return .switchPresetWindowHeight
+    case "set-window-height-minus": return .shrinkWindowHeight
+    case "set-window-height-plus": return .growWindowHeight
+    case "reset-window-height": return .resetWindowHeight
+    case "focus-column-first": return .focusColumnFirst
+    case "focus-column-last": return .focusColumnLast
+    case "move-column-to-first": return .moveColumnToFirst
+    case "move-column-to-last": return .moveColumnToLast
+    case "swap-window-left": return .swapWindowLeft
+    case "swap-window-right": return .swapWindowRight
+    case "move-column-to-workspace-down": return .moveColumnToWorkspaceDown
+    case "move-column-to-workspace-up": return .moveColumnToWorkspaceUp
+    case "focus-workspace-previous": return .focusWorkspacePrevious
+    case "move-workspace-down": return .moveWorkspaceDown
+    case "move-workspace-up": return .moveWorkspaceUp
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -826,6 +929,11 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     if text.hasPrefix("move-to-workspace ") {
         if let number = Int(text.dropFirst("move-to-workspace ".count)) {
             return .moveToWorkspace(number)
+        }
+    }
+    if text.hasPrefix("move-column-to-workspace ") {
+        if let number = Int(text.dropFirst("move-column-to-workspace ".count)) {
+            return .moveColumnToWorkspace(number)
         }
     }
     return nil
@@ -850,6 +958,12 @@ public func validActionNames() -> [String] {
         "move-window-to-monitor-up", "move-window-to-monitor-down",
         "move-workspace-to-monitor-left", "move-workspace-to-monitor-right",
         "move-workspace-to-monitor-up", "move-workspace-to-monitor-down",
+        "switch-preset-window-height", "set-window-height-minus", "set-window-height-plus",
+        "reset-window-height",
+        "focus-column-first", "focus-column-last", "move-column-to-first", "move-column-to-last",
+        "swap-window-left", "swap-window-right",
+        "move-column-to-workspace N", "move-column-to-workspace-down", "move-column-to-workspace-up",
+        "focus-workspace-previous", "move-workspace-down", "move-workspace-up",
     ]
 }
 

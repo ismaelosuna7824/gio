@@ -327,6 +327,6 @@ final class NamedWorkspaceConfigTests: XCTestCase {
         let form = RuleForm(rule: rule)
         XCTAssertEqual(form.problems, [])
         XCTAssertEqual(form.rule, rule)
-        XCTAssertEqual(RuleForm().problems, ["App name is required."])
+        XCTAssertEqual(RuleForm().problems, ["App name or title pattern is required."])
     }
 }

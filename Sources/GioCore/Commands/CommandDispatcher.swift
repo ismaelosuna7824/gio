@@ -139,8 +139,8 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return lines.joined(separator: "\n")
     case .setup:
         return runSetup(session: &session)
-    case .update:
-        return runUpdate()
+    case .update(let install):
+        return runUpdate(install: install)
     case .doctor:
         return runDoctor(session: &session)
     case .uninstall:
@@ -148,5 +148,16 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
     case .toggleOverview:
         // The panel is the app's; `IPCRouter` hands the toggle to it.
         return "overview toggled"
+    case .moveWindowToDisplay(let number):
+        guard let display = session.manager.display(numbered: number) else {
+            return "no display \(number)"
+        }
+        guard session.manager.currentWorkspace().focusedWindow != nil else {
+            return "move unchanged (no focused window)"
+        }
+        guard session.manager.moveWindow(toDisplay: display) else {
+            return "move unchanged (already on display \(number))"
+        }
+        return "moved window to display \(number)"
     }
 }

@@ -21,6 +21,10 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     /// Host-provided: summon the launcher window / the main Gio window.
     public var onOpenLauncher: (() -> Void)?
     public var onOpenMain: (() -> Void)?
+    /// UP-11: "Update to vX.Y.Z…" while an update waits (nil hides the
+    /// item) and what choosing it does (the app shows the release notes).
+    public var updateTitleProvider: (() -> String?)?
+    public var onUpdate: (() -> Void)?
 
     public override init() {
         super.init()
@@ -77,7 +81,14 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
                 menu.addItem(item)
             }
         }
+        if let move = moveToDisplayMenuItem(connected: connected) {
+            menu.addItem(.separator())
+            menu.addItem(move)
+        }
         menu.addItem(.separator())
+        if let title = updateTitleProvider?() {
+            menu.addItem(actionItem(title, symbol: "arrow.down.circle", key: "", modifiers: [], action: #selector(openUpdate)))
+        }
         menu.addItem(actionItem("Open Gio", symbol: "macwindow", key: ",", modifiers: .command, action: #selector(openMain)))
         menu.addItem(actionItem("Launcher", symbol: "magnifyingglass", key: " ", modifiers: .option, action: #selector(openLauncher)))
         let reload = actionItem("Reload Config", symbol: "arrow.clockwise", key: "r", modifiers: .command, action: #selector(reloadConfig))
@@ -87,6 +98,38 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         let quit = NSMenuItem(title: "Quit Gio", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         quit.image = menuSymbol("power")
         menu.addItem(quit)
+    }
+
+    /// MM-04: Move Window to Display, one row per display by number and
+    /// name (`moveToDisplayItems`); nil with a single display.
+    private func moveToDisplayMenuItem(connected: Bool) -> NSMenuItem? {
+        let displays = NSScreen.screens.compactMap { screen -> MenuDisplay? in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                return nil
+            }
+            return MenuDisplay(id: number.uint32Value, frame: screen.frame, name: screen.localizedName)
+        }
+        let rows = moveToDisplayItems(
+            displays: displays, current: latest?.stacks.first(where: \.focused)?.display,
+            hasFocusedWindow: connected && latest?.focused != nil
+        )
+        guard !rows.isEmpty else {
+            return nil
+        }
+        let submenu = NSMenu()
+        for row in rows {
+            let item = NSMenuItem(title: row.title, action: #selector(moveWindowToDisplay(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = row.number
+            item.state = row.isCurrent ? .on : .off
+            item.isEnabled = row.isEnabled
+            submenu.addItem(item)
+        }
+        submenu.autoenablesItems = false
+        let item = NSMenuItem(title: "Move Window to Display", action: nil, keyEquivalent: "")
+        item.image = menuSymbol("rectangle.2.swap")
+        item.submenu = submenu
+        return item
     }
 
     private func headerItem(_ model: BarMenuModel) -> NSMenuItem {
@@ -144,6 +187,10 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         sendAsync(["workspace", "\(sender.tag)"])
     }
 
+    @objc private func moveWindowToDisplay(_ sender: NSMenuItem) {
+        sendAsync(["move-window-to-display", "\(sender.tag)"])
+    }
+
     @objc private func reloadConfig() {
         sendAsync(["reload"])
     }
@@ -161,6 +208,10 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func openMain() {
         onOpenMain?()
+    }
+
+    @objc private func openUpdate() {
+        onUpdate?()
     }
 }
 

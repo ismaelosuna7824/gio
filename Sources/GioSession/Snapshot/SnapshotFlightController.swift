@@ -262,7 +262,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// overlay flight. `.flying`: the caller runs the ordinary instant pass
     /// now (the real windows' one write under a primed overlay). `.priming`:
     /// the caller defers that pass with `deferPass`.
-    public func drive(animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters) -> SnapshotDrive {
+    public func drive(
+        animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: Set<WindowID> = []
+    ) -> SnapshotDrive {
         let screens = context.displayFrames()
         var targets: [WindowID: CGRect] = [:]
         for plan in plans {
@@ -276,6 +278,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
         var starts = context.physicalFrames().filter { targets[$0.key] != nil }
         for animation in animations {
             starts[animation.id] = animation.from
+        }
+        // MM-04: a far-side park (or a return from one) starts at its target:
+        // no layer flies across the display.
+        for id in jumps {
+            starts[id] = targets[id]
         }
         let now = context.now()
         // SM-11: the image of the start size, or a fresh one of the other size.

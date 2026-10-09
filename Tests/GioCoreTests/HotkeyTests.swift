@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 48)
+        XCTAssertEqual(dispatcher.bindingCount, 73)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -112,6 +112,8 @@ final class HotkeyTests: XCTestCase {
         for (key, direction) in keys {
             XCTAssertEqual(action([.alt, .ctrl], key), .focusMonitor(direction), key)
             XCTAssertEqual(action([.alt, .ctrl, .shift], key), .moveColumnToMonitor(direction), key)
+            // MM-04: the window move is bound too, Command for "window".
+            XCTAssertEqual(action([.alt, .ctrl, .cmd], key), .moveWindowToMonitor(direction), key)
         }
         // Alt+H/L keep focusing columns.
         XCTAssertEqual(action([.alt], "H"), .focusLeft)
@@ -129,12 +131,76 @@ final class HotkeyTests: XCTestCase {
                 XCTAssertTrue(validActionNames().contains(name), name)
             }
         }
-        // Window and workspace moves ship unbound.
+        // Workspace moves ship unbound.
         let bound = defaultHotkeyBindings().map(\.1)
         for direction in [FocusDirection.left, .right, .up, .down] {
-            XCTAssertFalse(bound.contains(.moveWindowToMonitor(direction)))
             XCTAssertFalse(bound.contains(.moveWorkspaceToMonitor(direction)))
         }
+    }
+
+    func testDefaultCombosAreUnique() {
+        let combos = defaultHotkeyBindings().map(\.0)
+        XCTAssertEqual(combos.count, 73)
+        XCTAssertEqual(Set(combos).count, combos.count, "a default combo is bound twice")
+        XCTAssertFalse(combos.contains(launcherHotkey), "Alt+Space stays the launcher")
+    }
+
+    /// NC-08..NC-11: niri's defaults with Alt as Mod, where the combo is free.
+    func testNiriColumnHeightAndWorkspaceDefaults() {
+        let dispatcher = HotkeyDispatcher()
+        func action(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyAction? {
+            dispatcher.action(for: HotkeyCombo(modifiers: modifiers, key: key))
+        }
+        XCTAssertEqual(action([.alt], "Home"), .focusColumnFirst)
+        XCTAssertEqual(action([.alt], "End"), .focusColumnLast)
+        XCTAssertEqual(action([.alt, .ctrl], "Home"), .moveColumnToFirst)
+        XCTAssertEqual(action([.alt, .ctrl], "End"), .moveColumnToLast)
+        XCTAssertEqual(action([.alt, .shift], "Minus"), .shrinkWindowHeight)
+        XCTAssertEqual(action([.alt, .shift], "Equal"), .growWindowHeight)
+        XCTAssertEqual(action([.alt, .shift], "R"), .switchPresetWindowHeight)
+        XCTAssertEqual(action([.alt, .ctrl], "R"), .resetWindowHeight)
+        XCTAssertEqual(action([.alt, .ctrl], "U"), .moveColumnToWorkspaceDown)
+        XCTAssertEqual(action([.alt, .ctrl], "I"), .moveColumnToWorkspaceUp)
+        XCTAssertEqual(action([.alt, .ctrl, .shift], "U"), .moveWorkspaceDown)
+        XCTAssertEqual(action([.alt, .ctrl, .shift], "I"), .moveWorkspaceUp)
+        for number in 1...9 {
+            XCTAssertEqual(action([.alt, .ctrl], "\(number)"), .moveColumnToWorkspace(number))
+        }
+        // Option+Tab is the default of the AltTab app switcher: left unbound.
+        XCTAssertNil(action([.alt], "Tab"))
+        let bound = defaultHotkeyBindings().map(\.1)
+        for unbound: HotkeyAction in [.focusWorkspacePrevious, .swapWindowLeft, .swapWindowRight] {
+            XCTAssertFalse(bound.contains(unbound), "\(unbound) ships unbound")
+        }
+    }
+
+    func testNiriColumnHeightAndWorkspaceActionNamesParse() {
+        let named: [(String, HotkeyAction)] = [
+            ("set-window-height-minus", .shrinkWindowHeight),
+            ("set-window-height-plus", .growWindowHeight),
+            ("switch-preset-window-height", .switchPresetWindowHeight),
+            ("reset-window-height", .resetWindowHeight),
+            ("focus-column-first", .focusColumnFirst),
+            ("focus-column-last", .focusColumnLast),
+            ("move-column-to-first", .moveColumnToFirst),
+            ("move-column-to-last", .moveColumnToLast),
+            ("swap-window-left", .swapWindowLeft),
+            ("swap-window-right", .swapWindowRight),
+            ("move-column-to-workspace-down", .moveColumnToWorkspaceDown),
+            ("move-column-to-workspace-up", .moveColumnToWorkspaceUp),
+            ("focus-workspace-previous", .focusWorkspacePrevious),
+            ("move-workspace-down", .moveWorkspaceDown),
+            ("move-workspace-up", .moveWorkspaceUp),
+        ]
+        for (name, expected) in named {
+            XCTAssertEqual(parseActionName(name), expected, name)
+            XCTAssertTrue(validActionNames().contains(name), name)
+            XCTAssertEqual(configActionName(expected), name)
+        }
+        XCTAssertEqual(parseActionName("move-column-to-workspace 4"), .moveColumnToWorkspace(4))
+        XCTAssertNil(parseActionName("move-column-to-workspace x"))
+        XCTAssertEqual(configActionName(.moveColumnToWorkspace(4)), "move-column-to-workspace 4")
+        XCTAssertTrue(validActionNames().contains("move-column-to-workspace N"))
     }
 
     func testBindUnbindAndOverride() {

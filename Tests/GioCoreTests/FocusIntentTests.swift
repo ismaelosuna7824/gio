@@ -20,10 +20,16 @@ final class FocusIntentTests: XCTestCase {
             .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
             .focusMonitor(.left), .moveColumnToMonitor(.right),
             .moveWindowToMonitor(.up), .moveWorkspaceToMonitor(.down),
+            .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
+            .swapWindowLeft, .swapWindowRight,
+            .moveColumnToWorkspace(3), .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
+            .focusWorkspacePrevious,
         ]
         let passive: [HotkeyAction] = [
             .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
             .growColumnWidth, .maximizeColumn, .centerColumn,
+            .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
+            .moveWorkspaceDown, .moveWorkspaceUp,
         ]
         for action in carrying {
             XCTAssertTrue(action.carriesFocusIntent, "\(action)")

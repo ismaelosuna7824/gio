@@ -1,0 +1,214 @@
+name: Release
+
+# A pushed tag vMAJOR.MINOR.PATCH[-prerelease] builds, signs and publishes Gio:
+# tests, a Release build signed with the Apple Development identity and the
+# Hardened Runtime, a signed Gio-<version>.dmg plus its .sha256, and a GitHub
+# release (a prerelease when the version has a "-"). Manual runs
+# (workflow_dispatch) are dry runs: same build and DMG, uploaded as a workflow
+# artifact, nothing published; they only sign when started on main.
+#
+# Jobs: test (no secrets, read-only token) -> build (the signing secrets, only
+# through the protected "release" environment, read-only token) -> publish
+# (contents: write, no secrets, no repository code: downloads the built DMG
+# and runs gh release create). Every action is pinned to a full commit SHA.
+# See docs/RELEASING.md for the environment, the secrets and the release steps.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build (no v), e.g. 0.2.0-beta.1. Dry run: nothing is published."
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Team (certificate OU) of the Apple Development identity. The designated
+  # requirement of a build pins the certificate's CN; keep the same identity
+  # across releases so Accessibility/Screen Recording grants survive updates.
+  GIO_TEAM_ID: 2CAK428VHF
+
+jobs:
+  test:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select the latest stable Xcode
+        run: |
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)"
+          if [ -z "$xcode" ]; then
+            echo "::error::No stable Xcode_<version>.app on the runner"
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+          swift --version
+
+      - name: Test (all bundles)
+        run: swift test
+
+  build:
+    needs: test
+    # Signing never runs for a dispatch from another branch.
+    if: github.event_name == 'push' || github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 60
+    environment: release
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+      publish: ${{ steps.version.outputs.publish }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Select the latest stable Xcode
+        run: |
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)"
+          if [ -z "$xcode" ]; then
+            echo "::error::No stable Xcode_<version>.app on the runner"
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode/Contents/Developer"
+          xcodebuild -version
+
+      - name: Resolve the version
+        id: version
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: scripts/release-version.sh
+
+      - name: Release notes from the tag annotation
+        if: steps.version.outputs.publish == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          # actions/checkout can leave an annotated tag as a lightweight ref; refetch the tag object.
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          mkdir -p "$RUNNER_TEMP/dist"
+          notes="$RUNNER_TEMP/dist/release-notes.md"
+          : > "$notes"
+          if [ "$(git cat-file -t "$TAG")" = "tag" ]; then
+            git for-each-ref "refs/tags/$TAG" --format='%(contents:subject)%0a%0a%(contents:body)' > "$notes"
+          fi
+
+      - name: Import the signing certificate into a temporary keychain
+        env:
+          P12_BASE64: ${{ secrets.APPLE_DEVELOPMENT_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DEVELOPMENT_P12_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$P12_BASE64" ] || [ -z "$P12_PASSWORD" ] || [ -z "$KEYCHAIN_PASSWORD" ]; then
+            echo "::error::Missing signing secrets in the release environment (see docs/RELEASING.md)"
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/gio-signing.keychain-db"
+          p12="$RUNNER_TEMP/gio-signing.p12"
+          wwdr="$RUNNER_TEMP/AppleWWDRCAG3.cer"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$p12"
+          curl -fsSL -o "$wwdr" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain"
+          security import "$wwdr" -k "$keychain" -T /usr/bin/codesign
+          security import "$p12" -k "$keychain" -f pkcs12 -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$keychain" > /dev/null
+          existing="$(security list-keychains -d user | sed -e 's/^[[:space:]]*"//' -e 's/"$//')"
+          # shellcheck disable=SC2086
+          security list-keychains -d user -s "$keychain" $existing
+          rm -f "$p12"
+          security find-identity -v -p codesigning "$keychain"
+          echo "GIO_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Build the signed app (Release, Hardened Runtime)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: |
+          xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Release \
+            -destination 'platform=macOS,arch=arm64' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Development" \
+            DEVELOPMENT_TEAM="$GIO_TEAM_ID" \
+            PROVISIONING_PROFILE_SPECIFIER= \
+            CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
+            ENABLE_HARDENED_RUNTIME=YES \
+            OTHER_CODE_SIGN_FLAGS="--keychain $GIO_KEYCHAIN" \
+            MARKETING_VERSION="$VERSION" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            build
+          echo "GIO_APP=$RUNNER_TEMP/DerivedData/Build/Products/Release/Gio.app" >> "$GITHUB_ENV"
+
+      - name: Make and sign the DMG
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          GIO_EXPECTED_TEAM: ${{ env.GIO_TEAM_ID }}
+        run: |
+          scripts/make-dmg.sh "$GIO_APP" "$VERSION" "$RUNNER_TEMP/dist"
+          echo "GIO_DIST=$RUNNER_TEMP/dist" >> "$GITHUB_ENV"
+
+      - name: Upload the DMG
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Gio-${{ steps.version.outputs.version }}
+          path: ${{ env.GIO_DIST }}
+          if-no-files-found: error
+
+      - name: Delete the temporary keychain
+        if: always()
+        run: |
+          keychain="$RUNNER_TEMP/gio-signing.keychain-db"
+          if [ -e "$keychain" ]; then
+            security delete-keychain "$keychain" || true
+          fi
+          rm -f "$RUNNER_TEMP/gio-signing.p12" "$RUNNER_TEMP/AppleWWDRCAG3.cer"
+
+  publish:
+    needs: build
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Download the built DMG
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: Gio-${{ needs.build.outputs.version }}
+          path: dist
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.build.outputs.tag }}
+          VERSION: ${{ needs.build.outputs.version }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          cd dist
+          sha256sum -c "Gio-$VERSION.dmg.sha256"
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Gio $VERSION")
+          if [ -f release-notes.md ] && [ -n "$(tr -d '[:space:]' < release-notes.md)" ]; then
+            args+=(--notes-file release-notes.md)
+          else
+            args+=(--generate-notes)
+          fi
+          if [ "$PRERELEASE" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          gh release create "$TAG" "${args[@]}" "Gio-$VERSION.dmg" "Gio-$VERSION.dmg.sha256"

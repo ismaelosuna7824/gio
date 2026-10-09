@@ -1,10 +1,11 @@
 import GioCore
 import SwiftUI
 
-/// Preset widths as chips: click one to edit or remove it, "+" adds one.
-/// Reads and writes the same comma-separated config text as before.
+/// Preset widths (or, NC-08, heights) as chips: click one to edit or remove
+/// it, "+" adds one. Reads and writes the same comma-separated config text.
 struct PresetWidthChips: View {
     @Binding var text: String
+    var axis: PresetAxis = .width
     @State private var editing: PresetWidthEditTarget?
 
     var body: some View {
@@ -22,7 +23,7 @@ struct PresetWidthChips: View {
                 .accessibilityHint("Edit or remove")
                 .popover(isPresented: isEditing(.existing(index)), arrowEdge: .bottom) {
                     PresetWidthEditor(
-                        value: PresetWidthEditorValue(value: value), isNew: false, canRemove: values.count > 1,
+                        value: PresetWidthEditorValue(value: value), axis: axis, isNew: false, canRemove: values.count > 1,
                         onDone: { replace(at: index, with: $0) },
                         onRemove: { remove(at: index) },
                         onCancel: { editing = nil }
@@ -35,11 +36,11 @@ struct PresetWidthChips: View {
                 PresetWidthAddChip()
             }
             .buttonStyle(.plain)
-            .help("Add a preset width")
-            .accessibilityLabel("Add preset width")
+            .help("Add a preset \(axis.noun)")
+            .accessibilityLabel("Add preset \(axis.noun)")
             .popover(isPresented: isEditing(.new), arrowEdge: .bottom) {
                 PresetWidthEditor(
-                    value: PresetWidthEditorValue(value: nil), isNew: true, canRemove: false,
+                    value: PresetWidthEditorValue(value: nil), axis: axis, isNew: true, canRemove: false,
                     onDone: append, onRemove: {}, onCancel: { editing = nil }
                 )
             }
@@ -112,6 +113,7 @@ struct PresetWidthAddChip: View {
 /// Popover body: amount and unit, live validation, Done / Remove.
 struct PresetWidthEditor: View {
     @State private var value: PresetWidthEditorValue
+    let axis: PresetAxis
     let isNew: Bool
     let canRemove: Bool
     let onDone: (Double) -> Void
@@ -119,10 +121,11 @@ struct PresetWidthEditor: View {
     let onCancel: () -> Void
 
     init(
-        value: PresetWidthEditorValue, isNew: Bool, canRemove: Bool,
+        value: PresetWidthEditorValue, axis: PresetAxis = .width, isNew: Bool, canRemove: Bool,
         onDone: @escaping (Double) -> Void, onRemove: @escaping () -> Void, onCancel: @escaping () -> Void
     ) {
         _value = State(initialValue: value)
+        self.axis = axis
         self.isNew = isNew
         self.canRemove = canRemove
         self.onDone = onDone
@@ -132,9 +135,9 @@ struct PresetWidthEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: GioSpacing.s) {
-            Text(isNew ? "Add Preset Width" : "Edit Preset Width").font(GioFont.headline)
+            Text("\(isNew ? "Add" : "Edit") Preset \(axis.noun.capitalized)").font(GioFont.headline)
             HStack(spacing: GioSpacing.xs) {
-                GioTextField(title: "Width", text: $value.amount, prompt: "50", width: 72, alignment: .trailing)
+                GioTextField(title: axis.noun.capitalized, text: $value.amount, prompt: "50", width: 72, alignment: .trailing)
                     .onSubmit(commit)
                 GioSegmented(
                     title: "Unit", selection: $value.unit,
@@ -145,7 +148,7 @@ struct PresetWidthEditor: View {
                 if let problem = value.problem {
                     InlineProblem(problem).lineLimit(1)
                 } else if let resolved = value.resolved {
-                    Text(resolved <= 1 ? "\(presetWidthLabel(resolved)) of the screen width" : "A fixed \(presetWidthLabel(resolved)) wide")
+                    Text(axis.caption(resolved))
                         .font(GioFont.caption)
                         .foregroundStyle(GioColor.secondaryText)
                 }

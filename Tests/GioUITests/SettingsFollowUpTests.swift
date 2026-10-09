@@ -28,6 +28,17 @@ final class SettingsFollowUpTests: XCTestCase {
         XCTAssertEqual(presetWidthsText([]), "")
     }
 
+    /// NC-08: the same chips edit the preset window heights.
+    func testPresetAxisWordsTheChipsForWidthsAndHeights() {
+        XCTAssertEqual(PresetAxis.width.noun, "width")
+        XCTAssertEqual(PresetAxis.height.noun, "height")
+        XCTAssertEqual(PresetAxis.width.caption(0.5), "50% of the screen width")
+        XCTAssertEqual(PresetAxis.width.caption(800), "A fixed 800 pt wide")
+        XCTAssertEqual(PresetAxis.height.caption(0.5), "50% of the screen height")
+        XCTAssertEqual(PresetAxis.height.caption(400), "A fixed 400 pt tall")
+        XCTAssertEqual(layoutDefaults(preserving: LayoutSettingsForm(config: LayoutSectionConfig())).presetHeightsText, "0.33333, 0.5, 0.66667")
+    }
+
     func testEditorSeedsFromAValue() {
         XCTAssertEqual(PresetWidthEditorValue(value: 0.33333), PresetWidthEditorValue(amount: "33.333", unit: .percent))
         XCTAssertEqual(PresetWidthEditorValue(value: 0.5), PresetWidthEditorValue(amount: "50", unit: .percent))

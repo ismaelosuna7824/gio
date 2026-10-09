@@ -36,6 +36,12 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         focusWindow: { [host] in host.focusWindow($0) },
         focusWorkspace: { [host] in host.focusWorkspace($0) }
     )
+    /// UP-10: the in-app updater (Overview, Diagnostics, menu bar, `gio
+    /// update`). Installing quits through the normal terminate path.
+    private lazy var updates = UpdateController(
+        dependencies: .live(guardianPID: { [host] in host.guardianPID }),
+        quit: { NSApplication.shared.terminate(nil) }
+    )
     private lazy var mainWindow = MainWindowController(
         model: DesktopModel(
             fetch: { [host] in host.snapshot() },
@@ -47,7 +53,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 relaunch: { [host] in host.requestRestart() },
                 setHotkeysSuspended: { [host] in host.setHotkeysSuspended($0) }
             )
-        )
+        ),
+        updates: updates
     )
     private let focusRing = FocusRingController()
     private let focusDim = FocusDimController()
@@ -68,6 +75,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
+        host.onUpdateRequest = { [updates] in updates.answerCLI($0) }
         if let error = host.start() {
             print("[gio] cannot start: \(error)")
             NSApplication.shared.terminate(nil)
@@ -78,6 +86,11 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.onOpenLauncher = { [weak self] in self?.showLauncher(source: .menu) }
         bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
         bar.stateProvider = { [host] in host.barState() }
+        bar.updateTitleProvider = { [updates] in updateMenuTitle(updates.state) }
+        bar.onUpdate = { [weak self] in
+            self?.mainWindow.show()
+            self?.updates.notesPresented = true
+        }
         host.onBarState = { [weak bar] state in bar?.apply(state) }
         bar.start()
         host.requestBarState()
@@ -94,6 +107,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         if opensWindow {
             mainWindow.show()
         }
+        updates.startAutomaticChecks()
     }
 
     /// Dock icon click while the window is hidden (policy is regular only
@@ -106,6 +120,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        updates.stopAutomaticChecks()
         host.shutdown()
         snapshotOverlay.stop()
         closeGhosts.stop()

@@ -4,7 +4,7 @@
 
 Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It works through public macOS APIs only (Accessibility, `NSWorkspace`, `CGEvent`), so **System Integrity Protection stays on** and no private compositor API is used.
 
-> Status: pre-release (`0.1.0-alpha`, see `gioVersion` in `Sources/GioCore/Config/GioConfig.swift`). Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read [Known limitations](docs/TESTING.md#known-limitations) before relying on it.
+> Status: pre-release. The version comes from the release tag (`MARKETING_VERSION`, see [RELEASING](docs/RELEASING.md)); local and SwiftPM builds report the last tag or `0.0.0-dev`. Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read [Known limitations](docs/TESTING.md#known-limitations) before relying on it.
 
 ## What it does
 

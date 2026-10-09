@@ -41,7 +41,7 @@ final class DisplayManagerTests: XCTestCase {
         XCTAssertEqual(survivor.viewport.offset, 0)
     }
 
-    func testReconnectRefreshesFrameAndKeepsOffset() {
+    func testReconnectRefreshesFrameKeepsOffsetAndFollowsTheSyncedWorkspace() {
         var manager = DisplayManager()
         manager.connect(main, frame: frameA, workspace: WorkspaceID(1))
         manager.updateViewport(Viewport(offset: 200, width: 1800), for: main)
@@ -50,8 +50,10 @@ final class DisplayManagerTests: XCTestCase {
         XCTAssertEqual(refreshed.frame, scaled)
         XCTAssertEqual(refreshed.viewport.width, 1512)
         XCTAssertEqual(refreshed.viewport.offset, 200)
-        // Reconnect never steals the workspace assignment.
-        XCTAssertEqual(refreshed.workspace, WorkspaceID(1))
+        // MM-04: the sync passes the manager's active workspace of the
+        // display; a known display follows it (a hot-plug may have moved a
+        // named workspace away from it).
+        XCTAssertEqual(refreshed.workspace, WorkspaceID(9))
     }
 
     func testAssignMovesDisplayBetweenWorkspaces() {

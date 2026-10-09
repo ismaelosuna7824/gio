@@ -42,6 +42,28 @@ final class NiriControlsConfigTests: XCTestCase {
         }
     }
 
+    /// NC-08: `preset-window-heights`, same rule as the widths.
+    func testPresetWindowHeightsDefaultParseAndRejection() throws {
+        XCTAssertEqual(defaultGioConfig().layout.presetWindowHeights, defaultPresetWindowHeights)
+        let (config, warnings) = try XCTUnwrap(parsed("""
+        [layout]
+        preset-window-heights = [0.25, 0.75, 400]
+        """))
+        XCTAssertEqual(config.layout.presetWindowHeights, [.proportion(0.25), .proportion(0.75), .points(400)])
+        XCTAssertTrue(warnings.isEmpty)
+        for text in [
+            "[layout]\npreset-window-heights = []",
+            "[layout]\npreset-window-heights = [0.5, 0]",
+            "[layout]\npreset-window-heights = 0.5",
+        ] {
+            guard case .failure(let errors) = parseGioConfig(text) else {
+                return XCTFail("expected failure for \(text)")
+            }
+            XCTAssertTrue(errors.messages.contains { $0.contains("layout.preset-window-heights") }, "\(errors.messages)")
+        }
+        XCTAssertTrue(defaultConfigTemplate().contains("preset-window-heights = [0.33333, 0.5, 0.66667]"))
+    }
+
     func testActionNames() {
         XCTAssertEqual(parseActionName("switch-preset-column-width"), .switchPresetColumnWidth)
         XCTAssertEqual(parseActionName("set-column-width-minus"), .shrinkColumnWidth)

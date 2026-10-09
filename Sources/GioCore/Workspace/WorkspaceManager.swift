@@ -40,6 +40,9 @@ public struct WorkspaceManager: Equatable, Sendable {
     private struct Stack: Equatable, Sendable {
         var ids: [WorkspaceID]
         var active: Int
+        /// NC-11: the workspace this display showed before the active one
+        /// (`focus-workspace-previous`); it may since have been pruned.
+        var previous: WorkspaceID?
     }
 
     private var workspaces: [WorkspaceID: Workspace]
@@ -257,8 +260,7 @@ public struct WorkspaceManager: Equatable, Sendable {
         guard case .index(let number)? = assignment else {
             return main
         }
-        let ranked = [main] + order.filter { $0 != main }
-        return number <= ranked.count ? ranked[number - 1] : main
+        return display(numbered: number) ?? main
     }
 
     /// Named workspaces first on their display, in config order; dynamic
@@ -425,21 +427,11 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// a focused column, for the focused display or an unknown one.
     @discardableResult
     public mutating func moveColumn(toDisplay display: DisplayID) -> Bool {
-        let sourceID = currentID
         guard display != focusedDisplay, let destinationID = activeID(on: display),
-              var source = workspaces[sourceID], let column = source.focusedColumnRef
+              let column = takeFocusedColumn()
         else {
             return false
         }
-        source.columns.remove(at: source.focusedColumn)
-        if source.columns.isEmpty {
-            source.focusedColumn = 0
-            source.focusedWindow = nil
-        } else {
-            source.focusedColumn = min(source.focusedColumn, source.columns.count - 1)
-            source.focusedWindow = source.columns[source.focusedColumn].focusedWindowID
-        }
-        workspaces[sourceID] = source
         insert(column, into: destinationID, afterFocused: true)
         crossFocus(to: display)
         return true
@@ -488,10 +480,83 @@ public struct WorkspaceManager: Equatable, Sendable {
         let named = target.ids.prefix { workspaces[$0]?.name != nil }.count
         let position = min(max(target.active + 1, named), target.ids.count - 1)
         target.ids.insert(moving.id, at: position)
+        target.previous = target.ids[target.active]
         target.active = position
         stacks[display] = target
         crossFocus(to: display)
         return true
+    }
+
+    /// NC-10 niri `move-column-to-workspace N`: the current workspace's
+    /// focused column (windows, width, height weights) moves to `index` of the
+    /// focused display's stack (beyond the stack: the trailing spare, which
+    /// opens a new workspace), right after that workspace's focused column,
+    /// focused, and focus follows it (niri's default `focus=true`). The source
+    /// repairs its focus like `moveColumn(toDisplay:)`; emptied, it is pruned
+    /// once left. False below 1, for the current workspace or without a column.
+    @discardableResult
+    public mutating func moveColumn(toWorkspace index: Int) -> Bool {
+        guard index >= 1 else {
+            return false
+        }
+        let stack = stacks[focusedDisplay]!
+        return transferColumn(to: stack.ids[min(index, stack.ids.count) - 1])
+    }
+
+    /// NC-10 niri `move-column-to-workspace-down`: the focused column to the
+    /// workspace below (the spare opens a new one), followed. False at the
+    /// bottom or without a column.
+    @discardableResult
+    public mutating func moveColumnToWorkspaceDown() -> Bool {
+        let stack = stacks[focusedDisplay]!
+        guard stack.active + 1 < stack.ids.count else {
+            return false
+        }
+        return transferColumn(to: stack.ids[stack.active + 1])
+    }
+
+    /// NC-10 niri `move-column-to-workspace-up`. False at the top.
+    @discardableResult
+    public mutating func moveColumnToWorkspaceUp() -> Bool {
+        let stack = stacks[focusedDisplay]!
+        guard stack.active > 0 else {
+            return false
+        }
+        return transferColumn(to: stack.ids[stack.active - 1])
+    }
+
+    /// NC-11 niri `focus-workspace-previous`: show the workspace the focused
+    /// display showed before the current one (named or dynamic); again
+    /// returns. Each display keeps its own history. False without history or
+    /// when that workspace is gone (an emptied dynamic one is pruned once
+    /// left) or now lives on another display.
+    @discardableResult
+    public mutating func focusWorkspacePrevious() -> Bool {
+        let stack = stacks[focusedDisplay]!
+        guard let previous = stack.previous, let position = stack.ids.firstIndex(of: previous),
+              position != stack.active
+        else {
+            return false
+        }
+        activate(position, on: focusedDisplay)
+        return true
+    }
+
+    /// NC-11 niri `move-workspace-down`: the current workspace trades places
+    /// with the one below in the focused display's stack and stays shown.
+    /// False for a named workspace (config order places it; `arrangeNamed`
+    /// would undo the move on the next reload), an empty one (nothing to
+    /// carry) or when only the trailing spare is below.
+    @discardableResult
+    public mutating func moveWorkspaceDown() -> Bool {
+        reorderCurrentWorkspace(by: 1)
+    }
+
+    /// NC-11 niri `move-workspace-up`: as `moveWorkspaceDown`, never above
+    /// the named workspaces that open the stack.
+    @discardableResult
+    public mutating func moveWorkspaceUp() -> Bool {
+        reorderCurrentWorkspace(by: -1)
     }
 
     /// The workspace a window rule `workspace = N` targets: index N of the
@@ -516,6 +581,9 @@ public struct WorkspaceManager: Equatable, Sendable {
 
     private mutating func activate(_ position: Int, on display: DisplayID) {
         var stack = stacks[display]!
+        if stack.ids[position] != stack.ids[stack.active] {
+            stack.previous = stack.ids[stack.active]
+        }
         stack.active = position
         stacks[display] = stack
         normalize(display)
@@ -542,6 +610,58 @@ public struct WorkspaceManager: Equatable, Sendable {
         stack.ids = kept
         stack.active = kept.firstIndex(of: active)!
         stacks[display] = stack
+    }
+
+    /// Remove the current workspace's focused column and repair its focus
+    /// (the column on the right takes over, else the one on the left). Nil
+    /// without a focused column.
+    private mutating func takeFocusedColumn() -> Column? {
+        let sourceID = currentID
+        guard var source = workspaces[sourceID], let column = source.focusedColumnRef else {
+            return nil
+        }
+        source.columns.remove(at: source.focusedColumn)
+        if source.columns.isEmpty {
+            source.focusedColumn = 0
+            source.focusedWindow = nil
+        } else {
+            source.focusedColumn = min(source.focusedColumn, source.columns.count - 1)
+            source.focusedWindow = source.columns[source.focusedColumn].focusedWindowID
+        }
+        workspaces[sourceID] = source
+        return column
+    }
+
+    /// NC-10: the focused column to `destinationID` (same display), after its
+    /// focused column, and follow it.
+    private mutating func transferColumn(to destinationID: WorkspaceID) -> Bool {
+        guard destinationID != currentID, let column = takeFocusedColumn() else {
+            return false
+        }
+        insert(column, into: destinationID, afterFocused: true)
+        if let place = location(of: destinationID) {
+            activate(place.index - 1, on: place.display)
+        }
+        return true
+    }
+
+    /// NC-11: swap the current workspace with its neighbour `delta` places
+    /// away, keeping it active; dynamic and non-empty only, between the
+    /// named block and the trailing spare.
+    private mutating func reorderCurrentWorkspace(by delta: Int) -> Bool {
+        var stack = stacks[focusedDisplay]!
+        guard let moving = workspaces[stack.ids[stack.active]], moving.name == nil, !moving.columns.isEmpty else {
+            return false
+        }
+        let named = stack.ids.prefix { workspaces[$0]?.name != nil }.count
+        let target = stack.active + delta
+        guard target >= named, target < stack.ids.count - 1 else {
+            return false
+        }
+        stack.ids.swapAt(stack.active, target)
+        stack.active = target
+        stacks[focusedDisplay] = stack
+        return true
     }
 
     /// Focus moved to `display` with a column, window or workspace: both

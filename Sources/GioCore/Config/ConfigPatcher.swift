@@ -412,7 +412,7 @@ private func render(_ value: ConfigEditValue) -> String? {
 
 private func renderRule(_ rule: WindowRule) -> [String]? {
     var block = ["[[window-rules]]"]
-    if !rule.app.isEmpty || rule.bundleID == nil {
+    if !rule.app.isEmpty || (rule.bundleID == nil && rule.title == nil) {
         guard let app = quoted(rule.app) else {
             return nil
         }
@@ -423,6 +423,12 @@ private func renderRule(_ rule: WindowRule) -> [String]? {
             return nil
         }
         block.append("bundle-id = \(text)")
+    }
+    if let title = rule.title {
+        guard let text = quoted(title.pattern) else {
+            return nil
+        }
+        block.append("title = \(text)")
     }
     if let mode = rule.mode {
         block.append("mode = \"\(mode.rawValue)\"")
@@ -438,6 +444,33 @@ private func renderRule(_ rule: WindowRule) -> [String]? {
     }
     if rule.follow != .whenActive {
         block.append("follow = \"\(rule.follow.rawValue)\"")
+    }
+    switch rule.columnWidth {
+    case .proportion(let value)?, .points(let value)?:
+        guard let text = renderNumber(Double(value)) else {
+            return nil
+        }
+        block.append("default-column-width = \(text)")
+    case .standard?, nil:
+        break
+    }
+    if rule.openMaximized {
+        block.append("open-maximized = true")
+    }
+    if let display = rule.openOnDisplay {
+        block.append("open-on-display = \(display)")
+    }
+    if !rule.openFocused {
+        block.append("open-focused = false")
+    }
+    for (key, value) in [("min-width", rule.minWidth), ("max-width", rule.maxWidth)] {
+        guard let value else {
+            continue
+        }
+        guard let text = renderNumber(Double(value)) else {
+            return nil
+        }
+        block.append("\(key) = \(text)")
     }
     return block
 }

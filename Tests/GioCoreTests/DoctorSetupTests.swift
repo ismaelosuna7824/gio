@@ -51,7 +51,8 @@ final class DoctorSetupTests: XCTestCase {
 
     func testUpdateAndUninstallMessages() {
         XCTAssertTrue(runUpdate().contains(gioVersion))
-        XCTAssertTrue(runUpdate().contains("1.0"))
+        XCTAssertTrue(runUpdate().contains("open the Gio app"))
+        XCTAssertTrue(runUpdate(install: true).contains("cannot install"))
         let out = runUninstall()
         // Either branch keeps user data; a running session refuses instead.
         XCTAssertTrue(out.contains("kept:"))
@@ -60,11 +61,15 @@ final class DoctorSetupTests: XCTestCase {
     func testDispatchNewVerbs() {
         var session = CommandSession()
         XCTAssertTrue(dispatch(.doctor, session: &session).contains("Gio doctor"))
-        XCTAssertTrue(dispatch(.update, session: &session).contains(gioVersion))
+        XCTAssertTrue(dispatch(.update(install: false), session: &session).contains(gioVersion))
         XCTAssertTrue(dispatch(.uninstall, session: &session).contains("kept:"))
         XCTAssertEqual(try parseCLICommand(["doctor"]).get(), .doctor)
         XCTAssertEqual(try parseCLICommand(["setup"]).get(), .setup)
-        XCTAssertEqual(try parseCLICommand(["update"]).get(), .update)
+        XCTAssertEqual(try parseCLICommand(["update"]).get(), .update(install: false))
+        XCTAssertEqual(try parseCLICommand(["update", "--install"]).get(), .update(install: true))
+        XCTAssertEqual(
+            parseCLICommand(["update", "now"]), .failure(.missingArgument(name: "--install", command: "update"))
+        )
         XCTAssertEqual(try parseCLICommand(["uninstall"]).get(), .uninstall)
         XCTAssertTrue(cliUsage().contains("gio doctor"))
     }

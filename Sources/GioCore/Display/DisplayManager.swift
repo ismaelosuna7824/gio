@@ -3,7 +3,7 @@ import Foundation
 
 /// Plan §16 display manager: pure topology transitions. Connect adds or
 /// refreshes a display (frame changes re-fit its viewport width and clamp
-/// the offset); disconnect drops only that display's record — workspaces
+/// the offset, and the display follows the workspace the sync passes); disconnect drops only that display's record — workspaces
 /// themselves are untouched, so unplugging B never corrupts A. Detection of
 /// the underlying events (connect/disconnect/resolution/scale) lives in the
 /// adapter (`GioMacOS/Displays`); this type decides state, never I/O.
@@ -26,8 +26,11 @@ public struct DisplayManager: Equatable, Sendable {
 
     /// New display, or refreshed frame for a known one (resolution/scale
     /// change). A fresh display starts on the given workspace at offset
-    /// zero; a known one keeps its workspace and viewport offset, re-fit to
-    /// the new width.
+    /// zero; a known one keeps its viewport offset, re-fit to the new width.
+    /// MM-04: a known one also takes the given workspace (the sync passes
+    /// the manager's active workspace of that display): a hot-plug that
+    /// moved a named workspace between displays must never leave two
+    /// displays on one workspace until the next pass.
     @discardableResult
     public mutating func connect(
         _ id: DisplayID,
@@ -36,6 +39,7 @@ public struct DisplayManager: Equatable, Sendable {
     ) -> DisplayState {
         if var known = displays[id] {
             known.frame = frame
+            known.workspace = workspace
             // Keep the scrolled offset; re-fit width to the new resolution.
             // Real content bounds clamp it on the next layout pass.
             known.viewport = Viewport(

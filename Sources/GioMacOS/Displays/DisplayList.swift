@@ -11,11 +11,17 @@ public struct DisplaySnapshot: Equatable, Sendable {
     public let id: DisplayID
     public let frame: CGRect
     public let visibleFrame: CGRect
+    /// MM-04: for the `display ...` log line only.
+    public let scale: CGFloat
+    /// Maximum refresh rate in Hz (0 when unknown); log only.
+    public let refreshRate: Int
 
-    public init(id: DisplayID, frame: CGRect, visibleFrame: CGRect) {
+    public init(id: DisplayID, frame: CGRect, visibleFrame: CGRect, scale: CGFloat = 1, refreshRate: Int = 0) {
         self.id = id
         self.frame = frame
         self.visibleFrame = visibleFrame
+        self.scale = scale
+        self.refreshRate = refreshRate
     }
 }
 
@@ -30,7 +36,10 @@ public func snapshotDisplayList() -> [DisplaySnapshot] {
             continue
         }
         let id = DisplayID(CGDirectDisplayID(number.uint32Value))
-        result[id] = DisplaySnapshot(id: id, frame: screen.frame, visibleFrame: screen.visibleFrame)
+        result[id] = DisplaySnapshot(
+            id: id, frame: screen.frame, visibleFrame: screen.visibleFrame,
+            scale: screen.backingScaleFactor, refreshRate: screen.maximumFramesPerSecond
+        )
     }
     return displaysByPosition(result.mapValues(\.frame)).compactMap { result[$0] }
 }

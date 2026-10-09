@@ -15,11 +15,16 @@ public struct ParkedTarget: Equatable, Sendable {
     public let frame: CGRect
     public let edge: ParkEdge
     public let display: CGRect
+    /// MM-04: the side the window leaves by touches another display, so it
+    /// parks on the far side (or the corner). Its motion jumps instead of
+    /// flying across the display (`ReflowPlan.jumps`).
+    public let farSide: Bool
 
-    public init(frame: CGRect, edge: ParkEdge, display: CGRect) {
+    public init(frame: CGRect, edge: ParkEdge, display: CGRect, farSide: Bool = false) {
         self.frame = frame
         self.edge = edge
         self.display = display
+        self.farSide = farSide
     }
 }
 
@@ -43,15 +48,24 @@ public let parkingSliver: CGFloat = 1
 /// Cocoa space (y up), like layout and reconciler. `display` is the FULL
 /// display frame (a Dock inset must not leave parked windows visible);
 /// `viewport` is the usable area layout ran against.
+///
+/// MM-04: a column that peeks over an edge another display shares would
+/// straddle both displays (macOS shows the rest of it on the neighbour and
+/// may even move it there), so it parks like an off-viewport column. A peek
+/// over a free edge stays (off every display, as on a single display).
+/// `focusedColumn` (its windows) always stays visible, even a column wider
+/// than its display (the niri rule: the focused column is shown).
 public func planParking(
     frames: [WindowID: CGRect],
     viewport: CGRect,
     display: CGRect,
-    otherDisplays: [CGRect]
+    otherDisplays: [CGRect],
+    focusedColumn: Set<WindowID> = []
 ) -> ParkingPlan {
     var plan = ParkingPlan(visible: [:], parked: [:])
     for (id, frame) in frames {
-        if frame.intersects(viewport) {
+        let crossesDisplay = !focusedColumn.contains(id) && otherDisplays.contains { $0.intersects(frame) }
+        if frame.intersects(viewport), !crossesDisplay {
             plan.visible[id] = frame
             continue
         }
@@ -104,11 +118,11 @@ private func parkedTarget(
         }
     }
     let order: [ParkEdge] = preferLeft ? [.left, .right] : [.right, .left]
-    for edge in order {
+    for (rank, edge) in order.enumerated() {
         let rect = candidate(edge)
         if !otherDisplays.contains(where: { $0.intersects(rect) }) {
-            return ParkedTarget(frame: rect, edge: edge, display: display)
+            return ParkedTarget(frame: rect, edge: edge, display: display, farSide: rank > 0)
         }
     }
-    return ParkedTarget(frame: candidate(.corner), edge: .corner, display: display)
+    return ParkedTarget(frame: candidate(.corner), edge: .corner, display: display, farSide: true)
 }

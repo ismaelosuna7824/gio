@@ -8,11 +8,13 @@ import SwiftUI
 /// in a bottom toolbar; outcomes appear as toasts.
 struct DiagnosticsView: View {
     @ObservedObject var model: DesktopModel
+    @Environment(\.updateController) private var updates
 
     var body: some View {
         DiagnosticsPage(
             facts: model.snapshot.facts,
             config: model.snapshot.config,
+            updates: updates,
             actions: DiagnosticsActions(
                 reloadConfig: { model.reloadConfig() },
                 restoreAllWindows: { model.restoreAllWindows(completion: $0) },
@@ -46,6 +48,8 @@ struct DiagnosticsActions {
 struct DiagnosticsPage: View {
     let facts: SessionFacts?
     let config: GioConfig
+    /// UP-11: update settings card; nil hides it (snapshots).
+    var updates: UpdateController?
     var actions = DiagnosticsActions()
     @State private var toast: ApplyToast?
     @State private var measurement: String?
@@ -54,11 +58,12 @@ struct DiagnosticsPage: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
-        facts: SessionFacts?, config: GioConfig, actions: DiagnosticsActions = DiagnosticsActions(),
-        toast: ApplyToast? = nil, measurement: String? = nil
+        facts: SessionFacts?, config: GioConfig, updates: UpdateController? = nil,
+        actions: DiagnosticsActions = DiagnosticsActions(), toast: ApplyToast? = nil, measurement: String? = nil
     ) {
         self.facts = facts
         self.config = config
+        self.updates = updates
         self.actions = actions
         _toast = State(initialValue: toast)
         _measurement = State(initialValue: measurement)
@@ -72,7 +77,7 @@ struct DiagnosticsPage: View {
         let socket = defaultSocketPath()
         return diagnosticChecklist(
             facts: facts, config: config,
-            version: (info?["CFBundleShortVersionString"] as? String) ?? gioVersion,
+            version: gioVersion,
             build: info?["CFBundleVersion"] as? String,
             socketPath: socket, socketExists: FileManager.default.fileExists(atPath: socket),
             logPath: GioLog.logFilePath
@@ -105,6 +110,9 @@ struct DiagnosticsPage: View {
             }
             if let measurement, !measurement.isEmpty {
                 measurementCard(measurement)
+            }
+            if let updates {
+                UpdateSettingsCard(controller: updates)
             }
             commandCard
             Color.clear.frame(height: 60)

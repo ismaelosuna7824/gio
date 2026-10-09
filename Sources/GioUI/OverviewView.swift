@@ -8,11 +8,13 @@ struct OverviewView: View {
     @ObservedObject var model: DesktopModel
     @StateObject private var loginItem = LoginItemModel(service: SystemLoginItem())
     @Environment(\.onboardingPresenter) private var onboarding
+    @Environment(\.updateController) private var updates
 
     var body: some View {
         OverviewDashboard(
             facts: model.snapshot.facts,
             config: model.snapshot.config,
+            updates: updates,
             showGuide: onboarding.map { presenter in { presenter.present() } },
             requestAccessibility: {
                 _ = requestAXPermission()
@@ -43,6 +45,8 @@ struct OverviewView: View {
 struct OverviewDashboard: View {
     let facts: SessionFacts?
     let config: GioConfig
+    /// UP-11: the Updates card; nil hides it (snapshots, previews).
+    var updates: UpdateController?
     var showGuide: (() -> Void)?
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
@@ -73,6 +77,9 @@ struct OverviewDashboard: View {
                 windowsCard(facts, overview)
             } else {
                 waitingState
+            }
+            if let updates {
+                UpdatesCard(controller: updates)
             }
         }
     }

@@ -122,18 +122,23 @@ public enum MotionCause: Equatable, Sendable {
 /// `HotkeyAction` case fails to compile here until it is classified.
 public func motionCause(for action: HotkeyAction) -> MotionCause {
     switch action {
-    case .focusLeft, .focusRight, .focusUp, .focusDown, .centerColumn:
+    case .focusLeft, .focusRight, .focusUp, .focusDown, .centerColumn,
+         .focusColumnFirst, .focusColumnLast:
         return .viewScroll
     case .moveLeft, .moveRight, .moveUp, .moveDown, .moveColumnLeft, .moveColumnRight,
          .consumeOrExpelLeft, .consumeOrExpelRight, .toggleFloating,
-         .moveColumnToMonitor, .moveWindowToMonitor:
+         .moveColumnToMonitor, .moveWindowToMonitor,
+         .moveColumnToFirst, .moveColumnToLast, .swapWindowLeft, .swapWindowRight:
         // MM-02: windows crossing to another display move like any window.
         return .windowMovement
     case .workspace, .moveToWorkspace, .focusWorkspaceDown, .focusWorkspaceUp,
          .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
-         .focusMonitor, .moveWorkspaceToMonitor:
+         .focusMonitor, .moveWorkspaceToMonitor,
+         .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
+         .focusWorkspacePrevious, .moveWorkspaceDown, .moveWorkspaceUp:
         return .workspaceSwitch
-    case .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .maximizeColumn:
+    case .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .maximizeColumn,
+         .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight:
         return .windowResize
     case .toggleOverview:
         // The app opens a panel; nothing moves.

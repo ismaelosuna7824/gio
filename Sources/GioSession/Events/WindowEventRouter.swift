@@ -272,6 +272,7 @@ public final class WindowEventRouter: @unchecked Sendable {
             {
                 record.title = title
                 try? registry.update(record)
+                discovery.titleChanged(known)
             }
         case .adoptFocus:
             context.requestFocusAdoption(.focusChanged, pid, element)

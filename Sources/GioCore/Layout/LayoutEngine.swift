@@ -116,10 +116,18 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
     /// to the usable viewport), and stacked heights honour minimum heights
     /// where the column can afford them.
     public let minimumSizes: [WindowID: CGSize]
+    /// WR-05 rule `min-width` / `max-width` per window: a column's width is
+    /// clamped to its members' combined limits (a minimum capped to the
+    /// usable viewport) before the learned minimum applies.
+    public let widthLimits: [WindowID: ColumnWidthLimits]
 
-    public init(config: LayoutConfig = LayoutConfig(), minimumSizes: [WindowID: CGSize] = [:]) {
+    public init(
+        config: LayoutConfig = LayoutConfig(), minimumSizes: [WindowID: CGSize] = [:],
+        widthLimits: [WindowID: ColumnWidthLimits] = [:]
+    ) {
         self.config = config
         self.minimumSizes = minimumSizes
+        self.widthLimits = widthLimits
     }
 
     public func calculate(workspace: Workspace, viewport: CGRect) throws -> LayoutResult {
@@ -151,7 +159,7 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
                 : config.resolvedWidth(of: column.widthSpec, viewportWidth: viewport.width)
             let learned = column.windows.map { minimumSizes[$0]?.width ?? 0 }.max() ?? 0
             let usableWidth = max(viewport.width - config.padding * 2, config.minimumColumnWidth)
-            widths.append(max(spec, min(learned, usableWidth)))
+            widths.append(max(limitedWidth(spec, column: column, usableWidth: usableWidth), min(learned, usableWidth)))
             framedColumns.append(column)
         }
 
@@ -189,6 +197,19 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
             cursor += width + gap
         }
         return LayoutResult(frames: frames, contentWidth: contentWidth, viewportOffset: offset)
+    }
+
+    private func limitedWidth(_ width: CGFloat, column: Column, usableWidth: CGFloat) -> CGFloat {
+        guard !widthLimits.isEmpty else {
+            return width
+        }
+        let limits = column.windows.compactMap { widthLimits[$0] }
+        guard !limits.isEmpty else {
+            return width
+        }
+        var combined = ColumnWidthLimits.combined(limits)
+        combined.min = combined.min.map { min($0, usableWidth) }
+        return combined.clamp(width)
     }
 }
 

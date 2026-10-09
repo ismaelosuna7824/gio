@@ -1,9 +1,6 @@
 import CoreGraphics
 import Foundation
 
-/// Single version source, bumped per release milestone.
-public let gioVersion = "0.1.0-alpha"
-
 /// Plan §20 configuration model. Mirrors `~/.config/gio/config.toml`.
 /// Every flag is parsed, validated and stored — never silently dropped — with
 /// its consumer named in comments.
@@ -23,6 +20,10 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// Widths `switch-preset-column-width` cycles through (Niri
     /// `preset-column-widths`): fractions when ≤ 1, points otherwise.
     public var presetColumnWidths: [ColumnWidthSpec]
+    /// NC-08: heights `switch-preset-window-height` cycles the focused
+    /// window of a stacked column through (niri `preset-window-heights`):
+    /// fractions of the usable height when ≤ 1, points otherwise.
+    public var presetWindowHeights: [ColumnWidthSpec]
     /// SW-01: a workspace with one tiled window shows it at the full strip
     /// width, like `maximize-column`; consumed by the layout engine.
     public var maximizeSingleWindow: Bool
@@ -35,7 +36,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         centerFocusedColumn: CenterFocusedColumnMode = .onOverflow,
         presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths,
         fullscreenGap: CGFloat? = nil,
-        maximizeSingleWindow: Bool = true
+        maximizeSingleWindow: Bool = true,
+        presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -44,6 +46,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.defaultColumnWidthPoints = defaultColumnWidthPoints
         self.centerFocusedColumn = centerFocusedColumn
         self.presetColumnWidths = presetColumnWidths
+        self.presetWindowHeights = presetWindowHeights
         self.maximizeSingleWindow = maximizeSingleWindow
     }
 }

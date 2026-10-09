@@ -171,6 +171,53 @@ public enum ActionApplier {
             effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
                 $0.moveWorkspace(toDisplay: $1)
             }
+        case .switchPresetWindowHeight:
+            let config = context.engine().config
+            let viewportHeight = focusedViewport(manager: manager, context: context).height
+            let next = switchPresetWindowHeight(
+                in: workspace, presets: context.layout.presetWindowHeights,
+                config: config, viewportHeight: viewportHeight
+            )
+            commit(next, over: workspace, manager: &manager)
+        case .shrinkWindowHeight, .growWindowHeight:
+            let config = context.engine().config
+            let viewportHeight = focusedViewport(manager: manager, context: context).height
+            let next = stepFocusedWindowHeight(
+                in: workspace, by: action == .growWindowHeight ? 0.1 : -0.1,
+                config: config, viewportHeight: viewportHeight
+            )
+            commit(next, over: workspace, manager: &manager)
+        case .resetWindowHeight:
+            commit(resetWindowHeights(in: workspace), over: workspace, manager: &manager)
+        case .focusColumnFirst:
+            commit(focusColumnFirst(in: workspace), over: workspace, manager: &manager)
+        case .focusColumnLast:
+            commit(focusColumnLast(in: workspace), over: workspace, manager: &manager)
+        case .moveColumnToFirst:
+            commit(moveColumnToFirst(in: workspace), over: workspace, manager: &manager)
+        case .moveColumnToLast:
+            commit(moveColumnToLast(in: workspace), over: workspace, manager: &manager)
+        case .swapWindowLeft:
+            commit(swapWindow(in: workspace, direction: .left), over: workspace, manager: &manager)
+        case .swapWindowRight:
+            commit(swapWindow(in: workspace, direction: .right), over: workspace, manager: &manager)
+        case .moveColumnToWorkspace(let number):
+            effect.syncsShownWorkspace = manager.moveColumn(toWorkspace: number)
+        case .moveColumnToWorkspaceDown:
+            effect.syncsShownWorkspace = manager.moveColumnToWorkspaceDown()
+        case .moveColumnToWorkspaceUp:
+            effect.syncsShownWorkspace = manager.moveColumnToWorkspaceUp()
+        case .focusWorkspacePrevious:
+            effect.syncsShownWorkspace = manager.focusWorkspacePrevious()
+        case .moveWorkspaceDown, .moveWorkspaceUp:
+            // The shown workspace stays the same: nothing to sync.
+            let moved = action == .moveWorkspaceDown ? manager.moveWorkspaceDown() : manager.moveWorkspaceUp()
+            if !moved, manager.currentWorkspace().name != nil {
+                GioLog.record(
+                    .info,
+                    "\(configActionName(action)) refused: workspace \(manager.currentID.rawValue) is named; config order places it"
+                )
+            }
         }
         if manager.focusedDisplay != startDisplay, manager.currentWorkspace().focusedWindow == nil,
            let display = context.displays.first(where: { $0.id == manager.focusedDisplay })
@@ -180,6 +227,28 @@ public enum ActionApplier {
         effect.carriesFocusIntent = action.carriesFocusIntent
         effect.growsFocusedWindow = action.growsFocusedWindow
         return effect
+    }
+
+    /// MM-04: the overview (Alt+O) opens on the display the user is on
+    /// (`overviewDisplay`: the focused window's display, else the one under
+    /// the cursor, else the focused display). When that is not the focused
+    /// display it becomes the focused one, so the overview's workspace picks
+    /// (`workspace N` on the focused display) act where it is shown.
+    @discardableResult
+    public static func focusOverviewDisplay(
+        manager: inout WorkspaceManager, focusedWindowFrame: CGRect?, cursor: CGPoint?, displays: [DisplayState]
+    ) -> (display: DisplayID, reason: OverviewDisplayReason)? {
+        let frames = Dictionary(displays.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+        guard let choice = overviewDisplay(
+            focusedWindowFrame: focusedWindowFrame, cursor: cursor, displays: frames,
+            focusedDisplay: manager.focusedDisplay
+        ) else {
+            return nil
+        }
+        if choice.display != manager.focusedDisplay {
+            manager.focusDisplay(choice.display)
+        }
+        return choice
     }
 
     /// Usable frame of the display showing the current workspace.

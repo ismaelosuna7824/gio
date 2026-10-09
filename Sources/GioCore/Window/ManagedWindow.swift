@@ -42,6 +42,9 @@ public struct ManagedWindow: Equatable, Sendable {
     /// Minimized windows stay registered (and keep their column) but sit out
     /// of the layout until they are deminimized.
     public var isMinimized: Bool
+    /// WR-05: the matching rule's `min-width` / `max-width`, set at arrival
+    /// and refreshed on config reload; nil without limits.
+    public var widthLimits: ColumnWidthLimits?
 
     public init(
         id: WindowID,
@@ -52,7 +55,8 @@ public struct ManagedWindow: Equatable, Sendable {
         frame: CGRect,
         mode: WindowMode,
         floatReason: FloatReason? = nil,
-        isMinimized: Bool = false
+        isMinimized: Bool = false,
+        widthLimits: ColumnWidthLimits? = nil
     ) {
         self.id = id
         self.pid = pid
@@ -63,5 +67,6 @@ public struct ManagedWindow: Equatable, Sendable {
         self.mode = mode
         self.floatReason = floatReason
         self.isMinimized = isMinimized
+        self.widthLimits = widthLimits
     }
 }

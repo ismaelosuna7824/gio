@@ -21,6 +21,9 @@ public func defaultConfigTemplate() -> String {
     center-focused-column = "on-overflow"
     # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
     preset-column-widths = [0.33333, 0.5, 0.66667]
+    # Heights Alt+Shift+R cycles the focused window of a stacked column
+    # through: fractions of the usable screen height (<= 1) or points.
+    preset-window-heights = [0.33333, 0.5, 0.66667]
     # A workspace with a single window shows it at full width (like Alt+F);
     # a second window brings the column widths back. false keeps the width.
     maximize-single-window = true
@@ -140,9 +143,23 @@ public func defaultConfigTemplate() -> String {
     # Multiple displays: "focus-monitor-left|right|up|down" (Ctrl+Alt+H / L /
     # K / J) focuses the neighbouring display; "move-column-to-monitor-..."
     # (Ctrl+Alt+Shift+H / L / K / J) sends the focused column there and
-    # follows it. Unbound: "move-window-to-monitor-..." (only the focused
-    # window) and "move-workspace-to-monitor-..." (the whole workspace), e.g.
-    # "Ctrl+Alt+Cmd+L" = "move-workspace-to-monitor-right"
+    # follows it; "move-window-to-monitor-..." (Ctrl+Alt+Cmd+H / L / K / J)
+    # sends only the focused window. Unbound: "move-workspace-to-monitor-..."
+    # (the whole workspace), e.g.
+    # "Ctrl+Alt+Shift+Cmd+L" = "move-workspace-to-monitor-right"
+    # Stacked windows: "switch-preset-window-height" (Alt+Shift+R),
+    # "set-window-height-minus" / "-plus" (Alt+Shift+Minus / Equal, 10% of
+    # the column; every window keeps 100 pt), "reset-window-height"
+    # (Ctrl+Alt+R, equal shares again).
+    # "focus-column-first" / "-last" (Alt+Home / End), "move-column-to-first"
+    # / "-last" (Ctrl+Alt+Home / End). Unbound: "swap-window-left" / "-right"
+    # trade places with the neighbouring column's focused window.
+    # "move-column-to-workspace N" (Ctrl+Alt+1-9) and
+    # "move-column-to-workspace-down" / "-up" (Ctrl+Alt+U / I) carry the whole
+    # column and follow it; "move-workspace-down" / "-up" (Ctrl+Alt+Shift+U /
+    # I) reorder this display's stack (named workspaces keep config order).
+    # Unbound: "focus-workspace-previous" (Option+Tab is left to app
+    # switchers such as AltTab), e.g. "Ctrl+Alt+Tab" = "focus-workspace-previous"
     # "none" switches a combo off, defaults included (the app's Shortcuts
     # section writes these lines for you), e.g. "Alt+C" = "none"
 
@@ -165,6 +182,11 @@ public func defaultConfigTemplate() -> String {
     # (index) or open-on-workspace = "<name>" (a [[workspace]] above; wins
     # over workspace). follow = "when-active" (default: go there only when
     # the app is frontmost as its window appears), "always" or "never".
+    # title = "<regex>" narrows the match to window titles (case-insensitive;
+    # alone it matches any app). How the window opens: default-column-width
+    # (fraction <= 1 or points), open-maximized, open-on-display = N (1 is
+    # the main display), open-focused = false (no focus, no follow), and
+    # min-width / max-width (points) for its column.
     [[window-rules]]
     app = "Calculator"
     mode = "floating"
@@ -173,5 +195,17 @@ public func defaultConfigTemplate() -> String {
     # bundle-id = "com.microsoft.VSCode"
     # open-on-workspace = "Code"
     # follow = "always"
+    #
+    # [[window-rules]]
+    # app = "Safari"
+    # title = "^Picture in Picture$"
+    # mode = "floating"
+    #
+    # [[window-rules]]
+    # app = "Mail"
+    # default-column-width = 0.66667
+    # open-on-display = 2
+    # open-focused = false
+    # min-width = 600
     """
 }

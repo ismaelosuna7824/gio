@@ -27,6 +27,48 @@ public func displaysByPosition(_ frames: [DisplayID: CGRect]) -> [DisplayID] {
     }
 }
 
+/// MM-04: the display numbers users see (`[[workspace]] display = N`, the
+/// menu bar's Move to Display, `gio move-window-to-display N`, the
+/// `display ... number=` log field): the primary display is 1, the others
+/// follow in position order. Same numbering as `WorkspaceManager.display(numbered:)`.
+public func displaysByNumber(_ frames: [DisplayID: CGRect]) -> [DisplayID] {
+    let ordered = displaysByPosition(frames)
+    guard let primary = primaryDisplayIndex(ordered.map { frames[$0]! }) else {
+        return []
+    }
+    return [ordered[primary]] + ordered.enumerated().filter { $0.offset != primary }.map(\.element)
+}
+
+/// MM-04: why the overview opens on a display.
+public enum OverviewDisplayReason: String, Equatable, Sendable {
+    /// The display holding most of the focused window.
+    case focusedWindow
+    /// No focused window on a display: the one under the cursor.
+    case cursor
+    /// Neither: Gio's focused display.
+    case focusedDisplay
+}
+
+/// MM-04: the display the overview (Alt+O) opens on, the one the user is on:
+/// the display holding the largest share of the focused window, else the
+/// display under the cursor, else Gio's focused display. Niri opens it on the
+/// focused output; the focused window's display is that output whenever Gio
+/// adopted the focus. Nil without displays.
+public func overviewDisplay(
+    focusedWindowFrame: CGRect?, cursor: CGPoint?, displays: [DisplayID: CGRect], focusedDisplay: DisplayID?
+) -> (display: DisplayID, reason: OverviewDisplayReason)? {
+    if let frame = focusedWindowFrame, let display = displayFor(frame: frame, displays: displays) {
+        return (display, .focusedWindow)
+    }
+    if let cursor, let display = displaysByPosition(displays).first(where: { displays[$0]!.contains(cursor) }) {
+        return (display, .cursor)
+    }
+    if let focusedDisplay, displays[focusedDisplay] != nil {
+        return (focusedDisplay, .focusedDisplay)
+    }
+    return nil
+}
+
 /// The display holding the largest share of `frame` (an even split goes to
 /// the first display in position order); nil when it touches none.
 public func displayFor(frame: CGRect, displays: [DisplayID: CGRect]) -> DisplayID? {

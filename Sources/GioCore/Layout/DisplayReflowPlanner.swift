@@ -64,8 +64,12 @@ public func planDisplayLayout(
             workspace.viewportOffset = revealed
         }
     }
+    let focusedColumn = workspace.focusedWindow.flatMap { focused in
+        workspace.columns.first { $0.windows.contains(focused) }
+    }
     let plan = planParking(
-        frames: layout.frames, viewport: viewport, display: display, otherDisplays: otherDisplays
+        frames: layout.frames, viewport: viewport, display: display, otherDisplays: otherDisplays,
+        focusedColumn: Set(focusedColumn?.windows ?? [])
     )
     workspace.viewportOffset = layout.viewportOffset
     return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)

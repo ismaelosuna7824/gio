@@ -196,6 +196,26 @@ final class SnapshotFlightTests: XCTestCase {
         )
     }
 
+    // MARK: MM-04 far-side parks jump
+
+    /// A window parking on the far side of its display (the near edge is
+    /// another display), or coming back from there, gets no layer flying
+    /// across the display: it starts at its target.
+    func testAJumpingWindowDoesNotFlyAcrossTheDisplay() {
+        refresh([idA: a, idB: b])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        var parkedPlan = plan
+        let far = CGRect(x: SessionFixture.screen.maxX - 1, y: b.minY, width: b.width, height: b.height)
+        parkedPlan.visible.removeValue(forKey: idB)
+        parkedPlan.parked[idB] = ParkedTarget(frame: far, edge: .right, display: SessionFixture.screen, farSide: true)
+        XCTAssertEqual(
+            flight.drive(animations: [animation], plans: [parkedPlan], spring: .niri, jumps: [idB]), .priming
+        )
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertNil(items.first { $0.id == idB }, "no layer flies to the far side")
+        XCTAssertEqual(items.first { $0.id == idA }?.from, a)
+    }
+
     // MARK: Order: prime, writes, fly
 
     func testRealWindowsAreWrittenOnlyAfterTheOverlayIsPrimedAndThenTheLayersFly() {

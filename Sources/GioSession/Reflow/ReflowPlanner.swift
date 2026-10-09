@@ -26,6 +26,11 @@ public struct ReflowPlan: Equatable, Sendable {
     /// PF-02: the pre-positions that are NA-02 entries (new windows): their
     /// writes never wait for an in-flight motion.
     public var entries: Set<WindowID> = []
+    /// MM-04: windows parking on the far side of their display (the near
+    /// side is another display) or coming back from there: no flight across
+    /// the display; they are pre-positioned at their target instead (and the
+    /// snapshot overlay starts their layers there).
+    public var jumps: Set<WindowID> = []
 }
 
 /// The planning half of `performReflow`: lays every display out, parks the
@@ -113,6 +118,9 @@ public final class ReflowPlanner: @unchecked Sendable {
     /// MM-03: the connected display whose stack held each floating window
     /// at the last pass.
     private var floatingDisplays: [WindowID: DisplayID] = [:]
+    /// MM-04: the windows the last pass parked on the far side of their
+    /// display (`ParkedTarget.farSide`): coming back, they jump too.
+    private var farParked: Set<WindowID> = []
 
     public init(context: Context) {
         self.context = context
@@ -236,6 +244,8 @@ public final class ReflowPlanner: @unchecked Sendable {
         zoomTargets: (ParkingPlan, CGRect) -> [WindowID: CGRect]
     ) -> ReflowPlan {
         var result = ReflowPlan()
+        var farParkedNow: Set<WindowID> = []
+        defer { farParked = farParkedNow }
         // Mirrors the host's manager: the host applies `displays` in order.
         var manager = input.manager
         for display in input.displays {
@@ -255,6 +265,8 @@ public final class ReflowPlanner: @unchecked Sendable {
             var displayPlan = planned.plan
             displayPlan.visible = zoomTargets(displayPlan, visible)
             result.plans.append(displayPlan)
+            let farHere = Set(displayPlan.parked.filter(\.value.farSide).keys)
+            farParkedNow.formUnion(farHere)
             result.hovered.merge(displayPlan.visible) { first, _ in first }
             if input.animating {
                 // NC-07 / MM-01: each display carries its own part of a
@@ -279,14 +291,27 @@ public final class ReflowPlanner: @unchecked Sendable {
                 for (id, start) in entries {
                     current[id] = start
                 }
-                let motion = planWorkspaceSwitchMotion(
+                var motion = planWorkspaceSwitchMotion(
                     current: current, visible: motionFrames,
                     parked: displayPlan.parked, hidden: hiddenHere,
                     viewport: visible, display: display.frame, otherDisplays: others,
                     duration: input.duration
                 )
+                // MM-04: a far-side park (its near edge is another display)
+                // or a return from one would fly across the whole display:
+                // it jumps to its target when the motion starts instead.
+                let jumps = jumpingWindows(
+                    farParked: farHere, returning: Set(displayPlan.visible.keys).intersection(farParked),
+                    targets: displayPlan, current: current
+                )
+                motion.animations.removeAll { jumps[$0.id] != nil }
+                for id in jumps.keys {
+                    motion.prepositions.removeValue(forKey: id)
+                }
                 result.animations += motion.animations
                 result.prepositions.merge(motion.prepositions) { _, new in new }
+                result.prepositions.merge(jumps) { _, new in new }
+                result.jumps.formUnion(jumps.keys)
                 result.prepositions.merge(entries) { _, new in new }
                 result.entries.formUnion(entries.keys)
                 // NA-04: risers (pre-positioned below) and hidden windows that
@@ -307,6 +332,21 @@ public final class ReflowPlanner: @unchecked Sendable {
         }
         result.plans.append(inactive)
         return result
+    }
+
+    /// MM-04: the far-side parks and the windows returning from one, with
+    /// their target, when they are not there yet.
+    private func jumpingWindows(
+        farParked: Set<WindowID>, returning: Set<WindowID>, targets: ParkingPlan, current: [WindowID: CGRect]
+    ) -> [WindowID: CGRect] {
+        var jumps: [WindowID: CGRect] = [:]
+        for id in farParked {
+            jumps[id] = targets.parked[id]?.frame
+        }
+        for id in returning {
+            jumps[id] = targets.visible[id]
+        }
+        return jumps.filter { current[$0.key] != $0.value }
     }
 
     /// NF-04: the spring curve replaces the eased timing.

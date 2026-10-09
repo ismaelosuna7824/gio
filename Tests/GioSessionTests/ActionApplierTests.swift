@@ -14,7 +14,12 @@ final class ActionApplierTests: XCTestCase {
             .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
             .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview,
             .focusMonitor(.right), .moveColumnToMonitor(.right), .moveWindowToMonitor(.right),
-            .moveWorkspaceToMonitor(.right)
+            .moveWorkspaceToMonitor(.right),
+            .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
+            .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
+            .swapWindowLeft, .swapWindowRight, .moveColumnToWorkspace(2),
+            .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .focusWorkspacePrevious,
+            .moveWorkspaceDown, .moveWorkspaceUp
         ]
         for action in actions {
             switch action {
@@ -23,7 +28,12 @@ final class ActionApplierTests: XCTestCase {
                  .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
                  .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
                  .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview,
-                 .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor:
+                 .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
+                 .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
+                 .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
+                 .swapWindowLeft, .swapWindowRight, .moveColumnToWorkspace,
+                 .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .focusWorkspacePrevious,
+                 .moveWorkspaceDown, .moveWorkspaceUp:
                 break
             }
         }
@@ -92,7 +102,10 @@ final class ActionApplierTests: XCTestCase {
 
     func testOnlyWorkspaceNavigationSyncsTheShownWorkspace() {
         let syncing: [HotkeyAction] = [
-            .workspace(2), .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp
+            .workspace(2), .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
+            // One workspace and the spare: the column moves down and is followed;
+            // up, previous and the workspace moves have nothing to do.
+            .moveColumnToWorkspace(2), .moveColumnToWorkspaceDown
         ]
         for action in Self.allActions {
             setUp()
@@ -102,7 +115,8 @@ final class ActionApplierTests: XCTestCase {
 
     func testOnlySizingAndCenterReadTheEngineAndOnlyCenterProbesModes() {
         let engineActions: [HotkeyAction] = [
-            .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .centerColumn
+            .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .centerColumn,
+            .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight
         ]
         for action in Self.allActions {
             setUp()
@@ -133,6 +147,15 @@ final class ActionApplierTests: XCTestCase {
             apply(action)
             XCTAssertEqual(current, expected, "\(action)")
         }
+        for (action, core) in [
+            (HotkeyAction.focusColumnFirst, focusColumnFirst(in:)), (.focusColumnLast, focusColumnLast(in:))
+        ] {
+            setUp()
+            let expected = core(current)
+            XCTAssertNotEqual(expected, current, "\(action)")
+            apply(action)
+            XCTAssertEqual(current, expected, "\(action)")
+        }
         world.focusColumn(0)
         let before = world.session.manager
         apply(.focusLeft)
@@ -148,7 +171,11 @@ final class ActionApplierTests: XCTestCase {
             (.moveUp, { moveWindow(in: $0, direction: .up) }),
             (.moveDown, { moveWindow(in: $0, direction: .down) }),
             (.consumeOrExpelLeft, { consumeOrExpelWindow(in: $0, direction: .left) }),
-            (.consumeOrExpelRight, { consumeOrExpelWindow(in: $0, direction: .right) })
+            (.consumeOrExpelRight, { consumeOrExpelWindow(in: $0, direction: .right) }),
+            (.moveColumnToFirst, { moveColumnToFirst(in: $0) }),
+            (.moveColumnToLast, { moveColumnToLast(in: $0) }),
+            (.swapWindowLeft, { swapWindow(in: $0, direction: .left) }),
+            (.swapWindowRight, { swapWindow(in: $0, direction: .right) })
         ]
         for (action, core) in cases {
             setUp()
@@ -186,6 +213,62 @@ final class ActionApplierTests: XCTestCase {
         apply(.moveWindowToWorkspaceUp)
         XCTAssertEqual(world.session.manager.current, 1)
         XCTAssertTrue(current.columns.flatMap(\.windows).contains(ids[1]))
+    }
+
+    func testColumnToWorkspaceActionsMatchTheManagerAndFollow() {
+        let cases: [(HotkeyAction, (inout WorkspaceManager) -> Bool)] = [
+            (.moveColumnToWorkspace(2), { $0.moveColumn(toWorkspace: 2) }),
+            (.moveColumnToWorkspaceDown, { $0.moveColumnToWorkspaceDown() }),
+        ]
+        for (action, move) in cases {
+            setUp()
+            var expected = world.session.manager
+            XCTAssertTrue(move(&expected), "\(action)")
+            let effect = apply(action)
+            XCTAssertEqual(world.session.manager, expected, "\(action)")
+            XCTAssertEqual(world.session.manager.current, 2, "\(action): focus follows the column")
+            XCTAssertEqual(current.focusedWindow, ids[1], "\(action)")
+            XCTAssertTrue(effect.syncsShownWorkspace, "\(action)")
+            XCTAssertTrue(effect.carriesFocusIntent, "\(action)")
+        }
+        let back = apply(.moveColumnToWorkspaceUp)
+        XCTAssertEqual(world.session.manager.current, 1)
+        XCTAssertEqual(current.focusedWindow, ids[1])
+        XCTAssertEqual(current.columns.count, 3)
+        XCTAssertTrue(back.syncsShownWorkspace)
+    }
+
+    func testFocusWorkspacePreviousAndMoveWorkspaceMatchTheManager() {
+        apply(.moveColumnToWorkspaceDown)
+        var expected = world.session.manager
+        XCTAssertTrue(expected.focusWorkspacePrevious())
+        let previous = apply(.focusWorkspacePrevious)
+        XCTAssertEqual(world.session.manager, expected)
+        XCTAssertEqual(world.session.manager.current, 1)
+        XCTAssertTrue(previous.syncsShownWorkspace)
+        XCTAssertTrue(previous.carriesFocusIntent)
+
+        let shown = world.session.manager.currentID
+        let moved = apply(.moveWorkspaceDown)
+        XCTAssertEqual(world.session.manager.currentID, shown, "the same workspace stays shown")
+        XCTAssertEqual(world.session.manager.current, 2)
+        XCTAssertFalse(moved.syncsShownWorkspace, "nothing to show differently")
+        XCTAssertFalse(moved.carriesFocusIntent)
+        apply(.moveWorkspaceUp)
+        XCTAssertEqual(world.session.manager.current, 1)
+    }
+
+    func testMoveWorkspaceRefusesANamedWorkspaceAndLogsIt() {
+        world.session.manager.applyNamedWorkspaces([WorkspaceDefinition(name: "Code")])
+        XCTAssertTrue(world.session.manager.focus(world.session.manager.namedWorkspaceID("Code")!))
+        let before = world.session.manager
+        apply(.moveWorkspaceDown)
+        XCTAssertEqual(world.session.manager, before)
+        let id = before.currentID.rawValue
+        XCTAssertTrue(GioLog.entries().contains {
+            $0.message == "move-workspace-down refused: workspace \(id) is named; config order places it"
+        })
+        XCTAssertFalse(GioLog.entries().contains { $0.message.contains("Code") }, "no names in the log")
     }
 
     func testWindowMovesWithoutFocusDoNothingAndDoNotSync() {
@@ -249,6 +332,32 @@ final class ActionApplierTests: XCTestCase {
             apply(action)
             XCTAssertEqual(current, stepFocusedColumnWidth(in: start, by: step, config: config, viewportWidth: width))
         }
+    }
+
+    func testHeightActionsResolveAgainstTheFocusedDisplaysUsableHeight() {
+        apply(.consumeOrExpelLeft)
+        XCTAssertEqual(current.columns[0].windows.count, 2, "a stacked column")
+        let height = world.visibleFrames[ReflowWorld.left]!.height
+        let config = world.engine().config
+        let presets = world.session.config.layout.presetWindowHeights
+        let cases: [(HotkeyAction, (Workspace) -> Workspace)] = [
+            (.switchPresetWindowHeight, {
+                switchPresetWindowHeight(in: $0, presets: presets, config: config, viewportHeight: height)
+            }),
+            (.growWindowHeight, { stepFocusedWindowHeight(in: $0, by: 0.1, config: config, viewportHeight: height) }),
+            (.shrinkWindowHeight, { stepFocusedWindowHeight(in: $0, by: -0.1, config: config, viewportHeight: height) }),
+        ]
+        for (action, core) in cases {
+            let start = current
+            let expected = core(start)
+            XCTAssertNotEqual(expected, start, "\(action)")
+            let effect = apply(action)
+            XCTAssertEqual(current, expected, "\(action)")
+            XCTAssertTrue(effect.growsFocusedWindow, "\(action)")
+        }
+        XCTAssertFalse(current.columns[0].heightWeights.isEmpty)
+        apply(.resetWindowHeight)
+        XCTAssertEqual(current.columns[0].heightWeights, [:])
     }
 
     func testCenterColumnMatchesCore() {

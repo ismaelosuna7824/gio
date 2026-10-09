@@ -485,14 +485,20 @@ public struct RuleBadge: Equatable, Sendable {
 
 /// One row of the rules list.
 public struct RuleRowPresentation: Equatable, Sendable {
+    /// The app name, else the bundle id, else "Any app" (a title-only rule).
     public let title: String
+    /// "Title matches <pattern>" for a rule with a title matcher.
+    public let subtitle: String?
     public let initials: String
     public let modeBadge: RuleBadge?
     public let workspaceBadge: RuleBadge?
+    /// WR-06: width, maximized, display, focus and width limits, in that order.
+    public let optionBadges: [RuleBadge]
     public let accessibilityLabel: String
 
     public init(rule: WindowRule) {
-        title = rule.app
+        title = !rule.app.isEmpty ? rule.app : rule.bundleID ?? "Any app"
+        subtitle = rule.title.map { "Title matches \($0.pattern)" }
         initials = appInitials(rule.app)
         switch rule.mode {
         case .floating?: modeBadge = RuleBadge(label: "Floating", symbol: "macwindow.on.rectangle", kind: .info)
@@ -507,6 +513,8 @@ public struct RuleRowPresentation: Equatable, Sendable {
                 RuleBadge(label: "Workspace \($0)", symbol: "square.stack.3d.up", kind: .neutral)
             }
         }
+        let options = ruleOptionBadges(rule)
+        optionBadges = options
         var parts: [String] = []
         if let mode = rule.mode { parts.append(mode.rawValue) }
         if let named = rule.openOnWorkspace {
@@ -514,8 +522,87 @@ public struct RuleRowPresentation: Equatable, Sendable {
         } else if let workspace = rule.workspace {
             parts.append("workspace \(workspace)")
         }
-        accessibilityLabel = "\(rule.app): " + (parts.isEmpty ? "no action" : parts.joined(separator: ", "))
+        parts += options.map { $0.label.prefix(1).lowercased() + $0.label.dropFirst() }
+        let name = title
+        let subject = subtitle.map { "\(name), \($0.prefix(1).lowercased() + $0.dropFirst())" } ?? name
+        accessibilityLabel = "\(subject): " + (parts.isEmpty ? "no action" : parts.joined(separator: ", "))
     }
+
+    /// No opinion at all: the row says "No action".
+    public var isEmpty: Bool {
+        modeBadge == nil && workspaceBadge == nil && optionBadges.isEmpty
+    }
+}
+
+private func ruleOptionBadges(_ rule: WindowRule) -> [RuleBadge] {
+    var badges: [RuleBadge] = []
+    switch rule.columnWidth {
+    case .proportion(let value)?:
+        badges.append(RuleBadge(label: "Width \(ruleNumber(value))", symbol: "arrow.left.and.right", kind: .neutral))
+    case .points(let value)?:
+        badges.append(RuleBadge(label: "Width \(ruleNumber(value)) pt", symbol: "arrow.left.and.right", kind: .neutral))
+    case .standard?, nil:
+        break
+    }
+    if rule.openMaximized {
+        badges.append(RuleBadge(label: "Maximized", symbol: "arrow.left.and.right.square", kind: .neutral))
+    }
+    if let display = rule.openOnDisplay {
+        badges.append(RuleBadge(label: "Display \(display)", symbol: "display", kind: .neutral))
+    }
+    if !rule.openFocused {
+        badges.append(RuleBadge(label: "Opens unfocused", symbol: "eye.slash", kind: .neutral))
+    }
+    switch (rule.minWidth, rule.maxWidth) {
+    case let (low?, high?):
+        badges.append(RuleBadge(label: "\(ruleNumber(low))–\(ruleNumber(high)) pt", symbol: "ruler", kind: .neutral))
+    case let (low?, nil):
+        badges.append(RuleBadge(label: "Min \(ruleNumber(low)) pt", symbol: "ruler", kind: .neutral))
+    case let (nil, high?):
+        badges.append(RuleBadge(label: "Max \(ruleNumber(high)) pt", symbol: "ruler", kind: .neutral))
+    case (nil, nil):
+        break
+    }
+    return badges
+}
+
+/// "900", "0.5", "0.33333": whole numbers without a decimal part.
+private func ruleNumber(_ value: CGFloat) -> String {
+    let number = Double(value)
+    return number == number.rounded() && abs(number) < 1e15 ? String(Int(number)) : "\(number)"
+}
+
+/// WR-06: a min/max width field's text: empty is "no limit" (nil); text
+/// that is not a number becomes NaN so the form reports it.
+public func ruleWidthLimitValue(_ text: String) -> Double? {
+    let trimmed = text.trimmingCharacters(in: .whitespaces)
+    guard !trimmed.isEmpty else {
+        return nil
+    }
+    return Double(trimmed) ?? .nan
+}
+
+/// The field text for a saved limit ("" for none).
+public func ruleWidthLimitText(_ value: Double?) -> String {
+    value.map { ruleNumber(CGFloat($0)) } ?? ""
+}
+
+/// WR-06: the rule editor shows its display picker with more than one
+/// display, or when the rule already names a display.
+public func ruleShowsDisplayPicker(displayCount: Int, current: Int?) -> Bool {
+    displayCount > 1 || current != nil
+}
+
+/// Display picker options: the focused display (no key), then each
+/// connected display by number; a saved display that is not connected
+/// stays listed.
+public func ruleDisplayOptions(displayCount: Int, current: Int?) -> [(Int?, String)] {
+    var options: [(Int?, String)] = [(nil, "Focused display")]
+    options += (1...max(displayCount, 1)).map { (Int?.some($0), "Display \($0)") }
+    if let current, current > max(displayCount, 1) {
+        options.append((current, "Display \(current)"))
+    }
+    return options
 }
 
 /// Where an app named `name` may be installed, most likely first. Names

@@ -49,6 +49,11 @@ public final class GuardianHandle: @unchecked Sendable {
         self.pipe = pipe
     }
 
+    /// UP-05: the update helper waits for this pid too before swapping bundles.
+    public var processIdentifier: Int32 {
+        process.processIdentifier
+    }
+
     /// Tell the guardian the shutdown finished: write `clean`, close the pipe.
     /// Idempotent.
     public func signalClean() {

@@ -71,7 +71,7 @@ public final class IPCRouter: @unchecked Sendable {
             switch command {
             case .reload:
                 context.applyReloadedConfig()
-            case .focus, .move, .workspace:
+            case .focus, .move, .workspace, .moveWindowToDisplay:
                 context.requestFocusIntent(command.carriesFocusIntent, previousFocus)
                 context.reflow()
             case .toggleOverview:

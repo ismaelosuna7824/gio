@@ -65,6 +65,8 @@ public func localBinOnPath(_ path: String, home: String) -> Bool {
     }
 }
 
-private func shellQuoted(_ value: String) -> String {
+/// Single-quoted for `/bin/sh`: nothing inside is expanded (also used by the
+/// update helper script, UP-05).
+public func shellQuoted(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }

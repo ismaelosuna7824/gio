@@ -77,6 +77,14 @@ final class IPCRouterTests: XCTestCase {
         withExtendedLifetime(router) {}
     }
 
+    func testMoveWindowToDisplayCarriesTheFocusAndReflows() {
+        let response = makeRouter().handle(["move-window-to-display", "2"])
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(world.calls, ["dispatch", "focusIntent", "reflow", "publishBar"])
+        XCTAssertEqual(world.intents.first?.0, true)
+        XCTAssertEqual(world.intents.first?.1, WindowID(pid: 5, elementID: 1))
+    }
+
     func testOverviewHandsTheToggleToTheApp() {
         let response = makeRouter().handle(["overview"])
         XCTAssertTrue(response.ok)

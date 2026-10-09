@@ -15,13 +15,19 @@ public enum CLICommand: Equatable, Sendable {
     case layoutInfo
     case status
     case setup
-    case update
+    /// UP-06: the running app checks GitHub releases; `install` also
+    /// downloads, verifies and installs (Gio quits and reopens).
+    case update(install: Bool)
     case doctor
     case uninstall
     case logs(LogLevel?)
     case help
     /// Niri `toggle-overview`: the app opens or closes the workspace overview.
     case toggleOverview
+    /// MM-04: move the focused window to display N (the user-facing display
+    /// number: 1 is the main display, the others follow in position order).
+    /// The menu bar's Move to Display submenu and the launcher send it.
+    case moveWindowToDisplay(Int)
 }
 
 public enum CLICommandError: Error, Equatable, Sendable {
@@ -75,7 +81,11 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
     case "setup":
         return .success(.setup)
     case "update":
-        return .success(.update)
+        switch Array(args.dropFirst()) {
+        case []: return .success(.update(install: false))
+        case ["--install"]: return .success(.update(install: true))
+        default: return .failure(.missingArgument(name: "--install", command: "update"))
+        }
     case "doctor":
         return .success(.doctor)
     case "uninstall":
@@ -93,6 +103,11 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
         return .success(.logs(level))
     case "overview":
         return .success(.toggleOverview)
+    case "move-window-to-display":
+        guard args.count > 1, let number = Int(args[1]), number >= 1 else {
+            return .failure(.missingArgument(name: "display number", command: verb))
+        }
+        return .success(.moveWindowToDisplay(number))
     case "help", "--help", "-h":
         return .success(.help)
     default:
@@ -114,9 +129,10 @@ public func cliUsage() -> String {
       gio workspace 1...9
       gio layout info
       gio overview
+      gio move-window-to-display N
       gio status
       gio setup
-      gio update
+      gio update [--install]
       gio doctor
       gio uninstall
       gio logs [--level trace|debug|info|warn|error]

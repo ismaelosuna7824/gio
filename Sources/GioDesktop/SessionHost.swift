@@ -179,6 +179,10 @@ final class SessionHost: @unchecked Sendable {
     /// WO-01: Alt+O or `gio overview`; invoked on the main thread. The app
     /// opens or closes the workspace overview panel.
     var onToggleOverview: (() -> Void)?
+    /// UP-06: `gio update [--install]`, answered by the app's updater on the
+    /// IPC thread (it may block for the network, so never on `queue`). Set
+    /// once before `start()`; read-only afterwards.
+    var onUpdateRequest: (@Sendable (UpdateCLIRequest) -> String)?
 
     func requestRestart() {
         onRestart?()
@@ -520,6 +524,9 @@ final class SessionHost: @unchecked Sendable {
                 updateDisplayHeight: { [unowned self] in actuator?.updateDisplayHeight($0) },
                 displaysChanged: { [unowned self] in
                     trustedFrames.removeAll()
+                    // MM-04: macOS may have moved windows: land, never fly
+                    // from a stale frame (startup is already instant).
+                    instantPlacement.arm(.displays)
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
                     snapshotRefresher.markBackdropDirty()
@@ -661,6 +668,12 @@ final class SessionHost: @unchecked Sendable {
     /// another instance holds the lock or the socket cannot bind.
     private var guardian: GuardianHandle?
 
+    /// UP-05: the guardian's pid (main thread; set by `start()`), so the
+    /// update helper waits for it to exit too.
+    var guardianPID: Int32? {
+        guardian?.processIdentifier
+    }
+
     func start() -> String? {
         // A relaunched instance waits a few seconds for its predecessor's lock.
         guard instanceLock.acquire(
@@ -684,6 +697,9 @@ final class SessionHost: @unchecked Sendable {
         let server = IPCServer(socketPath: defaultSocketPath()) { [weak self] argv in
             guard let self else {
                 return IPCResponse(ok: false, error: "shutting down")
+            }
+            if let request = parseUpdateRequest(argv), let answer = self.onUpdateRequest {
+                return IPCResponse(ok: true, output: answer(request))
             }
             return self.queue.sync {
                 self.ipcRouter.handle(argv)
@@ -858,9 +874,31 @@ final class SessionHost: @unchecked Sendable {
     /// focused display).
     func workspaceOverview(completion: @escaping @Sendable (WorkspaceOverviewFacts?) -> Void) {
         queue.async { [weak self] in
+            self?.focusOverviewDisplay()
             let facts = self?.factsBuilder.workspaceOverview()
             DispatchQueue.main.async { completion(facts) }
         }
+    }
+
+    /// MM-04: the overview opens on the display the user is on: the one
+    /// holding the focused window (the frontmost app's front window, as the
+    /// WindowServer lists it, so focus Gio did not adopt counts too), else
+    /// the display under the cursor, else the focused display.
+    private func focusOverviewDisplay() {
+        let own = ProcessInfo.processInfo.processIdentifier
+        let frontmost = probe.frontmostPID.flatMap { $0 == own ? nil : $0 }
+        let focusedFrame = frontmost.flatMap { pid in
+            probe.windowServerWindows(displayHeight: primaryHeight()).first { $0.pid == pid }?.bounds
+        }
+        var manager = session.manager
+        guard let choice = ActionApplier.focusOverviewDisplay(
+            manager: &manager, focusedWindowFrame: focusedFrame, cursor: probe.mouseLocation,
+            displays: displays.allDisplays()
+        ) else {
+            return
+        }
+        session.manager = manager
+        GioLog.record(.info, "overview display id=\(choice.display.rawValue) reason=\(choice.reason.rawValue)")
     }
 
     /// WO-01: one capture of the given windows (`WindowFact.id`s) at their
@@ -1023,8 +1061,9 @@ final class SessionHost: @unchecked Sendable {
         reflowAll()
     }
 
-    /// Config reload: rule-owned floats follow the new rules. Workspace
-    /// assignment is not re-applied (rules place windows at arrival only);
+    /// Config reload: rule-owned floats and rule width limits follow the new
+    /// rules. Workspace assignment, width, maximized, display and focus are
+    /// not re-applied (rules place windows at arrival only);
     /// named workspaces were already re-applied when `session.config` was
     /// assigned (`CommandSession.config` didSet, NW-02).
     private func reapplyRules() {
@@ -1035,6 +1074,11 @@ final class SessionHost: @unchecked Sendable {
             case .tile(let id):
                 try? session.registry.setMode(.tiled, for: id)
                 tileability.invalidate(id)
+            case .widthLimits(let id, let limits):
+                if var record = session.registry.find(id) {
+                    record.widthLimits = limits
+                    try? session.registry.update(record)
+                }
             }
         }
     }
@@ -1046,8 +1090,25 @@ final class SessionHost: @unchecked Sendable {
         // independent (MM-01): default widths resolve per display viewport.
         ScrollableLayoutEngine(
             config: session.config.makeLayoutConfig(),
-            minimumSizes: minimumSizes.sizes
+            minimumSizes: minimumSizes.sizes,
+            widthLimits: ruleWidthLimits()
         )
+    }
+
+    /// WR-05: rule width limits of the registered windows. Empty, without a
+    /// pass over the registry, when no rule sets any (a reload clears the
+    /// windows' limits through `reapplyRules`).
+    private func ruleWidthLimits() -> [WindowID: ColumnWidthLimits] {
+        guard session.config.rules.contains(where: { $0.minWidth != nil || $0.maxWidth != nil }) else {
+            return [:]
+        }
+        var limits: [WindowID: ColumnWidthLimits] = [:]
+        for window in session.registry.managedWindows() {
+            if let windowLimits = window.widthLimits {
+                limits[window.id] = windowLimits
+            }
+        }
+        return limits
     }
 
     /// FI-02: a write that landed larger than asked teaches the layout that
@@ -1311,7 +1372,9 @@ final class SessionHost: @unchecked Sendable {
         // the fallback.
         var snapshotFlight = false
         if animating, snapshotRefresher.rendererUsable(), !animations.isEmpty || overlayFlight.isActive {
-            switch overlayFlight.drive(animations: animations, plans: plans, spring: passAnimation.spring) {
+            switch overlayFlight.drive(
+                animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps
+            ) {
             case .ax:
                 break
             case .flying:
@@ -1683,10 +1746,10 @@ final class SessionHost: @unchecked Sendable {
             }
             self.publishDisplayRefreshes()
             self.queue.async {
-                // Screens changed under the flight: come down, then relayout.
+                // Screens changed under the flight: come down at once; the
+                // sync and the relayout wait for the end of the burst (MM-04).
                 self.overlayFlight.abortForDisplayChange()
-                self.discovery.syncDisplays()
-                self.reflowAll()
+                self.discovery.noteDisplayChange()
             }
         }
     }

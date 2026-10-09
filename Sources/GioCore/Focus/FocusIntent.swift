@@ -13,10 +13,19 @@ extension HotkeyAction {
              .focusWorkspaceDown, .focusWorkspaceUp,
              .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
              .consumeOrExpelLeft, .consumeOrExpelRight,
-             .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor:
+             .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
+             .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
+             .swapWindowLeft, .swapWindowRight,
+             .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
+             .focusWorkspacePrevious:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
-             .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview:
+             .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview,
+             .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight:
+            return false
+        case .moveWorkspaceDown, .moveWorkspaceUp:
+            // The shown workspace and its focused window stay the same; only
+            // the stack order changes.
             return false
         }
     }
@@ -29,7 +38,8 @@ extension HotkeyAction {
     /// a focus intent instead.
     public var growsFocusedWindow: Bool {
         switch self {
-        case .switchPresetColumnWidth, .growColumnWidth, .shrinkColumnWidth, .maximizeColumn:
+        case .switchPresetColumnWidth, .growColumnWidth, .shrinkColumnWidth, .maximizeColumn,
+             .switchPresetWindowHeight, .growWindowHeight, .shrinkWindowHeight, .resetWindowHeight:
             return true
         default:
             return false
@@ -41,7 +51,7 @@ extension CLICommand {
     /// IPC commands that change the logical focus deliberately.
     public var carriesFocusIntent: Bool {
         switch self {
-        case .focus, .move, .workspace:
+        case .focus, .move, .workspace, .moveWindowToDisplay:
             return true
         default:
             return false

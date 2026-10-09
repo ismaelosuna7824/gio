@@ -21,6 +21,30 @@ public func presetWidthsText(_ values: [Double]) -> String {
     values.map { $0 == $0.rounded() ? String(Int($0)) : "\($0)" }.joined(separator: ", ")
 }
 
+/// NC-08: which preset list a chip row edits; the chips and the editor are
+/// shared, only the words change.
+public enum PresetAxis: Sendable {
+    case width, height
+
+    /// "width" / "height", for titles and help texts.
+    public var noun: String {
+        switch self {
+        case .width: return "width"
+        case .height: return "height"
+        }
+    }
+
+    /// The editor's caption for a resolved value (a fraction or points).
+    public func caption(_ resolved: Double) -> String {
+        switch self {
+        case .width:
+            return resolved <= 1 ? "\(presetWidthLabel(resolved)) of the screen width" : "A fixed \(presetWidthLabel(resolved)) wide"
+        case .height:
+            return resolved <= 1 ? "\(presetWidthLabel(resolved)) of the screen height" : "A fixed \(presetWidthLabel(resolved)) tall"
+        }
+    }
+}
+
 public enum PresetWidthUnit: String, CaseIterable, Sendable {
     case percent, points
 

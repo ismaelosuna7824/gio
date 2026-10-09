@@ -8,6 +8,9 @@ public enum InstantPlacementReason: String, Equatable, Sendable {
     /// A mouse button abandoned the running motion; the deferred pass after
     /// release lands instantly.
     case mouse
+    /// MM-04: the displays changed (connect, disconnect, arrangement):
+    /// macOS may have moved windows, so nothing flies from a stale frame.
+    case displays
 }
 
 public enum InstantPlacementDecision: Equatable, Sendable {

@@ -228,7 +228,10 @@ final class FocusedGrowTests: XCTestCase {
     }
 
     func testSizingActionsResizeTheFocusedWindowWithoutMovingFocus() {
-        let sizing: [HotkeyAction] = [.switchPresetColumnWidth, .growColumnWidth, .shrinkColumnWidth, .maximizeColumn]
+        let sizing: [HotkeyAction] = [
+            .switchPresetColumnWidth, .growColumnWidth, .shrinkColumnWidth, .maximizeColumn,
+            .switchPresetWindowHeight, .growWindowHeight, .shrinkWindowHeight, .resetWindowHeight,
+        ]
         for action in sizing {
             XCTAssertTrue(action.growsFocusedWindow, "\(action)")
             XCTAssertFalse(action.carriesFocusIntent, "\(action)")

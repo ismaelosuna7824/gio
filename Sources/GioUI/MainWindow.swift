@@ -58,9 +58,14 @@ public struct GioMainView: View {
     @StateObject private var drafts = SettingsDraftStore()
     @StateObject private var onboarding = OnboardingPresenter()
     private let onSectionChange: (MainSection) -> Void
+    /// UP-11: the updater (Overview row, Diagnostics settings, notes sheet).
+    private let updates: UpdateController?
 
-    public init(model: DesktopModel, onSectionChange: @escaping (MainSection) -> Void = { _ in }) {
+    public init(
+        model: DesktopModel, updates: UpdateController? = nil, onSectionChange: @escaping (MainSection) -> Void = { _ in }
+    ) {
         self.model = model
+        self.updates = updates
         self.onSectionChange = onSectionChange
     }
 
@@ -78,13 +83,15 @@ public struct GioMainView: View {
             }
             .listStyle(.sidebar)
             .safeAreaInset(edge: .top, spacing: 0) {
-                SidebarHeader(status: sessionStatus(model.snapshot.facts), version: appVersionLabel())
+                SidebarHeader(status: sessionStatus(model.snapshot.facts), version: gioVersion)
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             detail(for: selection ?? .overview)
                 .navigationTitle((selection ?? .overview).title)
+                .updateNotesSheet(updates)
         }
+        .environment(\.updateController, updates)
         .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
         .environment(\.onboardingPresenter, onboarding)
         .sheet(isPresented: $onboarding.isPresented) {
@@ -122,11 +129,6 @@ public struct GioMainView: View {
 /// Smallest and first-launch sizes of the main window's content.
 public let mainWindowMinSize = CGSize(width: 860, height: 580)
 public let mainWindowDefaultSize = CGSize(width: 1040, height: 700)
-
-/// `0.1.0` from the bundle, else the built-in version string.
-func appVersionLabel() -> String {
-    (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? gioVersion
-}
 
 /// One sidebar row: colored symbol tile and title, System Settings style,
 /// with a dot while the section holds unsaved edits.
@@ -217,9 +219,11 @@ struct SidebarHeader: View {
 public final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: DesktopModel
+    private let updates: UpdateController?
 
-    public init(model: DesktopModel) {
+    public init(model: DesktopModel, updates: UpdateController? = nil) {
         self.model = model
+        self.updates = updates
         super.init()
     }
 
@@ -245,7 +249,7 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
     /// Unified toolbar window with a full-height sidebar; the title follows
     /// the selected section and the frame is restored across launches.
     private func makeWindow() -> NSWindow {
-        let hosting = NSHostingController(rootView: GioMainView(model: model) { [weak self] section in
+        let hosting = NSHostingController(rootView: GioMainView(model: model, updates: updates) { [weak self] section in
             self?.window?.title = section.title
         })
         hosting.sizingOptions = []

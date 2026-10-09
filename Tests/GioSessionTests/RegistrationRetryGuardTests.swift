@@ -75,6 +75,8 @@ final class RegistrationRetryGuardTests: XCTestCase {
     }
 
     func testOwnPidIsNeverClassifiedNorRetried() {
+        // MM-04: the set-up display sync logs the display configuration.
+        world.logs.removeAll()
         world.running = [EventWorld.ownPID]
         var context = world.discoveryContext()
         var asked: [pid_t] = []

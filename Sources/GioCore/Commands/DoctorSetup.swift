@@ -86,8 +86,11 @@ public func runSetup(session: inout CommandSession) -> String {
     return lines.joined(separator: "\n")
 }
 
-public func runUpdate() -> String {
-    "Gio \(gioVersion) — updates are not published yet (first release at 1.0)"
+/// UP-06: the Gio app answers `gio update` itself (its IPC server hands the
+/// request to the updater before dispatch); this is the answer of a session
+/// without one.
+public func runUpdate(install: Bool = false) -> String {
+    "Gio \(gioVersion): this session cannot \(install ? "install" : "check for") updates; open the Gio app"
 }
 
 public func runUninstall() -> String {

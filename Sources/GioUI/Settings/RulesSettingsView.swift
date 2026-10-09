@@ -21,7 +21,7 @@ struct RulesSettingsView: View {
     var body: some View {
         let rules = model.snapshot.config.rules
         SettingsScaffold(
-            "Rules", subtitle: "Place or float windows of specific apps as they appear.",
+            "Rules", subtitle: "Place, size or float windows of specific apps or titles as they appear.",
             barState: .hidden, toast: $toast, onApply: {}, onRevert: {}
         ) {
             if !rules.isEmpty {
@@ -36,7 +36,7 @@ struct RulesSettingsView: View {
             } else {
                 SectionCard(
                     "Window Rules",
-                    footer: "Rules apply when a window first appears. The first rule whose app name matches exactly wins."
+                    footer: "Rules apply when a window first appears (an untitled window is checked once more when its title arrives). The first matching rule wins: the app name or bundle id exactly, and the title pattern if the rule has one."
                 ) {
                     ForEach(Array(rules.enumerated()), id: \.offset) { index, rule in
                         CardRow(divider: index < rules.count - 1) {
@@ -51,7 +51,7 @@ struct RulesSettingsView: View {
             }
         }
         .sheet(item: $draft) { item in
-            RuleEditor(draft: item) { form in
+            RuleEditor(draft: item, displayCount: model.snapshot.facts?.displays.count ?? 1) { form in
                 let edit: ConfigEdit = item.index.map { .updateRule(index: $0, form.rule) } ?? .addRule(form.rule)
                 toast = ApplyToast(feedback: model.apply([edit]))
                 draft = nil
@@ -80,7 +80,7 @@ struct RulesSettingsView: View {
         guard let index = pendingDelete, rules.indices.contains(index) else {
             return "Delete this rule?"
         }
-        return "Delete the rule for \(rules[index].app)?"
+        return "Delete the rule for \(RuleRowPresentation(rule: rules[index]).title)?"
     }
 }
 
@@ -107,17 +107,29 @@ struct RuleRow: View {
     private var content: some View {
         HStack(spacing: GioSpacing.s) {
             RuleAppIcon(application: presentation.title, size: 28)
-            Text(presentation.title)
-                .font(GioFont.body.weight(.medium))
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(presentation.title)
+                    .font(GioFont.body.weight(.medium))
+                    .lineLimit(1)
+                if let subtitle = presentation.subtitle {
+                    Text(subtitle)
+                        .font(GioFont.callout.monospaced())
+                        .foregroundStyle(GioColor.secondaryText)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
             Spacer(minLength: GioSpacing.s)
-            if presentation.modeBadge == nil, presentation.workspaceBadge == nil {
+            if presentation.isEmpty {
                 StatusBadge(.neutral, "No action", symbol: "minus.circle")
             }
             if let badge = presentation.modeBadge {
                 StatusBadge(badge.kind, badge.label, symbol: badge.symbol)
             }
             if let badge = presentation.workspaceBadge {
+                StatusBadge(badge.kind, badge.label, symbol: badge.symbol)
+            }
+            ForEach(presentation.optionBadges, id: \.label) { badge in
                 StatusBadge(badge.kind, badge.label, symbol: badge.symbol)
             }
             GioIconMenu("Actions for \(presentation.title)", systemImage: "ellipsis.circle") {
@@ -240,16 +252,27 @@ struct RulesEmptyState: View {
     }
 }
 
-/// Add / edit sheet.
+/// Add / edit sheet: who the rule matches (app, title pattern), where and
+/// how the window opens (mode, workspace, display, width, maximized,
+/// focus) and its width limits. Validation is `RuleForm.problems`.
 struct RuleEditor: View {
     @State private var draft: RuleDraft
     @State private var touched = false
+    @State private var minWidthText: String
+    @State private var maxWidthText: String
+    let displayCount: Int
     let onSave: (RuleForm) -> Void
     let onCancel: () -> Void
 
-    init(draft: RuleDraft, onSave: @escaping (RuleForm) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        draft: RuleDraft, displayCount: Int = 1,
+        onSave: @escaping (RuleForm) -> Void, onCancel: @escaping () -> Void
+    ) {
         _draft = State(initialValue: draft)
         _touched = State(initialValue: draft.index != nil)
+        _minWidthText = State(initialValue: ruleWidthLimitText(draft.form.minWidth))
+        _maxWidthText = State(initialValue: ruleWidthLimitText(draft.form.maxWidth))
+        self.displayCount = displayCount
         self.onSave = onSave
         self.onCancel = onCancel
     }
@@ -267,41 +290,15 @@ struct RuleEditor: View {
                 RuleAppIcon(application: draft.form.app.trimmingCharacters(in: .whitespaces), size: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(draft.index == nil ? "New Rule" : "Edit Rule").font(.system(size: 15, weight: .semibold))
-                    Text("Applies to new windows of this app.")
+                    Text("Applies to new windows of this app, or with a matching title.")
                         .font(GioFont.callout)
                         .foregroundStyle(GioColor.secondaryText)
                 }
             }
             SectionCard {
-                CardRow {
-                    SettingRow("App name", caption: "Exactly as shown in the menu bar.") {
-                        HStack(spacing: GioSpacing.xxs) {
-                            GioTextField(title: "App name", text: $draft.form.app, prompt: "Safari", width: 170)
-                                .onChange(of: draft.form.app) { _ in touched = true }
-                            GioIconMenu("Choose a running app", systemImage: "list.bullet.circle") {
-                                ForEach(runningApps, id: \.self) { name in
-                                    Button(name) { draft.form.app = name }
-                                }
-                            }
-                        }
-                    }
-                }
-                CardRow {
-                    SegmentedRow(
-                        "Mode", selection: $draft.form.mode,
-                        options: [(nil, "Any"), (.tiled, "Tiled"), (.floating, "Floating"), (.fullscreen, "Fullscreen")],
-                        width: 300
-                    )
-                }
-                CardRow(divider: false) {
-                    SettingRow("Workspace", caption: "Where its windows open.") {
-                        GioPopup(
-                            title: "Workspace", selection: $draft.form.workspace,
-                            options: [(Int?.none, "Current")] + (1...9).map { (Int?.some($0), "Workspace \($0)") },
-                            width: 150
-                        )
-                    }
-                }
+                matchRows
+                placementRows
+                sizeRows
                 if touched, !draft.form.problems.isEmpty {
                     VStack(alignment: .leading, spacing: GioSpacing.xxs) {
                         ForEach(draft.form.problems, id: \.self) { InlineProblem($0) }
@@ -320,7 +317,117 @@ struct RuleEditor: View {
             }
         }
         .padding(GioSpacing.xl)
-        .frame(width: 520)
+        .frame(width: 560)
         .background(GioColor.page)
+    }
+
+    @ViewBuilder
+    private var matchRows: some View {
+        CardRow {
+            SettingRow("App name", caption: "Exactly as shown in the menu bar. Leave empty to match any app by title.") {
+                HStack(spacing: GioSpacing.xxs) {
+                    GioTextField(title: "App name", text: $draft.form.app, prompt: "Safari", width: 170)
+                        .onChange(of: draft.form.app) { _ in touched = true }
+                    GioIconMenu("Choose a running app", systemImage: "list.bullet.circle") {
+                        ForEach(runningApps, id: \.self) { name in
+                            Button(name) { draft.form.app = name }
+                        }
+                    }
+                }
+            }
+        }
+        CardRow {
+            SettingRow("Title", caption: "Regular expression, case-insensitive. Empty matches every title.") {
+                GioTextField(
+                    title: "Title pattern", text: $draft.form.title, prompt: "^Picture in Picture$", width: 200,
+                    monospaced: true
+                )
+                .onChange(of: draft.form.title) { _ in touched = true }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var placementRows: some View {
+        CardRow {
+            SegmentedRow(
+                "Mode", selection: $draft.form.mode,
+                options: [(nil, "Any"), (.tiled, "Tiled"), (.floating, "Floating"), (.fullscreen, "Fullscreen")],
+                width: 300
+            )
+        }
+        CardRow {
+            SettingRow("Workspace", caption: "Where its windows open.") {
+                GioPopup(
+                    title: "Workspace", selection: $draft.form.workspace,
+                    options: [(Int?.none, "Current")] + (1...9).map { (Int?.some($0), "Workspace \($0)") },
+                    width: 150
+                )
+            }
+        }
+        if ruleShowsDisplayPicker(displayCount: displayCount, current: draft.form.openOnDisplay) {
+            CardRow {
+                SettingRow("Display", caption: "1 is the main display. A display that is not connected uses the focused one.") {
+                    GioPopup(
+                        title: "Display", selection: $draft.form.openOnDisplay,
+                        options: ruleDisplayOptions(displayCount: displayCount, current: draft.form.openOnDisplay),
+                        width: 150
+                    )
+                }
+            }
+        }
+        CardRow {
+            ToggleRow(
+                "Take focus", caption: "Off: the window opens without taking focus or switching workspace.",
+                isOn: $draft.form.openFocused
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var sizeRows: some View {
+        CardRow {
+            SegmentedRow(
+                "Column width",
+                selection: Binding(get: { draft.form.widthChoice }, set: { draft.form.adoptWidthChoice($0) }),
+                options: [(.layoutDefault, "Default"), (.fraction, "Fraction"), (.points, "Points")], width: 240
+            )
+        }
+        switch draft.form.widthChoice {
+        case .layoutDefault:
+            EmptyView()
+        case .fraction:
+            CardRow {
+                SliderRow(
+                    "Width", value: $draft.form.widthValue, in: 0.1...1, step: 0.01, format: formatPercent
+                )
+            }
+        case .points:
+            CardRow {
+                SliderRow(
+                    "Width", value: $draft.form.widthValue, in: 200...3000, step: 10, format: formatPoints
+                )
+            }
+        }
+        CardRow {
+            ToggleRow("Open maximized", caption: "Full strip width, like Alt+F.", isOn: $draft.form.openMaximized)
+        }
+        CardRow(divider: false) {
+            SettingRow("Width limits", caption: "Points; empty means no limit. The app's own minimum still wins.") {
+                HStack(spacing: GioSpacing.xxs) {
+                    GioTextField(title: "Minimum width", text: $minWidthText, prompt: "Min", width: 70, alignment: .trailing)
+                        .onChange(of: minWidthText) { text in
+                            draft.form.minWidth = ruleWidthLimitValue(text)
+                            touched = true
+                        }
+                    Text("–").foregroundStyle(GioColor.secondaryText)
+                    GioTextField(title: "Maximum width", text: $maxWidthText, prompt: "Max", width: 70, alignment: .trailing)
+                        .onChange(of: maxWidthText) { text in
+                            draft.form.maxWidth = ruleWidthLimitValue(text)
+                            touched = true
+                        }
+                }
+            }
+        }
     }
 }

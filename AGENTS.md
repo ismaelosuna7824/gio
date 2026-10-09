@@ -17,6 +17,8 @@ Instructions for AI coding agents working on Gio, a Niri-style scrollable tiling
 | `Tests/*` | One XCTest bundle per module: `GioCoreTests`, `GioMacOSTests`, `GioUITests`, `GioSessionTests`, `GioPOCTests`, `GioMacTests` (legacy). |
 | `odd/tasks/*.md` | Feature documents: decisions, task IDs, commit hashes, evidence. |
 | `docs/` | Architecture, testing, user guide, contributing. |
+| `scripts/` | Release tooling: `make-dmg.sh` (signed, hardened `Gio.app` to a signed `Gio-<version>.dmg` plus `.sha256`), `release-version.sh` (the release workflow's version check; tests: `test-release-version.sh`) and `stamp-dev-version.sh` (Xcode build phase: dev builds report `<last tag>+dev`). See `docs/RELEASING.md`. |
+| `.github/workflows/` | `ci.yml` (tests plus unsigned app build on every push) and `release.yml` (a `v*` tag: test, then build and sign in the protected `release` environment, then publish a GitHub release; actions pinned by commit SHA). |
 | `Gio.xcodeproj`, `Gio.xcworkspace` | Signed app project (scheme `Gio`) and helper schemes (`gio-poc-list`, `gio-poc-tile`, `gio-poc-restore`, `gio-doctor`). |
 | `Resources/` | App icon: `AppIcon.icon`, an Icon Composer document (layers and `icon.json`) bundled by the Xcode `Gio` target; actool compiles it into `Assets.car` and `AppIcon.icns` (`ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon`). Edit it in Icon Composer and replace the folder; `applyBundleAppIcon()` (GioUI) hands the Dock the bundle's `AppIcon` at launch and whenever the window shows, to bypass a stale icon cache. |
 
@@ -60,6 +62,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **Never run `gio-poc tile` against a live desktop** while Gio runs (or at all on a desktop you care about): it rewrites window frames and fights the session. Recovery: `swift run gio-poc restore`.
 - **Never write the user's real config or files in tests.** `applyConfigEdits(_:toFileAt:)` defaults to `~/.config/gio/config.toml`, `loadGioConfig(at:)` reads the real path by default (`GioLog.logFilePath` defaults to a temp file under XCTest, HD-08), and `dispatch(.reload, ...)` re-reads the real config. Pass temp paths (see `ConfigPatcherTests`, `GioLogTests`, `CommandDispatcherTests`). Socket tests must use temp sockets.
 - **The Xcode `Gio` target lists the `GioDesktop` files explicitly** in `Gio.xcodeproj/project.pbxproj` (`main.swift`, `SessionHost.swift`). A new file in `Sources/GioDesktop` will not be compiled by Xcode unless the pbxproj is edited. Put new UI and logic in `Sources/GioUI` or `Sources/GioCore`, which the app links as package products.
+- **Never hard-code a version.** The app version is `MARKETING_VERSION` (`Config/Version.xcconfig`, the tag in releases) through Info.plist; code reads `gioVersion` (GioCore), which falls back to `gioBuildVersion` (`0.0.0-dev`) outside the app bundle. Never create or push tags or releases from an agent session (`docs/RELEASING.md`).
 - **Do not validate Accessibility behavior with `swift run GioDesktop`/`GioApp`.** They are not the signed app; the Accessibility grant is tied to code-signing identity. Use the Xcode `Gio` scheme. Signing lives in `Config/*.xcconfig` (`Signing.xcconfig` tracked defaults, `Signing.local.xcconfig` git-ignored personal override). Never edit `project.pbxproj` for signing and never commit signing changes.
 - **The app re-executes itself as a guardian** (`Gio --guardian <pid>`, HD-07). Detect the flag before any `NSApplication` setup; the guardian must never take the lock, serve IPC or show UI. Protocol and decision logic: `GioCore/Commands/Guardian.swift`.
 - **`SessionHost` and the views have no unit tests.** Extract the decision into Core, or the session-queue component into `GioSession` (closure context, `SystemProbe`, `ManualScheduler`), so it can be tested.
@@ -83,7 +86,8 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `desktop-app.md` | Main window, menu-bar lifecycle, settings, logs, diagnostics (DA-01..DA-05). |
 | `workspace-overview.md` | Mission Control workaround, `toggle-overview` panel (WO-00..WO-01). |
 | `fluidity.md` | Slow apps vs. the final pass, registration storms, unpainted windows, floating popups stealing focus, transient-window retries; a motion-following dim was tried and reverted (PF-A..PF-F). |
-| `multi-monitor.md` | Multiple displays: primary-display flip, position order, startup placement, per-display parking, switch motion and widths (MM-01); monitor actions (MM-02); stacked displays and floating monitor moves (MM-03). |
+| `multi-monitor.md` | Multiple displays: primary-display flip, position order, startup placement, per-display parking, switch motion and widths (MM-01); monitor actions (MM-02); stacked displays and floating monitor moves (MM-03); no straddling, hot-plug, overview display, Move to Display, display log lines (MM-04). |
+| `release.md` | Versioning, signed DMG, release workflow and its hardening (RL-01..RL-08) and the in-app updater and its hardening (UP-01..UP-17). |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 
 ## How to verify a change

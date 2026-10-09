@@ -32,8 +32,9 @@ public struct ShortcutBinding: Equatable, Sendable {
     }
 }
 
-/// One row of the Shortcuts reference. Parameterized actions
-/// (`workspace N`, `move-to-workspace N`) are one entry with several bindings.
+/// One row of the Shortcuts reference. Parameterized actions (`workspace N`,
+/// `move-to-workspace N`, `move-column-to-workspace N`) are one entry with
+/// several bindings.
 public struct ShortcutEntry: Equatable, Identifiable, Sendable {
     public let id: String
     public let name: String
@@ -124,6 +125,38 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
     case .moveWorkspaceToMonitor(let direction):
         let side = monitorSide(direction)
         return ActionInfo(id: "move-workspace-to-monitor-\(side)", name: "Move workspace to monitor \(side)", summary: "Send the current workspace to the stack of the display \(monitorPlace(direction)), shown there, and follow it; named workspaces stay where config puts them (unbound by default).", category: .monitors)
+    case .switchPresetWindowHeight:
+        return ActionInfo(id: "switch-preset-window-height", name: "Cycle window height", summary: "Cycle the focused window through the preset heights of its column; the other windows share the rest.", category: .windows)
+    case .shrinkWindowHeight:
+        return ActionInfo(id: "set-window-height-minus", name: "Shrink window height", summary: "Make the focused window 10% of the column shorter; the others grow.", category: .windows)
+    case .growWindowHeight:
+        return ActionInfo(id: "set-window-height-plus", name: "Grow window height", summary: "Make the focused window 10% of the column taller; every other window keeps a minimum height.", category: .windows)
+    case .resetWindowHeight:
+        return ActionInfo(id: "reset-window-height", name: "Reset window heights", summary: "Give every window of the focused column an equal share of its height again.", category: .windows)
+    case .focusColumnFirst:
+        return ActionInfo(id: "focus-column-first", name: "Focus first column", summary: "Focus the leftmost column of the workspace.", category: .focus)
+    case .focusColumnLast:
+        return ActionInfo(id: "focus-column-last", name: "Focus last column", summary: "Focus the rightmost column of the workspace.", category: .focus)
+    case .moveColumnToFirst:
+        return ActionInfo(id: "move-column-to-first", name: "Move column to first", summary: "Move the focused column to the start of the strip; it keeps its windows and sizes.", category: .move)
+    case .moveColumnToLast:
+        return ActionInfo(id: "move-column-to-last", name: "Move column to last", summary: "Move the focused column to the end of the strip; it keeps its windows and sizes.", category: .move)
+    case .swapWindowLeft:
+        return ActionInfo(id: "swap-window-left", name: "Swap window left", summary: "Trade places with the focused window of the left column; widths stay with the columns (unbound by default).", category: .move)
+    case .swapWindowRight:
+        return ActionInfo(id: "swap-window-right", name: "Swap window right", summary: "Trade places with the focused window of the right column; widths stay with the columns (unbound by default).", category: .move)
+    case .moveColumnToWorkspace:
+        return ActionInfo(id: "move-column-to-workspace N", name: "Move column to workspace N", summary: "Send the focused column, with all its windows and sizes, to workspace 1 to 9 and follow it.", category: .workspaces)
+    case .moveColumnToWorkspaceDown:
+        return ActionInfo(id: "move-column-to-workspace-down", name: "Move column down a workspace", summary: "Send the focused column to the workspace below (the empty one at the bottom opens a new workspace) and follow it.", category: .workspaces)
+    case .moveColumnToWorkspaceUp:
+        return ActionInfo(id: "move-column-to-workspace-up", name: "Move column up a workspace", summary: "Send the focused column to the workspace above and follow it.", category: .workspaces)
+    case .focusWorkspacePrevious:
+        return ActionInfo(id: "focus-workspace-previous", name: "Previous workspace", summary: "Go back to the workspace this display showed before; again to return (unbound by default: Option+Tab belongs to app switchers).", category: .workspaces)
+    case .moveWorkspaceDown:
+        return ActionInfo(id: "move-workspace-down", name: "Move workspace down", summary: "Move the current workspace one place down in this display's stack; named workspaces keep their config order.", category: .workspaces)
+    case .moveWorkspaceUp:
+        return ActionInfo(id: "move-workspace-up", name: "Move workspace up", summary: "Move the current workspace one place up in this display's stack, never above the named ones.", category: .workspaces)
     }
 }
 
@@ -174,14 +207,18 @@ private func withParameter(_ text: String, of action: HotkeyAction) -> String {
 
 /// One representative per family, in display order within each category.
 private let catalogActions: [HotkeyAction] = [
-    .focusLeft, .focusRight, .focusUp, .focusDown,
-    .moveColumnLeft, .moveColumnRight, .moveLeft, .moveRight, .moveUp, .moveDown,
+    .focusLeft, .focusRight, .focusUp, .focusDown, .focusColumnFirst, .focusColumnLast,
+    .moveColumnLeft, .moveColumnRight, .moveColumnToFirst, .moveColumnToLast,
+    .moveLeft, .moveRight, .moveUp, .moveDown, .swapWindowLeft, .swapWindowRight,
     .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
     .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight,
     .toggleFloating, .fullscreen,
-    .workspace(1), .moveToWorkspace(1),
-    .focusWorkspaceDown, .focusWorkspaceUp,
-    .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp, .toggleOverview,
+    .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
+    .workspace(1), .moveToWorkspace(1), .moveColumnToWorkspace(1),
+    .focusWorkspaceDown, .focusWorkspaceUp, .focusWorkspacePrevious,
+    .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
+    .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
+    .moveWorkspaceDown, .moveWorkspaceUp, .toggleOverview,
     .focusMonitor(.left), .focusMonitor(.right), .focusMonitor(.up), .focusMonitor(.down),
     .moveColumnToMonitor(.left), .moveColumnToMonitor(.right),
     .moveColumnToMonitor(.up), .moveColumnToMonitor(.down),
@@ -244,7 +281,7 @@ private func bindingOrder(
 
 private func parameter(of action: HotkeyAction) -> Int {
     switch action {
-    case .workspace(let number), .moveToWorkspace(let number): return number
+    case .workspace(let number), .moveToWorkspace(let number), .moveColumnToWorkspace(let number): return number
     default: return 0
     }
 }

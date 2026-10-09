@@ -75,7 +75,7 @@ private func sourceText(_ source: ShortcutSource) -> String {
 /// The workspace number of a parameterized action, nil for the rest.
 private func workspaceNumber(_ action: HotkeyAction) -> Int? {
     switch action {
-    case .workspace(let number), .moveToWorkspace(let number): return number
+    case .workspace(let number), .moveToWorkspace(let number), .moveColumnToWorkspace(let number): return number
     default: return nil
     }
 }
@@ -84,6 +84,7 @@ private func withWorkspace(_ action: HotkeyAction, _ number: Int) -> HotkeyActio
     switch action {
     case .workspace: return .workspace(number)
     case .moveToWorkspace: return .moveToWorkspace(number)
+    case .moveColumnToWorkspace: return .moveColumnToWorkspace(number)
     default: return action
     }
 }

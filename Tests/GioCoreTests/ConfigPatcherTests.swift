@@ -223,6 +223,8 @@ final class SettingsFormTests: XCTestCase {
         form.widthKind = .points
         form.widthValue = 900
         form.presetsText = "0.33, 0.5, 700"
+        XCTAssertEqual(form.presetHeightsText, "0.33333, 0.5, 0.66667")
+        form.presetHeightsText = "0.25, 500"
         XCTAssertTrue(form.problems.isEmpty)
         let result = try {
             switch patchGioConfig("", edits: form.edits) {
@@ -236,6 +238,7 @@ final class SettingsFormTests: XCTestCase {
             result.config.layout.presetColumnWidths,
             [.proportion(0.33), .proportion(0.5), .points(700)]
         )
+        XCTAssertEqual(result.config.layout.presetWindowHeights, [.proportion(0.25), .points(500)])
     }
 
     func testLayoutFormReportsProblems() {
@@ -245,6 +248,8 @@ final class SettingsFormTests: XCTestCase {
         form.widthValue = 1.5
         form.presetsText = "abc"
         XCTAssertEqual(form.problems.count, 3)
+        form.presetHeightsText = "0.5, -2"
+        XCTAssertTrue(form.problems.contains("Preset heights must be a comma-separated list of positive numbers."))
         form.widthKind = .points
         form.widthValue = 0.5
         XCTAssertTrue(form.problems.contains { $0.contains("points") })

@@ -62,6 +62,44 @@ public enum HotkeyAction: Equatable, Sendable {
     /// Niri `move-workspace-to-monitor-<direction>` (unbound): the current
     /// workspace moves to the neighbouring display's stack; focus follows it.
     case moveWorkspaceToMonitor(FocusDirection)
+    /// NC-08 niri `switch-preset-window-height` (Alt+Shift+R): cycle the
+    /// focused window through `preset-window-heights` within its column.
+    case switchPresetWindowHeight
+    /// NC-08 niri `set-window-height "-10%"` (Alt+Shift+Minus).
+    case shrinkWindowHeight
+    /// NC-08 niri `set-window-height "+10%"` (Alt+Shift+Equal).
+    case growWindowHeight
+    /// NC-08 niri `reset-window-height` (Ctrl+Alt+R): every window of the
+    /// focused column back to an equal share.
+    case resetWindowHeight
+    /// NC-09 niri `focus-column-first` (Alt+Home).
+    case focusColumnFirst
+    /// NC-09 niri `focus-column-last` (Alt+End).
+    case focusColumnLast
+    /// NC-09 niri `move-column-to-first` (Ctrl+Alt+Home).
+    case moveColumnToFirst
+    /// NC-09 niri `move-column-to-last` (Ctrl+Alt+End).
+    case moveColumnToLast
+    /// NC-09 niri `swap-window-left` (unbound): trade places with the left
+    /// column's focused window.
+    case swapWindowLeft
+    /// NC-09 niri `swap-window-right` (unbound).
+    case swapWindowRight
+    /// NC-10 niri `move-column-to-workspace N` (Ctrl+Alt+N): the whole
+    /// focused column; focus follows it.
+    case moveColumnToWorkspace(Int)
+    /// NC-10 niri `move-column-to-workspace-down` (Ctrl+Alt+U).
+    case moveColumnToWorkspaceDown
+    /// NC-10 niri `move-column-to-workspace-up` (Ctrl+Alt+I).
+    case moveColumnToWorkspaceUp
+    /// NC-11 niri `focus-workspace-previous` (unbound: Option+Tab belongs to
+    /// app switchers such as AltTab): the display's previously shown workspace.
+    case focusWorkspacePrevious
+    /// NC-11 niri `move-workspace-down` (Ctrl+Alt+Shift+U): reorder the
+    /// display's stack; named workspaces keep their config order.
+    case moveWorkspaceDown
+    /// NC-11 niri `move-workspace-up` (Ctrl+Alt+Shift+I).
+    case moveWorkspaceUp
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -98,8 +136,14 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
 /// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
-/// floating, Alt+O the workspace overview, Ctrl+Alt+H/J/K/L focus the neighbouring display and
-/// Ctrl+Alt+Shift+H/J/K/L move the column there (Alt+Space stays the launcher; exact-match combos never collide).
+/// floating, Alt+O the workspace overview, Ctrl+Alt+H/J/K/L focus the neighbouring display,
+/// Ctrl+Alt+Shift+H/J/K/L move the column there and Ctrl+Alt+Cmd+H/J/K/L move only the focused
+/// window (MM-04) (Alt+Space stays the launcher; exact-match combos never collide).
+/// NC-08..NC-11 follow niri's defaults with Alt as Mod: Alt+Home/End focus the first/last column,
+/// Ctrl+Alt+Home/End move the column there, Alt+Shift+Minus/Equal and Alt+Shift+R size the window
+/// within its column, Ctrl+Alt+R resets the heights, Ctrl+Alt+N / Ctrl+Alt+U / I move the column to
+/// a workspace, Ctrl+Alt+Shift+U / I move the workspace. `focus-workspace-previous` (niri Mod+Tab)
+/// and `swap-window-*` ship unbound: Option+Tab is the AltTab switcher's default.
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -127,15 +171,31 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt, .shift], "U"), .moveWindowToWorkspaceDown),
         (combo([.alt, .shift], "I"), .moveWindowToWorkspaceUp),
         (combo([.alt], "O"), .toggleOverview),
+        (combo([.alt], "Home"), .focusColumnFirst),
+        (combo([.alt], "End"), .focusColumnLast),
+        (combo([.ctrl, .alt], "Home"), .moveColumnToFirst),
+        (combo([.ctrl, .alt], "End"), .moveColumnToLast),
+        (combo([.alt, .shift], "R"), .switchPresetWindowHeight),
+        (combo([.alt, .shift], "Minus"), .shrinkWindowHeight),
+        (combo([.alt, .shift], "Equal"), .growWindowHeight),
+        (combo([.ctrl, .alt], "R"), .resetWindowHeight),
+        (combo([.ctrl, .alt], "U"), .moveColumnToWorkspaceDown),
+        (combo([.ctrl, .alt], "I"), .moveColumnToWorkspaceUp),
+        (combo([.ctrl, .alt, .shift], "U"), .moveWorkspaceDown),
+        (combo([.ctrl, .alt, .shift], "I"), .moveWorkspaceUp),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))
         bindings.append((combo([.alt, .shift], "\(number)"), .moveToWorkspace(number)))
+        bindings.append((combo([.ctrl, .alt], "\(number)"), .moveColumnToWorkspace(number)))
     }
     let monitorKeys: [(String, FocusDirection)] = [("H", .left), ("J", .down), ("K", .up), ("L", .right)]
     for (key, direction) in monitorKeys {
         bindings.append((combo([.ctrl, .alt], key), .focusMonitor(direction)))
         bindings.append((combo([.ctrl, .alt, .shift], key), .moveColumnToMonitor(direction)))
+        // MM-04: Command for "window" (niri leaves the window move as a
+        // commented alternative on its column-move combo).
+        bindings.append((combo([.ctrl, .alt, .cmd], key), .moveWindowToMonitor(direction)))
     }
     return bindings
 }

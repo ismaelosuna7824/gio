@@ -5,7 +5,9 @@ Two or more displays must behave correctly: frames flip with the right height, d
 a geometric order, startup windows stay on their display, each display hides and switches
 its own workspaces, and default-width columns fit their own display (MM-01). Niri monitor
 actions (`focus-monitor-*`, `move-column-to-monitor-*`, `move-window-to-monitor-*`,
-`move-workspace-to-monitor-*`) follow in MM-02.
+`move-workspace-to-monitor-*`) follow in MM-02. MM-04 repairs what the first live session on two
+displays showed (2026-10-08): windows straddling displays, hot-plug, the overview's display and how
+to send a window to another display.
 
 ## Problem (read-only code map, 2026-10-07)
 - The global AX/WindowServer <-> Cocoa flip used `NSScreen.main` (the key-window screen):
@@ -310,7 +312,192 @@ detection on secondary displays (documented only), legacy `GioMac`/`GioApp`.
     hides and returns with the target display's workspace.
   - The union-corner fallback (every side of a display touching another) has not been seen.
 
+## MM-04 — Live repair: straddling windows, hot-plug, overview display, Move to Display
+
+### Live evidence (user, 2026-10-08 23:29-23:40 UTC)
+- Arrangement (read from `NSScreen`): built-in id 1, frame `(0,0,1800,1169)`, visible
+  `(0,0,1800,1130)`, scale 2, 120 Hz, primary; external id 3, frame `(-2160,-224,2160,1440)`, visible
+  the same, scale 1, 60 Hz, left of the built-in (bottom 224 pt lower, top 47 pt higher: AX top
+  y = 1169 - 1216 = -47, bottom 1393).
+- Config: named `Code` with `display = 2`, `Browsers` on main, `center-focused-column =
+  "on-overflow"`. (The config file read on 2026-10-08 17:13 local no longer has `display = 2`;
+  the tests use the reported one.)
+- Symptoms: windows pass to the other monitor and straddle; on the built-in, after Alt+H/L, two half
+  columns and empty desktop on the right; Alt+O always on the same display; worse after
+  connecting a monitor while Gio runs; no way known to send a window to another display.
+- Log (`~/.config/gio/gio.log`, read only): no display line at all; `reconcile failure
+  id=39335:14 app=Activity Monitor kind=frameMismatch requested=(-1076,-216,1068,1394)
+  actual=(-1076,0,1068,1178)` (23:38:09); `requested=(-538,-216,1068,1394)
+  actual=(-538,-264,1068,1394)` for Activity Monitor (23:39:10) and LoopOps ADE (23:36:48 and
+  six more). Every `overview shown` (`workspaces=2 windows=5`) listed the external's stack
+  (WhatsApp, Slack, OrbStack, LoopOps ADE, Activity Monitor), each opened while a window of the
+  external had the focus.
+
+### Causes
+Proven (arithmetic on the log plus a RED test):
+1. **Peeking columns straddle displays (symptoms 1 and 2).** On the external, columns are 1068 pt
+   (half of 2160 after padding). A centered column k sits at offset `1076k - 538`; its right
+   neighbour then starts at x = -538 and ends at 530, half on the built-in. That is exactly the
+   logged `requested=(-538,...)`. macOS pushed it down to y = -264 (its top under the built-in's
+   menu bar, AX y 39): the `frameMismatch`. Mirror case: the built-in's left neighbour of a
+   centered column, `(-440,8,888,1114)`, lies half on the external. `planParking` kept every
+   frame that intersected the viewport visible, whatever display the rest of it covered.
+2. **Not a flip bug.** The failure line logs the Cocoa frame the actuator was asked for (before
+   `AXVerticalFlip`). Flipped with the primary height 1169 the request is AX `(-1076,-9,1068,1394)`,
+   inside the external's AX bounds `(-2160,-47,2160,1440)`. `primaryHeight()`, `AXVerticalFlip`,
+   `cocoaFrame(fromWindowServer:)` and the discovery flip all use the primary display (MM-01).
+   Guard test, green before and after.
+3. **Hot-plug left two displays on one workspace.** `DisplayManager.connect` kept a known
+   display's workspace ("never steals"). Connecting the external moves `Code` (`display = 2`)
+   there, but the built-in, which showed `Code`, kept pointing at it: both displays showed `Code`
+   until the next pass's `syncShownWorkspace` (and the facts, actions and visibility checks in
+   between read the stale pair). RED: `[2, 2]`, expected `[2, 3]`.
+4. **An empty screen list disconnected every display** in the host's `DisplayManager` while the
+   manager kept its stacks (the manager ignores an empty list). RED: displays `[]`, two
+   `displaysChanged` calls.
+5. **No coalescing**: every `didChangeScreenParametersNotification` (macOS posts several per
+   plug) ran a full sync and a reflow, each animating from frames macOS had just changed.
+6. **No display logging** (nothing to diagnose the arrangement from).
+7. **Overview display (symptom 3)**: `workspaceOverview()` always used `manager.focusedDisplay`.
+
+Inferred (not proven):
+- Activity Monitor's `actual=(-1076,0,1068,1178)`: macOS cut the height at the built-in's bottom,
+  presumably because the window, straddling just before, still counted as on the built-in when
+  its position was written. Without straddling it should not recur.
+- The requested height 1394 means a 1410 pt usable height on the external at 23:38, not the 1440
+  read later (a 30 pt top inset then, a menu bar on the external?). Unknown; the new `display`
+  line records the visible frame at every change.
+- Symptom 2 is not a viewport or content-width defect: with the exact arrangement and three
+  half-width columns centered on the built-in, the planner keeps the right neighbour visible
+  (test), and the log's built-in steps (`applied=2 parked=1`, no centering: two 888 pt columns
+  never overflow 1800 pt) are sane. The empty/half columns seen were most likely the straddlers
+  (the external's right peek over the built-in's left part, and macOS moving straddlers).
+  `center-focused-column` applies to the display showing the current workspace with that
+  display's viewport (`ReflowPlanner.plan`, `display.workspace == manager.currentID`); checked by
+  reading and by the centered tests on both displays.
+- Symptom 3: the focus Gio adopts follows clicks and activations (`focus reveal` lines), so the
+  overview followed it in this log; it can only lag when the focus goes to a window Gio did not
+  adopt, or when the user is on a display whose workspace is empty.
+
+### Decisions
+- **No straddling.** A frame that intersects the viewport but also another display parks like an
+  off-viewport column (`planParking`). Clipping by resizing was rejected (every scroll would
+  resize apps; minimum widths would straddle again). A peek over a free edge stays (off every
+  display, as on one display); the focused column always stays visible (`focusedColumn`), even one
+  wider than its display. Test assertions for the external accept a left peek past its free edge
+  (AX x below -2160): that is off every display, not on the built-in.
+- **Far-side parks jump.** `ParkedTarget.farSide` marks a park whose preferred edge is taken by
+  another display (the far edge or the corner). `ReflowPlanner` drops the flight of such a park
+  and of a window returning from one (`farParked`, last pass) and pre-positions it at its target
+  (`ReflowPlan.jumps`); the snapshot flight starts those layers at their target
+  (`drive(jumps:)`). Before, a column leaving over the shared edge flew across the whole display.
+- **Hot-plug.** `DiscoveryService.noteDisplayChange()` coalesces a burst: one sync and one reflow
+  `displayChangeDelay` (0.25 s) after the last notification (generation-checked one-shot on the
+  session scheduler); a running snapshot flight is still aborted at once. `syncDisplays` ignores
+  an empty list, points known displays at the manager's active workspace too (`DisplayManager.connect`
+  semantics changed; `testReconnectRefreshesFrameAndKeepsOffset` encoded the old rule and became
+  `...FollowsTheSyncedWorkspace`), logs the configuration, and `displaysChanged` now also arms
+  `InstantPlacementReason.displays` (the next pass lands without motion: macOS moves windows of a
+  removed display, so the known frames are stale). Audited without change: per-display parking
+  memos and the hidden book (`invalidateParking`), floating relocation (a gone display is not a
+  move), snapshot overlay panels/backdrops (the overlay prunes gone displays itself), focus dim
+  panels (keyed by display frame, gone ones fade out), the flip height update.
+- **Display numbers.** One user-facing numbering everywhere: `displaysByNumber` (primary 1, then
+  position order), the same as `WorkspaceManager.display(numbered:)` / `[[workspace]] display`.
+- **Logging.** Info at startup and every sync: `displays count=N`, then per display `display
+  index=<position> id=<CGDirectDisplayID> frame=(x,y,w,h) visible=(x,y,w,h) scale=S hz=H
+  primary=<bool> number=<display number> shown=<workspace id> stack=<ids>` (Cocoa). Debug: `display
+  flip primaryHeight=H primary=<id>`. `displays count=0 ignored` for an empty list. Nothing extra
+  per reflow.
+- **Overview display rule.** The display holding most of the focused window (the frontmost app's
+  front window from the WindowServer list, so focus Gio did not adopt counts), else the display
+  under the cursor, else Gio's focused display (`overviewDisplay`, pure). Niri uses the focused
+  output; this is the same whenever Gio adopted the focus. `ActionApplier.focusOverviewDisplay`
+  makes it the focused display so the overview's `1`-`9` and picks act there; log `overview
+  display id=N reason=focusedWindow|cursor|focusedDisplay`.
+- **Moving windows between displays.** `move-window-to-monitor-*` is bound by default to
+  `Ctrl+Alt+Cmd+H/J/K/L` (free in the 69-binding table, now 73; Ctrl+Alt is the monitor family,
+  Shift the column as in niri, Command the window; niri itself leaves the window move as a
+  commented alternative of its column-move combo). `move-column-to-monitor-*` unchanged. New CLI
+  verb `move-window-to-display N` (it fits the `verb N` grammar of `workspace N`): IPC, launcher
+  `> move-window-to-display N`, and the menu bar's **Move Window to Display** submenu (one row per
+  display, `N  <NSScreen.localizedName>`, the focused window's display checked and disabled,
+  hidden with one display). The config template's example moved to `Ctrl+Alt+Shift+Cmd+L`.
+
+### Tasks
+- [x] MM-04 — Live repair. Not committed (working tree, per the session's instruction); LIVE PENDING.
+  - [x] 1. Instrumentation: `GioCore/Display/DisplayLog.swift` (`DisplayLogEntry`,
+    `displayConfigurationLog`, `displayFlipLogLine`), `GioMacOS/Displays/DisplayList.swift`
+    (`DisplaySnapshot.scale/refreshRate`), `DiscoveryService.syncDisplays` (`logDisplays`).
+  - [x] 2. No straddling: `GioCore/Layout/ParkingPlanner.swift` (`planParking` straddlers,
+    `focusedColumn`, `ParkedTarget.farSide`), `DisplayReflowPlanner.swift` (passes the focused
+    column), `GioSession/Reflow/ReflowPlanner.swift` (`jumps`, `farParked`),
+    `GioSession/Snapshot/SnapshotFlightController.swift` (`drive(jumps:)`), `SessionHost` (passes
+    `pass.jumps`).
+  - [x] 3. Symptom 2 reproduced on the exact arrangement (no extra defect; see Causes).
+  - [x] 4. Hot-plug: `DiscoveryService.noteDisplayChange` / `displayChangeDelay`, empty-list guard,
+    `DisplayManager.connect`, `InstantPlacementReason.displays`, `SessionHost.watchDisplays` and
+    `displaysChanged`.
+  - [x] 5. Overview display: `GioCore/Display/DisplayGeometry.swift` (`overviewDisplay`,
+    `displaysByNumber`), `ActionApplier.focusOverviewDisplay`, `SessionHost.focusOverviewDisplay`.
+  - [x] 6. Move to Display: `HotkeyDispatcher.defaultHotkeyBindings`, `CLICommand`
+    (`moveWindowToDisplay`, usage), `CommandDispatcher`, `FocusIntent`, `IPCRouter`,
+    `GioUI/LauncherModel.swift`, `GioUI/MoveToDisplayMenu.swift`, `GioUI/MenuBar.swift`,
+    `ConfigTemplate.swift`.
+  - [x] 7. Docs: `docs/USER_GUIDE.md` (Multiple monitors, shortcuts table, 73 bindings, menu bar,
+    overview, CLI), `docs/ARCHITECTURE.md` (Multiple displays MM-04 bullets, parking table,
+    instant placement), `docs/TESTING.md` (checks 14 and 14b, log lines, known limitations),
+    `docs/CONTRIBUTING.md` (73), this file.
+
+### Evidence
+- RED by compilation (`swift build --target ...`, before the code): `GioCoreTests/MultiDisplayRepairTests`
+  (`ParkedTarget.farSide`, `displaysByNumber`, `overviewDisplay`, `displayConfigurationLog`,
+  `DisplayLogEntry`, `displayFlipLogLine`, `InstantPlacementReason.displays`,
+  `CLICommand.moveWindowToDisplay`); `GioSessionTests` (`SnapshotFlightTests` `farSide:` /
+  `drive(jumps:)`, `MultiDisplayHotPlugTests` `DisplaySnapshot(scale:refreshRate:)`,
+  `noteDisplayChange`, `ActionApplier.focusOverviewDisplay`, `ReflowPlan.jumps`); `GioUITests`
+  (`MenuDisplay`, `moveToDisplayItems`).
+- RED observed (assertions, `swift test --filter`, with the new API in place and the old behaviour):
+  - `MultiDisplayRepairTests.testAColumnPeekingOverASharedEdgeParksOffItsDisplaysFreeSide`:
+    `(-538,-216,1068,1424)` stayed visible, no park.
+  - `testTheBuiltInsLeftPeekNeverReachesTheExternal`: `(-440,8,888,1114)` visible.
+  - `testTheExternalStripStaysInsideTheExternalsAXBounds`: focus 1 and 2, `(-538,-216,1068,1424)`
+    visible, AX maxX 530 > 0.
+  - `testTheBuiltInStripKeepsItsRightNeighbourAndNeverReachesTheExternal`: left neighbour
+    `(-440,8,888,1114)` on the external.
+  - `testAColumnWiderThanTheRoomAtTheEdgeNeverStraddles`: 7 straddlers, e.g. external
+    `(-644,-216,1500,1424)`, built-in `(-1058,8,1300,1114)`.
+  - `FarSideParkingMotionTests` (both): no far-side park, the return flew (no jump, no pre-position).
+  - `MultiDisplayHotPlugTests.testConnectingAndDisconnectingTheExternalKeepsEveryWindowOnItsDisplay`:
+    display workspaces `[2, 2]` after connecting (expected `[2, 3]`).
+  - `testEveryDisplaySyncLogsTheConfiguration`: no log line.
+  - `testAnEmptyScreenListKeepsTheConnectedDisplays`: displays `[]`, `displayChanges` 2.
+  - `HotkeyTests`: 69 bindings (expected 73), `Ctrl+Alt+Cmd+H/J/K/L` unbound.
+- Green before and after (guards): `testTheFlipUsesThePrimaryHeightAndKeepsExternalFramesOnTheExternal`,
+  `testAPeekTowardsNoDisplayStaysVisible`, every `ReflowPlannerTests` legacy-equivalence test, the
+  MM-03 stacked-display tests.
+- Tests that encoded the old decisions, updated: `DisplayManagerTests.testReconnectRefreshesFrameAndKeepsOffset`
+  (now `...FollowsTheSyncedWorkspace`), `HotkeyTests` (count, window moves bound),
+  `ShortcutCatalogTests.testMonitorEntriesOnePerDirectionWithCtrlAltDefaults` (window moves bound),
+  `RegistrationRetryGuardTests.testOwnPidIsNeverClassifiedNorRetried` (clears the set-up sync's
+  display lines before asserting the own-pid path logs nothing).
+- GREEN: `swift test`, all bundles 0 failures: GioUITests 306 (53 skipped), GioSessionTests 393,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 83, GioCoreTests 1653. `git diff --check` clean.
+  Signed `xcodebuild` not run in this session (GioMacOS, GioUI and GioDesktop changed: run it).
+- LIVE PENDING (nothing validated on real displays; `docs/TESTING.md` checks 14 and 14b):
+  - The exact arrangement (external left, bottom 224 pt lower): no window on both displays after
+    Alt+H/L, overview picks and centering on either display; no `frameMismatch` across the edge.
+  - Hot-plug while Gio runs, with `Code` at `display = 2`: one `displays count=` block per plug or
+    unplug, `layout instant reason=displays`, `Code` moves to the external and back, hidden windows
+    park off their own display.
+  - Far-side parks: the leaving peek vanishes instead of flying across the display, with both
+    renderers.
+  - Alt+O on each display (focused window there; empty workspace with the cursor there).
+  - Menu bar **Move Window to Display**, `> move-window-to-display N`, `Ctrl+Alt+Cmd+H/L`.
+
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
   live check pending.
 - 2026-10-08: committed as `ecfd426` and pushed to `main`; still not tested on real displays.
+- 2026-10-08: MM-04 (live repair after the first two-display session) implemented and verified
+  automatically; not committed; live check pending.

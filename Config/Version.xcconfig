@@ -1,0 +1,12 @@
+// Version and update settings for the Gio app (project-level base configuration).
+// Info.plist reads them: CFBundleShortVersionString = $(MARKETING_VERSION),
+// CFBundleVersion = $(CURRENT_PROJECT_VERSION), GioUpdateRepository = $(GIO_UPDATE_REPOSITORY).
+//
+// Releases override MARKETING_VERSION (the tag without "v") and CURRENT_PROJECT_VERSION
+// (the CI run number) on the xcodebuild command line; see docs/RELEASING.md.
+// Local builds keep the 0.0.0-dev default, which scripts/stamp-dev-version.sh turns into
+// "<last v* tag>+dev" when the repository has a tag.
+
+MARKETING_VERSION = 0.0.0-dev
+CURRENT_PROJECT_VERSION = 0
+GIO_UPDATE_REPOSITORY = ismaelosuna7824/gio

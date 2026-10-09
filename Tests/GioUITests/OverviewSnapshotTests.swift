@@ -65,7 +65,7 @@ struct SidebarReplica: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             Color.clear.frame(height: 44) // titlebar / traffic lights
-            SidebarHeader(status: status, version: "0.1.0-alpha")
+            SidebarHeader(status: status, version: gioBuildVersion)
             ForEach(sidebarGroups) { group in
                 Text(group.title)
                     .font(.system(size: 11, weight: .semibold))
