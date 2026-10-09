@@ -677,9 +677,10 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     // MARK: Pruning, memory pressure, cap (SM-20)
 
     /// A settle drops the images no flight can use (logged by reason) and
-    /// keeps old images of the current size (SM-24); a stale hidden-workspace
-    /// window is not captured again on the next settles (no capture loop),
-    /// the visible ones are.
+    /// keeps the images of placed windows: old ones of the current size
+    /// (SM-24) and the other size (SM-25); a stale hidden-workspace window is
+    /// not captured again on the next settles (no capture loop), the visible
+    /// ones are.
     func testSettlePrunesWhatNoFlightCanUseAndNeverRecapturesItInALoop() throws {
         let adjacent = try XCTUnwrap(addWindows(1, workspace: 2).first)
         let hidden = try XCTUnwrap(addWindows(1, workspace: 3).first)
@@ -695,8 +696,8 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertEqual(cache.cache.entries(of: idB).count, 2, "both sizes of b")
         scheduler.advance(by: 40)
         refresh([idA: a, idB: narrow])
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot cache pruned images=1 reason=size") })
-        XCTAssertEqual(cache.cache.entries(of: idB).map(\.frame), [narrow], "the other size is past the soft age")
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot cache pruned") }, "nothing to prune")
+        XCTAssertEqual(cache.cache.entries(of: idB).map(\.frame.width).sorted(), [narrow.width, b.width].sorted(), "both sizes of b stay")
         XCTAssertNotNil(cache.cache.entry(hidden), "50 s: still usable")
 
         scheduler.advance(by: 140)

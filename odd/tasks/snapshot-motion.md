@@ -928,6 +928,28 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   no `snapshot fallback reason=cache-miss`, `snapshot holes` only for windows never captured, no
   `snapshot cache pruned ... reason=age`.
 
+- [ ] SM-25 — A placed window keeps both sizes; Alt+F back flies its own image.
+  Report (2026-10-09 21:39, "it happened for a moment when I had a window full and then changed it to a
+  column"). Log (build with `123de82`, session 21:36:42): `hotkey maximizeColumn` 21:37:03 (Tern `4907:4` to
+  full width), `snapshot cache pruned ... reason=size` at 21:37:15 and 21:37:27 (the size a window is not at
+  now, past the 30 s soft age), `hotkey maximizeColumn` 21:38:27.412 (back to a column), then
+  `snapshot scaled id=4907:4` in 7 flights from 21:38:28.097 to 21:38:33.653: the maximized image squeezed
+  into the column, while key presses kept a flight up and no settle could capture; `snapshot capture ...
+  reason=size` only at 21:38:34.552. SM-11 keeps two sizes so Alt+F toggling finds both; the SM-20 size
+  prune removed the other one 30 s later.
+  Decision (relax): `prune` keeps every image of a placed window (age prunes only windows without a frame;
+  the `size` prune reason is removed). Memory stays bounded by the cap, which already evicts the sizes a
+  window is not at now first, and by memory pressure. Scaling another size stays limited to `snapshotSoftAge`.
+  RED (observed): `SnapshotCacheTests.testBothSizesOfAWindowSurviveSettlesSoAToggleBackFliesItsOwnImage`
+  (pruned `.size`, lookup nil). Re-pinned: `testPruneDropsOnlyImagesNoFlightCanUse` (id 2 keeps both sizes,
+  no `.size`), `SnapshotCacheRefresherTests.testSettlePrunesWhatNoFlightCanUseAndNeverRecapturesItInALoop`
+  (both sizes of b stay, nothing pruned).
+  GREEN: full `swift test`: GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 83, GioCoreTests 1655, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean.
+  LIVE PENDING: Alt+F on a column, wait over 30 s, Alt+F back, then Alt+H/L right away: no `snapshot scaled`
+  for that window; `snapshot cache entries ... pixels=` stays under the cap line.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.

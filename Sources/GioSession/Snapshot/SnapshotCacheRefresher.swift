@@ -56,10 +56,10 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 /// parked is not retried before it is visible. SM-13: under the cap the
 /// images of windows away from the screen go first; once an eviction ran,
 /// coverage stops (logged once) until a window leaves the cache. SM-20:
-/// every settle run first prunes the images no flight can use (another size
-/// past the soft age, a window without a frame past the max age, backdrops of
-/// gone displays; SM-24: an image of the current size stays whatever its
-/// age). A hidden-workspace window whose image is missing or stale is
+/// every settle run first prunes the images no flight can use (a window
+/// without a frame past the max age, backdrops of gone displays; a placed
+/// window keeps its images: SM-24, the current size at any age; SM-25, the
+/// other size). A hidden-workspace window whose image is missing or stale is
 /// captured again when its workspace becomes adjacent to a shown one (the
 /// visible and adjacent windows keep their freshness rules). System memory pressure
 /// (`noteMemoryPressure`, event-driven) drops more. SM-21: the shown strips

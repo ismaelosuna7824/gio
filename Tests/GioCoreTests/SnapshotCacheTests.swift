@@ -333,6 +333,21 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertNil(cache.usableEntry(id(2), startFrame: frame, now: 101))
     }
 
+    /// Live 2026-10-09 21:38: Tern's column-size image was pruned 30 s into
+    /// a maximize (`pruned images=1 reason=size`); Alt+F back to a column then
+    /// flew the maximized image squeezed into the column (`snapshot scaled`)
+    /// for the 7 s of the next burst, until a settle captured the new size.
+    func testBothSizesOfAWindowSurviveSettlesSoAToggleBackFliesItsOwnImage() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 0)
+        cache.store(id(1), image: "maximized", frame: maximized, pixels: 1, at: 10)
+        let pruned = cache.prune(now: 100, currentFrame: { _ in self.maximized }, displayFrames: [])
+        XCTAssertTrue(pruned.images.isEmpty, "the size it is not at now stays")
+        let back = cache.usableEntry(id(1), startFrame: frame, now: 100)
+        XCTAssertEqual(back?.entry.image, "column")
+        XCTAssertEqual(back?.scaled, false)
+    }
+
     /// Live 2026-10-09 21:27: after a 3-4 min pause the images of the strip's
     /// parked windows had expired (`pruned ... reason=age`); the next Alt+L
     /// burst showed them through holes and fell back to the AX motion four
@@ -421,10 +436,10 @@ final class SnapshotCacheTests: XCTestCase {
     private let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
     private let goneDisplay = CGRect(x: 1800, y: 0, width: 1440, height: 900)
 
-    /// A settle drops exactly what no flight can use: an image of another
-    /// size past the soft age (it only flies scaled), an image of a window
-    /// without a frame past the max age, and backdrops of gone displays. An
-    /// image of the current size stays whatever its age (SM-24).
+    /// A settle drops exactly what no flight can use: an image of a window
+    /// without a frame past the max age, and backdrops of gone displays. A
+    /// placed window keeps every image (SM-24: the current size at any age;
+    /// SM-25: the other size, exact when the window toggles back).
     func testPruneDropsOnlyImagesNoFlightCanUse() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "old", frame: frame, pixels: 10, at: 0)
@@ -438,15 +453,14 @@ final class SnapshotCacheTests: XCTestCase {
         cache.storeBackdrop(image: "gone", displayFrame: goneDisplay, pixels: 10, at: 0)
         let current: (WindowID) -> CGRect? = { [4, 5].contains($0.elementID) ? nil : self.frame }
         let pruned = cache.prune(now: 200, currentFrame: current, displayFrames: [display])
-        XCTAssertEqual(pruned.images, [.age: 1, .size: 1, .display: 1])
+        XCTAssertEqual(pruned.images, [.age: 1, .display: 1])
         XCTAssertEqual(pruned.emptied, [id(4)])
         XCTAssertEqual(pruned.logLines, [
             "snapshot cache pruned images=1 reason=age",
-            "snapshot cache pruned images=1 reason=size",
             "snapshot cache pruned images=1 reason=display",
         ])
         XCTAssertEqual(cache.entry(id(1))?.image, "old", "the current size, past the max age: still flies")
-        XCTAssertEqual(cache.entries(of: id(2)).map(\.image), ["fresh"])
+        XCTAssertEqual(Set(cache.entries(of: id(2)).map(\.image)), ["fresh", "max-old"])
         XCTAssertEqual(Set(cache.entries(of: id(3)).map(\.image)), ["small", "max-new"])
         XCTAssertNil(cache.entry(id(4)))
         XCTAssertEqual(cache.entry(id(5))?.image, "unknown-new", "no current frame: the max age alone")

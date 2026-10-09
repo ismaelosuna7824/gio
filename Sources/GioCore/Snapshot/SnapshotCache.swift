@@ -336,46 +336,33 @@ public struct SnapshotCache<Image> {
 
     // MARK: SM-20 pruning and memory pressure
 
-    /// Drops what no flight can use any more (a flight starts from the
-    /// window's current frame, `usableEntry`): an image of another size older
-    /// than `softAge` (it only flies scaled, and only that young), any image
-    /// older than `maxAge` when the window has no current frame, and the
-    /// backdrops of displays not in `displayFrames`. An image of the current
-    /// size stays whatever its age (SM-24). Backdrops of shown displays always
-    /// stay (a stale desktop beats a fallback).
+    /// Drops what no flight can use any more: any image older than `maxAge`
+    /// when the window has no current frame, and the backdrops of displays not
+    /// in `displayFrames`. A placed window keeps its images whatever their age
+    /// (SM-24: the current size flies at any age; SM-25: the other size is the
+    /// exact image when Alt+F toggles back; the cap evicts sizes a window is
+    /// not at now first). Backdrops of shown displays always stay (a stale
+    /// desktop beats a fallback).
     @discardableResult
     public mutating func prune(
         now: TimeInterval, currentFrame: (WindowID) -> CGRect?, displayFrames: [CGRect],
-        maxAge: TimeInterval = snapshotMaxAge, softAge: TimeInterval = snapshotSoftAge
+        maxAge: TimeInterval = snapshotMaxAge
     ) -> SnapshotPruneResult {
         var result = SnapshotPruneResult()
-        for id in entries.keys.sorted() {
-            let current = currentFrame(id)
+        var expired = 0
+        for id in entries.keys.sorted() where currentFrame(id) == nil {
             let list = entries[id] ?? []
-            let kept = list.filter { item in
-                let age = now - item.capturedAt
-                guard let current else {
-                    if age > maxAge {
-                        result.images[.age, default: 0] += 1
-                        return false
-                    }
-                    return true
-                }
-                if snapshotSameSize(item.frame, current, tolerance: 2) {
-                    return true
-                }
-                if age > softAge {
-                    result.images[.size, default: 0] += 1
-                    return false
-                }
-                return true
-            }
+            let kept = list.filter { now - $0.capturedAt <= maxAge }
+            expired += list.count - kept.count
             if kept.isEmpty {
                 entries.removeValue(forKey: id)
                 result.emptied.append(id)
             } else if kept.count != list.count {
                 entries[id] = kept
             }
+        }
+        if expired > 0 {
+            result.images[.age] = expired
         }
         let gone = retainBackdrops(onlyFrames: displayFrames).count
         if gone > 0 {
@@ -434,8 +421,6 @@ public struct SnapshotCache<Image> {
 public enum SnapshotPruneReason: String, CaseIterable, Sendable {
     /// Older than the max age, of a window without a current frame.
     case age
-    /// Another size than the window's current one, older than the soft age.
-    case size
     /// The backdrop of a display that is gone.
     case display
 }
@@ -448,7 +433,7 @@ public struct SnapshotPruneResult: Equatable, Sendable {
 
     public init() {}
 
-    /// `snapshot cache pruned images=N reason=<age|size|display>`, one per
+    /// `snapshot cache pruned images=N reason=<age|display>`, one per
     /// reason that dropped any, in that order.
     public var logLines: [String] {
         SnapshotPruneReason.allCases.compactMap { reason in
