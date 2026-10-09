@@ -970,9 +970,11 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   GREEN: full `swift test`: GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19,
   GioMacOSTests 83, GioCoreTests 1656, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
   clean.
-  LIVE PENDING: Alt+F on several strip windows, then Alt+1/2/3 repeatedly: `evicted=` lines may appear, but no
-  `snapshot holes` on the switches. SM-24 idle path (4+ min) still unexercised: the session had no gap over
-  120 s.
+  LIVE (2026-10-09 21:50:19-21:51:30, build with `c0e6b46`, 208 Alt+H/L, 23 workspace switches, 2 Alt+F):
+  `evicted=1` twice (21:51:04, 21:51:12) and 0 `snapshot holes`, 0 `retarget uncovered`, 0 `snapshot fallback`,
+  0 `cache pruned`. 5 `snapshot scaled`, all for a size never captured: WhatsApp and LoopOps right after
+  `min size learned` (21:50:26, captured 21:50:27), the first Alt+F of Tern and of WhatsApp (captured 1 s later).
+  Still LIVE PENDING: the SM-24 idle path (no gap over 2 s between keys in this session).
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
