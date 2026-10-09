@@ -133,15 +133,22 @@ public func logCopyText(_ groups: [LogGroup]) -> String {
     }.joined(separator: "\n")
 }
 
-/// ISO8601DateFormatter is thread-safe for parsing.
+/// ISO8601DateFormatter is thread-safe for parsing. Lines are stamped to the
+/// millisecond; logs written before that carry whole seconds.
 private nonisolated(unsafe) let logTimestampParser: ISO8601DateFormatter = {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    return formatter
+}()
+
+private nonisolated(unsafe) let wholeSecondLogTimestampParser: ISO8601DateFormatter = {
     let formatter = ISO8601DateFormatter()
     formatter.formatOptions = [.withInternetDateTime]
     return formatter
 }()
 
 func parseLogTimestamp(_ timestamp: String) -> Date? {
-    logTimestampParser.date(from: timestamp)
+    logTimestampParser.date(from: timestamp) ?? wholeSecondLogTimestampParser.date(from: timestamp)
 }
 
 /// "now", "30s ago", "5m ago", "3h ago", "3d ago"; nil when unparseable.

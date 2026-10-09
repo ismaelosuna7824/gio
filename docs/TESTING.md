@@ -218,7 +218,7 @@ rg "anim done" ~/.config/gio/gio.log | tail -20          # recent animation qual
 
 ### Launcher and window-open timing
 
-Log timestamps have one-second resolution, so latency is carried inside the lines, in milliseconds (all `info`, ids and app names only):
+Log timestamps are UTC to the millisecond (`[2026-10-09T01:10:15.123Z]`; logs written before that carry whole seconds), so the gap between a `hotkey` line and the `reconcile dispatched` or `anim done` line after it is the key's latency on the session queue. Latency is also carried inside the lines, in milliseconds (all `info`, ids and app names only):
 
 | Line (prefix) | Meaning |
 | --- | --- |

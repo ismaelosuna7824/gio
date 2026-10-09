@@ -146,7 +146,8 @@ public enum GioLog {
     private struct State {
         var minimumLevel: LogLevel = .info
         var sink: LogFileSink?
-        var stamp: (second: Int, text: String) = (-1, "")
+        /// The second's ISO-8601 text without its trailing `Z`.
+        var stamp: (second: Int, prefix: String) = (-1, "")
     }
 
     private static let lock = NSLock()
@@ -224,15 +225,21 @@ public enum GioLog {
         return sink
     }
 
-    /// ISO-8601 prefix cached per wall-clock second.
+    /// ISO-8601 to the millisecond (`2026-10-09T01:10:15.123Z`): the
+    /// second's text is cached, only the milliseconds are formatted per line.
     private static func timestamp() -> String {
         let now = Date()
-        let second = Int(now.timeIntervalSince1970)
-        return lock.withLock {
+        let seconds = now.timeIntervalSince1970
+        let second = Int(seconds.rounded(.down))
+        let milliseconds = min(max(Int(((seconds - Double(second)) * 1000).rounded(.down)), 0), 999)
+        let prefix = lock.withLock {
             if state.stamp.second != second {
-                state.stamp = (second, formatter.string(from: now))
+                let whole = Date(timeIntervalSince1970: Double(second))
+                state.stamp = (second, String(formatter.string(from: whole).dropLast()))
             }
-            return state.stamp.text
+            return state.stamp.prefix
         }
+        let digits = String(milliseconds)
+        return prefix + "." + String(repeating: "0", count: 3 - digits.count) + digits + "Z"
     }
 }

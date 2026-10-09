@@ -28,6 +28,25 @@ final class GioLogTests: XCTestCase {
         XCTAssertNil(LogEntry.parse("[x] [NOPE] y"))
     }
 
+    /// Latency between a key and the motion it starts is tens of
+    /// milliseconds: a line carries the time it was recorded to the
+    /// millisecond, not its second.
+    func testALineIsStampedToTheMillisecond() throws {
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        for _ in 0..<5 {
+            let before = Date()
+            GioLog.record(.info, "stamp=1")
+            let after = Date()
+            let stamp = try XCTUnwrap(GioLog.entries().last?.timestamp)
+            XCTAssertNotNil(stamp.range(of: #"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$"#, options: .regularExpression), stamp)
+            let date = try XCTUnwrap(parser.date(from: stamp), stamp)
+            XCTAssertGreaterThanOrEqual(date.timeIntervalSince(before), -0.001, stamp)
+            XCTAssertLessThanOrEqual(date.timeIntervalSince(after), 0.001, stamp)
+            Thread.sleep(forTimeInterval: 0.003)
+        }
+    }
+
     func testRingCapsAndFilters() {
         for index in 0..<600 {
             GioLog.record(index % 2 == 0 ? .debug : .error, "m\(index)")

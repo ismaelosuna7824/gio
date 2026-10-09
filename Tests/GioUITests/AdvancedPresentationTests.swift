@@ -104,6 +104,9 @@ final class AdvancedPresentationTests: XCTestCase {
         XCTAssertEqual(relativeLogTime("2026-09-30T09:00:00Z", now: now), "3h ago")
         XCTAssertEqual(relativeLogTime("2026-09-27T12:00:00Z", now: now), "3d ago")
         XCTAssertEqual(relativeLogTime("2026-09-30T12:00:30Z", now: now), "now")
+        // Lines are stamped to the millisecond; older lines to the second.
+        XCTAssertEqual(relativeLogTime("2026-09-30T11:59:29.750Z", now: now), "30s ago")
+        XCTAssertEqual(relativeLogTime("2026-09-30T08:59:59.001Z", now: now), "3h ago")
         XCTAssertNil(relativeLogTime("yesterday", now: now))
     }
 
