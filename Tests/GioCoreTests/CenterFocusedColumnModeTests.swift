@@ -34,10 +34,12 @@ final class CenterFocusedColumnModeTests: XCTestCase {
 
     // MARK: Config
 
-    func testDefaultIsOnOverflow() throws {
-        XCTAssertEqual(LayoutSectionConfig().centerFocusedColumn, .onOverflow)
+    /// PF-J: `never`, Niri's default. `on-overflow` re-centered the whole strip
+    /// on every focus change between two columns that do not fit together.
+    func testDefaultIsNever() throws {
+        XCTAssertEqual(LayoutSectionConfig().centerFocusedColumn, .never)
         let (config, _) = try parseGioConfig("[layout]\ngaps = 8\n").get()
-        XCTAssertEqual(config.layout.centerFocusedColumn, .onOverflow)
+        XCTAssertEqual(config.layout.centerFocusedColumn, .never)
     }
 
     func testParsesTheThreeStrings() throws {

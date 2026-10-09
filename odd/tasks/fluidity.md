@@ -47,6 +47,11 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
 - PF-G: `layout.center-focused-column` defaults to `on-overflow` (was `never`): a neighbour
   already in view only takes focus, the strip scrolls and centers only when the column does
   not fit next to the previous one. Chosen by the user after trying it live in Settings.
+- PF-J (supersedes PF-G): `center-focused-column` defaults to `never` again (Niri's default).
+  With `on-overflow`, any pair of columns that does not fit together (real minimum widths:
+  WhatsApp 970, LoopOps 1024 on an 1800 pt screen; or the false 1068 of MM-05) re-centered
+  the whole strip on every focus change between them, the "windows move when they should not"
+  report of 2026-10-09. Chosen by the user after the MM-05/SM-23 build felt better live.
 - PF-I: focus counts only when the target's app is frontmost (`NSWorkspace.frontmostApplication`)
   and its focused window is the target (`FocusLanding.judge`, GioCore). The actuator keeps
   `NSRunningApplication.activate()`, focuses and raises the window, then writes the app's
@@ -106,6 +111,11 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   `CenterFocusedColumnModeTests.testDefaultIsOnOverflow` (got `never` for both the default
   section and a parsed config without the key); `ConfigTests.testDefaultsMirrorPlanExample`
   updated to the new default. Commit `a59f85d`. Existing configs keep their value.
+- [ ] PF-J — `center-focused-column` defaults to `never`. RED:
+  `CenterFocusedColumnModeTests.testDefaultIsNever` (got `onOverflow` for the default section
+  and a parsed config without the key); `ConfigTests.testDefaultsMirrorPlanExample` (same).
+  `ConfigTemplate` writes `"never"`; `docs/USER_GUIDE.md` default updated. Existing configs keep
+  their value (the user's already says `"never"`).
 - [~] PF-F — Dim follows motions instead of pulsing. Implemented, tried live by the user,
   reverted at their request (2026-10-08): the previous fade out/in looked better to them.
   No code left behind; see Decisions (PF-F).
