@@ -521,7 +521,7 @@ stuck, and sometimes windows move or rearrange when they should not."
   `instantPass` and `foldSettle`; passes collected after an overlay flight are `.animate`.
 
 ### Tasks
-- [ ] MM-05 — `MinimumSizeBook.learn(from:placement:)`, `SessionHost.instantPass` /
+- [x] MM-05 (`fb27b68`) — `MinimumSizeBook.learn(from:placement:)`, `SessionHost.instantPass` /
   `foldSettle` / `learnMinimumSizes`, `docs/ARCHITECTURE.md` (Learned minimum sizes),
   `docs/TESTING.md` (`min size learned` row), this file.
 
