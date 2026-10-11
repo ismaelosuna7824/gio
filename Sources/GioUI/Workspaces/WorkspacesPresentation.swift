@@ -50,10 +50,13 @@ public struct WorkspaceCardDraft: Equatable, Sendable, Identifiable {
     public var color: String?
     public var display: WorkspaceDisplayAssignment?
     public var apps: [WorkspaceAppAssignment]
+    /// DW-03 `[[workspace]] layout`; nil follows `[layout] default-layout`.
+    public var layout: WorkspaceLayoutKind?
 
     public init(
         id: String, origin: Int?, name: String, icon: String? = nil, color: String? = nil,
-        display: WorkspaceDisplayAssignment? = nil, apps: [WorkspaceAppAssignment] = []
+        display: WorkspaceDisplayAssignment? = nil, apps: [WorkspaceAppAssignment] = [],
+        layout: WorkspaceLayoutKind? = nil
     ) {
         self.id = id
         self.origin = origin
@@ -62,13 +65,27 @@ public struct WorkspaceCardDraft: Equatable, Sendable, Identifiable {
         self.color = color
         self.display = display
         self.apps = apps
+        self.layout = layout
     }
 
     public var trimmedName: String { name.trimmingCharacters(in: .whitespaces) }
 
     public var definition: WorkspaceDefinition {
-        WorkspaceDefinition(name: trimmedName, icon: icon, color: color, display: display)
+        WorkspaceDefinition(name: trimmedName, icon: icon, color: color, display: display, layout: layout)
     }
+}
+
+/// DW-03: the per-workspace layout picker's choices (nil: the default layout).
+public let workspaceLayoutOptions: [(WorkspaceLayoutKind?, String)] = [
+    (nil, "Default"), (.scrolling, "Scrolling"), (.dwindle, "Dwindle"),
+]
+
+/// DW-03: "Default (Dwindle)", "Scrolling", "Dwindle".
+public func workspaceLayoutLabel(_ layout: WorkspaceLayoutKind?, default fallback: WorkspaceLayoutKind) -> String {
+    func title(_ kind: WorkspaceLayoutKind) -> String {
+        kind == .dwindle ? "Dwindle" : "Scrolling"
+    }
+    return layout.map(title) ?? "Default (\(title(fallback)))"
 }
 
 /// An app that would leave another workspace when assigned here.
@@ -145,7 +162,8 @@ public struct WorkspacesDraft: Equatable, Sendable {
         cards = config.workspaces.enumerated().map { index, definition in
             WorkspaceCardDraft(
                 id: "saved-\(index)", origin: index, name: definition.name, icon: definition.icon,
-                color: definition.color, display: definition.display, apps: appsByName[definition.name] ?? []
+                color: definition.color, display: definition.display, apps: appsByName[definition.name] ?? [],
+                layout: definition.layout
             )
         }
     }

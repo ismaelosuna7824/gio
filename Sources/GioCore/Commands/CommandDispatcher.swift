@@ -13,6 +13,8 @@ public struct CommandSession {
     /// when they did not change).
     public var config: GioConfig {
         didSet {
+            // DW-03: layout defaults first, so new named workspaces start with them.
+            manager.applyLayoutDefaults(config.layoutDefaults)
             manager.applyNamedWorkspaces(config.workspaces)
         }
     }
@@ -60,6 +62,7 @@ public struct CommandSession {
         self.displayCount = displayCount
         self.recentErrors = recentErrors
         self.configPath = configPath
+        self.manager.applyLayoutDefaults(config.layoutDefaults)
         self.manager.applyNamedWorkspaces(config.workspaces)
     }
 }

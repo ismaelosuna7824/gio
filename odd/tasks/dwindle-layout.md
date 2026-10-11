@@ -115,19 +115,18 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `GioDesktop/SessionHost.swift` (IPC `visibleFrames`); docs: README, USER_GUIDE (Dwindle
   layout section, shortcuts), ARCHITECTURE, TESTING (check 14d, limitation), CONTRIBUTING,
   AGENTS.md, this file. LIVE PENDING.
-- [ ] DW-03 — Config and Settings UI. NOT STARTED (run stopped at the request budget).
-  Planned: `[layout] default-layout = "scrolling" | "dwindle"`, `[dwindle] default-split-ratio`
-  (0.1-1.9) and `split-width-multiplier` (new `ConfigSection.dwindle`, `DwindleSectionConfig`,
-  `GioConfig.layoutDefaults`, `makeLayoutConfig()` filling `LayoutConfig.dwindle`),
-  `[[workspace]] layout` (`workspaceKeys`, `buildWorkspace`, `renderWorkspace`), invalid values
-  as line-numbered warnings keeping the default (the brief's rule; differs from the repo's
-  "wrong value = error"), `CommandSession.config` didSet calling
-  `manager.applyLayoutDefaults(config.layoutDefaults)` before `applyNamedWorkspaces`, template
-  keys, `LayoutSettingsForm` (default layout, ratio, multiplier) + Layout section card, layout
-  picker on the Workspaces cards. `smart-split` to be omitted (needs the pointer position when a
-  window opens; the membership sync has none) with a specific warning. Today the model already
-  supports it (`WorkspaceDefinition.layout`, `WorkspaceManager.applyLayoutDefaults`, both tested)
-  but nothing parses the keys: dwindle is reachable only through the actions.
+- [ ] DW-03 — Config and Settings UI. Commit pending.
+  `Config/GioConfig.swift` (`LayoutSectionConfig.defaultLayout`, `DwindleSectionConfig`,
+  `GioConfig.dwindle`, `layoutDefaults`, `makeLayoutConfig()` fills `LayoutConfig.dwindle`),
+  `Config/ConfigParser.swift` (`[dwindle]` section, `applyDwindleKey`, `default-layout`,
+  `[[workspace]] layout`), `Config/ConfigPatcher.swift` (`renderWorkspace` writes `layout`),
+  `Config/ConfigTemplate.swift`, `Config/SettingsForms.swift` (`LayoutSettingsForm`: default
+  layout, ratio, multiplier), `Commands/CommandDispatcher.swift` (`CommandSession.config`
+  applies `applyLayoutDefaults` before `applyNamedWorkspaces`), `GioUI/Settings/
+  LayoutSettingsView.swift` (Workspace Layout card), `GioUI/Workspaces/WorkspacesPresentation.swift`
+  (`WorkspaceCardDraft.layout`, `workspaceLayoutOptions`, `workspaceLayoutLabel`),
+  `WorkspacesSettingsView.swift` (Layout popup per card); docs: USER_GUIDE (config reference),
+  TESTING (14e), ARCHITECTURE, this file. LIVE PENDING.
 - [ ] DW-04 — Overview, IPC and CLI. NOT STARTED. Planned: `WorkspaceMiniature` /
   `WorkspaceOverview` strips from dwindle frames instead of columns; `gio layout info` and
   `gio status` with `layout` per workspace and a tree summary (`WorkspaceStackSummary`);
@@ -184,6 +183,28 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
 - GREEN: `swift test`, all bundles 0 failures: GioUITests 306 (53 skipped), GioSessionTests 406,
   GioPOCTests 7, GioMacTests 19, GioMacOSTests 83, GioCoreTests 1757. Signed `xcodebuild` BUILD
   SUCCEEDED. `git diff --check` clean.
+
+### DW-03
+- Decisions: invalid layout/dwindle values are **warnings that keep the default** (the brief's
+  rule; the repo's general rule makes a wrong value an error that rejects the file, but a layout
+  typo must not drop the user's whole config). Wrong type or out of range alike: ratio outside
+  0.1-1.9, multiplier outside 0.1-10, layout other than "scrolling"/"dwindle". `smart-split` is
+  omitted with its own warning: it needs the pointer position when a window opens, which the
+  pure membership sync does not have (use `dwindle-preselect-*`). The Layout form writes the
+  three keys with the others on Apply (`[dwindle]` is created at the end of the file when
+  missing, comments kept). A runtime toggle never writes the config; a `[[workspace]] layout`
+  applies when the workspace is created or the key changes.
+- RED by compilation: `DwindleSectionConfig` not in scope; `GioConfig` has no `dwindle` /
+  `layoutDefaults`; `LayoutSectionConfig` has no `defaultLayout`; extra argument `dwindle`
+  (`LayoutSettingsForm`); `WorkspaceCardDraft` has no `layout`; no `workspaceLayoutOptions` /
+  `workspaceLayoutLabel`. First GREEN run: 1 failure, `NamedWorkspaceConfigTests.
+  testUnknownWorkspaceKeyWarns` used `layout` as its unknown key; it now uses `gaps`.
+- Tests: `DwindleConfigTests` (8: defaults, valid parse incl. three workspaces, every invalid
+  value warns with its line and keeps the default, `smart-split` warning, template, patch keeps
+  comments and round-trips `[[workspace]] layout`, Layout form fields / problems / edits, the
+  session applies defaults and named layouts and keeps a runtime toggle across an unchanged
+  reload, PF-M transport: dwindle tile changes stay on Accessibility and a dwindle hide goes
+  through the WindowServer), `DwindleWorkspaceCardTests` (card layout round trip and labels).
 
 ## Progress
 - 2026-10-11: DW-01 (`cdef806`) and DW-02 (`c95f162`) committed on `feat/dwindle` (worktree

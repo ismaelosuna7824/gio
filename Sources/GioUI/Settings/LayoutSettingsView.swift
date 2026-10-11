@@ -18,7 +18,8 @@ struct LayoutSettingsView: View {
     ) {
         self.model = model
         self.drafts = drafts
-        var draft = drafts.restore(for: .layout, saved: LayoutSettingsForm(config: model.snapshot.config.layout))
+        let config = model.snapshot.config
+        var draft = drafts.restore(for: .layout, saved: LayoutSettingsForm(config: config.layout, dwindle: config.dwindle))
         if let editing {
             draft.current = editing
         }
@@ -42,9 +43,10 @@ struct LayoutSettingsView: View {
             widthCard
             heightCard
             fullscreenCard
+            dwindleCard
         }
         .onReceive(model.$snapshot) { snapshot in
-            draft.adopt(saved: LayoutSettingsForm(config: snapshot.config.layout))
+            draft.adopt(saved: LayoutSettingsForm(config: snapshot.config.layout, dwindle: snapshot.config.dwindle))
         }
         .onChange(of: draft) { drafts.store($0, for: .layout) }
     }
@@ -154,6 +156,34 @@ struct LayoutSettingsView: View {
                 }
             }
             problems(matching: ["Fullscreen"])
+        }
+    }
+
+    /// DW-03: the layout new workspaces start with and the dwindle tuning.
+    private var dwindleCard: some View {
+        SectionCard(
+            "Workspace Layout",
+            footer: "New workspaces open in this layout; Alt+Shift+T switches the current one and Workspaces can set one per named workspace. Dwindle keeps every window on screen: each new window splits the focused one."
+        ) {
+            CardRow {
+                SegmentedRow(
+                    "Default layout", selection: form.defaultLayout,
+                    options: [(.scrolling, "Scrolling"), (.dwindle, "Dwindle")], width: 200
+                )
+            }
+            CardRow {
+                SliderRow(
+                    "Dwindle split ratio", value: form.splitRatio, in: 0.1...1.9, step: 0.05,
+                    format: { String(format: "%.0f%% kept", $0 * 50) }
+                )
+            }
+            CardRow(divider: false) {
+                SliderRow(
+                    "Dwindle width multiplier", value: form.splitWidthMultiplier, in: 0.1...3, step: 0.05,
+                    format: { String(format: "%.2fx", $0) }
+                )
+            }
+            problems(matching: ["Dwindle"])
         }
     }
 

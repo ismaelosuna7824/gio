@@ -37,8 +37,12 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var maximizeSingleWindow: Bool
     /// NC-13 `always-center-single-column`.
     public var alwaysCenterSingleColumn: Bool
+    /// DW-03 `[layout] default-layout` and `[dwindle]`.
+    public var defaultLayout: WorkspaceLayoutKind
+    public var splitRatio: Double
+    public var splitWidthMultiplier: Double
 
-    public init(config: LayoutSectionConfig) {
+    public init(config: LayoutSectionConfig, dwindle: DwindleSectionConfig = DwindleSectionConfig()) {
         gaps = Double(config.gaps)
         padding = Double(config.padding)
         fullscreenGapFollowsGaps = config.fullscreenGap == nil
@@ -55,6 +59,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         centerFocusedColumn = config.centerFocusedColumn
         maximizeSingleWindow = config.maximizeSingleWindow
         alwaysCenterSingleColumn = config.alwaysCenterSingleColumn
+        defaultLayout = config.defaultLayout
+        splitRatio = Double(dwindle.defaultSplitRatio)
+        splitWidthMultiplier = Double(dwindle.splitWidthMultiplier)
     }
 
     private static func text(_ value: Double) -> String {
@@ -98,6 +105,12 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         if parsePresetList(presetHeightsText) == nil {
             found.append("Preset heights must be a comma-separated list of positive numbers.")
         }
+        if !DwindleSectionConfig.splitRatioRange.contains(splitRatio) {
+            found.append("Dwindle split ratio must be 0.1 to 1.9.")
+        }
+        if !DwindleSectionConfig.splitWidthMultiplierRange.contains(splitWidthMultiplier) {
+            found.append("Dwindle width multiplier must be 0.1 to 10.")
+        }
         return found
     }
 
@@ -120,6 +133,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
                 table: "layout", key: "preset-window-heights",
                 value: .numbers(parsePresetList(presetHeightsText) ?? [])
             ),
+            .set(table: "layout", key: "default-layout", value: .string(defaultLayout.rawValue)),
+            .set(table: "dwindle", key: "default-split-ratio", value: .number(splitRatio)),
+            .set(table: "dwindle", key: "split-width-multiplier", value: .number(splitWidthMultiplier)),
         ]
     }
 }

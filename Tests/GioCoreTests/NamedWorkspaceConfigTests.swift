@@ -84,9 +84,10 @@ final class NamedWorkspaceConfigTests: XCTestCase {
     }
 
     func testUnknownWorkspaceKeyWarns() throws {
-        let (config, warnings) = try parsed("[[workspace]]\nname = \"A\"\nlayout = \"x\"\n")
+        // DW-03 made `layout` a known key; `gaps` stays unknown here.
+        let (config, warnings) = try parsed("[[workspace]]\nname = \"A\"\ngaps = 4\n")
         XCTAssertEqual(config.workspaces.map(\.name), ["A"])
-        XCTAssertTrue(warnings.contains { $0.contains("unknown workspace key 'layout'") })
+        XCTAssertTrue(warnings.contains { $0.contains("unknown workspace key 'gaps'") })
     }
 
     func testRuleGainsBundleIDOpenOnWorkspaceAndFollow() throws {

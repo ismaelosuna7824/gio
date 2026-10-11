@@ -38,6 +38,7 @@ private enum ConfigSection: Equatable {
     case keybindings
     case windowRules
     case workspaceEntry
+    case dwindle
     case ignored(String)
 }
 
@@ -60,7 +61,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
 
     func closeRule(line: Int) {
         if workspaceOpen {
-            buildWorkspace(workspaceDraft, line: workspaceLine, errors: &errors, config: &config)
+            buildWorkspace(workspaceDraft, line: workspaceLine, errors: &errors, warnings: &warnings, config: &config)
             workspaceDraft = [:]
             workspaceOpen = false
         }
@@ -116,6 +117,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "focus": section = .focus
             case "logging": section = .logging
             case "keybindings": section = .keybindings
+            case "dwindle": section = .dwindle
             case let name where name.hasPrefix("animations."):
                 // NA-04: `[animations.<niri name>]`.
                 if let kind = AnimationKind(rawValue: String(name.dropFirst("animations.".count))) {
@@ -165,6 +167,8 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyFocusKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .logging:
             applyLoggingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
+        case .dwindle:
+            applyDwindleKey(key, value: value, line: line, warnings: &warnings, config: &config)
         case .keybindings:
             applyBindingKey(key, value: value, line: line, errors: &errors, config: &config)
         case .windowRules:
@@ -352,6 +356,14 @@ func applyLayoutKey(
     case "maximize-single-window":
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
             config.layout.maximizeSingleWindow = $0
+        }
+    case "default-layout":
+        // DW-03: an unknown layout warns and keeps the default (the brief's
+        // rule for the layout keys; the WM always has a valid layout).
+        if case .string(let text) = value, let kind = WorkspaceLayoutKind(rawValue: text) {
+            config.layout.defaultLayout = kind
+        } else {
+            warnings.append("line \(line): layout.default-layout expects \"scrolling\" or \"dwindle\", default kept")
         }
     case "always-center-single-column":
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
@@ -690,12 +702,42 @@ func applyBindingKey(
 /// DA-07: the `[keybindings]` value that unbinds a combo.
 public let unbindActionName = "none"
 
-private let workspaceKeys: Set<String> = ["name", "icon", "color", "display"]
+private let workspaceKeys: Set<String> = ["name", "icon", "color", "display", "layout"]
+
+/// DW-03: one `[dwindle]` key. Every invalid value is a warning that keeps
+/// the default, so a dwindle typo never rejects the rest of the file.
+func applyDwindleKey(
+    _ key: String, value: ConfigValue, line: Int, warnings: inout [String], config: inout GioConfig
+) {
+    func number(in range: ClosedRange<Double>, describing text: String) -> CGFloat? {
+        guard let number = value.number, number.isFinite, range.contains(number) else {
+            warnings.append("line \(line): dwindle.\(key) expects a number from \(text), default kept")
+            return nil
+        }
+        return CGFloat(number)
+    }
+    switch key {
+    case "default-split-ratio":
+        if let ratio = number(in: DwindleSectionConfig.splitRatioRange, describing: "0.1 to 1.9") {
+            config.dwindle.defaultSplitRatio = ratio
+        }
+    case "split-width-multiplier":
+        if let multiplier = number(in: DwindleSectionConfig.splitWidthMultiplierRange, describing: "0.1 to 10") {
+            config.dwindle.splitWidthMultiplier = multiplier
+        }
+    case "smart-split":
+        warnings.append(
+            "line \(line): dwindle.smart-split is not supported (Gio has no pointer position when a window opens; use dwindle-preselect-*), ignored"
+        )
+    default:
+        warnings.append("line \(line): unknown dwindle key '\(key)', ignored")
+    }
+}
 
 /// NW-01: one `[[workspace]]` table; `line` is its header.
 func buildWorkspace(
     _ draft: [String: ConfigValue], line: Int,
-    errors: inout [String], config: inout GioConfig
+    errors: inout [String], warnings: inout [String], config: inout GioConfig
 ) {
     guard case .string(let raw) = draft["name"],
           case let name = raw.trimmingCharacters(in: .whitespaces), !name.isEmpty
@@ -731,6 +773,14 @@ func buildWorkspace(
         default:
             errors.append("line \(line): workspace display expects \"main\" or a display number (1, 2, ...)")
             return
+        }
+    }
+    if let value = draft["layout"] {
+        // DW-03: a wrong layout warns; the workspace follows the default layout.
+        if case .string(let text) = value, let kind = WorkspaceLayoutKind(rawValue: text) {
+            definition.layout = kind
+        } else {
+            warnings.append("line \(line): workspace layout expects \"scrolling\" or \"dwindle\", default layout kept")
         }
     }
     config.workspaces.append(definition)

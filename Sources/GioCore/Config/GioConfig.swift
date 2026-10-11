@@ -30,6 +30,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// NC-13 niri `always-center-single-column`: a workspace with a single
     /// column shows it in the middle; consumed by the layout engine.
     public var alwaysCenterSingleColumn: Bool
+    /// DW-03 `default-layout`: the layout new workspaces start with;
+    /// consumed by `WorkspaceManager.applyLayoutDefaults`.
+    public var defaultLayout: WorkspaceLayoutKind
 
     public init(
         gaps: CGFloat = 8,
@@ -41,7 +44,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         fullscreenGap: CGFloat? = nil,
         maximizeSingleWindow: Bool = true,
         presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights,
-        alwaysCenterSingleColumn: Bool = false
+        alwaysCenterSingleColumn: Bool = false,
+        defaultLayout: WorkspaceLayoutKind = .scrolling
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -53,6 +57,25 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.presetWindowHeights = presetWindowHeights
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
+        self.defaultLayout = defaultLayout
+    }
+}
+
+/// DW-03 `[dwindle]`: consumed by the dwindle engine (`makeLayoutConfig`)
+/// and the tree's insertion (`layoutDefaults`).
+public struct DwindleSectionConfig: Equatable, Sendable {
+    public static let splitRatioRange = 0.1...1.9
+    public static let splitWidthMultiplierRange = 0.1...10.0
+
+    /// `default-split-ratio`: a new split's ratio (the first, existing
+    /// window's share times two; 1 = half and half).
+    public var defaultSplitRatio: CGFloat
+    /// `split-width-multiplier`: side by side when `width >= height * m`.
+    public var splitWidthMultiplier: CGFloat
+
+    public init(defaultSplitRatio: CGFloat = 1, splitWidthMultiplier: CGFloat = 1) {
+        self.defaultSplitRatio = defaultSplitRatio
+        self.splitWidthMultiplier = splitWidthMultiplier
     }
 }
 
@@ -195,6 +218,8 @@ public struct GioConfig: Sendable {
     /// NW-01: `[[workspace]]` entries in file order (empty: no named
     /// workspaces, the pre-NW behaviour).
     public var workspaces: [WorkspaceDefinition]
+    /// DW-03 `[dwindle]`.
+    public var dwindle: DwindleSectionConfig
 
     public init(
         layout: LayoutSectionConfig = LayoutSectionConfig(),
@@ -206,7 +231,8 @@ public struct GioConfig: Sendable {
         keybindings: [(HotkeyCombo, HotkeyAction)] = [],
         unboundKeys: [HotkeyCombo] = [],
         rules: [WindowRule] = [],
-        workspaces: [WorkspaceDefinition] = []
+        workspaces: [WorkspaceDefinition] = [],
+        dwindle: DwindleSectionConfig = DwindleSectionConfig()
     ) {
         self.workspaces = workspaces
         self.layout = layout
@@ -218,6 +244,12 @@ public struct GioConfig: Sendable {
         self.keybindings = keybindings
         self.unboundKeys = unboundKeys
         self.rules = rules
+        self.dwindle = dwindle
+    }
+
+    /// DW-03: what `WorkspaceManager.applyLayoutDefaults` receives.
+    public var layoutDefaults: WorkspaceLayoutDefaults {
+        WorkspaceLayoutDefaults(kind: layout.defaultLayout, splitRatio: dwindle.defaultSplitRatio)
     }
 
     /// Engine input, independent of any display: a fraction stays a
@@ -233,7 +265,10 @@ public struct GioConfig: Sendable {
             defaultColumnProportion: fraction ?? 0.5,
             fullscreenGap: layout.resolvedFullscreenGap,
             maximizeSingleWindow: layout.maximizeSingleWindow,
-            alwaysCenterSingleColumn: layout.alwaysCenterSingleColumn
+            alwaysCenterSingleColumn: layout.alwaysCenterSingleColumn,
+            dwindle: DwindleSettings(
+                splitRatio: dwindle.defaultSplitRatio, splitWidthMultiplier: dwindle.splitWidthMultiplier
+            )
         )
     }
 

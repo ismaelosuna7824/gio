@@ -497,5 +497,8 @@ private func renderWorkspace(_ definition: WorkspaceDefinition) -> [String]? {
     case .index(let number)?: block.append("display = \(number)")
     case nil: break
     }
+    if let layout = definition.layout {
+        block.append("layout = \"\(layout.rawValue)\"")
+    }
     return block
 }

@@ -30,6 +30,18 @@ public func defaultConfigTemplate() -> String {
     # A workspace with a single column shows it in the middle of the screen
     # instead of at the left edge (niri always-center-single-column).
     always-center-single-column = false
+    # Layout of new workspaces: "scrolling" (the strip of columns) or "dwindle"
+    # (a split tree that keeps every window on screen). Alt+Shift+T switches
+    # the current workspace; [[workspace]] layout = "..." sets one workspace.
+    default-layout = "scrolling"
+
+    [dwindle]
+    # Dwindle workspaces. A new window splits the focused one; this is the
+    # share the focused window keeps, times two (0.1-1.9; 1.0 is half and half).
+    default-split-ratio = 1.0
+    # A split puts its halves side by side when its area is at least this many
+    # times wider than tall, else stacks them (0.1-10; above 1 favours stacking).
+    split-width-multiplier = 1.0
 
     [behavior]
     # Focus the window the pointer rests on (~100 ms); never scrolls.
@@ -194,7 +206,8 @@ public func defaultConfigTemplate() -> String {
     # display's stack in this order (Alt+1 is the first), and keep their
     # name across launches. icon is an SF Symbol name, color a hex color,
     # display "main" (default) or a display number (1, 2, ...; a missing
-    # display falls back to the main one).
+    # display falls back to the main one). layout = "scrolling" | "dwindle"
+    # (unset: [layout] default-layout).
     # [[workspace]]
     # name = "Code"
     # icon = "chevron.left.forwardslash.chevron.right"

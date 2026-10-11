@@ -134,7 +134,7 @@ Limits: learned minimum sizes and rule `min-width` / `max-width` apply to the st
 
 Gio parses a strict **subset of TOML**:
 
-- Tables `[layout]`, `[behavior]`, `[animations]`, `[focus]`, `[focus-ring]`, `[logging]`, `[keybindings]`, the per-animation tables `[animations.<name>]`, and array tables `[[workspace]]` and `[[window-rules]]`.
+- Tables `[layout]`, `[behavior]`, `[animations]`, `[dwindle]`, `[focus]`, `[focus-ring]`, `[logging]`, `[keybindings]`, the per-animation tables `[animations.<name>]`, and array tables `[[workspace]]` and `[[window-rules]]`.
 - `key = value` with double-quoted strings, integers, decimals, `true`/`false`, and flat lists of numbers like `[0.33, 0.5, 800]` (a trailing comma is tolerated; nested lists are not).
 - `#` comments outside quotes. Keys may be quoted (`"Alt+H" = ...`).
 - No escapes in strings, no multi-line values, no inline tables.
@@ -146,6 +146,7 @@ Validation outcomes:
 | Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used**, and every message (with its line number) is shown in the app (**Overview**, **Diagnostics**) and returned by `gio reload`. |
 | Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility). |
 | `animations.duration-ms` outside 0 to 1000, `animations.spring-damping-ratio` outside 0.2 to 3, `animations.spring-stiffness` outside 100 to 3000, `focus-ring.width` outside 0 to 20, `focus.dim-strength` outside 0.0 to 0.5 | **Warning.** Clamped into range. |
+| `layout.default-layout`, `[[workspace]] layout` other than `"scrolling"` / `"dwindle"`, `dwindle.default-split-ratio` outside 0.1 to 1.9, `dwindle.split-width-multiplier` outside 0.1 to 10 (or not a number) | **Warning.** The default is kept and the rest of the file applies (DW-03: a layout typo never rejects the file). |
 | Missing file | Silent defaults (first run). |
 
 An invalid config never stops the window manager.
@@ -163,6 +164,16 @@ An invalid config never stops the window manager.
 | `center-focused-column` | `"never"`, `"always"`, `"on-overflow"` | `"never"` | Niri semantics (and Niri's default), applied on keyboard/IPC focus changes only. `never` scrolls minimally (the column stops at the layout padding, never flush with the screen edge; a column already in view just takes focus, nothing moves); `always` centers the focused column; `on-overflow` centers only when it does not fit on screen together with the previously focused column (a neighbour already in view just takes focus, nothing moves; with columns too wide to fit in pairs, every focus change re-centers the strip). The old boolean still parses (`true` = `always`, `false` = `never`). Any other value is an error and the default applies. |
 | `maximize-single-window` | bool | `true` | A workspace whose only tiled window is alone shows it at the full strip width, the same frame `Alt+F` gives (floating windows do not count). The column keeps its own width: a second window (or a second window stacked in the column) brings the normal widths back. While a window is alone, width actions (`Alt+R`, `Alt+Minus`/`Alt+Equal`, `Alt+F`) change its stored width without a visible change. `false` keeps the column width. Settings > Layout > **Full width when alone**. |
 | `always-center-single-column` | bool | `false` | A workspace with a single column (one window, or one stack) shows it in the middle of the display instead of at the left padding, whatever `center-focused-column` says (niri's option of the same name). A column too wide to fit inside the padding stays at the padding. With `maximize-single-window` on, a lone window already fills the strip; the option matters for a lone stacked column or with `maximize-single-window = false`. Settings > Layout > **Center a lone column**. |
+| `default-layout` | `"scrolling"`, `"dwindle"` | `"scrolling"` | Layout new workspaces start with (see [Dwindle layout](#dwindle-layout)). An empty workspace takes a changed value at once; a workspace with windows keeps its layout until you switch it (`Alt+Shift+T`). A named workspace with its own `layout` keeps that. Settings > Layout > Workspace Layout. |
+
+### `[dwindle]`
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `default-split-ratio` | number | `1.0` | `0.1` to `1.9`. When a new window splits the focused one, the focused window keeps this share of the tile, times two (`1.0` half and half, `1.2` keeps 60%). Settings > Layout > **Dwindle split ratio**. |
+| `split-width-multiplier` | number | `1.0` | `0.1` to `10`. A new split puts its halves side by side when the tile is at least this many times wider than tall, otherwise stacks them; above 1 favours stacking (Hyprland's `split_width_multiplier`). A split keeps the shape it got. Settings > Layout > **Dwindle width multiplier**. |
+
+`smart-split` (Hyprland: the side follows the pointer) is not supported: Gio has no pointer position when a window opens. It warns; use `dwindle-preselect-*` instead.
 
 ### `[behavior]`
 
@@ -241,6 +252,7 @@ A named workspace (Niri's named workspaces). Each block declares one; order in t
 | `icon` | no | SF Symbol name, e.g. `"globe"` | Shown next to the name by the desktop app. |
 | `color` | no | hex color `"#RGB"` or `"#RRGGBB"` | Accent for the workspace in the desktop app. |
 | `display` | no | `"main"` (default) or a display number `1`, `2`, ... | The display whose stack holds it. `1` is the main display (the one at the origin, with the menu bar in System Settings > Displays); the others are numbered by position, left to right (top to bottom when they line up vertically). A number with no such display connected falls back to the main display, and the workspace moves back when that display returns. |
+| `layout` | no | `"scrolling"` or `"dwindle"` | The workspace's layout (unset: `[layout] default-layout`). Applied when the workspace is created or the key changes, so switching it at runtime (`Alt+Shift+T`) lasts until you edit this key. Settings > Workspaces > **Layout**. |
 
 An empty or duplicate `name`, a bad `color` or a bad `display` is a config error. Unknown keys warn.
 

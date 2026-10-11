@@ -220,6 +220,14 @@ struct WorkspaceCardView: View {
                     }
                 }
             }
+            CardRow {
+                SettingRow("Layout", caption: "Scrolling strip or dwindle tree; Default follows Layout > Workspace Layout.") {
+                    GioPopup(
+                        title: "Layout for \(card.trimmedName)", selection: $card.layout,
+                        options: workspaceLayoutOptions, width: 150
+                    )
+                }
+            }
             CardRow(divider: false) { appsSection }
         }
         .background(RoundedRectangle(cornerRadius: GioRadius.medium, style: .continuous).fill(GioColor.card))
