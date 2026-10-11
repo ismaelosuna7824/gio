@@ -587,7 +587,7 @@ read for behaviour (GPL-2.0); no code taken. Non-goals: Dwindle, gestures, SkyLi
   at the end of the Monitors category (20 entries).
 
 ### Tasks
-- [x] MM-06 — Move Edge actions, landing and toggle. Commit `<pending>`; LIVE PENDING.
+- [x] MM-06 — Move Edge actions, landing and toggle. Commit `f8bceec`; LIVE PENDING.
   `GioCore/Hotkeys/HotkeyDispatcher.swift` (4 cases), `ShortcutCatalog.swift`,
   `Config/ConfigParser.swift` (names, behavior key), `Config/GioConfig.swift`,
   `Config/SettingsForms.swift`, `Config/ConfigTemplate.swift`, `Config/AnimationKinds.swift`,
@@ -631,5 +631,5 @@ read for behaviour (GPL-2.0); no code taken. Non-goals: Dwindle, gestures, SkyLi
 - 2026-10-08: MM-04 (live repair after the first two-display session) implemented and verified
   automatically; not committed; live check pending.
 - 2026-10-09: MM-04 committed as `e564c8d` and pushed to `main`. LIVE PENDING: hot-plug while running, the 2160x1440 left/above arrangement, Alt+O per display, Move Window to Display.
-- 2026-10-11: MM-06 (Move Edge) implemented on `feat/move-edge` and verified automatically;
-  LIVE PENDING (check 14c).
+- 2026-10-11: MM-06 (Move Edge) committed as `f8bceec` on `feat/move-edge` (not pushed, not
+  merged) and verified automatically; LIVE PENDING (check 14c).
