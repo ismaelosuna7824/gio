@@ -141,6 +141,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let windowServer: WindowServerMover?
     public var windowServerEnabled = false
     private var ledger = WindowServerLedger()
+    /// PF-M: does the WindowServer really move other apps' windows here?
+    private var probe = WindowServerProbe()
     private let ownPID: pid_t
 
     /// Timing of the most recent `reconcile` pass (MO-01).
@@ -724,6 +726,52 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         motionLanes.submit(pid: pid, writes: writes)
     }
 
+    /// PF-M: the runtime probe's verdict so far.
+    public var windowServerProbe: WindowServerProbeState {
+        probe.state
+    }
+
+    /// PF-M: one tick of hide and reveal flights, all in one WindowServer
+    /// transaction, no Accessibility write (the final pass follows through
+    /// the ledger). Never blocks. While the probe is unverified, it first
+    /// looks where the WindowServer draws a window moved on an earlier tick;
+    /// once the probe fails, nothing is moved any more (here or in instant
+    /// passes) and the player writes these frames through Accessibility.
+    /// Returns the windows moved.
+    public func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID> {
+        guard !writes.isEmpty, windowServerUsable, let windowServer else {
+            return []
+        }
+        let targets = probe.observationTargets()
+        if !targets.isEmpty {
+            probe.observe(windowServer.frames(of: targets))
+            if probe.state != .unverified {
+                GioLog.record(.info, "skylight probe result=\(probe.state.rawValue)")
+            }
+            if probe.state == .failed {
+                return []
+            }
+        }
+        var frames: [WindowID: CGRect] = [:]
+        for write in writes {
+            frames[write.id] = write.to
+        }
+        let moved = moveThroughWindowServer(frames)
+        if probe.state == .unverified {
+            for write in writes where moved.contains(write.id) {
+                if let windowID = windowServer.windowServerID(of: write.id) {
+                    probe.moved(windowID: windowID, from: write.from, to: write.to)
+                }
+            }
+        }
+        return moved
+    }
+
+    /// PF-L/PF-M: switched on by the session, present, not refuted by the probe.
+    private var windowServerUsable: Bool {
+        windowServerEnabled && windowServer != nil && probe.state != .failed
+    }
+
     /// NC-07 / HD-02: put hidden incoming windows just below their target
     /// before a workspace-switch animation. Same lanes and lean write as
     /// motion frames (known origin, unverified), no reads, never focus.
@@ -820,7 +868,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// pending until an Accessibility write follows; none when the transport
     /// is off, missing or refused the transaction.
     private func moveThroughWindowServer(_ targets: [WindowID: CGRect]) -> Set<WindowID> {
-        guard windowServerEnabled, let windowServer, !targets.isEmpty else {
+        guard windowServerUsable, let windowServer, !targets.isEmpty else {
             return []
         }
         var moves: [WindowServerMove] = []

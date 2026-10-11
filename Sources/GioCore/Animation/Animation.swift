@@ -84,6 +84,9 @@ public struct WindowAnimation: Equatable, Sendable {
     public var velocity: CGPoint
     /// PA-06: whether (and from when) the size interpolates during flight.
     public var sizeSchedule: SizeSchedule = .none
+    /// PF-M: Accessibility on every tick, or the WindowServer (hide and
+    /// reveal flights, `planMotionTransports`).
+    public var transport: MotionTransport = .accessibility
 
     public init(
         id: WindowID, from: CGRect, to: CGRect,
@@ -117,6 +120,7 @@ public struct WindowAnimation: Equatable, Sendable {
     public func springing(_ spring: SpringParameters, velocity: CGPoint = .zero) -> WindowAnimation {
         var result = WindowAnimation(id: id, from: from, to: to, spring: spring, velocity: velocity)
         result.sizeSchedule = sizeSchedule
+        result.transport = transport
         return result
     }
 

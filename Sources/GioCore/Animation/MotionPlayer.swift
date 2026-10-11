@@ -22,9 +22,17 @@ public struct MotionWrite: Equatable, Sendable {
 /// as `MotionWriteStats.drops`.
 public protocol MotionFrameSink: AnyObject {
     func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool
+    /// PF-M: one tick's WindowServer frames, all in one transaction. Returns
+    /// the windows moved; the player writes the others through Accessibility
+    /// in the same tick. Never blocks.
+    func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID>
     /// Per-app write stats accumulated since the last call (aggregated in
     /// place; no per-write entries).
     func takeMotionStats() -> [pid_t: MotionWriteStats]
+}
+
+public extension MotionFrameSink {
+    func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID> { [] }
 }
 
 /// What one finished animation cost, for the live fps judgement.
@@ -208,6 +216,7 @@ public final class MotionPlayer {
         frames += 1
         var sampled: [WindowID: CGRect] = [:]
         var perPid: [pid_t: [MotionWrite]] = [:]
+        var serverWrites: [MotionWrite] = []
         for animation in animations {
             let frame = wholePoints(
                 animation.motionFrame(at: elapsed), size: animation.sizeSchedule.interpolates
@@ -215,9 +224,24 @@ public final class MotionPlayer {
             sampled[animation.id] = frame
             let last = submitted[animation.id] ?? animation.from
             if differs(frame, last) {
-                perPid[animation.id.pid, default: []].append(
-                    MotionWrite(id: animation.id, from: last, to: frame)
-                )
+                let write = MotionWrite(id: animation.id, from: last, to: frame)
+                if animation.transport == .windowServer {
+                    serverWrites.append(write)
+                } else {
+                    perPid[animation.id.pid, default: []].append(write)
+                }
+            }
+        }
+        // PF-M: hide and reveal flights first, in one transaction; what the
+        // WindowServer did not take goes through Accessibility this tick.
+        if !serverWrites.isEmpty {
+            let moved = sink.submitWindowServerMotion(serverWrites)
+            for write in serverWrites {
+                if moved.contains(write.id) {
+                    submitted[write.id] = write.to
+                } else {
+                    perPid[write.id.pid, default: []].append(write)
+                }
             }
         }
         for pid in perPid.keys.sorted() {

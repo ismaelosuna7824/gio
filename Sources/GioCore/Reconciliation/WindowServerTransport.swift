@@ -24,6 +24,13 @@ public protocol WindowServerMover: AnyObject {
     func windowServerID(of id: WindowID) -> UInt32?
     /// Moves every window in one transaction; false when nothing was committed.
     func commit(_ moves: [WindowServerMove]) -> Bool
+    /// PF-M: where the WindowServer draws `windowIDs` now (Cocoa frames),
+    /// for the runtime probe; unlisted windows are absent.
+    func frames(of windowIDs: [UInt32]) -> [UInt32: CGRect]
+}
+
+public extension WindowServerMover {
+    func frames(of windowIDs: [UInt32]) -> [UInt32: CGRect] { [:] }
 }
 
 /// PF-L: whether the WindowServer transport is in use, and why (log-safe).
@@ -43,8 +50,11 @@ public struct WindowServerTransportStatus: Equatable, Sendable {
 }
 
 /// PF-L: `[behavior] skylight` off, or a private symbol missing at runtime,
-/// keeps the Accessibility-only path.
-public func windowServerTransportStatus(enabled: Bool, missingSymbols: [String]) -> WindowServerTransportStatus {
+/// keeps the Accessibility-only path. PF-M: so does a failed runtime probe;
+/// a verified one says so.
+public func windowServerTransportStatus(
+    enabled: Bool, missingSymbols: [String], probe: WindowServerProbeState = .unverified
+) -> WindowServerTransportStatus {
     guard enabled else {
         return WindowServerTransportStatus(available: false, reason: "config-off")
     }
@@ -53,7 +63,110 @@ public func windowServerTransportStatus(enabled: Bool, missingSymbols: [String])
             available: false, reason: "missing-symbols:" + missingSymbols.joined(separator: ",")
         )
     }
-    return WindowServerTransportStatus(available: true, reason: "symbols-resolved")
+    switch probe {
+    case .failed:
+        return WindowServerTransportStatus(available: false, reason: "probe-failed")
+    case .verified:
+        return WindowServerTransportStatus(available: true, reason: "probe-verified")
+    case .unverified:
+        return WindowServerTransportStatus(available: true, reason: "symbols-resolved")
+    }
+}
+
+/// PF-M: whether SkyLight moves of other apps' windows take effect here.
+public enum WindowServerProbeState: String, Equatable, Sendable {
+    case unverified, verified, failed
+}
+
+/// PF-M: the runtime probe, fed by real motion and nothing else (it never
+/// moves a window itself). During a WindowServer flight no Accessibility
+/// write touches the window, so where the WindowServer draws it before the
+/// next tick's commit tells: at a frame Gio committed, the moves work
+/// (`verified`); still at the frame the window had before its first move
+/// (and that frame is none Gio committed) on `failureObservations`
+/// observations, they do not (`failed`). Anything else (the window elsewhere
+/// or not listed) proves nothing. Instant passes do not feed it: their
+/// Accessibility write follows at once and would move the window either way.
+/// Pure; owned by `WindowReconciler` on the calling thread.
+public struct WindowServerProbe: Sendable {
+    public static let failureObservations = 3
+    /// Within this many points a drawn origin matches a frame.
+    static let slack: CGFloat = 2
+    /// Committed frames kept per window while unverified.
+    static let keptMoves = 16
+
+    public private(set) var state: WindowServerProbeState = .unverified
+    private var started: [UInt32: CGRect] = [:]
+    private var committed: [UInt32: [CGRect]] = [:]
+    private var stuck = 0
+
+    public init() {}
+
+    /// A WindowServer move of `windowID` from `from` (where it was) to `to`.
+    public mutating func moved(windowID: UInt32, from: CGRect, to: CGRect) {
+        guard state == .unverified else {
+            return
+        }
+        if started[windowID] == nil {
+            started[windowID] = from
+        }
+        var frames = committed[windowID, default: []]
+        frames.append(to)
+        if frames.count > Self.keptMoves {
+            frames.removeFirst(frames.count - Self.keptMoves)
+        }
+        committed[windowID] = frames
+    }
+
+    /// Windows worth looking at (moved before, at most `limit`), sorted.
+    public func observationTargets(limit: Int = 2) -> [UInt32] {
+        guard state == .unverified else {
+            return []
+        }
+        return Array(committed.keys.sorted().prefix(limit))
+    }
+
+    /// Where the WindowServer draws the targets now.
+    public mutating func observe(_ drawn: [UInt32: CGRect]) {
+        guard state == .unverified else {
+            return
+        }
+        var sawStuck = false
+        for (windowID, frame) in drawn {
+            let moves = committed[windowID] ?? []
+            if moves.contains(where: { near($0, frame) }) {
+                state = .verified
+                started = [:]
+                committed = [:]
+                return
+            }
+            if let start = started[windowID], near(start, frame), !moves.contains(where: { near($0, start) }) {
+                sawStuck = true
+            }
+        }
+        guard sawStuck else {
+            return
+        }
+        stuck += 1
+        if stuck >= Self.failureObservations {
+            state = .failed
+            started = [:]
+            committed = [:]
+        }
+    }
+
+    private func near(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.minX - b.minX) <= Self.slack && abs(a.minY - b.minY) <= Self.slack
+    }
+}
+
+/// PF-M: more than a parking sliver of `frame` shows in one of `viewports`,
+/// on both axes (a window hanging below a display keeps a 1 pt strip too).
+func showsOnScreen(_ frame: CGRect, in viewports: [CGRect]) -> Bool {
+    viewports.contains { viewport in
+        let inside = frame.intersection(viewport)
+        return !inside.isNull && inside.width > parkingSliver * 2 && inside.height > parkingSliver * 2
+    }
 }
 
 /// PF-L: the status line once at startup, then only when it changes.
@@ -82,11 +195,11 @@ public func planWindowServerFirst(
     current: [WindowID: CGRect], displays: [CGRect], ownPID: pid_t
 ) -> Set<WindowID> {
     func shown(_ frame: CGRect) -> Bool {
-        displays.contains { isOnScreen(frame, viewport: $0) }
+        showsOnScreen(frame, in: displays)
     }
     var first: Set<WindowID> = []
     for (id, target) in parked where id.pid != ownPID {
-        if let now = current[id], isOnScreen(now, viewport: target.display) || shown(now) {
+        if let now = current[id], shown(now) || showsOnScreen(now, in: [target.display]) {
             first.insert(id)
         }
     }

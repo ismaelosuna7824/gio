@@ -127,6 +127,9 @@ final class SessionHost: @unchecked Sendable {
     /// actuator, in `initialSync`.
     private var skyLight: SkyLightWindowMover?
     private var skyLightMissing: [String]?
+    /// PF-M: the transport state the last pass used; a change (probe
+    /// verdict, reload) republishes the facts, which log it.
+    private var lastWindowServerStatus: WindowServerTransportStatus?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
     /// SM-04: pre-captured window images (refreshed once after each settle,
@@ -1315,7 +1318,12 @@ final class SessionHost: @unchecked Sendable {
             windowServer: skyLight
         )
         self.reconciler = reconciler
-        reconciler.windowServerEnabled = windowServerStatus().available
+        let windowServer = windowServerStatus()
+        reconciler.windowServerEnabled = windowServer.available
+        if let previous = lastWindowServerStatus, previous != windowServer {
+            publishSnapshot()
+        }
+        lastWindowServerStatus = windowServer
         let settings = session.config.animations
         // NA-04: the triggering action picks the pass's animation; a kind
         // that is off makes its pass instant.
@@ -1393,6 +1401,13 @@ final class SessionHost: @unchecked Sendable {
             animations, settings: settings,
             canAnimateSize: { resizeCapability.canAnimateSize(resizeKey($0)) },
             focused: focus.pendingIntentTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget
+        )
+        // PF-M: hide and reveal flights move through SkyLight per tick (one
+        // transaction for all of them) with no Accessibility write until the
+        // final pass; flights between two visible frames stay on their lanes.
+        animations = planMotionTransports(
+            animations, viewports: displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame },
+            enabled: windowServer.available, ownPID: ProcessInfo.processInfo.processIdentifier
         )
         // SM-04/SM-08: with the snapshot renderer the real windows get one
         // write to their final frames (the instant pass) under an overlay
@@ -1586,12 +1601,16 @@ final class SessionHost: @unchecked Sendable {
         )
     }
 
-    /// PF-L: `[behavior] skylight` and what this macOS offers.
+    /// PF-L: `[behavior] skylight`, what this macOS offers and (PF-M) the
+    /// runtime probe's verdict.
     private func windowServerStatus() -> WindowServerTransportStatus {
         guard let skyLightMissing else {
             return WindowServerTransportStatus(available: false, reason: "not-loaded")
         }
-        return windowServerTransportStatus(enabled: session.config.behavior.skyLight, missingSymbols: skyLightMissing)
+        return windowServerTransportStatus(
+            enabled: session.config.behavior.skyLight, missingSymbols: skyLightMissing,
+            probe: reconciler?.windowServerProbe ?? .unverified
+        )
     }
 
     /// SM-12: fold every pass dispatched under the overlay, oldest first

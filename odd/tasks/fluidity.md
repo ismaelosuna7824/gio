@@ -108,7 +108,23 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   actor; [INFERENCE] the main connection is usable from any thread; LIVE PENDING). No runtime
   probe in PF-L: every SkyLight move is followed by an AX write anyway, so a WindowServer that
   ignores the move only loses the speed-up. The probe belongs with per-tick SkyLight motion
-  (PF-M, open), where an ignored move would freeze a flight.
+  (PF-M), where an ignored move would freeze a flight.
+- PF-M: with the AX renderer, flights that start or end hidden (no more than a parking sliver
+  in any viewport on both axes; `isOnScreen` counted a window hanging 1 pt below a display with
+  no Dock there as visible, so a stricter `showsOnScreen` is used for both PF-L and PF-M) and
+  keep their size move through SkyLight, one transaction per tick for all of them, no AX write
+  on ticks, the final pass following through the PF-L ledger. Visible-to-visible flights keep
+  their AX lanes; windows hidden at both ends are still not animated (`planMotion`) and trusted
+  ones are skipped by the final pass (PA-04). Runtime probe: the coordinator suggested checking
+  the first instant park; rejected because its AX write follows at once and moves the window
+  either way, and checking right after the commit could read a not-yet-applied transaction.
+  Instead the probe observes real flights only (no extra move, nothing visible): before a tick's
+  commit it reads the WindowServer bounds of up to two windows moved on earlier ticks, which no
+  AX write touched: at a committed frame = verified; still at the pre-flight frame on 3
+  observations = failed (the transport stops for the session and that flight continues on AX
+  from the next tick; at 120 Hz a broken transport freezes at most ~25 ms of one flight).
+  Display link for the AX motion: not adopted (main-thread hop per tick, coupling to main
+  stalls); the SkyLight per-tick path removes the app latency for hide and reveal flights.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -236,7 +252,7 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   `focus failed ... reason=notFrontmost(frontmost=<pid>,ax=<status>)` if macOS still refuses
   (`ax` tells whether the `AXFrontmost` write was accepted). Also read the `reason` of the
   Xcode window 31952:13 the next time it refuses.
-- [x] PF-K (`ccdef7d`) — `AXEnhancedUserInterface` off around write batches (reconcile, dispatched,
+- [x] PF-K (`5a54258`) — `AXEnhancedUserInterface` off around write batches (reconcile, dispatched,
   pre-position, nudge and motion lanes), restored after the batch, the final pass, the settle
   or shutdown; never for Gio's own pid. New `GioCore/Reconciliation/EnhancedUserInterface.swift`
   (`EnhancedUserInterfaceSwitch`, `EnhancedUIGuard`), `LaneExecutor` lane `epilogue`,
@@ -253,7 +269,7 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist
   15g in `docs/TESTING.md` (VoiceOver on: Chrome/Electron motion fluid, VoiceOver still reads
   every app after motions and after Quit; a stopped app logs `restore failed` then `restored`).
-- [x] PF-L (`3db96a0`) — SkyLight WindowServer transport for parks, reveals and same-size pre-positions,
+- [x] PF-L (`a3ea8d3`) — SkyLight WindowServer transport for parks, reveals and same-size pre-positions,
   AX follow-up, config key and status. New `GioCore/Reconciliation/WindowServerTransport.swift`
   (`WindowServerMove`, `WindowServerMover`, `WindowServerTransportStatus`,
   `windowServerTransportStatus`, `WindowServerStatusLogGate`, `planWindowServerFirst`,
@@ -276,19 +292,21 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist 15h in `docs/TESTING.md` (startup line, atomic hide/reveal with
   animations off and under the overlay, instant switch start with the AX renderer, apps know
   their frames afterwards, `skylight = false` fallback, Quit restores windows mid-switch).
-- [ ] PF-M — open, not implemented (session budget ran out after PF-L; a RED test draft was
-  discarded, nothing of it is committed). Planned: during an AX motion, flights that start or
-  end hidden and keep their size (reveals, parks, workspace drop and rise) move through one
-  SkyLight transaction per tick (`MotionPlayer` routes them to a new
-  `MotionFrameSink.submitWindowServerMotion`, falling back to AX per window when refused), with
-  no AX write on ticks; the final pass follows through the PF-L ledger. Runtime probe: while
-  unverified, before each tick's commit, compare the WindowServer bounds
-  (`CGWindowListCopyWindowInfo`) of a window moved on an earlier tick with the committed frames:
-  a match verifies; three observations still at the start frame fail it, turn the transport off
-  (`skylight available=false reason=probe-failed`) and fall back to AX for the rest of the
-  flight. Today's state: parked-to-parked windows are not animated (`planMotion`) and trusted
-  ones are skipped by the final pass (PA-04); hide and reveal flights still write AX on every
-  tick. Not attempted either: driving the AX motion from a display link (optional item 5).
+- [x] PF-M — Hide and reveal flights move through SkyLight per tick, with a runtime probe.
+  New `GioCore/Animation/MotionTransport.swift` (`MotionTransport`, `planMotionTransports`),
+  `WindowAnimation.transport` (kept by `springing`), `MotionFrameSink.submitWindowServerMotion`
+  (default: nothing moved), `MotionPlayer` routes window-server frames in one batch per tick
+  and falls back to AX per window; `WindowServerProbe`, `WindowServerProbeState`,
+  `windowServerTransportStatus(...probe:)`, `showsOnScreen`; `WindowReconciler
+  .submitWindowServerMotion`, `windowServerProbe`; `WindowServerMover.frames(of:)` (adapter:
+  `CGWindowListCopyWindowInfo` bounds only); `SessionHost` plans transports after the size
+  schedules and republishes the facts when the status changes. RED (compile):
+  `WindowServerMotionTests` (no `planMotionTransports`, `WindowServerProbe`,
+  `MotionTransport`, `submitWindowServerMotion`, `windowServerProbe`, probe-aware status).
+  GREEN after the rebase onto MM-06: Core 1729 (+11), Session 400, UI 307 (53 skipped), MacOS
+  89, Mac 19, POC 7, 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  LIVE PENDING: checklist 15h (glide of leaving/entering columns and switch
+  drop/rise with Chrome and Electron, `skylight probe result=verified`, fallback).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -310,8 +328,9 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   pending.
 - 2026-10-08: PF-E (no retries for gone/rejected elements) and PF-G (on-overflow default)
   committed. PF-F implemented, tried live, reverted at the user's request (never committed).
-- 2026-10-11: PF-K (`ccdef7d`, `AXEnhancedUserInterface` off around write batches) and PF-L
-  (`3db96a0`, SkyLight hide/reveal with AX follow-up, `[behavior] skylight`) committed on
+- 2026-10-11: PF-K (`5a54258`, `AXEnhancedUserInterface` off around write batches) and PF-L
+  (`a3ea8d3`, SkyLight hide/reveal with AX follow-up, `[behavior] skylight`) committed on
   `feat/fluidity-skylight`; all bundles green, signed build succeeded; both LIVE PENDING
-  (checklists 15g and 15h). PF-M (per-tick SkyLight motion and the runtime probe) and the
-  display-link renderer remain open.
+  (checklists 15g and 15h). Branch rebased by the coordinator onto MM-06 (hashes above are the
+  rebased ones). PF-M (per-tick SkyLight motion and the runtime probe) implemented; display
+  link for the AX motion not adopted (Decisions, PF-M).

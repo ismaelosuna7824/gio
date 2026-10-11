@@ -129,4 +129,26 @@ public final class SkyLightWindowMover: WindowServerMover, @unchecked Sendable {
         symbols.commit(transaction, 0)
         return true
     }
+
+    /// PF-M: where the WindowServer draws `windowIDs` now, in Cocoa
+    /// coordinates, for the runtime probe. Public `CGWindowListCopyWindowInfo`
+    /// for each window; only the number and the bounds are read (no titles).
+    public func frames(of windowIDs: [UInt32]) -> [UInt32: CGRect] {
+        let height = flip().displayHeight
+        var frames: [UInt32: CGRect] = [:]
+        for windowID in windowIDs {
+            guard let entries = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowID))
+                as? [[String: Any]],
+                let entry = entries.first(where: {
+                    ($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowID
+                }),
+                let bounds = entry[kCGWindowBounds as String] as? NSDictionary,
+                let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary)
+            else {
+                continue
+            }
+            frames[windowID] = cocoaFrame(fromWindowServer: rect, displayHeight: height)
+        }
+        return frames
+    }
 }
