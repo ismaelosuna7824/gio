@@ -157,6 +157,16 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "move-workspace-down", name: "Move workspace down", summary: "Move the current workspace one place down in this display's stack; named workspaces keep their config order.", category: .workspaces)
     case .moveWorkspaceUp:
         return ActionInfo(id: "move-workspace-up", name: "Move workspace up", summary: "Move the current workspace one place up in this display's stack, never above the named ones.", category: .workspaces)
+    case .focusWindowOrWorkspaceDown:
+        return ActionInfo(id: "focus-window-or-workspace-down", name: "Focus down or workspace below", summary: "Focus the window below in the column; from its last window, the workspace below (unbound by default).", category: .focus)
+    case .focusWindowOrWorkspaceUp:
+        return ActionInfo(id: "focus-window-or-workspace-up", name: "Focus up or workspace above", summary: "Focus the window above in the column; from its first window, the workspace above (unbound by default).", category: .focus)
+    case .switchPresetColumnWidthBack:
+        return ActionInfo(id: "switch-preset-column-width-back", name: "Cycle column width back", summary: "Cycle the focused column through the preset widths in reverse (unbound by default).", category: .columns)
+    case .expandColumnToAvailableWidth:
+        return ActionInfo(id: "expand-column-to-available-width", name: "Expand column to available width", summary: "Make the focused column fill the space the other fully visible columns leave.", category: .columns)
+    case .centerVisibleColumns:
+        return ActionInfo(id: "center-visible-columns", name: "Center visible columns", summary: "Scroll the view so the fully visible columns sit in the middle of the display.", category: .columns)
     }
 }
 
@@ -208,10 +218,12 @@ private func withParameter(_ text: String, of action: HotkeyAction) -> String {
 /// One representative per family, in display order within each category.
 private let catalogActions: [HotkeyAction] = [
     .focusLeft, .focusRight, .focusUp, .focusDown, .focusColumnFirst, .focusColumnLast,
+    .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp,
     .moveColumnLeft, .moveColumnRight, .moveColumnToFirst, .moveColumnToLast,
     .moveLeft, .moveRight, .moveUp, .moveDown, .swapWindowLeft, .swapWindowRight,
-    .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-    .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight,
+    .switchPresetColumnWidth, .switchPresetColumnWidthBack, .shrinkColumnWidth, .growColumnWidth,
+    .maximizeColumn, .expandColumnToAvailableWidth, .centerColumn, .centerVisibleColumns,
+    .consumeOrExpelLeft, .consumeOrExpelRight,
     .toggleFloating, .fullscreen,
     .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
     .workspace(1), .moveToWorkspace(1), .moveColumnToWorkspace(1),

@@ -918,6 +918,11 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "focus-workspace-previous": return .focusWorkspacePrevious
     case "move-workspace-down": return .moveWorkspaceDown
     case "move-workspace-up": return .moveWorkspaceUp
+    case "focus-window-or-workspace-down": return .focusWindowOrWorkspaceDown
+    case "focus-window-or-workspace-up": return .focusWindowOrWorkspaceUp
+    case "switch-preset-column-width-back": return .switchPresetColumnWidthBack
+    case "expand-column-to-available-width": return .expandColumnToAvailableWidth
+    case "center-visible-columns": return .centerVisibleColumns
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -964,6 +969,8 @@ public func validActionNames() -> [String] {
         "swap-window-left", "swap-window-right",
         "move-column-to-workspace N", "move-column-to-workspace-down", "move-column-to-workspace-up",
         "focus-workspace-previous", "move-workspace-down", "move-workspace-up",
+        "focus-window-or-workspace-down", "focus-window-or-workspace-up",
+        "switch-preset-column-width-back", "expand-column-to-available-width", "center-visible-columns",
     ]
 }
 

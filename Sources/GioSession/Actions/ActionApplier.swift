@@ -218,6 +218,34 @@ public enum ActionApplier {
                     "\(configActionName(action)) refused: workspace \(manager.currentID.rawValue) is named; config order places it"
                 )
             }
+        case .focusWindowOrWorkspaceDown:
+            effect.syncsShownWorkspace = manager.focusWindowOrWorkspaceDown()
+        case .focusWindowOrWorkspaceUp:
+            effect.syncsShownWorkspace = manager.focusWindowOrWorkspaceUp()
+        case .switchPresetColumnWidthBack:
+            let config = context.engine().config
+            let viewportWidth = focusedViewport(manager: manager, context: context).width
+            let next = switchPresetColumnWidthBack(
+                in: workspace, presets: context.layout.presetColumnWidths,
+                config: config, viewportWidth: viewportWidth
+            )
+            commit(next, over: workspace, manager: &manager)
+        case .expandColumnToAvailableWidth:
+            let viewport = focusedViewport(manager: manager, context: context)
+            commit(
+                expandColumnToAvailableWidth(
+                    in: workspace, modes: context.modes(), engine: context.engine(), viewport: viewport
+                ),
+                over: workspace, manager: &manager
+            )
+        case .centerVisibleColumns:
+            let viewport = focusedViewport(manager: manager, context: context)
+            commit(
+                centerVisibleColumns(
+                    in: workspace, modes: context.modes(), engine: context.engine(), viewport: viewport
+                ),
+                over: workspace, manager: &manager
+            )
         }
         if manager.focusedDisplay != startDisplay, manager.currentWorkspace().focusedWindow == nil,
            let display = context.displays.first(where: { $0.id == manager.focusedDisplay })

@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 73)
+        XCTAssertEqual(dispatcher.bindingCount, 75)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -140,7 +140,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultCombosAreUnique() {
         let combos = defaultHotkeyBindings().map(\.0)
-        XCTAssertEqual(combos.count, 73)
+        XCTAssertEqual(combos.count, 75)
         XCTAssertEqual(Set(combos).count, combos.count, "a default combo is bound twice")
         XCTAssertFalse(combos.contains(launcherHotkey), "Alt+Space stays the launcher")
     }
@@ -169,9 +169,15 @@ final class HotkeyTests: XCTestCase {
         // Option+Tab is the default of the AltTab app switcher: left unbound.
         XCTAssertNil(action([.alt], "Tab"))
         let bound = defaultHotkeyBindings().map(\.1)
-        for unbound: HotkeyAction in [.focusWorkspacePrevious, .swapWindowLeft, .swapWindowRight] {
+        for unbound: HotkeyAction in [
+            .focusWorkspacePrevious, .swapWindowLeft, .swapWindowRight,
+            .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
+        ] {
             XCTAssertFalse(bound.contains(unbound), "\(unbound) ships unbound")
         }
+        // NC-12: niri Mod+Ctrl+F / Mod+Ctrl+C.
+        XCTAssertEqual(action([.alt, .ctrl], "F"), .expandColumnToAvailableWidth)
+        XCTAssertEqual(action([.alt, .ctrl], "C"), .centerVisibleColumns)
     }
 
     func testNiriColumnHeightAndWorkspaceActionNamesParse() {
@@ -191,6 +197,11 @@ final class HotkeyTests: XCTestCase {
             ("focus-workspace-previous", .focusWorkspacePrevious),
             ("move-workspace-down", .moveWorkspaceDown),
             ("move-workspace-up", .moveWorkspaceUp),
+            ("focus-window-or-workspace-down", .focusWindowOrWorkspaceDown),
+            ("focus-window-or-workspace-up", .focusWindowOrWorkspaceUp),
+            ("switch-preset-column-width-back", .switchPresetColumnWidthBack),
+            ("expand-column-to-available-width", .expandColumnToAvailableWidth),
+            ("center-visible-columns", .centerVisibleColumns),
         ]
         for (name, expected) in named {
             XCTAssertEqual(parseActionName(name), expected, name)

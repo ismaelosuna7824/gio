@@ -55,6 +55,19 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
   `move-column-to-workspace-down/up` (Ctrl+Alt+U/I): the whole column, focus follows.
 - [ ] NC-11 (`e564c8d`) — `focus-workspace-previous` (unbound; per-display history) and
   `move-workspace-down/up` (Ctrl+Alt+Shift+U/I; named workspaces refused and logged).
+- [ ] NC-12 — More niri actions (user request 2026-10-11): `focus-window-or-workspace-down/up`
+  (unbound; `WorkspaceManager.focusWindowOrWorkspaceDown/Up`: the window below/above in the
+  column, else the workspace below/above; true only when the workspace changed),
+  `switch-preset-column-width-back` (unbound: niri's Mod+Shift+R is Gio's window-height cycle),
+  `expand-column-to-available-width` (Ctrl+Alt+F, niri Mod+Ctrl+F) and `center-visible-columns`
+  (Ctrl+Alt+C, niri Mod+Ctrl+C) in `Layout/VisibleColumns.swift`. 75 default bindings.
+  Decisions: "fully visible" = the column's content range inside the viewport within 0.5 pt; the
+  expanded width is stored as a proportion (adapts across displays, like the 10% steps) and the
+  view scrolls so the group starts at the left padding (fills padding to padding); expand is a
+  NO-OP without room to grow; center-visible always includes the focused column (a column wider
+  than the viewport is never fully visible). Or-workspace moves animate as a workspace switch
+  (a move within the column does not scroll). Expand and preset-back grow the focused window
+  (focused-grow); center-visible is a view scroll.
 
 Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
 resolved per display; savedWidthSpec for maximize; FullscreenBook + full-display frame below

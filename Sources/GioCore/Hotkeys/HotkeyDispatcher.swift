@@ -100,6 +100,19 @@ public enum HotkeyAction: Equatable, Sendable {
     case moveWorkspaceDown
     /// NC-11 niri `move-workspace-up` (Ctrl+Alt+Shift+I).
     case moveWorkspaceUp
+    /// NC-12 niri `focus-window-or-workspace-down` (unbound): the window
+    /// below in the column, or the workspace below from its last window.
+    case focusWindowOrWorkspaceDown
+    /// NC-12 niri `focus-window-or-workspace-up` (unbound).
+    case focusWindowOrWorkspaceUp
+    /// NC-12 niri `switch-preset-column-width-back` (unbound: niri's
+    /// Mod+Shift+R is Gio's window-height cycle): the presets in reverse.
+    case switchPresetColumnWidthBack
+    /// NC-12 niri `expand-column-to-available-width` (Ctrl+Alt+F): fill the
+    /// width the other fully visible columns leave.
+    case expandColumnToAvailableWidth
+    /// NC-12 niri `center-visible-columns` (Ctrl+Alt+C).
+    case centerVisibleColumns
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -143,7 +156,10 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// Ctrl+Alt+Home/End move the column there, Alt+Shift+Minus/Equal and Alt+Shift+R size the window
 /// within its column, Ctrl+Alt+R resets the heights, Ctrl+Alt+N / Ctrl+Alt+U / I move the column to
 /// a workspace, Ctrl+Alt+Shift+U / I move the workspace. `focus-workspace-previous` (niri Mod+Tab)
-/// and `swap-window-*` ship unbound: Option+Tab is the AltTab switcher's default.
+/// and `swap-window-*` ship unbound: Option+Tab is the AltTab switcher's default. NC-12:
+/// Ctrl+Alt+F expands the column to the available width, Ctrl+Alt+C centers the visible columns
+/// (niri Mod+Ctrl+F / C); `focus-window-or-workspace-*` (a commented alternative in niri) and
+/// `switch-preset-column-width-back` (niri Mod+Shift+R, Gio's window-height cycle) ship unbound.
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -183,6 +199,8 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.ctrl, .alt], "I"), .moveColumnToWorkspaceUp),
         (combo([.ctrl, .alt, .shift], "U"), .moveWorkspaceDown),
         (combo([.ctrl, .alt, .shift], "I"), .moveWorkspaceUp),
+        (combo([.ctrl, .alt], "F"), .expandColumnToAvailableWidth),
+        (combo([.ctrl, .alt], "C"), .centerVisibleColumns),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))

@@ -160,6 +160,12 @@ public func defaultConfigTemplate() -> String {
     # I) reorder this display's stack (named workspaces keep config order).
     # Unbound: "focus-workspace-previous" (Option+Tab is left to app
     # switchers such as AltTab), e.g. "Ctrl+Alt+Tab" = "focus-workspace-previous"
+    # "expand-column-to-available-width" (Ctrl+Alt+F) fills the room the other
+    # visible columns leave; "center-visible-columns" (Ctrl+Alt+C) centers them.
+    # Unbound: "switch-preset-column-width-back" (the presets in reverse) and
+    # "focus-window-or-workspace-down" / "-up" (the workspace below / above from
+    # the column's last / first window), e.g.
+    # "Alt+J" = "focus-window-or-workspace-down"
     # "none" switches a combo off, defaults included (the app's Shortcuts
     # section writes these lines for you), e.g. "Alt+C" = "none"
 

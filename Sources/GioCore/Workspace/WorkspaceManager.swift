@@ -339,6 +339,32 @@ public struct WorkspaceManager: Equatable, Sendable {
         return true
     }
 
+    /// Niri `focus-window-or-workspace-down`: the window below in the focused
+    /// column, or, from its last window (or an empty workspace), the workspace
+    /// below. True only when the workspace changed (the caller syncs the
+    /// shown workspace); false for a move within the column or at the bottom.
+    @discardableResult
+    public mutating func focusWindowOrWorkspaceDown() -> Bool {
+        focusWindowOrWorkspace(.down)
+    }
+
+    /// Niri `focus-window-or-workspace-up`: the window above, or the
+    /// workspace above from the column's first window. Same return value.
+    @discardableResult
+    public mutating func focusWindowOrWorkspaceUp() -> Bool {
+        focusWindowOrWorkspace(.up)
+    }
+
+    private mutating func focusWindowOrWorkspace(_ direction: FocusDirection) -> Bool {
+        let workspace = currentWorkspace()
+        let next = moveFocus(in: workspace, direction: direction)
+        if next != workspace {
+            update(next)
+            return false
+        }
+        return direction == .down ? focusDown() : focusUp()
+    }
+
     /// Focus a specific workspace on whichever display owns it (focusing a
     /// window elsewhere). False when the id is unknown.
     @discardableResult

@@ -123,7 +123,7 @@ public enum MotionCause: Equatable, Sendable {
 public func motionCause(for action: HotkeyAction) -> MotionCause {
     switch action {
     case .focusLeft, .focusRight, .focusUp, .focusDown, .centerColumn,
-         .focusColumnFirst, .focusColumnLast:
+         .focusColumnFirst, .focusColumnLast, .centerVisibleColumns:
         return .viewScroll
     case .moveLeft, .moveRight, .moveUp, .moveDown, .moveColumnLeft, .moveColumnRight,
          .consumeOrExpelLeft, .consumeOrExpelRight, .toggleFloating,
@@ -135,10 +135,13 @@ public func motionCause(for action: HotkeyAction) -> MotionCause {
          .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
          .focusMonitor, .moveWorkspaceToMonitor,
          .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
-         .focusWorkspacePrevious, .moveWorkspaceDown, .moveWorkspaceUp:
+         .focusWorkspacePrevious, .moveWorkspaceDown, .moveWorkspaceUp,
+         // A move within the column does not scroll; only the switch animates.
+         .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp:
         return .workspaceSwitch
     case .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .maximizeColumn,
-         .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight:
+         .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
+         .switchPresetColumnWidthBack, .expandColumnToAvailableWidth:
         return .windowResize
     case .toggleOverview:
         // The app opens a panel; nothing moves.

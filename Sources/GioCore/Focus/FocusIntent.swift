@@ -17,11 +17,12 @@ extension HotkeyAction {
              .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
              .swapWindowLeft, .swapWindowRight,
              .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
-             .focusWorkspacePrevious:
+             .focusWorkspacePrevious, .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
              .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview,
-             .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight:
+             .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
+             .switchPresetColumnWidthBack, .expandColumnToAvailableWidth, .centerVisibleColumns:
             return false
         case .moveWorkspaceDown, .moveWorkspaceUp:
             // The shown workspace and its focused window stay the same; only
@@ -39,7 +40,8 @@ extension HotkeyAction {
     public var growsFocusedWindow: Bool {
         switch self {
         case .switchPresetColumnWidth, .growColumnWidth, .shrinkColumnWidth, .maximizeColumn,
-             .switchPresetWindowHeight, .growWindowHeight, .shrinkWindowHeight, .resetWindowHeight:
+             .switchPresetWindowHeight, .growWindowHeight, .shrinkWindowHeight, .resetWindowHeight,
+             .switchPresetColumnWidthBack, .expandColumnToAvailableWidth:
             return true
         default:
             return false

@@ -19,7 +19,9 @@ final class ActionApplierTests: XCTestCase {
             .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
             .swapWindowLeft, .swapWindowRight, .moveColumnToWorkspace(2),
             .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .focusWorkspacePrevious,
-            .moveWorkspaceDown, .moveWorkspaceUp
+            .moveWorkspaceDown, .moveWorkspaceUp,
+            .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
+            .expandColumnToAvailableWidth, .centerVisibleColumns
         ]
         for action in actions {
             switch action {
@@ -33,7 +35,9 @@ final class ActionApplierTests: XCTestCase {
                  .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
                  .swapWindowLeft, .swapWindowRight, .moveColumnToWorkspace,
                  .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .focusWorkspacePrevious,
-                 .moveWorkspaceDown, .moveWorkspaceUp:
+                 .moveWorkspaceDown, .moveWorkspaceUp,
+                 .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
+                 .expandColumnToAvailableWidth, .centerVisibleColumns:
                 break
             }
         }
@@ -105,7 +109,9 @@ final class ActionApplierTests: XCTestCase {
             .workspace(2), .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
             // One workspace and the spare: the column moves down and is followed;
             // up, previous and the workspace moves have nothing to do.
-            .moveColumnToWorkspace(2), .moveColumnToWorkspaceDown
+            .moveColumnToWorkspace(2), .moveColumnToWorkspaceDown,
+            // Single-window columns: the last window leads to the spare below.
+            .focusWindowOrWorkspaceDown
         ]
         for action in Self.allActions {
             setUp()
@@ -113,16 +119,18 @@ final class ActionApplierTests: XCTestCase {
         }
     }
 
-    func testOnlySizingAndCenterReadTheEngineAndOnlyCenterProbesModes() {
+    func testOnlySizingAndCenterReadTheEngineAndOnlyTheVisibleSetProbesModes() {
         let engineActions: [HotkeyAction] = [
             .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .centerColumn,
-            .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight
+            .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight,
+            .switchPresetColumnWidthBack, .expandColumnToAvailableWidth, .centerVisibleColumns
         ]
+        let modeActions: [HotkeyAction] = [.centerColumn, .expandColumnToAvailableWidth, .centerVisibleColumns]
         for action in Self.allActions {
             setUp()
             apply(action)
             XCTAssertEqual(engineCalls, engineActions.contains(action) ? 1 : 0, "\(action)")
-            XCTAssertEqual(modeCalls, action == .centerColumn ? 1 : 0, "\(action)")
+            XCTAssertEqual(modeCalls, modeActions.contains(action) ? 1 : 0, "\(action)")
             XCTAssertEqual(fallbackCalls, 0, "\(action): a display exists")
         }
     }

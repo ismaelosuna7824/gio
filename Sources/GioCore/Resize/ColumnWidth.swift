@@ -36,6 +36,32 @@ public func switchPresetColumnWidth(
     return next
 }
 
+/// Niri `switch-preset-column-width-back`: the mirror of
+/// `switchPresetColumnWidth`, the last preset strictly narrower than the
+/// current width, wrapping to the last preset when none is narrower. Same
+/// NO-OPs.
+public func switchPresetColumnWidthBack(
+    in workspace: Workspace,
+    presets: [ColumnWidthSpec],
+    config: LayoutConfig,
+    viewportWidth: CGFloat
+) -> Workspace {
+    guard let last = presets.last,
+          workspace.focusedColumn >= 0, workspace.focusedColumn < workspace.columns.count
+    else {
+        return workspace
+    }
+    var next = workspace
+    let current = config.resolvedWidth(
+        of: next.columns[next.focusedColumn].widthSpec, viewportWidth: viewportWidth
+    )
+    let chosen = presets.last {
+        config.resolvedWidth(of: $0, viewportWidth: viewportWidth) < current - widthEpsilon
+    } ?? last
+    next.columns[next.focusedColumn].widthSpec = chosen
+    return next
+}
+
 /// Niri `set-column-width "+10%"` / `"-10%"`: move the focused column's
 /// proportion by `fraction` (0.1 = 10% of the viewport strip), clamped
 /// between the minimum column width and the full strip. The result is always

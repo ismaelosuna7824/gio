@@ -25,6 +25,7 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+K` | `focus-up` | Focus the window above in the current column. |
 | `Alt+J` | `focus-down` | Focus the window below in the current column. |
 | `Alt+Home` / `Alt+End` | `focus-column-first` / `focus-column-last` | Focus the leftmost / rightmost column of the workspace. |
+| (unbound) | `focus-window-or-workspace-down` / `focus-window-or-workspace-up` | Like `focus-down` / `focus-up`, but from the last (first) window of the column, or an empty workspace, it goes to the workspace below (above). Niri offers it as an alternative for Mod+J/K; bind it, e.g. `"Alt+J" = "focus-window-or-workspace-down"`. |
 | `Alt+Shift+H` | `move-column-left` | Swap the focused window's column with the one on its left. The column keeps its windows and sizes; focus stays on the same window. |
 | `Alt+Shift+L` | `move-column-right` | Swap the focused window's column with the one on its right. |
 | `Alt+Shift+K` | `move-up` | Move the focused window up within its column. |
@@ -32,10 +33,13 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Ctrl+Alt+Home` / `Ctrl+Alt+End` | `move-column-to-first` / `move-column-to-last` | Move the focused column to the start / end of the strip; it keeps its windows and sizes. |
 | (unbound) | `swap-window-left` / `swap-window-right` | Trade places with the focused window of the left / right column (niri: that column's focused window, not the same row). Columns keep their widths; focus follows the window. Two lone windows: the column moves, like `move-column-*`. |
 | `Alt+R` | `switch-preset-column-width` | Cycle the focused column through the preset widths (first preset wider than the current width, wrapping). |
+| (unbound) | `switch-preset-column-width-back` | Cycle the preset widths in reverse (last preset narrower than the current width, wrapping). Niri binds it to Mod+Shift+R, which is the window-height cycle in Gio. |
 | `Alt+Minus` | `set-column-width-minus` | Make the focused column 10% narrower (clamped between the minimum width of 200 pt and the full strip). |
 | `Alt+Equal` | `set-column-width-plus` | Make the focused column 10% wider. |
 | `Alt+F` | `maximize-column` | Make the focused column fill the display width; press again to restore the previous width. |
 | `Alt+C` | `center-column` | Scroll the view so the focused column is centered (clamped at the strip edges). |
+| `Ctrl+Alt+F` | `expand-column-to-available-width` | Make the focused column fill the space the other fully visible columns leave; the view scrolls so the group fills the display between the paddings. Nothing happens without room to grow. |
+| `Ctrl+Alt+C` | `center-visible-columns` | Scroll the view so the fully visible columns (and the focused one) are centered, clamped at the strip edges. |
 | `Alt+[` (`Alt+BracketLeft`) | `consume-or-expel-window-left` | Pull the window into the left column, or push it out into its own column. |
 | `Alt+]` (`Alt+BracketRight`) | `consume-or-expel-window-right` | Same, to the right. |
 | `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. |
@@ -62,7 +66,7 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | (unbound) | `move-workspace-to-monitor-left`, `-right`, `-up`, `-down` | Send the current workspace to the stack of the display on that side (after its active workspace, shown there) and follow it; the display left behind shows its next workspace. Refused for a named or empty workspace. Bind it in `[keybindings]`. |
 | `Alt+Space` | (launcher, fixed) | Summon the launcher panel. Handled by the app before the action table; not configurable. |
 
-That is 73 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`), and edits it.
+That is 75 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`), and edits it.
 
 Notes:
 
