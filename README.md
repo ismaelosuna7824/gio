@@ -14,7 +14,7 @@ Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges 
 - **Automatic window admission.** Every window is classified as tile, float (with a reason), ignore or suspend. Dialogs, fixed-size windows and panels float; minimized windows stay registered and rejoin their column when restored.
 - **Window rules.** `[[window-rules]]` in the config can force an app to float, tile or start on a given workspace.
 - **Parking of off-viewport columns.** macOS will not place a window fully off-screen, so hidden columns keep a 1 pt sliver inside the display edge.
-- **Animation.** Scroll, focus and workspace moves are animated by writing interpolated frames through Accessibility, with a configurable duration.
+- **Animation.** Scroll, focus and workspace moves animate with a Niri-style spring (or an `ease-out` curve). By default the real windows move once and an overlay slides images of them at the display's refresh rate, so slow apps keep up; this needs Screen Recording (see [Why Screen Recording](#why-screen-recording)).
 - **Multi-display aware** layout state (one workspace stack and viewport per display).
 - **Desktop app.** One main window (Overview, Shortcuts, Layout, Focus, Animations, Rules, Logs, Diagnostics), a menu bar item, an `Alt+Space` launcher panel and an `Alt+O` workspace overview (every workspace as a row of window thumbnails). Closing the window keeps Gio running from the menu bar.
 - **Config with live reload.** `~/.config/gio/config.toml` is a strict subset of TOML. Invalid config never breaks the window manager; it falls back to defaults and reports the problems.
@@ -31,7 +31,18 @@ See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 | Toolchain | Xcode with Swift 6 (`swift-tools-version: 6.0`). The `Gio` target builds in Swift 6 mode. |
 | Architecture | The Xcode `Gio` target is `arm64` only. |
 | Permission | **Accessibility** for the process that runs Gio (System Settings > Privacy & Security > Accessibility). Without it Gio cannot move windows or hear shortcuts. |
+| Recommended permission | **Screen Recording**, for the smooth motion and the overview thumbnails (macOS 14 or later). Gio works without it; see below. |
 | SIP | Stays enabled. |
+
+### Why Screen Recording
+
+Apps redraw at their own pace, and some are slow (WhatsApp, Music, Xcode). Moving the real windows through Accessibility on every frame makes those apps lag behind the rest and jump. The default renderer (`[animations] renderer = "snapshot"`) avoids that: it moves each real window once, slides images of them in an overlay at the display's refresh rate, and removes the overlay only once the windows that came into view have painted. Every app then moves at the same speed, however slowly it repaints.
+
+Capturing those images is what macOS calls Screen Recording (ScreenCaptureKit, macOS 14 or later). The same captures give the `Alt+O` overview its live thumbnails.
+
+- **Without it, or on macOS 13**, Gio still works: it falls back to the Accessibility motion (the log shows `renderer effective=ax reason=screen-recording-missing`), so slow apps move at their own pace, and the overview shows app icons.
+- **Privacy.** The images stay in memory; Gio never writes them to disk or sends them anywhere. Window titles never reach the log.
+- **Granting it.** Gio never asks at launch. Use **Request access** in the app's Overview or Diagnostics, then relaunch Gio: macOS usually applies a new grant only on the next launch.
 
 ## Build and run
 
