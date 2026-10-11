@@ -59,14 +59,18 @@ public struct SessionFacts: Equatable, Sendable {
     /// PF-L: whether hidden and revealed windows move through the private
     /// WindowServer transport (SkyLight) first, and why.
     public let windowServer: WindowServerTransportStatus
+    /// TG-03: whether trackpad gestures run, and why.
+    public let gestures: GestureSourceStatus
 
     public init(
         configPath: String, configExists: Bool, configMessages: [String],
         accessibilityGranted: Bool, currentWorkspace: Int,
         displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
         strip: WorkspaceStripFact? = nil,
-        windowServer: WindowServerTransportStatus = WindowServerTransportStatus(available: false, reason: "unknown")
+        windowServer: WindowServerTransportStatus = WindowServerTransportStatus(available: false, reason: "unknown"),
+        gestures: GestureSourceStatus = GestureSourceStatus(available: false, reason: "unknown")
     ) {
+        self.gestures = gestures
         self.windowServer = windowServer
         self.configPath = configPath
         self.configExists = configExists

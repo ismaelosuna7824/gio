@@ -17,9 +17,13 @@ public enum MotionTransport: String, Equatable, Sendable {
 /// first-frame shrink or an interpolated size stays on Accessibility).
 /// Flights between two visible frames stay on Accessibility (only the app can
 /// lay out a window the user sees move in place), and so does every window of
-/// Gio's own pid. With the transport off, nothing changes.
+/// Gio's own pid. With the transport off, nothing changes. TG-03: the
+/// settle of a trackpad scroll (`moveVisible`) moves every same-size flight
+/// through the WindowServer, visible ones included: the gesture already
+/// moved those windows there on every frame, and the settle continues that
+/// motion; Accessibility follows in the final pass as always.
 public func planMotionTransports(
-    _ animations: [WindowAnimation], viewports: [CGRect], enabled: Bool, ownPID: pid_t
+    _ animations: [WindowAnimation], viewports: [CGRect], enabled: Bool, ownPID: pid_t, moveVisible: Bool = false
 ) -> [WindowAnimation] {
     guard enabled else {
         return animations
@@ -28,7 +32,7 @@ public func planMotionTransports(
         var planned = animation
         let hides = !showsOnScreen(animation.to, in: viewports)
         let reveals = !showsOnScreen(animation.from, in: viewports)
-        if animation.id.pid != ownPID, hides || reveals, keepsItsSize(animation) {
+        if animation.id.pid != ownPID, hides || reveals || moveVisible, keepsItsSize(animation) {
             planned.transport = .windowServer
         }
         return planned

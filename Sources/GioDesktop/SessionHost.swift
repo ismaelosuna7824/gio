@@ -130,6 +130,24 @@ final class SessionHost: @unchecked Sendable {
     /// PF-M: the transport state the last pass used; a change (probe
     /// verdict, reload) republishes the facts, which log it.
     private var lastWindowServerStatus: WindowServerTransportStatus?
+    /// TG-03: trackpad gestures: recognition and the interactive scroll
+    /// (session queue), fed by the mailbox (its own lock) from
+    /// MultitouchSupport's callback thread, which never touches session state.
+    private var gestures: GestureController!
+    private var touchMailbox: TouchFrameMailbox!
+    /// TG-03: the release of a trackpad scroll, consumed by the next pass.
+    private var pendingGestureRelease: GestureRelease?
+    /// TG-03, session queue: the symbols MultitouchSupport lacks (nil until
+    /// loaded) and how many devices report frames.
+    private var multitouchMissing: [String]?
+    private var multitouchDevices = 0
+    /// TG-03, main thread only: the touch source, its device watcher,
+    /// whether it runs and the debounce generation of re-registrations.
+    private var multitouch: MultitouchSource?
+    private var multitouchWatcher: MultitouchDeviceWatcher?
+    private var multitouchRunning = false
+    private var multitouchGeneration = 0
+    private var multitouchShutDown = false
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
     /// SM-04: pre-captured window images (refreshed once after each settle,
@@ -231,7 +249,7 @@ final class SessionHost: @unchecked Sendable {
                 session: { [unowned self] in session },
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 displays: { [unowned self] in displays.allDisplays() },
-                isMotionActive: { [unowned self] in motion.isActive },
+                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isNativeZoomActive: { [unowned self] in nativeZoom.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
@@ -261,12 +279,18 @@ final class SessionHost: @unchecked Sendable {
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
             prefetchSnapshotContent: { [unowned self] in snapshotRefresher.prefetchIfNeeded(permissionGranted: $0) },
             windowServerStatus: { [unowned self] in windowServerStatus() },
+            gestureStatus: { [unowned self] in
+                gestureSourceStatus(
+                    enabled: session.config.gestures.anyEnabled, missingSymbols: multitouchMissing,
+                    devices: multitouchDevices
+                )
+            },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
             context: .init(
                 isShuttingDown: { [unowned self] in isShuttingDown },
-                isMotionActive: { [unowned self] in motion.isActive },
+                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
                 isReady: { [unowned self] in reconciler != nil },
@@ -287,7 +311,7 @@ final class SessionHost: @unchecked Sendable {
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
-                isMotionActive: { [unowned self] in motion.isActive },
+                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking },
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
@@ -577,7 +601,9 @@ final class SessionHost: @unchecked Sendable {
                 requestFocusAdoption: { [unowned self] in focus.requestAdoption($0, pid: $1, element: $2) },
                 updateDim: { [unowned self] in focusDim.update() },
                 holdDimForDrag: { [unowned self] in focusDim.holdForDrag() },
-                animatingPids: { [unowned self] in motion.animatingPids },
+                animatingPids: { [unowned self] in
+                    gestures.isTracking ? motion.animatingPids.union(gestures.animatingPids) : motion.animatingPids
+                },
                 knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
                 isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
                 forgetZoom: { [unowned self] in nativeZoom.forget($0) },
@@ -639,6 +665,7 @@ final class SessionHost: @unchecked Sendable {
                 invalidateConfigCaches: { [unowned self] in
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
+                    applyGestureConfig()
                 },
                 setFocusFollowsMouse: { [unowned self] in focus.focusFollowsMouse = $0 },
                 tapObservesMouseMoved: { [unowned self] in hotkeyTap?.observesMouseMoved },
@@ -680,6 +707,54 @@ final class SessionHost: @unchecked Sendable {
             },
             log: { GioLog.record($0, $1) }
         ))
+        gestures = GestureController(context: .init(
+            settings: { [unowned self] in session.config.gestures },
+            isMouseDown: { [unowned self] in probe.isMouseDown },
+            surface: { [unowned self] in gestureSurface() },
+            physicalFrames: { [unowned self] in physicalFrames },
+            sink: { [unowned self] in reconciler },
+            updateManager: { [unowned self] body in body(&session.manager) },
+            beginTracking: { [unowned self] in
+                // The fingers take the strip from wherever a motion left it;
+                // passes wait for the release (`performReflow`).
+                motion.stop()
+                overlayFlight.end()
+                renderVerifier.cancel()
+                focusDim.update()
+            },
+            recordSampled: { [unowned self] id, frame, now in
+                physicalFrames[id] = frame
+                echoGate.recordApplied(id, frame: frame, at: now)
+            },
+            markUnverified: { [unowned self] id in
+                trustedFrames.invalidate(id)
+                renderVerifier.insertCandidate(id)
+            },
+            focusedWindow: { [unowned self] in session.manager.currentWorkspace().focusedWindow },
+            publishFocusRing: { [unowned self] in publishFocusRing() },
+            settle: { [unowned self] release in
+                if release.focusChanged {
+                    focus.requestGestureIntent()
+                }
+                pendingGestureRelease = release
+                motionCauses.note(.viewScroll)
+                performReflow()
+            },
+            abandon: { [unowned self] reason in
+                // A mouse-abandoned gesture lands like a mouse-abandoned
+                // flight: instantly, once the button is up.
+                if reason == .mouse {
+                    instantPlacement.arm(.mouse)
+                }
+                reflowAll()
+            },
+            perform: { [unowned self] in apply($0) },
+            toggleOverview: { [weak self] in
+                DispatchQueue.main.async { self?.onToggleOverview?() }
+            },
+            log: { GioLog.record($0, $1) }
+        ))
+        touchMailbox = TouchFrameMailbox(scheduler: scheduler) { [unowned self] in gestures.deliver($0) }
     }
 
     // MARK: - Lifecycle
@@ -745,6 +820,7 @@ final class SessionHost: @unchecked Sendable {
             self.publishSnapshot()
         }
         startTap()
+        startMultitouch(gestures: config.gestures)
         return nil
     }
 
@@ -753,6 +829,12 @@ final class SessionHost: @unchecked Sendable {
     /// reconciler, release the socket and lock. Idempotent and synchronous,
     /// so it is safe to call from both the terminate hook and a signal.
     func shutdown() {
+        // TG-03: no touch frame arrives after this (main thread). The source
+        // itself stays alive: a callback already running holds its refcon.
+        multitouchWatcher = nil
+        multitouch?.stop()
+        multitouchRunning = false
+        multitouchShutDown = true
         queue.sync {
             guard !isShuttingDown else {
                 return
@@ -995,6 +1077,96 @@ final class SessionHost: @unchecked Sendable {
         hotkeyTap = nil
         startTap()
         GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted)")
+    }
+
+    // MARK: - Trackpad gestures (TG-03)
+
+    /// Main thread, once at start: load MultitouchSupport (a missing symbol
+    /// leaves gestures off and Gio otherwise unchanged), register the devices
+    /// when a gesture is on, and watch for devices coming and going.
+    private func startMultitouch(gestures: GesturesSectionConfig) {
+        let mailbox = touchMailbox!
+        let loaded = MultitouchSource.load { mailbox.post($0) }
+        multitouch = loaded.source
+        let devices = gestures.anyEnabled ? (loaded.source?.start() ?? 0) : 0
+        multitouchRunning = gestures.anyEnabled && loaded.source != nil
+        if loaded.source != nil {
+            multitouchWatcher = MultitouchDeviceWatcher { [weak self] in
+                self?.multitouchTopologyChanged()
+            }
+        }
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            multitouchMissing = loaded.missing
+            multitouchDevices = devices
+            applyGestureConfig()
+            publishSnapshot()
+        }
+    }
+
+    /// Session queue, at start and on every config change: the mailbox lets
+    /// through only what the enabled gestures can use, and the devices run
+    /// only while a gesture is on.
+    private func applyGestureConfig() {
+        let gestures = session.config.gestures
+        touchMailbox.setMinimumFingers(gestures.recognizerSettings.minimumFingers)
+        DispatchQueue.main.async { [weak self] in
+            self?.setMultitouchRunning(gestures.anyEnabled)
+        }
+    }
+
+    /// Main thread.
+    private func setMultitouchRunning(_ running: Bool) {
+        guard let multitouch, running != multitouchRunning, !multitouchShutDown else {
+            return
+        }
+        multitouchRunning = running
+        let devices = running ? multitouch.start() : 0
+        if !running {
+            multitouch.stop()
+        }
+        GioLog.record(.info, "gestures devices running=\(running) count=\(devices)")
+        queue.async { [weak self] in
+            self?.multitouchDevices = devices
+            self?.publishSnapshot()
+        }
+    }
+
+    /// Main thread: a multitouch device appeared or vanished, or the Mac
+    /// woke up. Registers again once things settle (a burst re-registers once).
+    private func multitouchTopologyChanged() {
+        multitouchGeneration += 1
+        let generation = multitouchGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, generation == multitouchGeneration, multitouchRunning, let multitouch else {
+                return
+            }
+            let devices = multitouch.start()
+            GioLog.record(.info, "gestures devices re-registered count=\(devices)")
+            queue.async { [weak self] in
+                self?.multitouchDevices = devices
+                self?.publishSnapshot()
+            }
+        }
+    }
+
+    /// Session queue: the strip a scroll moves (the display under the
+    /// pointer, else the focused one), with what laying it out needs.
+    private func gestureSurface() -> GestureSurface? {
+        let all = displays.allDisplays()
+        guard let display = gestureDisplay(at: probe.mouseLocation, displays: all, focused: session.manager.focusedDisplay),
+              let workspace = session.manager.workspace(id: display.workspace)
+        else {
+            return nil
+        }
+        return GestureSurface(
+            display: display.id, workspace: workspace, modes: tileableModes(), engine: engine(),
+            viewport: visibleFrames[display.id] ?? display.frame, displayFrame: display.frame,
+            otherDisplays: all.filter { $0.id != display.id }.map(\.frame),
+            centering: session.config.layout.centerFocusedColumn == .always
+        )
     }
 
     /// Read-only state for the main window. Never waits on the session
@@ -1305,6 +1477,13 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator, space.allowsWindowWork else {
             return
         }
+        // TG-03: while the fingers move a strip, every pass waits; the
+        // release (or the abandon) runs one that covers them all.
+        guard !gestures.isTracking else {
+            return
+        }
+        let gestureRelease = pendingGestureRelease
+        pendingGestureRelease = nil
         // The snap-back reflow after a drag releases the dim hold.
         focusDim.releaseDragHold()
         // Every exit (animation started or instant pass) refreshes the ring.
@@ -1386,6 +1565,12 @@ final class SessionHost: @unchecked Sendable {
         animations = ReflowPlanner.applyingAnimationSettings(
             animations, settings: settings, kinds: pass.kinds, fallback: cause.kind
         )
+        // TG-03: the strip keeps the velocity the fingers left it with.
+        if let gestureRelease {
+            animations = handingOffGestureVelocity(
+                animations, windows: gestureRelease.windows, velocity: gestureRelease.velocity
+            )
+        }
         // Native zoom: a maximize that grows a single-window column presses the
         // app's own zoom instead of writing a size. The zooming window leaves
         // this pass's motion and writes; the zoom starts after the neighbours'
@@ -1414,9 +1599,11 @@ final class SessionHost: @unchecked Sendable {
         // PF-M: hide and reveal flights move through SkyLight per tick (one
         // transaction for all of them) with no Accessibility write until the
         // final pass; flights between two visible frames stay on their lanes.
+        // TG-03: a gesture's settle moves visible ones through it too.
         animations = planMotionTransports(
             animations, viewports: displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame },
-            enabled: windowServer.available, ownPID: ProcessInfo.processInfo.processIdentifier
+            enabled: windowServer.available, ownPID: ProcessInfo.processInfo.processIdentifier,
+            moveVisible: gestureRelease != nil
         )
         // SM-04/SM-08: with the snapshot renderer the real windows get one
         // write to their final frames (the instant pass) under an overlay
@@ -1424,9 +1611,12 @@ final class SessionHost: @unchecked Sendable {
         // screen before that write: `.priming` hands the pass to the flight
         // controller, which runs it once main reports the prime (or the AX
         // motion instead when the overlay never made it). The AX motion is
-        // the fallback.
+        // the fallback. TG-03: a gesture's settle stays on the motion player,
+        // which carries the release velocity (the overlay starts from rest).
         var snapshotFlight = false
-        if animating, snapshotRefresher.rendererUsable(), !animations.isEmpty || overlayFlight.isActive {
+        if animating, gestureRelease == nil, snapshotRefresher.rendererUsable(),
+           !animations.isEmpty || overlayFlight.isActive
+        {
             switch overlayFlight.drive(
                 animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps
             ) {

@@ -2,7 +2,7 @@
 
 This document explains how Gio is put together, which rules keep it correct, and how a macOS event becomes a window movement. Every claim was checked against the code at the time of writing; where behavior is legacy, unfinished or unverified live, the text says so.
 
-Contents: [Modules](#modules-and-dependency-rules) · [Invariants](#core-invariants) · [State model](#state-model) · [Event pipeline](#event-pipeline) · [Layout details](#layout-details) · [Hotkeys](#hotkey-flow) · [Window lifecycle](#window-lifecycle) · [App lifecycle](#app-lifecycle) · [Coordinate spaces](#coordinate-spaces) · [Concurrency](#concurrency-model)
+Contents: [Modules](#modules-and-dependency-rules) · [Invariants](#core-invariants) · [State model](#state-model) · [Event pipeline](#event-pipeline) · [Layout details](#layout-details) · [Hotkeys](#hotkey-flow) · [Trackpad gestures](#trackpad-gestures) · [Window lifecycle](#window-lifecycle) · [App lifecycle](#app-lifecycle) · [Coordinate spaces](#coordinate-spaces) · [Concurrency](#concurrency-model)
 
 ## Modules and dependency rules
 
@@ -65,7 +65,7 @@ These are hard rules. Break one and the design stops working.
 | 9 | **Physical writes never mutate logical state.** Animation only changes what the reconciler writes; workspace state already holds the final layout. | Animation can be cancelled or retargeted without corrupting state. |
 | 10 | **WindowServer moves are never the final word; Accessibility follows** (PF-L). A window moved through SkyLight stays pending in the reconciler until an Accessibility write of it succeeded, and trusted frames never skip it. | The app does not necessarily learn a move made behind its back; a later Accessibility read, restore or the app itself would act on a stale frame. |
 
-Invariant 3 has no exceptions. Every write, including the off-screen prepositioning of incoming windows before a workspace-switch animation (`preposition`), animation frames, the SkyLight WindowServer moves (PF-L) and restore, goes through `WindowReconciler` (`preposition`, `submitMotion`, `reconcile`, `dispatch`, `restoreOffscreen`). Do not add direct writes.
+Invariant 3 has no exceptions. Every write, including the off-screen prepositioning of incoming windows before a workspace-switch animation (`preposition`), animation frames, the SkyLight WindowServer moves (PF-L), the frames of a trackpad scroll that follows the fingers (TG-03, `GestureFramePump` hands them to `submitWindowServerMotion` / `submitMotion`) and restore, goes through `WindowReconciler` (`preposition`, `submitMotion`, `submitWindowServerMotion`, `reconcile`, `dispatch`, `restoreOffscreen`). Do not add direct writes.
 
 ### Why Gio never touches its own windows (commit `bac43c6`)
 
@@ -439,6 +439,33 @@ Notes:
 - **Editing bindings (DA-07).** Validation (`checkShortcut`: a modifier, a key in `supportedKeyNames`, not `Alt+Space`, conflicts named with their source) and the edit lists (`addShortcutEdits`, `removeShortcutEdits`, `resetShortcutEdits`) are pure Core; the patcher's `.setKeybinding`/`.removeKeybinding` match `[keybindings]` lines by parsed combo, whatever their spelling.
 - If the tap cannot start (no Accessibility permission), Gio keeps running without global hotkeys and retries on the next resync.
 
+## Trackpad gestures
+
+TG-01..TG-03 (`odd/tasks/trackpad-gestures.md`). Input source, recognizer, interactive viewport:
+
+```mermaid
+flowchart LR
+    MT["MultitouchSupport callback thread - MultitouchSource (GioMacOS)"] -->|"touchFrame copy"| Box["TouchFrameMailbox - lock, TouchFrameGate"]
+    Box -->|"one drain per burst"| Ctl["gio.session: GestureController"]
+    Ctl --> Rec["GestureRecognizer (Core)"]
+    Rec -->|"scroll began/changed"| Frames["gestureFrames: layout at the gesture offset, planParking"]
+    Frames --> Pump["GestureFramePump"]
+    Pump -->|"submitWindowServerMotion, else submitMotion"| WR["WindowReconciler"]
+    Rec -->|"scroll ended"| Snap["snapGestureScroll, commitGestureScroll (State)"]
+    Snap --> Pass["performReflow: springs with the release velocity"]
+    Rec -->|"vertical swipe"| Act["apply(focus-workspace-up/down) or toggle overview"]
+```
+
+- **Input source (`GioMacOS/Gestures/Multitouch.swift`).** The private `MultitouchSupport` framework is opened with `dlopen`/`dlsym` (`MTDeviceCreateList`, `MTDeviceStart`, `MTDeviceStop`, `MTRegisterContactFrameCallbackWithRefcon`, `MTUnregisterContactFrameCallback`), never linked; a missing symbol leaves gestures off (`gestures available=false reason=missing-symbols:...`) and nothing else changes. Every device of a fresh device list is registered and started on the main thread; `MultitouchDeviceWatcher` (IOKit matching notifications for `AppleMultitouchDevice`, the workspace wake notification) makes the host register again 1 s after the last change. The C callback runs on MultitouchSupport's own thread: it copies the fingers on the surface (`makeTouch` and `touching` contacts, normalized x/y, y up) into a `TouchFrame` and posts it. **It never touches session state.**
+- **Mailbox (`GioSession/Gestures/TouchFrameMailbox.swift`).** A locked buffer: `TouchFrameGate` drops frames with fewer fingers than any enabled gesture needs (pointer movement, two-finger scrolling) except the one frame that drops below; the first admitted frame of a burst schedules one drain on the session queue, which delivers every frame posted until then, in order (oldest dropped past 256). No gesture enabled: nothing crosses and the devices are stopped.
+- **Recognizer (`GioCore/Gestures/GestureRecognizer.swift`, pure).** Finger count, centroid, a 0.03 commit distance, axis lock, an 80 ms velocity window; before the commit a count change restarts recognition, while scrolling an extra finger cancels and lifting a finger ends.
+- **Interactive viewport (`GestureController`, `GioCore/Gestures/StripGesture.swift`).** On `scrollBegan` the controller takes the display under the pointer (`gestureDisplay`, else the focused one) and its strip (`gestureStrip`; none with a fullscreen window), stops the running motion and overlay, and starts from where the windows really are (`gestureVisualOffset`: a motion may still be carrying them). Each drain moves a `GestureScrollTracker` (clamped to the strip, re-based at the ends) by the fingers' travel (`gestureOffsetDelta`: trackpad widths times viewport width times `scroll-sensitivity`, inverted for natural direction), lays the strip out at that offset with no reveal (`gestureFrames`), parks what left the viewport and un-parks what reached it (`planParking`), and hands the frames to `GestureFramePump`. State does not change while the fingers move; every pass (`performReflow`) returns at once while `isTracking`, and the release or the abandon runs one that covers them all.
+- **Transport.** The pump is the trackpad's motion lane and goes through `WindowReconciler` like the motion player (invariant 3): every changed window in one SkyLight transaction per drain (`submitWindowServerMotion`, all pure moves: a scroll never resizes), what it did not take on the app's Accessibility lane (`submitMotion`, latest frame wins). With SkyLight unusable (`[behavior] skylight = false`, missing symbols, failed probe) every frame goes through the lanes. The snapshot overlay is not used while the fingers move: it primes asynchronously on main (the first frames would be late or drawn from stale images), images of parked columns can be missing or old, and the real windows would still need a write under it at the end. Windows moved by SkyLight stay pending in the reconciler's ledger, so the settle's final pass writes each through Accessibility (invariant 10). The gesture's pids count as animating (`animatingPids`), so their moved events are dropped as our own; the dim hides and render checks wait as for a motion.
+- **Release.** `snapGestureScroll` (niri `view_offset_gesture_end`): project the offset with the release velocity (`gestureProjectionSeconds` = 0.333 s, niri's 0.997/ms deceleration), take the nearest snap point (each column's left or right edge with the padding, never past the first column's left or the last column's right; with `center-focused-column = always`, each column centered), then focus the furthest column still fully visible in the swipe's direction. `commitGestureScroll` writes the offset and the focus into State and focuses that display; the session then runs one animated pass (`motionCauses` `.viewScroll`) whose springs start with the release velocity (`handingOffGestureVelocity`), on the motion player even with the snapshot renderer (the overlay starts from rest), with every same-size flight on SkyLight (`planMotionTransports(moveVisible:)`). The reveal finds the focused column already visible and leaves the snapped offset alone.
+- **Focus.** niri moves the focus with the gesture (the active column is the snapped one). A settle that focused another window raises it through `FocusCoordinator.requestGestureIntent()`: a focus intent like a key press, without centering (the snap chose the offset) and without the `mouse-follows-focus` warp (the hand is on the trackpad). Nothing is focused while the fingers move.
+- **Abandon.** An extra finger: State is untouched and `reflowAll()` animates the strip back. A mouse button down (a click, or three-finger drag): the same, written instantly once the button is up (`InstantPlacementGate` `.mouse`, like an abandoned flight).
+- **Vertical swipes** are discrete: `workspaceSwipeAction` maps the direction (and `natural`) to `focus-workspace-down/up`, applied like the hotkey (`apply`), or a swipe up with the overview's fingers toggles the overview on main.
+
 ## Window lifecycle
 
 ```mermaid
@@ -545,6 +572,7 @@ Gio uses three coordinate conventions and converts at the edges.
 - The click record (`tappedClick`) has its own lock (tap writes on main, session reads).
 - `AXWindowActuator` guards handles and the flip with a lock because reflow lanes read them from several threads and an abandoned lane can outlive its reflow.
 - AX observers and hotkey tap sources always run on the **main** run loop. Rebuilt observers once landed on the session queue's run loop, which never runs (fixed in `e9c8066`).
+- **Trackpad contact frames (TG-03) arrive on MultitouchSupport's own thread** and stop at `TouchFrameMailbox` (its own lock): the callback copies the frame and posts it, the session queue drains it. The touch source and its device watcher are started, stopped and re-registered on the main thread only; the host keeps the source alive until exit because the callback's refcon is unretained.
 - The UI reads state through `SessionSnapshot` values produced on the session queue; `DesktopModel` publishes them on the main actor.
 
 ## Where things live
@@ -558,5 +586,6 @@ Gio uses three coordinate conventions and converts at the edges.
 | Hotkeys and catalog | `Sources/GioCore/Hotkeys/*`, `Sources/GioMacOS/Hotkeys/HotkeyTap.swift` |
 | Config | `Sources/GioCore/Config/*` |
 | IPC and CLI grammar | `Sources/GioCore/IPC/*`, `Sources/GioCore/Commands/*` |
+| Trackpad gestures | `Sources/GioCore/Gestures/*`, `Sources/GioCore/Config/GesturesConfig.swift`, `Sources/GioSession/Gestures/*`, `Sources/GioMacOS/Gestures/Multitouch.swift` |
 | AX adapters | `Sources/GioMacOS/Accessibility/*` |
 | Decision history | `odd/tasks/*.md` |

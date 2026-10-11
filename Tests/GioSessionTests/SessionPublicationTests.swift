@@ -70,7 +70,8 @@ final class SessionFactsBuilderTests: XCTestCase {
     private func make(
         _ fixture: SessionFixture, logs: Recorder<String>, prefetches: Recorder<Bool>,
         screenRecording: Bool = true, exists: Bool = false,
-        windowServer: WindowServerTransportStatus = windowServerTransportStatus(enabled: true, missingSymbols: [])
+        windowServer: WindowServerTransportStatus = windowServerTransportStatus(enabled: true, missingSymbols: []),
+        gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1)
     ) -> SessionFactsBuilder {
         SessionFactsBuilder(context: .init(
             session: { fixture.session },
@@ -89,6 +90,7 @@ final class SessionFactsBuilderTests: XCTestCase {
             homeDirectory: { "/Users/test" },
             prefetchSnapshotContent: { prefetches.append($0) },
             windowServerStatus: { windowServer },
+            gestureStatus: { gestures },
             log: { _, line in logs.append(line) }
         ))
     }
@@ -140,6 +142,21 @@ final class SessionFactsBuilderTests: XCTestCase {
         _ = builder.facts()
         XCTAssertEqual(facts.windowServer, off)
         XCTAssertEqual(logs.values.filter { $0.hasPrefix("skylight ") }, ["skylight available=false reason=config-off"])
+    }
+
+    /// TG-03: whether trackpad gestures run is logged once (again only when
+    /// it changes) and published for Diagnostics.
+    func testGestureStatusIsLoggedOnceAndPublished() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let logs = Recorder<String>()
+        let missing = gestureSourceStatus(enabled: true, missingSymbols: ["MTDeviceStart"], devices: 0)
+        let builder = make(fixture, logs: logs, prefetches: Recorder(), gestures: missing)
+        let facts = builder.facts()
+        _ = builder.facts()
+        XCTAssertEqual(facts.gestures, missing)
+        XCTAssertEqual(
+            logs.values.filter { $0.hasPrefix("gestures ") }, ["gestures available=false reason=missing-symbols:MTDeviceStart"]
+        )
     }
 
     func testNoStripWithoutTheFocusedDisplay() {

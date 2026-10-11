@@ -529,6 +529,19 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(focus.takeCenterRequest(), .none)
     }
 
+    /// TG-03: a trackpad scroll that settled on another column raises its
+    /// window like a key press, without centering (the snap chose the
+    /// offset) or a cursor warp (the hand is on the trackpad).
+    func testGestureIntentRaisesWithoutCenteringOrWarp() {
+        world.centerMode = .always
+        focusLogically(2)
+        focus.requestGestureIntent()
+        XCTAssertEqual(focus.takeCenterRequest(), .none)
+        let settle = focus.takeSettleFocus(parked: [])
+        XCTAssertEqual(settle.target, ids[2])
+        XCTAssertFalse(settle.warp)
+    }
+
     func testSizingFocusIsConsumedOnce() {
         focus.noteSizingFocus(ids[2])
         XCTAssertEqual(focus.takeSizingFocus(), ids[2])

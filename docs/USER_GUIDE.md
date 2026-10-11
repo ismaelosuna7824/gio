@@ -414,6 +414,23 @@ Windows show a live thumbnail captured when the panel opens (parked windows incl
 
 The panel shows the stack as it was when it opened; floating windows are not drawn (they are not part of any strip).
 
+## Trackpad gestures
+
+Gio reads the fingers on the built-in trackpad and on Magic Trackpads (see [Private APIs](../README.md#private-apis)) and turns swipes into strip and workspace moves. Keys are in [`[gestures]`](#gestures); Settings, Focus, **Trackpad Gestures** edits them.
+
+| Swipe (defaults) | Effect |
+| --- | --- |
+| Three fingers left or right | The strip of the display under the pointer follows the fingers, columns coming into view as they arrive. Lift: the strip keeps the swipe's speed, springs to the nearest column edge (a fast swipe travels further, never past the first or last column) and the column it lands on takes the focus: the furthest one fully visible in the direction you swiped, as in niri. Its window is raised like after `Alt+L`, without moving the pointer. |
+| Three fingers up or down | One workspace down or up per swipe (`natural = true`: up shows the workspace below), like `focus-workspace-down` / `-up`. |
+| Four fingers up (`overview = true`) | Opens or closes the workspace overview, like `Alt+O`. |
+
+- **Natural direction.** With `natural = true` (default) the content follows the fingers, as with macOS natural scrolling. `false` inverts the scroll and the workspace swipe.
+- **Cancelling.** Put a fourth finger down during a scroll, or click, and the strip goes back to where it was; nothing changes. A scroll on a workspace with a fullscreen window does nothing.
+- **Moves while scrolling.** The windows move through the WindowServer when it can (one step for all of them on every frame) and are written through Accessibility once they settle; without it each app moves its own windows. The snapshot renderer does not draw the scroll: the real windows follow the fingers.
+- **Permissions.** Gio asks for nothing more than Accessibility. It reads the trackpad through MultitouchSupport and never intercepts scroll or gesture events. Not yet verified on every macOS version: if the log never shows `gestures first contact frame` after a three-finger swipe, allow Gio in System Settings > Privacy & Security > Input Monitoring and relaunch it.
+- **macOS uses the same swipes.** By default macOS switches full-screen apps with three- and four-finger horizontal swipes and opens Mission Control with three- and four-finger vertical swipes. Gio cannot block them, so both act on the same swipe. Change them in System Settings > Trackpad > More Gestures (set **Swipe between full-screen applications** and **Mission Control** to four fingers or Off when Gio uses three), or move Gio's gestures to other finger counts.
+- **Log lines** (no titles): `gestures available=<bool> reason=<reason>` (`devices=N`, `config-off`, `no-trackpad`, `missing-symbols:<names>`), `gestures first contact frame`, `gesture scroll begin display= fingers= offset= columns=`, `gesture scroll end offset= snap= column= velocity= focusChanged=`, `gesture scroll abandoned reason=mouse|cancelled`, `gesture swipe fingers= direction= action=`.
+
 ## Command line (`gio`)
 
 The client is the SwiftPM executable target **`GioCLI`** (its usage text prints `gio`). It sends the arguments to the running app over `~/.config/gio/gio.sock`; parsing and execution happen in the app. Without arguments it prints the usage and exits 2; if no app is running it prints an error and exits 1.

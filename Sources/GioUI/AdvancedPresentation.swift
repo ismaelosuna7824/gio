@@ -308,7 +308,35 @@ public func diagnosticChecklist(
         summary: "Events, counts and timings; never window titles.", details: [logPath]
     )
 
-    return [permissions, session, configuration, displays, renderer, logging]
+    return [permissions, session, configuration, displays, renderer, gesturesCheck(facts.gestures), logging]
+}
+
+/// TG-03: whether trackpad gestures run, and why not.
+private func gesturesCheck(_ status: GestureSourceStatus) -> DiagnosticCheck {
+    let state = status.available ? "available" : "unavailable"
+    let details = ["Gestures: \(state) (\(status.reason))"]
+    func card(_ kind: StatusKind, badge: String, summary: String) -> DiagnosticCheck {
+        DiagnosticCheck(
+            id: "gestures", title: "Gestures", symbol: "hand.draw.fill", tint: .orange, status: kind,
+            badge: badge, summary: summary, details: details
+        )
+    }
+    if status.available {
+        return card(.ok, badge: "Available", summary: "Trackpad swipes scroll the strip and switch workspaces ([gestures]).")
+    }
+    if status.reason == "config-off" {
+        return card(.neutral, badge: "Off", summary: "Every trackpad gesture is off in [gestures].")
+    }
+    if status.reason.hasPrefix("missing-symbols:") {
+        return card(
+            .warning, badge: "Unavailable",
+            summary: "This macOS lacks the private MultitouchSupport calls gestures need; everything else works as usual."
+        )
+    }
+    if status.reason == "no-trackpad" {
+        return card(.neutral, badge: "No trackpad", summary: "No trackpad is connected; gestures start when one is.")
+    }
+    return card(.neutral, badge: "Starting", summary: "The trackpad is not opened yet.")
 }
 
 /// "Test Snapshot Capture" only makes sense while the snapshot renderer

@@ -21,6 +21,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var prefetchSnapshotContent: (Bool) -> Void
         /// PF-L: the WindowServer transport's state (config, symbols, probe).
         public var windowServerStatus: () -> WindowServerTransportStatus
+        /// TG-03: whether trackpad gestures run (symbols, config, devices).
+        public var gestureStatus: () -> GestureSourceStatus
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -31,9 +33,11 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             configFileExists: @escaping (String) -> Bool, homeDirectory: @escaping () -> String,
             prefetchSnapshotContent: @escaping (Bool) -> Void,
             windowServerStatus: @escaping () -> WindowServerTransportStatus,
+            gestureStatus: @escaping () -> GestureSourceStatus,
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.windowServerStatus = windowServerStatus
+            self.gestureStatus = gestureStatus
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
@@ -54,6 +58,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
     private var rendererLog = RendererLogGate()
     /// PF-L: logs `skylight available=... reason=...` once, then on change.
     private var windowServerLog = WindowServerStatusLogGate()
+    /// TG-03: logs `gestures available=... reason=...` once, then on change.
+    private var gestureLog = GestureStatusLogGate()
 
     public init(context: Context) {
         self.context = context
@@ -98,6 +104,10 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         if let line = windowServerLog.line(for: windowServer) {
             context.log(.info, line)
         }
+        let gestures = context.gestureStatus()
+        if let line = gestureLog.line(for: gestures) {
+            context.log(.info, line)
+        }
         return SessionFacts(
             configPath: path, configExists: context.configFileExists(path),
             configMessages: context.configMessages(), accessibilityGranted: context.accessibilityGranted(),
@@ -110,7 +120,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
                 )
             },
             windows: windows, screenRecordingGranted: screenRecording,
-            strip: workspaceStrip(), windowServer: windowServer
+            strip: workspaceStrip(), windowServer: windowServer, gestures: gestures
         )
     }
 

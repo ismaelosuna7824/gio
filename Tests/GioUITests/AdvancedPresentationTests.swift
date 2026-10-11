@@ -132,11 +132,42 @@ final class AdvancedPresentationTests: XCTestCase {
         list.first { $0.id == id }!
     }
 
-    func testChecklistHasTheSixCardsInOrder() {
+    func testChecklistHasTheSevenCardsInOrder() {
         XCTAssertEqual(
             checklist(facts()).map(\.title),
-            ["Permissions", "Session", "Configuration", "Displays", "Renderer", "Logging"]
+            ["Permissions", "Session", "Configuration", "Displays", "Renderer", "Gestures", "Logging"]
         )
+    }
+
+    private func facts(gestures: GestureSourceStatus) -> SessionFacts {
+        SessionFacts(
+            configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
+            currentWorkspace: 1, displays: [], windows: [], gestures: gestures
+        )
+    }
+
+    /// TG-03: the Gestures card says whether trackpad gestures run, and why not.
+    func testGesturesCardNamesTheSourceStatus() {
+        let running = check(checklist(facts(gestures: gestureSourceStatus(enabled: true, missingSymbols: [], devices: 2))), "gestures")
+        XCTAssertEqual(running.status, .ok)
+        XCTAssertEqual(running.badge, "Available")
+        XCTAssertEqual(running.details, ["Gestures: available (devices=2)"])
+
+        let missing = check(
+            checklist(facts(gestures: gestureSourceStatus(enabled: true, missingSymbols: ["MTDeviceStart"], devices: 0))),
+            "gestures"
+        )
+        XCTAssertEqual(missing.status, .warning)
+        XCTAssertEqual(missing.badge, "Unavailable")
+        XCTAssertEqual(missing.details, ["Gestures: unavailable (missing-symbols:MTDeviceStart)"])
+
+        let off = check(checklist(facts(gestures: gestureSourceStatus(enabled: false, missingSymbols: [], devices: 0))), "gestures")
+        XCTAssertEqual(off.status, .neutral)
+        XCTAssertEqual(off.badge, "Off")
+
+        let none = check(checklist(facts(gestures: gestureSourceStatus(enabled: true, missingSymbols: [], devices: 0))), "gestures")
+        XCTAssertEqual(none.status, .neutral)
+        XCTAssertEqual(none.details, ["Gestures: unavailable (no-trackpad)"])
     }
 
     func testHealthySessionIsAllOk() {
