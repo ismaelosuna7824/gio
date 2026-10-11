@@ -106,9 +106,9 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   pending window where SkyLight put it (`syncWindowServerMoves`), so the restore does not trust
   a stale app frame. SkyLight is called on the session queue (OmniWM calls it from the main
   actor; [INFERENCE] the main connection is usable from any thread; LIVE PENDING). No runtime
-  probe yet in PF-L: every SkyLight move is followed by an AX write anyway, so a WindowServer
-  that ignores the move only loses the speed-up (PF-M adds the probe with the per-tick moves,
-  where it matters).
+  probe in PF-L: every SkyLight move is followed by an AX write anyway, so a WindowServer that
+  ignores the move only loses the speed-up. The probe belongs with per-tick SkyLight motion
+  (PF-M, open), where an ignored move would freeze a flight.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -236,7 +236,7 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   `focus failed ... reason=notFrontmost(frontmost=<pid>,ax=<status>)` if macOS still refuses
   (`ax` tells whether the `AXFrontmost` write was accepted). Also read the `reason` of the
   Xcode window 31952:13 the next time it refuses.
-- [x] PF-K — `AXEnhancedUserInterface` off around write batches (reconcile, dispatched,
+- [x] PF-K (`ccdef7d`) — `AXEnhancedUserInterface` off around write batches (reconcile, dispatched,
   pre-position, nudge and motion lanes), restored after the batch, the final pass, the settle
   or shutdown; never for Gio's own pid. New `GioCore/Reconciliation/EnhancedUserInterface.swift`
   (`EnhancedUserInterfaceSwitch`, `EnhancedUIGuard`), `LaneExecutor` lane `epilogue`,
@@ -253,7 +253,7 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist
   15g in `docs/TESTING.md` (VoiceOver on: Chrome/Electron motion fluid, VoiceOver still reads
   every app after motions and after Quit; a stopped app logs `restore failed` then `restored`).
-- [x] PF-L — SkyLight WindowServer transport for parks, reveals and same-size pre-positions,
+- [x] PF-L (`3db96a0`) — SkyLight WindowServer transport for parks, reveals and same-size pre-positions,
   AX follow-up, config key and status. New `GioCore/Reconciliation/WindowServerTransport.swift`
   (`WindowServerMove`, `WindowServerMover`, `WindowServerTransportStatus`,
   `windowServerTransportStatus`, `WindowServerStatusLogGate`, `planWindowServerFirst`,
@@ -276,6 +276,19 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist 15h in `docs/TESTING.md` (startup line, atomic hide/reveal with
   animations off and under the overlay, instant switch start with the AX renderer, apps know
   their frames afterwards, `skylight = false` fallback, Quit restores windows mid-switch).
+- [ ] PF-M — open, not implemented (session budget ran out after PF-L; a RED test draft was
+  discarded, nothing of it is committed). Planned: during an AX motion, flights that start or
+  end hidden and keep their size (reveals, parks, workspace drop and rise) move through one
+  SkyLight transaction per tick (`MotionPlayer` routes them to a new
+  `MotionFrameSink.submitWindowServerMotion`, falling back to AX per window when refused), with
+  no AX write on ticks; the final pass follows through the PF-L ledger. Runtime probe: while
+  unverified, before each tick's commit, compare the WindowServer bounds
+  (`CGWindowListCopyWindowInfo`) of a window moved on an earlier tick with the committed frames:
+  a match verifies; three observations still at the start frame fail it, turn the transport off
+  (`skylight available=false reason=probe-failed`) and fall back to AX for the rest of the
+  flight. Today's state: parked-to-parked windows are not animated (`planMotion`) and trusted
+  ones are skipped by the final pass (PA-04); hide and reveal flights still write AX on every
+  tick. Not attempted either: driving the AX motion from a display link (optional item 5).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -297,3 +310,8 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   pending.
 - 2026-10-08: PF-E (no retries for gone/rejected elements) and PF-G (on-overflow default)
   committed. PF-F implemented, tried live, reverted at the user's request (never committed).
+- 2026-10-11: PF-K (`ccdef7d`, `AXEnhancedUserInterface` off around write batches) and PF-L
+  (`3db96a0`, SkyLight hide/reveal with AX follow-up, `[behavior] skylight`) committed on
+  `feat/fluidity-skylight`; all bundles green, signed build succeeded; both LIVE PENDING
+  (checklists 15g and 15h). PF-M (per-tick SkyLight motion and the runtime probe) and the
+  display-link renderer remain open.
