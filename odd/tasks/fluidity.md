@@ -292,7 +292,7 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist 15h in `docs/TESTING.md` (startup line, atomic hide/reveal with
   animations off and under the overlay, instant switch start with the AX renderer, apps know
   their frames afterwards, `skylight = false` fallback, Quit restores windows mid-switch).
-- [x] PF-M — Hide and reveal flights move through SkyLight per tick, with a runtime probe.
+- [x] PF-M (`ea96c2c`) — Hide and reveal flights move through SkyLight per tick, with a runtime probe.
   New `GioCore/Animation/MotionTransport.swift` (`MotionTransport`, `planMotionTransports`),
   `WindowAnimation.transport` (kept by `springing`), `MotionFrameSink.submitWindowServerMotion`
   (default: nothing moved), `MotionPlayer` routes window-server frames in one batch per tick
