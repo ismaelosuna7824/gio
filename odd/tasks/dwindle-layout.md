@@ -127,7 +127,7 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   (`WorkspaceCardDraft.layout`, `workspaceLayoutOptions`, `workspaceLayoutLabel`),
   `WorkspacesSettingsView.swift` (Layout popup per card); docs: USER_GUIDE (config reference),
   TESTING (14e), ARCHITECTURE, this file. LIVE PENDING.
-- [x] DW-04 — Overview, IPC and CLI. Commit recorded in Progress.
+- [x] DW-04 — Overview, IPC and CLI. Commit `9b7d196`.
   `Layout/DisplayReflowPlanner.swift` (`workspaceLayoutResult`), `Commands/WorkspaceMiniature.swift`
   (dwindle tiles measured from the top), `GioSession/Publication/SessionFactsBuilder.swift`
   (strips from either layout), `Dwindle/DwindleTree.swift` (`dwindleTreeSummary`),
@@ -247,5 +247,5 @@ CLI) in `docs/TESTING.md`, signed Gio scheme.
 - 2026-10-11: DW-01 (`cdef806`) and DW-02 (`c95f162`) committed on `feat/dwindle` (worktree
   `gio-wt-dwindle`, not pushed, not merged), verified automatically; LIVE PENDING (check 14d).
 - 2026-10-11: branch rebased by the main agent onto main with PF-K/L/M (DW-01 `3980d44`, DW-02
-  `c978296`, docs `9610f69`); green on the rebase. DW-03 committed as `62fea5d`; DW-04 committed
-  next (hash in the following `docs(odd)` commit). LIVE PENDING (checks 14d, 14e).
+  `c978296`, docs `9610f69`); green on the rebase. DW-03 committed as `62fea5d`, DW-04 as
+  `9b7d196` (not pushed, not merged). LIVE PENDING (checks 14d, 14e).
