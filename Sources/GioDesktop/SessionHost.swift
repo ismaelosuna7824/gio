@@ -148,6 +148,10 @@ final class SessionHost: @unchecked Sendable {
     private var multitouchRunning = false
     private var multitouchGeneration = 0
     private var multitouchShutDown = false
+    /// TG-04, session queue: macOS's own swipe settings, read again at most
+    /// every 10 s when the facts are built, and on every config apply.
+    private var trackpadPreferences = TrackpadSystemPreferences()
+    private var trackpadPreferencesRead: TimeInterval?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
     /// SM-04: pre-captured window images (refreshed once after each settle,
@@ -285,6 +289,7 @@ final class SessionHost: @unchecked Sendable {
                     devices: multitouchDevices
                 )
             },
+            gestureConflicts: { [unowned self] in gestureConflicts() },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
@@ -1112,6 +1117,8 @@ final class SessionHost: @unchecked Sendable {
     private func applyGestureConfig() {
         let gestures = session.config.gestures
         touchMailbox.setMinimumFingers(gestures.recognizerSettings.minimumFingers)
+        // TG-04: a reload re-reads macOS's swipe settings for the facts.
+        trackpadPreferencesRead = nil
         DispatchQueue.main.async { [weak self] in
             self?.setMultitouchRunning(gestures.anyEnabled)
         }
@@ -1150,6 +1157,22 @@ final class SessionHost: @unchecked Sendable {
                 self?.publishSnapshot()
             }
         }
+    }
+
+    /// Session queue (facts): Gio's gestures that macOS performs too. The
+    /// preferences are re-read at most every 10 s (a few `cfprefsd` round
+    /// trips, only while the facts are built: UI polling, config changes);
+    /// no gesture can run without MultitouchSupport, so nothing collides then.
+    private func gestureConflicts() -> [GestureConflict] {
+        let now = ProcessInfo.processInfo.systemUptime
+        if trackpadPreferencesRead.map({ now - $0 >= 10 }) ?? true {
+            trackpadPreferences = readTrackpadSystemPreferences()
+            trackpadPreferencesRead = now
+        }
+        guard multitouchMissing?.isEmpty == true else {
+            return []
+        }
+        return detectGestureConflicts(session.config.gestures, preferences: trackpadPreferences)
     }
 
     /// Session queue: the strip a scroll moves (the display under the

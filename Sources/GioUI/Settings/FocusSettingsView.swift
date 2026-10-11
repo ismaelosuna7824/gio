@@ -217,6 +217,10 @@ struct FocusSettingsView: View {
             ForEach(draft.current.gestures.problems, id: \.self) { problem in
                 InlineProblem(problem).padding(.horizontal, GioSpacing.m - 2).padding(.bottom, GioSpacing.s - 2)
             }
+            // TG-04: the saved gestures that macOS performs too.
+            ForEach((model.snapshot.facts?.gestureConflicts ?? []).map(gestureConflictMessage), id: \.self) { warning in
+                InlineProblem(warning).padding(.horizontal, GioSpacing.m - 2).padding(.bottom, GioSpacing.s - 2)
+            }
         }
     }
 

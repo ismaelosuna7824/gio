@@ -230,6 +230,27 @@ struct OverviewDashboard: View {
                     loginItemRow(loginItem)
                 }
             }
+            // TG-04: Gio's trackpad swipes that macOS performs too.
+            if !overview.gestureWarnings.isEmpty {
+                CardRow {
+                    VStack(alignment: .leading, spacing: GioSpacing.xs) {
+                        HStack(spacing: GioSpacing.s) {
+                            SectionIcon(symbol: "hand.draw.fill", tint: .orange, size: 26)
+                            Text("Trackpad gestures").font(GioFont.body)
+                            Spacer(minLength: GioSpacing.xs)
+                            StatusBadge(.warning, "macOS swipes collide")
+                        }
+                        ForEach(Array(overview.gestureWarnings.enumerated()), id: \.offset) { _, warning in
+                            Text(warning)
+                                .font(GioFont.caption)
+                                .foregroundStyle(GioColor.ink(.systemOrange))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                                .padding(.leading, 38)
+                        }
+                    }
+                }
+            }
             CardRow(divider: false) {
                 VStack(alignment: .leading, spacing: GioSpacing.xs) {
                     HStack(spacing: GioSpacing.s) {

@@ -145,24 +145,46 @@ read for the snap and focus rules.
   rubber-banded `WorkspaceSwipeMotion`) was optional and is not done.
 - TG-03 Diagnostics: `SessionFacts.gestures` (`gestureSourceStatus`: `not-loaded`,
   `missing-symbols:<names>`, `config-off`, `no-trackpad`, `devices=N`) and a Gestures card.
+- TG-04 conflicts (`GioCore/Gestures/GestureConflicts.swift`, pure): from the integer values
+  of `com.apple.AppleMultitouchTrackpad`, `com.apple.driver.AppleBluetoothMultitouch.trackpad`
+  (`TrackpadThreeFinger{Horiz,Vert}SwipeGesture`, `TrackpadFourFinger{Horiz,Vert}SwipeGesture`,
+  `TrackpadThreeFingerDrag`) and `com.apple.dock` (`showMissionControlGestureEnabled`,
+  `showAppExposeGestureEnabled`). A swipe is on when any trackpad domain holding the key
+  says so (the built-in and a Magic Trackpad share the swipe, and System Settings writes
+  both); a key missing from every domain is macOS's default (2 for the four swipes, Mission
+  Control on, App Exposé and three-finger drag off): a false warning is cheaper than a
+  silent fight. Horizontal 3 fingers: 2 = full-screen apps, 1 = swipe between pages;
+  4 fingers: 2 = full-screen apps; vertical 3/4 = 2: Mission Control (if on) for the
+  workspace swipe and the overview, App Exposé (if on, it swipes down) for the workspace
+  swipe only; three-finger drag against every three-finger gesture; five fingers against
+  nothing. Only enabled gestures count; none when MultitouchSupport is missing. The
+  adapter (`GioMacOS/Gestures/TrackpadPreferences.swift`) synchronizes each domain and
+  reads with `CFPreferencesCopyAppValue`, never writes; numbers and booleans become
+  integers, anything else counts as missing. Re-read: at most every 10 s while the facts
+  are built (UI polling only, no timer) and on every config apply (a reload or a Settings
+  Apply re-reads at once). Shown in Diagnostics > Gestures (warning, `N conflicts`, one
+  detail per conflict), the Overview status card and the Settings Trackpad Gestures card
+  (for the saved config), each with the exact System Settings path; logged
+  `gestures conflict=<gesture-fingers:system,...>` (warn) or `gestures conflict=none` (info)
+  once and on change, no titles. This Mac reads 2 for all four swipe keys in both domains
+  (the macOS defaults), so the default gestures report two conflicts.
+- Dwindle (rebased onto DW-01..DW-04): a dwindle workspace has no strip, so
+  `gestureStrip` returns nil (`layout == .dwindle`) and a horizontal scroll does nothing
+  (debug `gesture scroll ignored ... reason=no-strip`); the workspace swipe and the overview
+  swipe go through `apply` / the overview hook and work there unchanged.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
-  80 ms velocity, finger-count rules) and the touch frame gate. Commit `4df4437`.
+  80 ms velocity, finger-count rules) and the touch frame gate. Commit `1a5935d`.
 - [x] TG-02 — `[gestures]` table: parse, validate (warnings keep defaults, finger conflicts),
-  template, Settings card and form. Commit `e5b29b7`.
+  template, Settings card and form. Commit `8c41d40`.
 - [x] TG-03 — MultitouchSupport source, touch mailbox, interactive strip scroll through the
   reconciler (SkyLight per drain, AX lanes fallback), niri snap, State commit, velocity
   hand-off, gesture focus intent, workspace and overview swipes, Diagnostics card. Commit
-  `bb7b169`. LIVE PENDING (see below).
-- [ ] TG-04 — NOT DONE (run stopped at its request budget): Mission Control conflict detection
-  (pure Core over `com.apple.AppleMultitouchTrackpad` /
-  `com.apple.driver.AppleBluetoothMultitouch.trackpad` / `com.apple.dock` values:
-  `TrackpadThreeFinger{Horiz,Vert}SwipeGesture`, `TrackpadFourFinger*`, `TrackpadThreeFingerDrag`,
-  `showMissionControlGestureEnabled`, `showAppExposeGestureEnabled`, missing key = macOS
-  default on), a prefs reader in `GioMacOS`, the warning in Diagnostics, the Settings card
-  and the log. This Mac reads 2 for all four swipe keys in both domains (macOS defaults), so
-  Gio's default three-finger gestures collide today; the USER_GUIDE tells the user to move them.
+  `50d64dd`. LIVE PENDING (see below).
+- [x] TG-04 — macOS swipe conflicts from the trackpad and Dock preferences (pure Core, read-only
+  adapter), warnings in Diagnostics, Overview and Settings, `gestures conflict=` log; no
+  scroll on dwindle workspaces. Commit: see Progress. LIVE PENDING (TESTING.md 15i (j), (k)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -183,8 +205,15 @@ read for the snap and focus rules.
   (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED.
 - TG-03 LIVE PENDING (not run: the user's Gio is running on this desktop, and nothing that
   captures input or moves windows may run here): TESTING.md row 15i, steps (a)-(i).
+- TG-04: RED `swift build --build-tests` failed (`cannot find 'detectGestureConflicts' /
+  'GestureConflict' / 'SystemTrackpadGesture' / 'gestureConflictMessage' /
+  'GestureConflictLogGate' in scope`, `cannot find 'preferenceValues' /
+  'readTrackpadSystemPreferences'`); `StripGestureTests.testNoStripOnADwindleWorkspace`
+  failed (a strip was returned). GREEN: `GestureConflictTests` 9, `StripGestureTests` 19,
+  `TrackpadPreferencesTests` 2, `SessionFactsBuilderTests` +1, `AdvancedPresentationTests` +1.
 
 ## Progress
-- TG-01 committed `4df4437`.
-- TG-02 committed `e5b29b7`.
-- TG-03 committed `bb7b169`; TG-04 (conflict detection and warning) still open.
+- TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
+  `8c41d40`, `50d64dd`, docs `fdefbbb` (the pre-rebase hashes `4df4437`, `e5b29b7`,
+  `bb7b169`, `7cfe28f` are gone).
+- TG-04 committed (hash recorded in the follow-up docs commit).

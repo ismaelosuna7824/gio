@@ -71,7 +71,8 @@ final class SessionFactsBuilderTests: XCTestCase {
         _ fixture: SessionFixture, logs: Recorder<String>, prefetches: Recorder<Bool>,
         screenRecording: Bool = true, exists: Bool = false,
         windowServer: WindowServerTransportStatus = windowServerTransportStatus(enabled: true, missingSymbols: []),
-        gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1)
+        gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1),
+        conflicts: [GestureConflict] = []
     ) -> SessionFactsBuilder {
         SessionFactsBuilder(context: .init(
             session: { fixture.session },
@@ -91,8 +92,24 @@ final class SessionFactsBuilderTests: XCTestCase {
             prefetchSnapshotContent: { prefetches.append($0) },
             windowServerStatus: { windowServer },
             gestureStatus: { gestures },
+            gestureConflicts: { conflicts },
             log: { _, line in logs.append(line) }
         ))
+    }
+
+    /// TG-04: collisions with macOS's own swipes are logged once (again on
+    /// change, without titles) and published for Diagnostics and Settings.
+    func testGestureConflictsAreLoggedOnceAndPublished() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let logs = Recorder<String>()
+        let conflicts = [GestureConflict(gesture: .scroll, fingers: 3, system: .fullScreenSwipe)]
+        let builder = make(fixture, logs: logs, prefetches: Recorder(), conflicts: conflicts)
+        let facts = builder.facts()
+        _ = builder.facts()
+        XCTAssertEqual(facts.gestureConflicts, conflicts)
+        XCTAssertEqual(
+            logs.values.filter { $0.hasPrefix("gestures conflict") }, ["gestures conflict=scroll-3:full-screen-swipe"]
+        )
     }
 
     func testBuildsWindowFactsWithWorkspaceAndVisibility() {
@@ -155,7 +172,7 @@ final class SessionFactsBuilderTests: XCTestCase {
         _ = builder.facts()
         XCTAssertEqual(facts.gestures, missing)
         XCTAssertEqual(
-            logs.values.filter { $0.hasPrefix("gestures ") }, ["gestures available=false reason=missing-symbols:MTDeviceStart"]
+            logs.values.filter { $0.hasPrefix("gestures available") }, ["gestures available=false reason=missing-symbols:MTDeviceStart"]
         )
     }
 

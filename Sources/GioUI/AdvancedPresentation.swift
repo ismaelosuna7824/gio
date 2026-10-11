@@ -308,17 +308,29 @@ public func diagnosticChecklist(
         summary: "Events, counts and timings; never window titles.", details: [logPath]
     )
 
-    return [permissions, session, configuration, displays, renderer, gesturesCheck(facts.gestures), logging]
+    return [
+        permissions, session, configuration, displays, renderer,
+        gesturesCheck(facts.gestures, conflicts: facts.gestureConflicts), logging,
+    ]
 }
 
-/// TG-03: whether trackpad gestures run, and why not.
-private func gesturesCheck(_ status: GestureSourceStatus) -> DiagnosticCheck {
+/// TG-03: whether trackpad gestures run, and why not. TG-04: running
+/// gestures that macOS performs too are a warning, each with the System
+/// Settings path that changes it.
+private func gesturesCheck(_ status: GestureSourceStatus, conflicts: [GestureConflict]) -> DiagnosticCheck {
     let state = status.available ? "available" : "unavailable"
-    let details = ["Gestures: \(state) (\(status.reason))"]
+    var details = ["Gestures: \(state) (\(status.reason))"]
     func card(_ kind: StatusKind, badge: String, summary: String) -> DiagnosticCheck {
         DiagnosticCheck(
             id: "gestures", title: "Gestures", symbol: "hand.draw.fill", tint: .orange, status: kind,
             badge: badge, summary: summary, details: details
+        )
+    }
+    if status.available, !conflicts.isEmpty {
+        details += conflicts.map(gestureConflictMessage)
+        return card(
+            .warning, badge: plural(conflicts.count, "conflict"),
+            summary: "macOS performs some of the same swipes itself, so both act. Change them in System Settings."
         )
     }
     if status.available {

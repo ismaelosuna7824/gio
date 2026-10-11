@@ -61,6 +61,8 @@ public struct SessionFacts: Equatable, Sendable {
     public let windowServer: WindowServerTransportStatus
     /// TG-03: whether trackpad gestures run, and why.
     public let gestures: GestureSourceStatus
+    /// TG-04: Gio's gestures that macOS performs too (system swipes on).
+    public let gestureConflicts: [GestureConflict]
 
     public init(
         configPath: String, configExists: Bool, configMessages: [String],
@@ -68,9 +70,11 @@ public struct SessionFacts: Equatable, Sendable {
         displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
         strip: WorkspaceStripFact? = nil,
         windowServer: WindowServerTransportStatus = WindowServerTransportStatus(available: false, reason: "unknown"),
-        gestures: GestureSourceStatus = GestureSourceStatus(available: false, reason: "unknown")
+        gestures: GestureSourceStatus = GestureSourceStatus(available: false, reason: "unknown"),
+        gestureConflicts: [GestureConflict] = []
     ) {
         self.gestures = gestures
+        self.gestureConflicts = gestureConflicts
         self.windowServer = windowServer
         self.configPath = configPath
         self.configExists = configExists
@@ -128,6 +132,8 @@ public struct Overview: Equatable, Sendable {
     public let displayLines: [String]
     public let windows: [WindowRow]
     public let windowSummary: String
+    /// TG-04: Gio gestures macOS performs too, with where to change them.
+    public var gestureWarnings: [String] = []
 }
 
 /// Minimized wins over hidden, hidden over the window's own mode: what the
@@ -216,6 +222,7 @@ public func makeOverview(_ facts: SessionFacts) -> Overview {
         configSummary: configSummary, configIssues: facts.configMessages,
         accessibilityGranted: facts.accessibilityGranted,
         screenRecordingGranted: facts.screenRecordingGranted, displayLines: displayLines,
-        windows: rows, windowSummary: windowSummary(rows)
+        windows: rows, windowSummary: windowSummary(rows),
+        gestureWarnings: facts.gestureConflicts.map(gestureConflictMessage)
     )
 }

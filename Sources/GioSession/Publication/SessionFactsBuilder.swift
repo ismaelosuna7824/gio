@@ -23,6 +23,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var windowServerStatus: () -> WindowServerTransportStatus
         /// TG-03: whether trackpad gestures run (symbols, config, devices).
         public var gestureStatus: () -> GestureSourceStatus
+        /// TG-04: Gio's gestures macOS performs too (from its preferences).
+        public var gestureConflicts: () -> [GestureConflict]
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -34,10 +36,12 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             prefetchSnapshotContent: @escaping (Bool) -> Void,
             windowServerStatus: @escaping () -> WindowServerTransportStatus,
             gestureStatus: @escaping () -> GestureSourceStatus,
+            gestureConflicts: @escaping () -> [GestureConflict],
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.windowServerStatus = windowServerStatus
             self.gestureStatus = gestureStatus
+            self.gestureConflicts = gestureConflicts
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
@@ -60,6 +64,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
     private var windowServerLog = WindowServerStatusLogGate()
     /// TG-03: logs `gestures available=... reason=...` once, then on change.
     private var gestureLog = GestureStatusLogGate()
+    /// TG-04: logs `gestures conflict=...` once, then on change.
+    private var conflictLog = GestureConflictLogGate()
 
     public init(context: Context) {
         self.context = context
@@ -108,6 +114,10 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         if let line = gestureLog.line(for: gestures) {
             context.log(.info, line)
         }
+        let conflicts = context.gestureConflicts()
+        if let line = conflictLog.line(for: conflicts) {
+            context.log(conflicts.isEmpty ? .info : .warn, line)
+        }
         return SessionFacts(
             configPath: path, configExists: context.configFileExists(path),
             configMessages: context.configMessages(), accessibilityGranted: context.accessibilityGranted(),
@@ -120,7 +130,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
                 )
             },
             windows: windows, screenRecordingGranted: screenRecording,
-            strip: workspaceStrip(), windowServer: windowServer, gestures: gestures
+            strip: workspaceStrip(), windowServer: windowServer, gestures: gestures, gestureConflicts: conflicts
         )
     }
 

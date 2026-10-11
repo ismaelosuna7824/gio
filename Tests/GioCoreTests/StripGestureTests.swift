@@ -58,7 +58,12 @@ final class StripGestureTests: XCTestCase {
         XCTAssertNil(gestureStrip(surface(workspace(), modes: [id(2): .fullscreen])))
     }
 
-    // MARK: - Tracking
+    /// DW: a dwindle workspace has no strip to scroll; its windows stay put.
+    func testNoStripOnADwindleWorkspace() {
+        var dwindle = workspace()
+        dwindle.layout = .dwindle
+        XCTAssertNil(gestureStrip(surface(dwindle)))
+    }
 
     func testFingerTravelMapsToTheOffset() {
         XCTAssertEqual(gestureOffsetDelta(fingerDX: -0.1, viewportWidth: 1000, sensitivity: 1, natural: true), 100)

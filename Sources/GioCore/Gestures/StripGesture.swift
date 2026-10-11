@@ -61,11 +61,14 @@ public struct GestureStrip: Equatable, Sendable {
     }
 }
 
-/// The strip under the fingers; nil when there is nothing to scroll or a
+/// The strip under the fingers; nil when there is nothing to scroll, the
+/// workspace is a dwindle tree (no strip: its tiles fill the display), or a
 /// fullscreen window owns the workspace (its strip is parked behind it).
 public func gestureStrip(_ surface: GestureSurface) -> GestureStrip? {
     let workspace = surface.workspace
-    guard !workspace.columns.contains(where: { $0.windows.contains { surface.modes[$0] == .fullscreen } }) else {
+    guard workspace.layout == .scrolling,
+          !workspace.columns.contains(where: { $0.windows.contains { surface.modes[$0] == .fullscreen } })
+    else {
         return nil
     }
     let tiled = tilingWorkspace(from: workspace, modes: surface.modes)

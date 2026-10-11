@@ -139,11 +139,23 @@ final class AdvancedPresentationTests: XCTestCase {
         )
     }
 
-    private func facts(gestures: GestureSourceStatus) -> SessionFacts {
+    private func facts(gestures: GestureSourceStatus, conflicts: [GestureConflict] = []) -> SessionFacts {
         SessionFacts(
             configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
-            currentWorkspace: 1, displays: [], windows: [], gestures: gestures
+            currentWorkspace: 1, displays: [], windows: [], gestures: gestures, gestureConflicts: conflicts
         )
+    }
+
+    /// TG-04: a running gesture that macOS also performs is a warning with
+    /// the System Settings path, here and in the Overview.
+    func testGesturesCardWarnsAboutSystemSwipes() {
+        let conflict = GestureConflict(gesture: .scroll, fingers: 3, system: .fullScreenSwipe)
+        let status = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1)
+        let card = check(checklist(facts(gestures: status, conflicts: [conflict])), "gestures")
+        XCTAssertEqual(card.status, .warning)
+        XCTAssertEqual(card.badge, "1 conflict")
+        XCTAssertEqual(card.details, ["Gestures: available (devices=1)", gestureConflictMessage(conflict)])
+        XCTAssertEqual(makeOverview(facts(gestures: status, conflicts: [conflict])).gestureWarnings, [gestureConflictMessage(conflict)])
     }
 
     /// TG-03: the Gestures card says whether trackpad gestures run, and why not.
