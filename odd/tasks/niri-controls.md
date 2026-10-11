@@ -55,7 +55,7 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
   `move-column-to-workspace-down/up` (Ctrl+Alt+U/I): the whole column, focus follows.
 - [ ] NC-11 (`e564c8d`) — `focus-workspace-previous` (unbound; per-display history) and
   `move-workspace-down/up` (Ctrl+Alt+Shift+U/I; named workspaces refused and logged).
-- [ ] NC-12 — More niri actions (user request 2026-10-11): `focus-window-or-workspace-down/up`
+- [x] NC-12 (`0f24c66`) — More niri actions (user request 2026-10-11): `focus-window-or-workspace-down/up`
   (unbound; `WorkspaceManager.focusWindowOrWorkspaceDown/Up`: the window below/above in the
   column, else the workspace below/above; true only when the workspace changed),
   `switch-preset-column-width-back` (unbound: niri's Mod+Shift+R is Gio's window-height cycle),
@@ -76,7 +76,7 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
   GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19, GioMacOSTests 83,
   GioCoreTests 1666, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
   Commit `0f24c66`. LIVE PENDING.
-- [ ] NC-13 — `[layout] always-center-single-column` (default false, niri's option): a strip with
+- [x] NC-13 (`343b869`, guide `62d5a2c`) — `[layout] always-center-single-column` (default false, niri's option): a strip with
   exactly one column narrower than the padded viewport starts at `(viewport - width) / 2`
   (`ScrollableLayoutEngine`, `LayoutConfig.alwaysCenterSingleColumn`); the offset still clamps to
   0. Settings > Layout > **Center a lone column** (`LayoutSettingsForm.alwaysCenterSingleColumn`).
@@ -84,7 +84,7 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
   `AlwaysCenterSingleColumnTests` (6: centered stack, two columns and off stay at the padding, too
   wide keeps the padding, the reveal with `center-focused-column = always` keeps it centered,
   parse/default/rejection, the form writes it). GREEN: GioCoreTests 1672, other bundles as NC-12, all
-  0 failures. LIVE PENDING.
+  0 failures; signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING.
 
 Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
 resolved per display; savedWidthSpec for maximize; FullscreenBook + full-display frame below
