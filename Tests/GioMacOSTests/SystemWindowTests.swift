@@ -76,6 +76,16 @@ final class DiscoveryScopeTests: XCTestCase {
         XCTAssertNil(actuator.element(for: WindowID(pid: ownPID, elementID: 1)))
     }
 
+    // PF-K: `AXEnhancedUserInterface` is never read or written on Gio's own
+    // app element (in-process AX runs AppKit on the lane thread).
+    func testEnhancedUserInterfaceSwitchRefusesGiosOwnPid() {
+        let ownPID = ProcessInfo.processInfo.processIdentifier
+        let control = AXEnhancedUserInterfaceSwitch()
+        XCTAssertNil(control.enhancedUserInterface(pid: ownPID))
+        XCTAssertFalse(control.setEnhancedUserInterface(false, pid: ownPID))
+        XCTAssertFalse(control.setEnhancedUserInterface(true, pid: 0))
+    }
+
     func testActuatorStillRegistersOtherProcesses() {
         let other: pid_t = ProcessInfo.processInfo.processIdentifier &+ 1
         let actuator = AXWindowActuator(displayHeight: 1000)

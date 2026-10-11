@@ -133,17 +133,22 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private var openLanes: [pid_t: LaneState<ItemResult>] = [:]
     private var openFocus: DispatchFocusStep?
     private let focusBook = DispatchFocusBook()
+    /// PF-K: `AXEnhancedUserInterface` off around each app's write batch.
+    private let enhancedUI: EnhancedUIGuard
 
     /// Timing of the most recent `reconcile` pass (MO-01).
     public private(set) var lastTiming: ReflowTiming?
 
     /// Keep one reconciler alive across reflows: it remembers which apps are
-    /// still stuck in an abandoned lane (MO-03).
+    /// still stuck in an abandoned lane (MO-03). `enhancedUI` (PF-K) switches
+    /// `AXEnhancedUserInterface` around write batches, never for `ownPID`.
     public init(
         actuator: Actuator, tolerance: CGFloat = 1,
         concurrency: LaneConcurrency = .concurrent(stallTimeout: 0.25),
         clock: @escaping ReflowClock = systemReflowClock,
-        appName: @escaping @Sendable (pid_t) -> String? = { _ in nil }
+        appName: @escaping @Sendable (pid_t) -> String? = { _ in nil },
+        enhancedUI: EnhancedUserInterfaceSwitch? = nil,
+        ownPID: pid_t = ProcessInfo.processInfo.processIdentifier
     ) {
         self.actuator = actuator
         self.tolerance = tolerance
@@ -152,9 +157,15 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         self.names = AppNameCache(resolve: appName)
         let executor = LaneExecutor()
         let motion = MotionBook()
-        let worker = MotionWorker(actuator: actuator, clock: clock)
+        let guardian = EnhancedUIGuard(control: enhancedUI, ownPID: ownPID, clock: clock)
+        let worker = MotionWorker(actuator: actuator, clock: clock, enhancedUI: guardian)
         self.executor = executor
         self.motion = motion
+        self.enhancedUI = guardian
+        // PF-K: a motion lane switches its app off at the first frame and
+        // leaves it off for the whole flight (a switch per frame would make
+        // the app rebuild its accessibility state up to 120 times a second);
+        // the app's final-pass lane, or the settle, switches it back on.
         motionLanes = MotionLanes(executor: executor, book: motion) { worker.write($0, into: motion) }
     }
 
@@ -179,6 +190,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         let actuator: Actuator
         let tolerance: CGFloat
         let clock: ReflowClock
+        let enhancedUI: EnhancedUIGuard
 
         /// The timing carries no app name: names are resolved once per pid
         /// when the report is folded, never per write.
@@ -214,6 +226,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 return .alreadyCorrect(actual)
             }
             do {
+                enhancedUI.willWrite(pid: id.pid)
                 try actuator.setFrame(item.desired, from: actual, for: id, verify: item.parked == nil)
                 return item.parked == nil ? .applied : .parkedApplied(clamped: false)
             } catch {
@@ -282,8 +295,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
         (toWrite, toPark) = skipTrusted(frames: toWrite, parked: toPark, trusted: trusted, into: &report)
         let lanes = planWriteLanes(frames: toWrite, parked: toPark)
-        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock)
-        let results = executor.run(lanes: lanes, mode: concurrency) { worker.process($0) }
+        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, enhancedUI: enhancedUI)
+        let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { worker.process($0) }
         let windowTimings = fold(lanes: lanes, results: results, frames: frames, parked: parked, into: &report)
         var focusMilliseconds = 0.0
         var focusCalls = 0
@@ -362,16 +375,21 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 step.run(book: book, clock: clock) { try actuator.value.focus(id: $0) }
             }
         }
-        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock)
+        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, enhancedUI: enhancedUI)
+        let epilogue = batchEnded
         let launched: LaunchedLanes<ItemResult>
         switch concurrency {
         case .serial:
-            launched = executor.launch(lanes: lanes, claimWait: nil, serial: true, tails: tails) { worker.process($0) }
+            launched = executor.launch(
+                lanes: lanes, claimWait: nil, serial: true, tails: tails, epilogue: epilogue
+            ) { worker.process($0) }
         case .concurrent(let stall):
             for lane in lanes where !lane.items.isEmpty {
                 openLanes[lane.pid]?.supersede(Set(lane.items.map(\.id)))
             }
-            launched = executor.launch(lanes: lanes, claimWait: stall * 2, tails: tails) { worker.process($0) }
+            launched = executor.launch(
+                lanes: lanes, claimWait: stall * 2, tails: tails, epilogue: epilogue
+            ) { worker.process($0) }
             for (lane, state) in zip(lanes, launched.states) where !lane.items.isEmpty {
                 openLanes[lane.pid] = state
             }
@@ -681,8 +699,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
         let lanes = planWriteLanes(frames: known, parked: [:])
         let actuator = actuator
-        let writer = PrepositionWriter(actuator: actuator)
-        let results = executor.run(lanes: lanes, mode: concurrency) { item in
+        let writer = PrepositionWriter(actuator: actuator, enhancedUI: enhancedUI)
+        let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { item in
             writer.write(item.desired, from: from[item.id]!, for: item.id)
         }
         var written: [WindowID] = []
@@ -725,8 +743,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
         waitForMotionIdle(timeout: 0.3)
         let lanes = planWriteLanes(frames: known.mapValues { $0.last! }, parked: [:])
-        let writer = NudgeWriter(actuator: actuator)
-        let results = executor.run(lanes: lanes, mode: concurrency) { item in
+        let writer = NudgeWriter(actuator: actuator, enhancedUI: enhancedUI)
+        let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { item in
             writer.write(known[item.id]!, for: item.id)
         }
         var written: [WindowID] = []
@@ -798,6 +816,43 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     public func forgetApp(pid: pid_t) {
         names.forget(pid)
         motionLanes.forget(pid: pid)
+        enhancedUI.forget(pid: pid)
+    }
+
+    /// PF-K: apps Gio left with `AXEnhancedUserInterface` off: a motion
+    /// whose final pass has not visited them yet, or a restore the app did
+    /// not take (typically a hung app).
+    public var pendingEnhancedUIRestores: Set<pid_t> {
+        enhancedUI.pendingRestores
+    }
+
+    /// PF-K: switch the pending apps back on, each on its own lane. An app
+    /// whose lane is busy is skipped and stays pending (that lane's batch, or
+    /// the next settle, restores it). The session does not wait (after a
+    /// settle): a hung app must not hold it; shutdown waits, bounded by the
+    /// stall timeout.
+    public func restoreEnhancedUI(waiting: Bool = false) {
+        let pending = enhancedUI.pendingRestores
+        guard !pending.isEmpty else {
+            return
+        }
+        let lanes = pending.sorted().map {
+            WriteLane(pid: $0, items: [WriteItem(index: 0, id: WindowID(pid: $0, elementID: 0), desired: .zero, parked: nil)])
+        }
+        let guardian = enhancedUI
+        let work: @Sendable (WriteItem) -> Void = { guardian.restore(pid: $0.id.pid) }
+        if waiting {
+            _ = executor.run(lanes: lanes, mode: concurrency, work: work)
+        } else {
+            let serial = concurrency == .serial
+            _ = executor.launch(lanes: lanes, claimWait: nil, serial: serial, work: work)
+        }
+    }
+
+    /// PF-K: the lane epilogue that ends an app's write batch.
+    private var batchEnded: @Sendable (pid_t) -> Void {
+        let guardian = enhancedUI
+        return { guardian.batchEnded(pid: $0) }
     }
 
     /// Gio is leaving: bring every listed window that is parked or off-screen
@@ -883,11 +938,13 @@ private struct FrameReader<Actuator: WindowActuator>: @unchecked Sendable {
 
 private struct NudgeWriter<Actuator: WindowActuator>: @unchecked Sendable {
     let actuator: Actuator
+    let enhancedUI: EnhancedUIGuard
 
     func write(_ steps: [CGRect], for id: WindowID) -> Bool {
         guard var current = (try? actuator.frame(of: id)) ?? nil else {
             return false
         }
+        enhancedUI.willWrite(pid: id.pid)
         for step in steps {
             guard (try? actuator.setFrame(step, from: current, for: id, verify: false)) != nil else {
                 return false
@@ -900,18 +957,23 @@ private struct NudgeWriter<Actuator: WindowActuator>: @unchecked Sendable {
 
 private struct PrepositionWriter<Actuator: WindowActuator>: @unchecked Sendable {
     let actuator: Actuator
+    let enhancedUI: EnhancedUIGuard
 
     func write(_ frame: CGRect, from current: CGRect, for id: WindowID) -> Bool {
-        (try? actuator.setFrame(frame, from: current, for: id, verify: false)) != nil
+        enhancedUI.willWrite(pid: id.pid)
+        return (try? actuator.setFrame(frame, from: current, for: id, verify: false)) != nil
     }
 }
 
 private struct MotionWorker<Actuator: WindowActuator>: @unchecked Sendable {
     let actuator: Actuator
     let clock: ReflowClock
+    let enhancedUI: EnhancedUIGuard
 
     func write(_ write: MotionWrite, into book: MotionBook) {
         let pid = write.id.pid
+        // PF-K: switched once per batch, outside the frame write's timing.
+        enhancedUI.willWrite(pid: pid)
         let tracks = actuator.tracksCalls
         let callsBefore = tracks ? actuator.axCallCount(forPid: pid) : 0
         let started = clock()

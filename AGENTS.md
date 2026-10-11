@@ -71,6 +71,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **Parsed-but-unused config:** themes are stored, not consumed. `behavior.focus-follows-mouse`, `behavior.mouse-follows-focus` and `layout.center-focused-column` are live (HD-04); `behavior.move-crosses-monitor-at-edge` is live through `ActionApplier.Context.behavior` and `CommandSession.config` (MM-06).
 - **Only keyboard/IPC actions focus OS windows** (`FocusIntent`, HD-01). Passive reflows (AX events, click adoption, reload, rescan) pass `focused: nil`; never add a focus call to those paths or you will steal focus. Add new focus-moving actions to `HotkeyAction.carriesFocusIntent`.
 - macOS refuses fully off-screen windows: parked windows keep a 1 pt sliver. Do not "fix" that by moving frames further out.
+- **Never leave an app's `AXEnhancedUserInterface` off** (PF-K): VoiceOver users depend on it. A new frame-write path must go through `WindowReconciler` lanes, call `EnhancedUIGuard.willWrite(pid:)` before writing and end the batch in the lane's epilogue (`batchEnded`); a motion ends its batch at the app's final-pass lane or the settle (`restoreEnhancedUI`). Gio's own pid is never read or written.
 - Legacy code (`GioMac`, `GioApp`, `TileLayout`, `NativeTilingCoordinator`, ...) still builds and has tests. Do not reuse it for new features.
 
 ## Where decisions live

@@ -205,8 +205,11 @@ final class LaneExecutor: @unchecked Sendable {
     private let released = NSCondition()
     private var busyPids: Set<pid_t> = []
 
+    /// `epilogue` (PF-K) runs once per lane after its writes, abandoned or
+    /// not, while the lane still holds its app.
     func run<Value: Sendable>(
         lanes: [WriteLane], mode: LaneConcurrency,
+        epilogue: (@Sendable (pid_t) -> Void)? = nil,
         work: @escaping @Sendable (WriteItem) -> Value
     ) -> [Int: LaneItemResult<Value>] {
         switch mode {
@@ -215,9 +218,13 @@ final class LaneExecutor: @unchecked Sendable {
             for item in lanes.flatMap(\.items).sorted(by: { $0.index < $1.index }) {
                 outcome[item.index] = .completed(work(item))
             }
+            for lane in lanes {
+                epilogue?(lane.pid)
+            }
             return outcome
         case .concurrent(let stallTimeout):
-            return launch(lanes: lanes, claimWait: nil, work: work).await(stallTimeout: stallTimeout)
+            return launch(lanes: lanes, claimWait: nil, epilogue: epilogue, work: work)
+                .await(stallTimeout: stallTimeout)
         }
     }
 
@@ -226,10 +233,12 @@ final class LaneExecutor: @unchecked Sendable {
     /// otherwise (SM-12) the lane waits on its own thread up to that long
     /// for the app's previous lane to return. `tails[pid]` runs on the lane
     /// after its writes (not when the lane was abandoned or never claimed
-    /// the app). `serial` work runs on the calling thread instead.
+    /// the app), then `epilogue` (PF-K; an abandoned lane too, once its
+    /// thread returns). `serial` work runs on the calling thread instead.
     func launch<Value: Sendable>(
         lanes: [WriteLane], claimWait: TimeInterval?, serial: Bool = false,
         tails: [pid_t: @Sendable () -> Void] = [:],
+        epilogue: (@Sendable (pid_t) -> Void)? = nil,
         work: @escaping @Sendable (WriteItem) -> Value
     ) -> LaunchedLanes<Value> {
         let launched = LaunchedLanes<Value>(lanes: lanes)
@@ -239,6 +248,7 @@ final class LaneExecutor: @unchecked Sendable {
             if serial {
                 Self.drain(lane, state: state, work: work, signal: nil)
                 tail?()
+                epilogue?(lane.pid)
                 state.finish()
                 continue
             }
@@ -265,6 +275,7 @@ final class LaneExecutor: @unchecked Sendable {
                 if !state.isAbandoned {
                     tail?()
                 }
+                epilogue?(lane.pid)
                 state.finish()
                 release(lane.pid)
                 events.signal()

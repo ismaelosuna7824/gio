@@ -751,6 +751,8 @@ final class SessionHost: @unchecked Sendable {
             snapshotRefresher.removeAll()
             closeGhost.removeAll()
             reconciler?.waitForMotionIdle(timeout: 0.3)
+            // PF-K: no app is left with `AXEnhancedUserInterface` off (VoiceOver).
+            reconciler?.restoreEnhancedUI(waiting: true)
             restoreOffscreenWindows(session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id))
         }
         server?.stop()
@@ -1286,9 +1288,12 @@ final class SessionHost: @unchecked Sendable {
         renderVerifier.cancel()
         // One reconciler for the session: it remembers apps whose write lane
         // is still stuck so a hung app is never written twice at once.
+        // PF-K: it switches `AXEnhancedUserInterface` off around each app's
+        // write batch (never Gio's own pid) and back on at the batch's end.
         let reconciler = self.reconciler ?? WindowReconciler(
             actuator: actuator,
-            appName: { [probe] in probe.applicationName($0) }
+            appName: { [probe] in probe.applicationName($0) },
+            enhancedUI: AXEnhancedUserInterfaceSwitch()
         )
         self.reconciler = reconciler
         let settings = session.config.animations
@@ -1624,6 +1629,8 @@ final class SessionHost: @unchecked Sendable {
             GioLog.record(.info, line)
         }
         deferredSettle.defer(deferred)
+        // PF-K: a hung app may have missed its restore; retry on its lane.
+        reconciler?.restoreEnhancedUI()
         nativeZoom.scheduleVerifications(failed: zoomWriteFailures)
     }
 

@@ -25,6 +25,15 @@ painted.
 PF-A slow apps do not stall motion, PF-B stop the registration loop, PF-C recover windows that
 do not paint. Not chosen: capping AX writes at 60 Hz.
 
+## Scope (user choice 2026-10-11, OmniWM comparison)
+Hiding and revealing windows (off-viewport columns, inactive workspaces, workspace switches)
+and the AX motion should feel as fluid as OmniWM's. The user allowed private APIs with a
+runtime probe and a fallback to the Accessibility-only path. Order: Fluidity first (this
+file, PF-K onwards), then Move Edge, Dwindle and gestures (other branches). Reference: the
+OmniWM evaluation (`HidingEval`): OmniWM turns `AXEnhancedUserInterface` off around write
+batches, moves hidden windows with SkyLight transactions and follows with an AX write once
+settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
+
 ## Decisions
 - PF-A: no lane wait in `MotionPlayer.finish`; the final pass waits only for the apps it
   writes, for `finalPassMotionGrace` (100 ms). Apps still writing are deferred
@@ -65,6 +74,19 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   bounded 50 ms wait) and `shutdown` (never focuses). Repeated refusals are one per key press, not a re-send: they are kept and
   logged by the reconciler once per window per minute (`FocusFailureLogGate`, debug,
   `focus failed id= app= reason= suppressed=`); `foldSettle` logs only landed intents.
+- PF-K: `AXEnhancedUserInterface` is switched off per app for one write batch and back on at
+  its end (`EnhancedUIGuard`, pure, Core-owned `EnhancedUserInterfaceSwitch`). A reconcile,
+  dispatched, pre-position or nudge lane is one batch (the lane epilogue restores, on the
+  lane thread, while the lane still holds the app). A motion is one batch from its first frame
+  to the app's final-pass lane, not one per frame: OmniWM restores after every mailbox drain,
+  but a switch per frame would make Chromium rebuild its accessibility state up to 120 times
+  a second, and the flight is short (~300 ms). Restore timing for VoiceOver users: a restore
+  the app does not take (hung app) stays pending; the app's next batch ends with it, every
+  settle retries it on the app's lane without waiting, and shutdown retries it waiting
+  (bounded by the 0.25 s stall) before the quit restore. Only apps that read `true` are
+  touched (one read per app per second at most, never while Gio has it off); Gio's own pid
+  never (Core guard plus the adapter refuses it). No config key: with VoiceOver off nothing is
+  written. Logs: pids only (`enhanced ui pid=N on=`, `restore failed`, `restored`).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -192,6 +214,23 @@ do not paint. Not chosen: capping AX writes at 60 Hz.
   `focus failed ... reason=notFrontmost(frontmost=<pid>,ax=<status>)` if macOS still refuses
   (`ax` tells whether the `AXFrontmost` write was accepted). Also read the `reason` of the
   Xcode window 31952:13 the next time it refuses.
+- [x] PF-K — `AXEnhancedUserInterface` off around write batches (reconcile, dispatched,
+  pre-position, nudge and motion lanes), restored after the batch, the final pass, the settle
+  or shutdown; never for Gio's own pid. New `GioCore/Reconciliation/EnhancedUserInterface.swift`
+  (`EnhancedUserInterfaceSwitch`, `EnhancedUIGuard`), `LaneExecutor` lane `epilogue`,
+  `WindowReconciler(enhancedUI:ownPID:)`, `pendingEnhancedUIRestores`, `restoreEnhancedUI`;
+  adapter `GioMacOS/Accessibility/EnhancedUserInterface.swift`; `SessionHost` wires it, retries
+  in `finishSettle` and `shutdown`. RED: compile (`EnhancedUIGuard`,
+  `EnhancedUserInterfaceSwitch` not found; `WindowReconciler` had no `enhancedUI:ownPID:`) for
+  `EnhancedUserInterfaceTests`; after the first GREEN the motion batch moved from one switch per
+  lane drain to one per flight: RED again by compile (no `pendingEnhancedUIRestores`) for
+  `testAMotionKeepsItOffUntilTheAppsFinalPassLane` and
+  `testTheSettleRestoresAMotionAppThatTheFinalPassDidNotVisit`. GREEN: Core 1688 (+16), Session
+  393, UI 306 (53 skipped), MacOS 84 (+1, `testEnhancedUserInterfaceSwitchRefusesGiosOwnPid`,
+  written with the adapter, not observed RED), Mac 19, POC 7, 0 failures; signed `xcodebuild`
+  BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist
+  15g in `docs/TESTING.md` (VoiceOver on: Chrome/Electron motion fluid, VoiceOver still reads
+  every app after motions and after Quit; a stopped app logs `restore failed` then `restored`).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
