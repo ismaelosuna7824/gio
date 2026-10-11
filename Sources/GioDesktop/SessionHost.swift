@@ -122,6 +122,11 @@ final class SessionHost: @unchecked Sendable {
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
     private var trustedFrames = TrustedFrames()
+    /// PF-L: the SkyLight WindowServer transport (nil when this macOS lacks a
+    /// symbol it needs, named in `skyLightMissing`); loaded once, with the
+    /// actuator, in `initialSync`.
+    private var skyLight: SkyLightWindowMover?
+    private var skyLightMissing: [String]?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
     /// SM-04: pre-captured window images (refreshed once after each settle,
@@ -252,6 +257,7 @@ final class SessionHost: @unchecked Sendable {
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
             prefetchSnapshotContent: { [unowned self] in snapshotRefresher.prefetchIfNeeded(permissionGranted: $0) },
+            windowServerStatus: { [unowned self] in windowServerStatus() },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
@@ -767,6 +773,9 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator, !ids.isEmpty else {
             return nil
         }
+        // PF-L: an app that never learned the WindowServer hid its window
+        // would report it on screen and the restore would skip it.
+        reconciler?.syncWindowServerMoves()
         return WindowReconciler(actuator: actuator)
             .restoreOffscreen(ids: ids, displays: restoreDisplays())
     }
@@ -1049,6 +1058,13 @@ final class SessionHost: @unchecked Sendable {
             snapshotCapturer.setWindowOrderReader { pid in
                 axWindowOrder(pid: pid) { handles.id(matching: $0, pid: pid) }
             }
+            // PF-L: SkyLight is opened once; window ids come from the
+            // actuator, frames cross into SkyLight's space with its flip.
+            let loaded = SkyLightWindowMover.load(
+                windowIDs: { handles.windowServerID(of: $0) }, flip: { handles.verticalFlip }
+            )
+            skyLight = loaded.mover
+            skyLightMissing = loaded.missing
         }
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
         // MM-01: displays first, so every startup window lands in the stack
@@ -1290,12 +1306,16 @@ final class SessionHost: @unchecked Sendable {
         // is still stuck so a hung app is never written twice at once.
         // PF-K: it switches `AXEnhancedUserInterface` off around each app's
         // write batch (never Gio's own pid) and back on at the batch's end.
+        // PF-L: it moves parks, reveals and same-size pre-positions through
+        // SkyLight first while `[behavior] skylight` and the runtime allow it.
         let reconciler = self.reconciler ?? WindowReconciler(
             actuator: actuator,
             appName: { [probe] in probe.applicationName($0) },
-            enhancedUI: AXEnhancedUserInterfaceSwitch()
+            enhancedUI: AXEnhancedUserInterfaceSwitch(),
+            windowServer: skyLight
         )
         self.reconciler = reconciler
+        reconciler.windowServerEnabled = windowServerStatus().available
         let settings = session.config.animations
         // NA-04: the triggering action picks the pass's animation; a kind
         // that is off makes its pass instant.
@@ -1496,7 +1516,8 @@ final class SessionHost: @unchecked Sendable {
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
                 focused: planFocus, currentlyFocused: nil,
-                trusted: trustedFrames
+                trusted: trustedFrames,
+                windowServerFirst: windowServerFirst(visible: plan.visible, parked: plan.parked)
             )
             foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus, placement: placement)
             zoomWriteFailures.formUnion(report.failed)
@@ -1530,7 +1551,8 @@ final class SessionHost: @unchecked Sendable {
             parked.merge(plan.parked) { _, new in new }
         }
         let pass = reconciler.dispatch(
-            frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames
+            frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames,
+            windowServerFirst: windowServerFirst(visible: visible, parked: parked)
         )
         let now = ProcessInfo.processInfo.systemUptime
         // SM-13: a write lands on its lane up to `landingBounds` after now
@@ -1550,6 +1572,26 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         dispatchedWrites.append((pass, visible, parked, focusTarget))
+    }
+
+    /// PF-L: the parks and reveals of a pass that SkyLight moves first
+    /// (decided in Core from the frames Gio knows).
+    private func windowServerFirst(visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget]) -> Set<WindowID> {
+        guard reconciler?.windowServerEnabled == true else {
+            return []
+        }
+        return planWindowServerFirst(
+            visible: visible, parked: parked, current: physicalFrames,
+            displays: displays.allDisplays().map(\.frame), ownPID: ProcessInfo.processInfo.processIdentifier
+        )
+    }
+
+    /// PF-L: `[behavior] skylight` and what this macOS offers.
+    private func windowServerStatus() -> WindowServerTransportStatus {
+        guard let skyLightMissing else {
+            return WindowServerTransportStatus(available: false, reason: "not-loaded")
+        }
+        return windowServerTransportStatus(enabled: session.config.behavior.skyLight, missingSymbols: skyLightMissing)
     }
 
     /// SM-12: fold every pass dispatched under the overlay, oldest first

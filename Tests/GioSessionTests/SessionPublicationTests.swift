@@ -69,7 +69,8 @@ final class GatedStatePublisherTests: XCTestCase {
 final class SessionFactsBuilderTests: XCTestCase {
     private func make(
         _ fixture: SessionFixture, logs: Recorder<String>, prefetches: Recorder<Bool>,
-        screenRecording: Bool = true, exists: Bool = false
+        screenRecording: Bool = true, exists: Bool = false,
+        windowServer: WindowServerTransportStatus = windowServerTransportStatus(enabled: true, missingSymbols: [])
     ) -> SessionFactsBuilder {
         SessionFactsBuilder(context: .init(
             session: { fixture.session },
@@ -87,6 +88,7 @@ final class SessionFactsBuilderTests: XCTestCase {
             configFileExists: { _ in exists },
             homeDirectory: { "/Users/test" },
             prefetchSnapshotContent: { prefetches.append($0) },
+            windowServerStatus: { windowServer },
             log: { _, line in logs.append(line) }
         ))
     }
@@ -122,9 +124,22 @@ final class SessionFactsBuilderTests: XCTestCase {
         let builder = make(fixture, logs: logs, prefetches: prefetches)
         _ = builder.facts()
         _ = builder.facts()
-        XCTAssertEqual(logs.count, 1)
+        XCTAssertEqual(logs.values.filter { $0.hasPrefix("renderer ") }.count, 1)
         let snapshot = effectiveRenderer(config: fixture.session.config.animations, permission: true) == .snapshot
         XCTAssertEqual(prefetches.values, [snapshot, snapshot])
+    }
+
+    /// PF-L: the WindowServer transport state is logged once (again only
+    /// when it changes) and published for Diagnostics.
+    func testSkyLightStatusIsLoggedOnceAndPublished() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let logs = Recorder<String>()
+        let off = windowServerTransportStatus(enabled: false, missingSymbols: [])
+        let builder = make(fixture, logs: logs, prefetches: Recorder(), windowServer: off)
+        let facts = builder.facts()
+        _ = builder.facts()
+        XCTAssertEqual(facts.windowServer, off)
+        XCTAssertEqual(logs.values.filter { $0.hasPrefix("skylight ") }, ["skylight available=false reason=config-off"])
     }
 
     func testNoStripWithoutTheFocusedDisplay() {

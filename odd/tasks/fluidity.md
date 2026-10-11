@@ -87,6 +87,28 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   touched (one read per app per second at most, never while Gio has it off); Gio's own pid
   never (Core guard plus the adapter refuses it). No config key: with VoiceOver off nothing is
   written. Logs: pids only (`enhanced ui pid=N on=`, `restore failed`, `restored`).
+- PF-L: hidden and revealed windows move through the private SkyLight WindowServer transport
+  first (`SLSMainConnectionID`, `SLSTransactionCreate`, `SLSTransactionMoveWindowWithGroup`,
+  `SLSTransactionCommit`, verified present on macOS 27.0.1 with a throwaway `dlsym` check that
+  moved nothing; window ids from `_AXUIElementGetWindow`, read once at registration). All
+  resolved with `dlopen`/`dlsym` at runtime; a missing one turns the transport off
+  (`missing-symbols:<names>`). Config key `[behavior] skylight` (default `true`): `[behavior]`
+  rather than `[animations]` because instant passes (animations off, the snapshot overlay's
+  real-window pass) use it too. Which windows (pure `planWindowServerFirst`): parks of windows on
+  a display now and reveals of windows on no display now; hidden-to-hidden and
+  visible-to-visible moves stay on AX (nothing to see; only the app can lay out a visible
+  window). Same-size pre-positions (workspace-switch risers, MM-04 far-side jumps, same-size
+  NA-02 entries) are SkyLight-only; resizing ones stay on AX (SkyLight never resizes). AX stays
+  authoritative (invariant 10): a moved window is pending in the reconciler's ledger until an
+  AX write that followed that very move succeeds; pending windows are never skipped as trusted
+  and are written even when the app already reports the target (it may report the
+  WindowServer's frame without having acted on it). Quit and restore-all first write every
+  pending window where SkyLight put it (`syncWindowServerMoves`), so the restore does not trust
+  a stale app frame. SkyLight is called on the session queue (OmniWM calls it from the main
+  actor; [INFERENCE] the main connection is usable from any thread; LIVE PENDING). No runtime
+  probe yet in PF-L: every SkyLight move is followed by an AX write anyway, so a WindowServer
+  that ignores the move only loses the speed-up (PF-M adds the probe with the per-tick moves,
+  where it matters).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -231,6 +253,29 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist
   15g in `docs/TESTING.md` (VoiceOver on: Chrome/Electron motion fluid, VoiceOver still reads
   every app after motions and after Quit; a stopped app logs `restore failed` then `restored`).
+- [x] PF-L — SkyLight WindowServer transport for parks, reveals and same-size pre-positions,
+  AX follow-up, config key and status. New `GioCore/Reconciliation/WindowServerTransport.swift`
+  (`WindowServerMove`, `WindowServerMover`, `WindowServerTransportStatus`,
+  `windowServerTransportStatus`, `WindowServerStatusLogGate`, `planWindowServerFirst`,
+  `WindowServerLedger`); `WindowReconciler(windowServer:)`, `windowServerEnabled`,
+  `reconcile/dispatch(windowServerFirst:)`, pre-position split, `windowServerPending`,
+  `syncWindowServerMoves`; `BehaviorSectionConfig.skyLight` (`[behavior] skylight`, template);
+  `SessionFacts.windowServer`, `SessionFactsBuilder` logs `skylight available= reason=`;
+  Diagnostics Renderer card line; adapter `GioMacOS/WindowServer/SkyLight.swift`
+  (`SkyLightSymbols`, `SkyLightWindowMover`, `windowServerOrigin(of:flip:)`), actuator
+  `windowServerID(of:)`/`verticalFlip`; `SessionHost` loads it with the actuator and passes
+  `windowServerFirst` in instant and dispatched passes. RED (compile): `WindowServerTransportTests`
+  (no `planWindowServerFirst`, `WindowServerMove`, `WindowServerMover`,
+  `windowServerTransportStatus`, `WindowServerStatusLogGate`), `ConfigTests`
+  (`BehaviorSectionConfig` had no `skyLight`), `SessionFactsBuilderTests` (no
+  `windowServerStatus:`; `SessionFacts` had no `windowServer`), `SkyLightTests` (no
+  `SkyLightSymbols`, `SkyLightWindowMover`, `windowServerOrigin`, actuator `windowServerID`);
+  `AdvancedPresentationTests.testRendererCardNamesTheHiddenWindowTransport` was written in the
+  same RED batch (its RED was the shared `SessionFacts` compile error). GREEN: Core 1705 (+17),
+  Session 394 (+1), UI 307 (+1, 53 skipped), MacOS 89 (+5), Mac 19, POC 7, 0 failures; signed
+  `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. LIVE PENDING: checklist 15h in `docs/TESTING.md` (startup line, atomic hide/reveal with
+  animations off and under the overlay, instant switch start with the AX renderer, apps know
+  their frames afterwards, `skylight = false` fallback, Quit restores windows mid-switch).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

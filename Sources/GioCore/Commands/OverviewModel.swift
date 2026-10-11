@@ -56,13 +56,18 @@ public struct SessionFacts: Equatable, Sendable {
     /// DD-02: the focused display's current workspace as a strip, for the
     /// Overview miniature; nil when no layout was available.
     public let strip: WorkspaceStripFact?
+    /// PF-L: whether hidden and revealed windows move through the private
+    /// WindowServer transport (SkyLight) first, and why.
+    public let windowServer: WindowServerTransportStatus
 
     public init(
         configPath: String, configExists: Bool, configMessages: [String],
         accessibilityGranted: Bool, currentWorkspace: Int,
         displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
-        strip: WorkspaceStripFact? = nil
+        strip: WorkspaceStripFact? = nil,
+        windowServer: WindowServerTransportStatus = WindowServerTransportStatus(available: false, reason: "unknown")
     ) {
+        self.windowServer = windowServer
         self.configPath = configPath
         self.configExists = configExists
         self.configMessages = configMessages

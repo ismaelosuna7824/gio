@@ -69,11 +69,21 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
     /// `gio move left/right`) at the strip's edge send the column to the
     /// neighbouring display, like `move-column-*-or-to-monitor-*`.
     public var moveCrossesMonitorAtEdge: Bool
+    /// PF-L: `skylight`: hidden and revealed windows move through the private
+    /// WindowServer transport first when it is available (default on);
+    /// false keeps the Accessibility-only path.
+    public var skyLight: Bool
 
-    public init(focusFollowsMouse: Bool = false, mouseFollowsFocus: Bool = true, moveCrossesMonitorAtEdge: Bool = false) {
+    public init(
+        focusFollowsMouse: Bool = false,
+        mouseFollowsFocus: Bool = true,
+        moveCrossesMonitorAtEdge: Bool = false,
+        skyLight: Bool = true
+    ) {
         self.focusFollowsMouse = focusFollowsMouse
         self.mouseFollowsFocus = mouseFollowsFocus
         self.moveCrossesMonitorAtEdge = moveCrossesMonitorAtEdge
+        self.skyLight = skyLight
     }
 }
 

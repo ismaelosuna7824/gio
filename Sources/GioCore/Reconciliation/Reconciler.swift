@@ -135,22 +135,34 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let focusBook = DispatchFocusBook()
     /// PF-K: `AXEnhancedUserInterface` off around each app's write batch.
     private let enhancedUI: EnhancedUIGuard
+    /// PF-L: the WindowServer transport, its switch (the session sets it from
+    /// `[behavior] skylight` and the runtime checks) and the windows it moved
+    /// that Accessibility has not followed yet. Calling thread only.
+    private let windowServer: WindowServerMover?
+    public var windowServerEnabled = false
+    private var ledger = WindowServerLedger()
+    private let ownPID: pid_t
 
     /// Timing of the most recent `reconcile` pass (MO-01).
     public private(set) var lastTiming: ReflowTiming?
 
     /// Keep one reconciler alive across reflows: it remembers which apps are
     /// still stuck in an abandoned lane (MO-03). `enhancedUI` (PF-K) switches
-    /// `AXEnhancedUserInterface` around write batches, never for `ownPID`.
+    /// `AXEnhancedUserInterface` around write batches; `windowServer` (PF-L)
+    /// moves parks, reveals and same-size pre-positions first. Neither ever
+    /// touches `ownPID`.
     public init(
         actuator: Actuator, tolerance: CGFloat = 1,
         concurrency: LaneConcurrency = .concurrent(stallTimeout: 0.25),
         clock: @escaping ReflowClock = systemReflowClock,
         appName: @escaping @Sendable (pid_t) -> String? = { _ in nil },
         enhancedUI: EnhancedUserInterfaceSwitch? = nil,
+        windowServer: WindowServerMover? = nil,
         ownPID: pid_t = ProcessInfo.processInfo.processIdentifier
     ) {
         self.actuator = actuator
+        self.windowServer = windowServer
+        self.ownPID = ownPID
         self.tolerance = tolerance
         self.concurrency = concurrency
         self.clock = clock
@@ -191,6 +203,9 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         let tolerance: CGFloat
         let clock: ReflowClock
         let enhancedUI: EnhancedUIGuard
+        /// PF-L: windows the WindowServer moved: written even when the app
+        /// already reports the target (it may not know where it is).
+        let followUps: Set<WindowID>
 
         /// The timing carries no app name: names are resolved once per pid
         /// when the report is folded, never per write.
@@ -222,12 +237,17 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             guard let actual else {
                 return .vanished
             }
-            if matches(item.desired, actual) || item.parked.map({ isParked(actual, $0, tolerance) }) == true {
+            let onTarget = matches(item.desired, actual)
+            let followsWindowServer = followUps.contains(id)
+            if !followsWindowServer, onTarget || item.parked.map({ isParked(actual, $0, tolerance) }) == true {
                 return .alreadyCorrect(actual)
             }
+            // PF-L: after a WindowServer move the app may report its target
+            // and still not know it: write the position anyway.
+            let current = onTarget ? forcingPosition(item.desired) : actual
             do {
                 enhancedUI.willWrite(pid: id.pid)
-                try actuator.setFrame(item.desired, from: actual, for: id, verify: item.parked == nil)
+                try actuator.setFrame(item.desired, from: current, for: id, verify: item.parked == nil)
                 return item.parked == nil ? .applied : .parkedApplied(clamped: false)
             } catch {
                 // macOS may clamp a parked position; accept a landing that is
@@ -270,13 +290,17 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// concurrently. A parked write counts as done when the window keeps its
     /// size and only a small strip stays on the intended side, because macOS
     /// may clamp the position. Focus is applied last, after every lane.
+    /// PF-L: `windowServerFirst` (`planWindowServerFirst`) are moved by the
+    /// WindowServer in one transaction before any lane starts; their
+    /// Accessibility write follows in the lanes as usual.
     @discardableResult
     public func reconcile(
         frames: [WindowID: CGRect],
         parked: [WindowID: ParkedTarget] = [:],
         focused: WindowID?,
         currentlyFocused: WindowID?,
-        trusted: TrustedFrames = TrustedFrames()
+        trusted: TrustedFrames = TrustedFrames(),
+        windowServerFirst: Set<WindowID> = []
     ) -> ReconcileReport {
         var report = ReconcileReport()
         // An animation frame still being written would make its app look
@@ -293,11 +317,17 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             toPark = toPark.filter { !stuck.contains($0.key.pid) }
             report.deferred = Set(frames.keys).union(parked.keys).filter { stuck.contains($0.pid) }.sorted()
         }
+        moveFirst(windowServerFirst, frames: toWrite, parked: toPark)
         (toWrite, toPark) = skipTrusted(frames: toWrite, parked: toPark, trusted: trusted, into: &report)
         let lanes = planWriteLanes(frames: toWrite, parked: toPark)
-        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, enhancedUI: enhancedUI)
+        let followUps = ledger.snapshot(Set(toWrite.keys).union(toPark.keys))
+        let worker = LaneWorker(
+            actuator: actuator, tolerance: tolerance, clock: clock, enhancedUI: enhancedUI,
+            followUps: Set(followUps.keys)
+        )
         let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { worker.process($0) }
         let windowTimings = fold(lanes: lanes, results: results, frames: frames, parked: parked, into: &report)
+        ledger.followed(report, snapshot: followUps)
         var focusMilliseconds = 0.0
         var focusCalls = 0
         if let focused, focused != currentlyFocused, parked[focused] == nil {
@@ -338,20 +368,25 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     ///   lane's writes, only while it is the newest intent (an older one
     ///   never lands after a newer one), and moves behind a newer pass that
     ///   writes its window again without an intent of its own.
+    /// PF-L: `windowServerFirst` move through the WindowServer before the
+    /// lanes start, as in `reconcile`.
     public func dispatch(
         frames: [WindowID: CGRect],
         parked: [WindowID: ParkedTarget] = [:],
         focused: WindowID?,
         currentlyFocused: WindowID?,
-        trusted: TrustedFrames = TrustedFrames()
+        trusted: TrustedFrames = TrustedFrames(),
+        windowServerFirst: Set<WindowID> = []
     ) -> DispatchedPass {
         let started = clock()
         var report = ReconcileReport()
         let pids = Set(frames.keys.map(\.pid)).union(parked.keys.map(\.pid))
         motionLanes.discardPending(pids: pids)
+        moveFirst(windowServerFirst, frames: frames, parked: parked)
         let (toWrite, toPark) = skipTrusted(frames: frames, parked: parked, trusted: trusted, into: &report)
         var lanes = planWriteLanes(frames: toWrite, parked: toPark)
         let written = Set(toWrite.keys).union(toPark.keys)
+        let followUps = ledger.snapshot(written)
         var step: DispatchFocusStep?
         if let focused, focused != currentlyFocused, parked[focused] == nil {
             step = DispatchFocusStep(target: focused, generation: focusBook.issue())
@@ -375,7 +410,10 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 step.run(book: book, clock: clock) { try actuator.value.focus(id: $0) }
             }
         }
-        let worker = LaneWorker(actuator: actuator, tolerance: tolerance, clock: clock, enhancedUI: enhancedUI)
+        let worker = LaneWorker(
+            actuator: actuator, tolerance: tolerance, clock: clock, enhancedUI: enhancedUI,
+            followUps: Set(followUps.keys)
+        )
         let epilogue = batchEnded
         let launched: LaunchedLanes<ItemResult>
         switch concurrency {
@@ -411,7 +449,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
         return DispatchedPass(
             launched: launched, frames: frames, parked: parked, report: report, focus: step, started: started,
-            landingBounds: landingBounds
+            landingBounds: landingBounds, followUps: followUps
         )
     }
 
@@ -445,6 +483,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         let windowTimings = fold(
             lanes: pass.launched.lanes, results: results, frames: pass.frames, parked: pass.parked, into: &report
         )
+        ledger.followed(report, snapshot: pass.followUps)
         var ended = pass.started
         var timedOut = false
         for result in results.values {
@@ -496,6 +535,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         fileprivate let report: ReconcileReport
         fileprivate let focus: DispatchFocusStep?
         fileprivate let started: TimeInterval
+        /// PF-L: the WindowServer moves this pass's writes follow.
+        fileprivate let followUps: [WindowID: Int]
         /// SM-13: per written window, the latest a write can land after
         /// dispatch (claim wait plus one stall per write of its lane up to
         /// and including its own; 0 when written before `dispatch` returned).
@@ -505,7 +546,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         fileprivate init(
             launched: LaunchedLanes<ItemResult>, frames: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
             report: ReconcileReport, focus: DispatchFocusStep?, started: TimeInterval,
-            landingBounds: [WindowID: TimeInterval]
+            landingBounds: [WindowID: TimeInterval], followUps: [WindowID: Int]
         ) {
             self.launched = launched
             self.frames = frames
@@ -514,6 +555,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             self.focus = focus
             self.started = started
             self.landingBounds = landingBounds
+            self.followUps = followUps
         }
 
         /// Every lane returned: `collect` will not wait.
@@ -525,6 +567,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// PA-04: a window sitting at a frame Gio placed and verified needs
     /// neither the two AX reads nor a write. Windows that moved in this
     /// motion are not trusted by the caller, so they are still verified.
+    /// PF-L: a window the WindowServer moved is never skipped: its app has
+    /// not been told yet.
     private func skipTrusted(
         frames: [WindowID: CGRect], parked: [WindowID: ParkedTarget], trusted: TrustedFrames,
         into report: inout ReconcileReport
@@ -535,12 +579,14 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             return (toWrite, toPark)
         }
         var skipped: [WindowID] = []
-        for (id, target) in toPark where trusted.canSkipRead(id, desired: target.frame) {
+        for (id, target) in toPark where !ledger.contains(id) && trusted.canSkipRead(id, desired: target.frame) {
             skipped.append(id)
             toPark.removeValue(forKey: id)
             report.settledFrames[id] = target.frame
         }
-        for (id, frame) in toWrite where parked[id] == nil && trusted.canSkipRead(id, desired: frame) {
+        for (id, frame) in toWrite
+            where parked[id] == nil && !ledger.contains(id) && trusted.canSkipRead(id, desired: frame)
+        {
             skipped.append(id)
             toWrite.removeValue(forKey: id)
             report.settledFrames[id] = frame
@@ -684,9 +730,13 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// Windows without a known origin in `from` are skipped. Returns the ids
     /// actually written, sorted, so the caller can record them for echo
     /// suppression and update its physical-frame memory.
-    @discardableResult
     /// PF-02: `waitForMotion: false` when the caller already waited, or
     /// writes only entries (new windows no motion lane holds a frame for).
+    /// PF-L: a pre-position that keeps the size is a pure move: the
+    /// WindowServer makes it, in one transaction, without the app; the
+    /// motion's or the final pass's Accessibility writes follow it. One that
+    /// resizes (or with no WindowServer) is written through Accessibility.
+    @discardableResult
     public func preposition(
         frames: [WindowID: CGRect], from: [WindowID: CGRect], waitForMotion: Bool = true
     ) -> [WindowID] {
@@ -695,21 +745,104 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             return []
         }
         if waitForMotion {
+            // A queued motion frame landing after the move would undo it.
             waitForMotionIdle(timeout: 0.3)
         }
-        let lanes = planWriteLanes(frames: known, parked: [:])
+        let moved = moveThroughWindowServer(known.filter { sameSize($0.value, from[$0.key]!) })
+        let rest = known.filter { !moved.contains($0.key) }
+        guard !rest.isEmpty else {
+            return moved.sorted()
+        }
+        let lanes = planWriteLanes(frames: rest, parked: [:])
         let actuator = actuator
         let writer = PrepositionWriter(actuator: actuator, enhancedUI: enhancedUI)
         let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { item in
             writer.write(item.desired, from: from[item.id]!, for: item.id)
         }
-        var written: [WindowID] = []
+        var written = Array(moved)
         for item in lanes.flatMap(\.items).sorted(by: { $0.index < $1.index }) {
             if case .completed(true)? = results[item.index] {
                 written.append(item.id)
             }
         }
         return written.sorted()
+    }
+
+    /// PF-L: windows the WindowServer moved that no Accessibility write has
+    /// followed yet, with where the WindowServer put them.
+    public var windowServerPending: [WindowID: CGRect] {
+        ledger.frames
+    }
+
+    /// PF-L: tell every pending window's app where the WindowServer put it
+    /// (one lean Accessibility write each, waiting, bounded by the stall
+    /// timeout). Quit and restore-all run it first: the restore reads the
+    /// apps' frames, and an app that never learned its window was hidden
+    /// would report it on screen.
+    public func syncWindowServerMoves() {
+        let pending = ledger.frames
+        guard !pending.isEmpty else {
+            return
+        }
+        let snapshot = ledger.snapshot(pending.keys)
+        let lanes = planWriteLanes(frames: pending, parked: [:])
+        let writer = PrepositionWriter(actuator: actuator, enhancedUI: enhancedUI)
+        let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { item in
+            writer.write(item.desired, from: forcingPosition(item.desired), for: item.id)
+        }
+        var written: [WindowID] = []
+        for item in lanes.flatMap(\.items) {
+            if case .completed(true)? = results[item.index] {
+                written.append(item.id)
+            }
+        }
+        ledger.followed(written, snapshot: snapshot)
+    }
+
+    /// PF-L: the parks and reveals of a pass, before its lanes start.
+    private func moveFirst(_ ids: Set<WindowID>, frames: [WindowID: CGRect], parked: [WindowID: ParkedTarget]) {
+        guard !ids.isEmpty else {
+            return
+        }
+        var targets: [WindowID: CGRect] = [:]
+        for id in ids {
+            if let target = parked[id] {
+                targets[id] = target.frame
+            } else if let frame = frames[id] {
+                targets[id] = frame
+            }
+        }
+        _ = moveThroughWindowServer(targets)
+    }
+
+    /// PF-L: one WindowServer transaction for every window with a known
+    /// `CGWindowID` (never Gio's own). Returns the windows it moved, now
+    /// pending until an Accessibility write follows; none when the transport
+    /// is off, missing or refused the transaction.
+    private func moveThroughWindowServer(_ targets: [WindowID: CGRect]) -> Set<WindowID> {
+        guard windowServerEnabled, let windowServer, !targets.isEmpty else {
+            return []
+        }
+        var moves: [WindowServerMove] = []
+        var ids: [WindowID] = []
+        for id in targets.keys.sorted() where id.pid != ownPID {
+            guard let windowID = windowServer.windowServerID(of: id) else {
+                continue
+            }
+            moves.append(WindowServerMove(windowID: windowID, frame: targets[id]!))
+            ids.append(id)
+        }
+        guard !moves.isEmpty, windowServer.commit(moves) else {
+            return []
+        }
+        for id in ids {
+            ledger.record(id, frame: targets[id]!)
+        }
+        return Set(ids)
+    }
+
+    private func sameSize(_ a: CGRect, _ b: CGRect) -> Bool {
+        abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
     }
 
     /// FI-05: read-only current frames for the render check, one lane per
@@ -817,6 +950,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         names.forget(pid)
         motionLanes.forget(pid: pid)
         enhancedUI.forget(pid: pid)
+        ledger.forget(pid: pid)
     }
 
     /// PF-K: apps Gio left with `AXEnhancedUserInterface` off: a motion

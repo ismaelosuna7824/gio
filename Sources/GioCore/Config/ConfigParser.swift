@@ -393,6 +393,10 @@ func applyBehaviorKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
             config.behavior.moveCrossesMonitorAtEdge = $0
         }
+    case "skylight":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
+            config.behavior.skyLight = $0
+        }
     default:
         warnings.append("line \(line): unknown behavior key '\(key)', ignored")
     }

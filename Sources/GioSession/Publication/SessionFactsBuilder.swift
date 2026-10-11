@@ -19,6 +19,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var homeDirectory: () -> String
         /// SM-02b: refresh the shareable content when the snapshot renderer is in force.
         public var prefetchSnapshotContent: (Bool) -> Void
+        /// PF-L: the WindowServer transport's state (config, symbols, probe).
+        public var windowServerStatus: () -> WindowServerTransportStatus
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -27,8 +29,11 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             engine: @escaping () -> ScrollableLayoutEngine, tileableModes: @escaping () -> [WindowID: WindowMode],
             screenRecordingGranted: @escaping () -> Bool, accessibilityGranted: @escaping () -> Bool,
             configFileExists: @escaping (String) -> Bool, homeDirectory: @escaping () -> String,
-            prefetchSnapshotContent: @escaping (Bool) -> Void, log: @escaping (LogLevel, String) -> Void
+            prefetchSnapshotContent: @escaping (Bool) -> Void,
+            windowServerStatus: @escaping () -> WindowServerTransportStatus,
+            log: @escaping (LogLevel, String) -> Void
         ) {
+            self.windowServerStatus = windowServerStatus
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
@@ -47,6 +52,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
     private let context: Context
     /// SM-01: logs the effective renderer only when it changes.
     private var rendererLog = RendererLogGate()
+    /// PF-L: logs `skylight available=... reason=...` once, then on change.
+    private var windowServerLog = WindowServerStatusLogGate()
 
     public init(context: Context) {
         self.context = context
@@ -87,6 +94,10 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         context.prefetchSnapshotContent(
             effectiveRenderer(config: session.config.animations, permission: screenRecording) == .snapshot
         )
+        let windowServer = context.windowServerStatus()
+        if let line = windowServerLog.line(for: windowServer) {
+            context.log(.info, line)
+        }
         return SessionFacts(
             configPath: path, configExists: context.configFileExists(path),
             configMessages: context.configMessages(), accessibilityGranted: context.accessibilityGranted(),
@@ -99,7 +110,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
                 )
             },
             windows: windows, screenRecordingGranted: screenRecording,
-            strip: workspaceStrip()
+            strip: workspaceStrip(), windowServer: windowServer
         )
     }
 

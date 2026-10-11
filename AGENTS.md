@@ -47,6 +47,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 8. **Cocoa coordinates inside Core, AX coordinates only at the adapter boundary** (`AXVerticalFlip`). Layout frames are screen-space; `viewportOffset` is content-space; convert before comparing (fix `592c89d`).
 9. **An invalid config never breaks the WM**, and config writes preserve unrelated lines and comments (`patchGioConfig`).
 10. **Absence is not death.** Remove windows only on proof (destroyed event, terminated pid, complete scan).
+11. **SkyLight moves are never the final word; Accessibility follows** (PF-L). Private WindowServer moves go only through `WindowReconciler` (`WindowServerMover`, loaded at runtime with `dlopen`/`dlsym`, never linked), and every moved window stays pending until an Accessibility write of it succeeded. Any new transport path needs the fallback: missing symbols or `[behavior] skylight = false` leave the Accessibility-only path exactly as it was.
 
 ## Workflow rules
 

@@ -270,29 +270,36 @@ public func diagnosticChecklist(
         }
     )
 
+    // PF-L: how hidden and revealed windows move, animated or not.
+    let transport = [
+        facts.windowServer.available
+            ? "Hidden windows: SkyLight, then Accessibility (\(facts.windowServer.reason))"
+            : "Hidden windows: Accessibility only (\(facts.windowServer.reason))",
+    ]
     let renderer: DiagnosticCheck
     if !config.animations.enabled {
         renderer = DiagnosticCheck(
             id: "renderer", title: "Renderer", symbol: "wand.and.stars", tint: .pink, status: .neutral,
-            badge: "Off", summary: "Animations are off; windows move instantly.", details: []
+            badge: "Off", summary: "Animations are off; windows move instantly.", details: transport
         )
     } else if effectiveRenderer(config: config.animations, permission: facts.screenRecordingGranted) == .snapshot {
         renderer = DiagnosticCheck(
             id: "renderer", title: "Renderer", symbol: "wand.and.stars", tint: .pink, status: .ok,
             badge: "Snapshot",
-            summary: "Slides window images at the display's refresh rate, then places the windows once.", details: []
+            summary: "Slides window images at the display's refresh rate, then places the windows once.",
+            details: transport
         )
     } else if wantsSnapshot {
         renderer = DiagnosticCheck(
             id: "renderer", title: "Renderer", symbol: "wand.and.stars", tint: .pink, status: .warning,
             badge: "Fallback",
             summary: "Snapshot is selected but Screen Recording is missing, so windows move through Accessibility.",
-            details: []
+            details: transport
         )
     } else {
         renderer = DiagnosticCheck(
             id: "renderer", title: "Renderer", symbol: "wand.and.stars", tint: .pink, status: .ok,
-            badge: "Accessibility", summary: "Windows animate live through Accessibility.", details: []
+            badge: "Accessibility", summary: "Windows animate live through Accessibility.", details: transport
         )
     }
 

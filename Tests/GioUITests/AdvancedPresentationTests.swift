@@ -176,6 +176,30 @@ final class AdvancedPresentationTests: XCTestCase {
         XCTAssertEqual(check(checklist(facts(displays: 2)), "displays").badge, "2 displays")
     }
 
+    /// PF-L: the Renderer card says how hidden windows move, and why.
+    func testRendererCardNamesTheHiddenWindowTransport() {
+        var available = facts()
+        available = SessionFacts(
+            configPath: available.configPath, configExists: true, configMessages: [], accessibilityGranted: true,
+            currentWorkspace: 1, displays: [], windows: [], screenRecordingGranted: true,
+            windowServer: windowServerTransportStatus(enabled: true, missingSymbols: [])
+        )
+        XCTAssertTrue(check(checklist(available), "renderer").details.contains(
+            "Hidden windows: SkyLight, then Accessibility (symbols-resolved)"
+        ))
+        var config = GioConfig()
+        config.animations.enabled = false
+        let off = SessionFacts(
+            configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
+            currentWorkspace: 1, displays: [], windows: [],
+            windowServer: windowServerTransportStatus(enabled: true, missingSymbols: ["SLSTransactionCreate"])
+        )
+        XCTAssertEqual(
+            check(checklist(off, config: config), "renderer").details,
+            ["Hidden windows: Accessibility only (missing-symbols:SLSTransactionCreate)"]
+        )
+    }
+
     func testRendererOffWhenAnimationsAreDisabled() {
         var config = GioConfig()
         config.animations.enabled = false

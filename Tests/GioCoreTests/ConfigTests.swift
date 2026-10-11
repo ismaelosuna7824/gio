@@ -43,6 +43,7 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.layout.centerFocusedColumn, .never)
         XCTAssertFalse(config.behavior.focusFollowsMouse)
         XCTAssertTrue(config.behavior.mouseFollowsFocus)
+        XCTAssertTrue(config.behavior.skyLight)
         XCTAssertTrue(config.animations.enabled)
         XCTAssertTrue(config.keybindings.isEmpty)
         XCTAssertTrue(config.rules.isEmpty)
@@ -106,6 +107,7 @@ final class ConfigTests: XCTestCase {
             "[layout]\npadding = \"wide\"\n",
             "[layout]\ndefault-column-width = 0\n",
             "[behavior]\nfocus-follows-mouse = \"yes\"\n",
+            "[behavior]\nskylight = \"off\"\n",
             "[keybindings]\n\"Alt+H\" = \"fly\"\n",
             "[keybindings]\n\"H\" = \"focus-left\"\n",
             "[[window-rules]]\nmode = \"floating\"\n",
@@ -121,6 +123,13 @@ final class ConfigTests: XCTestCase {
             }
             XCTAssertFalse(errors.messages.isEmpty, "no message for: \(doc)")
         }
+    }
+
+    /// PF-L: `[behavior] skylight` turns the private WindowServer transport off.
+    func testSkyLightCanBeTurnedOff() throws {
+        let (config, warnings) = try parseGioConfig("[behavior]\nskylight = false\n").get()
+        XCTAssertTrue(warnings.isEmpty)
+        XCTAssertFalse(config.behavior.skyLight)
     }
 
     func testLoaderFallsBackToDefaultsOnInvalid() {

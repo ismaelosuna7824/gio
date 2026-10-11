@@ -39,6 +39,10 @@ public func defaultConfigTemplate() -> String {
     # With two or more displays: move-column-left / -right (Alt+Shift+H / L)
     # at the first / last column send it to the display on that side.
     move-crosses-monitor-at-edge = false
+    # Move hidden and revealed windows through macOS's private WindowServer
+    # interface (SkyLight) first: instant and in one step. Accessibility still
+    # writes every window afterwards. false keeps Accessibility only.
+    skylight = true
 
     [animations]
     enabled = true

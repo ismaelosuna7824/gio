@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ismaelosuna7824/gio/actions/workflows/ci.yml/badge.svg)](https://github.com/ismaelosuna7824/gio/actions/workflows/ci.yml)
 
-Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It works through public macOS APIs only (Accessibility, `NSWorkspace`, `CGEvent`), so **System Integrity Protection stays on** and no private compositor API is used.
+Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It moves windows through public macOS APIs (Accessibility, `NSWorkspace`, `CGEvent`) and, when this macOS offers them, a few private calls that make hiding and revealing windows instant (see [Private APIs](#private-apis)). **System Integrity Protection stays on**; Gio injects nothing into other processes or the Dock.
 
 > Status: pre-release. The version comes from the release tag (`MARKETING_VERSION`, see [RELEASING](docs/RELEASING.md)); local and SwiftPM builds report the last tag or `0.0.0-dev`. Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read [Known limitations](docs/TESTING.md#known-limitations) before relying on it.
 
@@ -13,7 +13,7 @@ Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges 
 - **Dynamic vertical workspaces.** Like Niri, each display has its own stack of workspaces with always one empty workspace at the bottom; emptied workspaces disappear once you leave them. Windows of inactive workspaces are hidden off the bottom corner of the display, and the switch is animated.
 - **Automatic window admission.** Every window is classified as tile, float (with a reason), ignore or suspend. Dialogs, fixed-size windows and panels float; minimized windows stay registered and rejoin their column when restored.
 - **Window rules.** `[[window-rules]]` in the config can force an app to float, tile or start on a given workspace.
-- **Parking of off-viewport columns.** macOS will not place a window fully off-screen, so hidden columns keep a 1 pt sliver inside the display edge.
+- **Parking of off-viewport columns.** macOS will not place a window fully off-screen, so hidden columns keep a 1 pt sliver inside the display edge. Hiding and revealing windows goes through the WindowServer first when it can (see [Private APIs](#private-apis)).
 - **Animation.** Scroll, focus and workspace moves animate with a Niri-style spring (or an `ease-out` curve). By default the real windows move once and an overlay slides images of them at the display's refresh rate, so slow apps keep up; this needs Screen Recording (see [Why Screen Recording](#why-screen-recording)).
 - **Multi-display aware** layout state (one workspace stack and viewport per display), niri's monitor actions, and optional edge crossing: `move-column-left/right-or-to-monitor-*` and `focus-column-or-monitor-*`, or `[behavior] move-crosses-monitor-at-edge` for the plain `Alt+Shift+H/L`, carry a column past the strip's edge to the next display.
 - **Desktop app.** One main window (Overview, Shortcuts, Layout, Focus, Animations, Rules, Logs, Diagnostics), a menu bar item, an `Alt+Space` launcher panel and an `Alt+O` workspace overview (every workspace as a row of window thumbnails). Closing the window keeps Gio running from the menu bar.
@@ -43,6 +43,15 @@ Capturing those images is what macOS calls Screen Recording (ScreenCaptureKit, m
 - **Without it, or on macOS 13**, Gio still works: it falls back to the Accessibility motion (the log shows `renderer effective=ax reason=screen-recording-missing`), so slow apps move at their own pace, and the overview shows app icons.
 - **Privacy.** The images stay in memory; Gio never writes them to disk or sends them anywhere. Window titles never reach the log.
 - **Granting it.** Gio never asks at launch. Use **Request access** in the app's Overview or Diagnostics, then relaunch Gio: macOS usually applies a new grant only on the next launch.
+
+### Private APIs
+
+Hiding a window means moving it to the display edge, and revealing it means moving it back. Through Accessibility each app makes that move itself, at its own pace (Chrome and Electron apps can take tens of milliseconds per window), so hidden windows used to leave and return one app at a time. When this macOS has them, Gio also uses:
+
+- **SkyLight transactions** (`SLSMainConnectionID`, `SLSTransactionCreate`, `SLSTransactionMoveWindowWithGroup`, `SLSTransactionCommit`, from the private `SkyLight` framework): the WindowServer moves every window being hidden or revealed in one step, instantly, without waiting for the apps.
+- **`_AXUIElementGetWindow`** (Accessibility, private): the WindowServer id of each window, read once when Gio registers it.
+
+They are loaded at runtime (`dlopen`/`dlsym`), never linked. Accessibility stays the source of truth: every window the WindowServer moved is written through Accessibility right after, so the app learns where it is. If a symbol is missing, or `[behavior] skylight = false` is set in the config, Gio uses Accessibility alone, as before; the log says which (`skylight available=... reason=...`) and so does **Diagnostics > Renderer**. Gio also switches an app's `AXEnhancedUserInterface` attribute off while it writes that app's windows and back on right after (assistive apps such as VoiceOver set it, and it makes Chromium and Electron apps slow to move).
 
 ## Build and run
 
