@@ -35,6 +35,7 @@ private enum ConfigSection: Equatable {
     case focusRing
     case focus
     case logging
+    case gestures
     case keybindings
     case windowRules
     case workspaceEntry
@@ -116,6 +117,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "focus-ring": section = .focusRing
             case "focus": section = .focus
             case "logging": section = .logging
+            case "gestures": section = .gestures
             case "keybindings": section = .keybindings
             case "dwindle": section = .dwindle
             case let name where name.hasPrefix("animations."):
@@ -169,6 +171,8 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyLoggingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .dwindle:
             applyDwindleKey(key, value: value, line: line, warnings: &warnings, config: &config)
+        case .gestures:
+            applyGesturesKey(key, value: value, line: line, warnings: &warnings, config: &config)
         case .keybindings:
             applyBindingKey(key, value: value, line: line, errors: &errors, config: &config)
         case .windowRules:
@@ -185,6 +189,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
         }
     }
     closeRule(line: rawLines.count + 1)
+    validateGestures(&config, warnings: &warnings)
     // NW-01: a rule naming no [[workspace]] keeps its other opinions.
     let names = Set(config.workspaces.map(\.name))
     for index in config.rules.indices {

@@ -38,6 +38,7 @@ struct FocusSettingsView: View {
             scrollingCard
             pointerCard
             displaysCard
+            gesturesCard
         }
         .onReceive(model.$snapshot) { snapshot in
             draft.adopt(saved: FocusSectionDraft(config: snapshot.config))
@@ -153,6 +154,68 @@ struct FocusSettingsView: View {
                     caption: "Move column left / right (Alt+Shift+H / L) from the first or last column sends it to the next display, entering by the edge it crossed.",
                     isOn: current.moveCrossesMonitorAtEdge
                 )
+            }
+        }
+    }
+
+    private static let fingerOptions: [(Int, String)] = GesturesSectionConfig.fingerRange.map { ($0, "\($0)") }
+
+    /// TG-02 trackpad gestures.
+    private var gesturesCard: some View {
+        SectionCard(
+            "Trackpad Gestures",
+            footer: "macOS uses three- and four-finger swipes for Mission Control and full-screen apps by default. Move or turn them off in System Settings > Trackpad > More Gestures, or both act."
+        ) {
+            CardRow {
+                ToggleRow(
+                    "Scroll the strip",
+                    caption: "Swipe left or right: the strip follows the fingers and settles on a column.",
+                    isOn: current.gestures.scroll
+                )
+            }
+            if draft.current.gestures.scroll {
+                CardRow {
+                    SegmentedRow("Fingers", selection: current.gestures.scrollFingers, options: Self.fingerOptions, width: 150)
+                }
+                CardRow {
+                    SliderRow(
+                        "Sensitivity", caption: "Strip travel per trackpad width, in screen widths.",
+                        value: current.gestures.scrollSensitivity, in: GesturesSectionConfig.sensitivityRange,
+                        step: 0.05, format: { String(format: "%.2f×", $0) }
+                    )
+                }
+            }
+            CardRow {
+                ToggleRow(
+                    "Natural direction",
+                    caption: "Content follows the fingers, like macOS natural scrolling. Applies to the strip and to workspaces.",
+                    isOn: current.gestures.natural
+                )
+            }
+            CardRow {
+                ToggleRow(
+                    "Switch workspaces", caption: "Swipe up or down: one workspace per swipe.",
+                    isOn: current.gestures.workspaceSwipe
+                )
+            }
+            if draft.current.gestures.workspaceSwipe {
+                CardRow {
+                    SegmentedRow("Fingers", selection: current.gestures.workspaceFingers, options: Self.fingerOptions, width: 150)
+                }
+            }
+            CardRow(divider: draft.current.gestures.overview) {
+                ToggleRow(
+                    "Workspace overview", caption: "Swipe up to open or close it.",
+                    isOn: current.gestures.overview
+                )
+            }
+            if draft.current.gestures.overview {
+                CardRow(divider: false) {
+                    SegmentedRow("Fingers", selection: current.gestures.overviewFingers, options: Self.fingerOptions, width: 150)
+                }
+            }
+            ForEach(draft.current.gestures.problems, id: \.self) { problem in
+                InlineProblem(problem).padding(.horizontal, GioSpacing.m - 2).padding(.bottom, GioSpacing.s - 2)
             }
         }
     }

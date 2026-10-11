@@ -143,6 +143,26 @@ public func defaultConfigTemplate() -> String {
     # warn or error. Lines below it cost nothing; use "debug" to troubleshoot.
     level = "info"
 
+    [gestures]
+    # Trackpad swipes (3-5 fingers). macOS uses three and four fingers for its
+    # own swipes by default: turn those off or move them in System Settings >
+    # Trackpad > More Gestures, or both act (Diagnostics lists collisions).
+    # Horizontal swipe scrolls the strip with the fingers and snaps to a
+    # column on release.
+    scroll = true
+    scroll-fingers = 3
+    # Strip travel per trackpad width, in screen widths (0.1-5.0).
+    scroll-sensitivity = 1.0
+    # Content follows the fingers; false inverts scroll and workspace swipe.
+    natural = true
+    # Vertical swipe switches workspace, one per swipe.
+    workspace-swipe = true
+    workspace-fingers = 3
+    # Swipe up toggles the workspace overview (off: macOS Mission Control
+    # uses four fingers up unless moved). Not on workspace-fingers.
+    overview = false
+    overview-fingers = 4
+
     [keybindings]
     "Alt+H" = "focus-left"
     "Alt+L" = "focus-right"

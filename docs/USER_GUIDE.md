@@ -230,6 +230,21 @@ Used when `[focus] indicator = "ring"`. A rounded outline around the focused win
 
 The ring is hidden when nothing is focused, the focused window is minimized, maximized or fullscreen (`hide-when-maximized`), fullscreen without room for it (it shows when `layout.fullscreen-gap` is at least the ring `width`) or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). Floating windows get the ring too. The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
 
+### `[gestures]`
+
+Trackpad swipes (see [Trackpad gestures](#trackpad-gestures)). Unlike the other tables, a bad value here only warns and keeps that key's default, so a gesture typo never sets the rest of the file aside. Settings, Focus, **Trackpad Gestures** edits the same keys.
+
+| Key | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `scroll` | bool | `true` | A horizontal swipe scrolls the strip of the display under the pointer: it follows the fingers, and on release it springs to a column edge with the speed of the swipe. |
+| `scroll-fingers` | number | `3` | Fingers for the scroll: `3`, `4` or `5`. Two fingers are the system's own scrolling and are not offered. |
+| `scroll-sensitivity` | number | `1.0` | Strip travel for a swipe across the whole trackpad, in screen widths. Clamped to `0.1...5.0` with a warning. |
+| `natural` | bool | `true` | Content follows the fingers, like macOS natural scrolling: swipe left to see the columns on the right, swipe up to go to the workspace below. `false` inverts the scroll and the workspace swipe. |
+| `workspace-swipe` | bool | `true` | A vertical swipe switches to the workspace above or below, one per swipe (`focus-workspace-up` / `-down`). |
+| `workspace-fingers` | number | `3` | Fingers for the workspace swipe: `3`, `4` or `5`. May equal `scroll-fingers` (the direction tells them apart). |
+| `overview` | bool | `false` | A swipe up opens or closes the workspace overview (like `Alt+O`). Off by default because macOS Mission Control already uses a four-finger swipe up. |
+| `overview-fingers` | number | `4` | Fingers for the overview swipe: `3`, `4` or `5`. Must differ from `workspace-fingers` while both are on (both swipe vertically): otherwise the overview is turned off with a warning. |
+
 ### Custom key bindings
 
 The `[keybindings]` table maps a combo to an action name: `"Alt+H" = "focus-left"`.

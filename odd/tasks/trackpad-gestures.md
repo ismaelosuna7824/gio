@@ -40,15 +40,37 @@ read for the snap and focus rules.
   movement, two-finger scrolling). `TouchFrameGate` lets through only frames with at least
   the smallest configured finger count, plus the one frame that drops below it, so pointer
   movement never reaches the session queue.
+- TG-02 config `[gestures]` (`GioCore/Config/GesturesConfig.swift`): `scroll` (true),
+  `scroll-fingers` (3), `scroll-sensitivity` (1.0 screen widths per trackpad width, 0.1-5.0),
+  `natural` (true, applies to scroll and workspace swipe), `workspace-swipe` (true),
+  `workspace-fingers` (3), `overview` (false), `overview-fingers` (4). Unlike the other
+  tables, an invalid value is a warning that keeps the key's default (the assignment's rule:
+  a gesture typo must not set the whole file aside); an out-of-range sensitivity is clamped
+  with a warning like the other numbers. Finger counts are 3-5: two fingers are the system's
+  scrolling, which Gio would have to swallow from the event stream (a filtering `scrollWheel`
+  tap: Input Monitoring, tap timeouts, and every app's scrolling through Gio's tap), so no
+  swallowing is needed at all. Conflict rule: the workspace swipe and the overview both swipe
+  vertically, so the same count for both (both on) is rejected after the file is read: the
+  workspace swipe keeps its fingers, the overview is turned off, one warning. Scroll and a
+  vertical gesture may share a count (the axis lock tells them apart). The overview is off by
+  default because macOS maps four fingers up to Mission Control unless the user moved it
+  (and three fingers up by default). Settings: a Trackpad Gestures card in Focus (same draft
+  and Apply bar; `GesturesSettingsForm` validates and patches, comments kept).
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
-  80 ms velocity, finger-count rules) and the touch frame gate. Commit: see Progress.
+  80 ms velocity, finger-count rules) and the touch frame gate. Commit `4df4437`.
+- [x] TG-02 — `[gestures]` table: parse, validate (warnings keep defaults, finger conflicts),
+  template, Settings card and form. Commit: see Progress.
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
   scope`, `cannot find type 'TouchFrame' in scope`); GREEN
   `swift test --filter GioCoreTests.GestureRecognizerTests`: 15 tests, 0 failures.
+- TG-02: RED `swift build --build-tests` failed (`cannot find 'GesturesSectionConfig' in
+  scope`); GREEN `GesturesConfigTests` 10 tests plus the existing config, patcher, template
+  and Settings presentation tests, 0 failures.
 
 ## Progress
-- TG-01 committed (hash recorded in the follow-up docs commit).
+- TG-01 committed `4df4437`.
+- TG-02 committed (hash recorded in the follow-up docs commit).

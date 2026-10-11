@@ -305,17 +305,28 @@ final class SettingsPresentationTests: XCTestCase {
         config.layout.centerFocusedColumn = .onOverflow
         config.behavior.focusFollowsMouse = true
         config.behavior.moveCrossesMonitorAtEdge = true
+        config.gestures.scrollFingers = 4
         let draft = FocusSectionDraft(config: config)
         XCTAssertEqual(draft.centerFocusedColumn, .onOverflow)
         XCTAssertTrue(draft.focusFollowsMouse)
         XCTAssertTrue(draft.moveCrossesMonitorAtEdge, "MM-06")
+        XCTAssertEqual(draft.gestures.scrollFingers, 4, "TG-02")
         XCTAssertEqual(
             draft.edits,
             [.set(table: "layout", key: "center-focused-column", value: .string("on-overflow"))]
                 + behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true, moveCrossesMonitorAtEdge: true)
-                + draft.ring.edits + draft.indicator.edits
+                + draft.ring.edits + draft.indicator.edits + draft.gestures.edits
         )
         XCTAssertTrue(draft.problems.isEmpty)
+    }
+
+    /// TG-02: gesture problems block Apply like any other field.
+    func testFocusDraftCountsGestureProblems() {
+        var draft = FocusSectionDraft(config: GioConfig())
+        draft.gestures.overview = true
+        draft.gestures.overviewFingers = draft.gestures.workspaceFingers
+        XCTAssertEqual(draft.problems, draft.gestures.problems)
+        XCTAssertEqual(draft.problems.count, 1)
     }
 
     func testFocusDraftProblemsOnlyCountTheActiveIndicator() {

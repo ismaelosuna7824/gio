@@ -220,6 +220,8 @@ public struct GioConfig: Sendable {
     public var workspaces: [WorkspaceDefinition]
     /// DW-03 `[dwindle]`.
     public var dwindle: DwindleSectionConfig
+    /// TG-02: trackpad gestures.
+    public var gestures: GesturesSectionConfig
 
     public init(
         layout: LayoutSectionConfig = LayoutSectionConfig(),
@@ -232,8 +234,10 @@ public struct GioConfig: Sendable {
         unboundKeys: [HotkeyCombo] = [],
         rules: [WindowRule] = [],
         workspaces: [WorkspaceDefinition] = [],
-        dwindle: DwindleSectionConfig = DwindleSectionConfig()
+        dwindle: DwindleSectionConfig = DwindleSectionConfig(),
+        gestures: GesturesSectionConfig = GesturesSectionConfig()
     ) {
+        self.gestures = gestures
         self.workspaces = workspaces
         self.layout = layout
         self.behavior = behavior
