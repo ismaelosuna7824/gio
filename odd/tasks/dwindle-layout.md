@@ -95,7 +95,7 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `visibleFrames` that `SessionHost` fills before every IPC dispatch, and the registry modes).
 
 ## Tasks
-- [ ] DW-01 — Model, engine and planning. Commit `cdef806`.
+- [x] DW-01 — Model, engine and planning. Commit `cdef806`.
   `GioCore/Dwindle/DwindleTree.swift`, `DwindleLayoutEngine.swift`, `DwindleMembership.swift`
   (new), `Workspace/Workspace.swift` (`layout`, `dwindle`, `windows`),
   `Workspace/WorkspaceManager.swift` (`store`, `setLayout`, `toggleLayout`,
@@ -103,7 +103,7 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `Layout/LayoutEngine.swift` (`LayoutConfig.dwindle`), `Layout/DisplayReflowPlanner.swift`
   (`planDwindleDisplayLayout`), `GioDesktop/SessionHost.swift` (`isVisibleInViewport`);
   docs: `docs/ARCHITECTURE.md`, this file, AGENTS.md. LIVE PENDING.
-- [ ] DW-02 — Actions and shared-action mapping. Commit pending.
+- [x] DW-02 — Actions and shared-action mapping. Commit `c95f162`.
   `GioCore/Dwindle/DwindleActions.swift` (new), `DwindleTree.swift` (`pinningOrientations`),
   `DwindleLayoutEngine.swift` (`orientations`), `Layout/DisplayReflowPlanner.swift` (pinning),
   `Hotkeys/HotkeyDispatcher.swift` (7 cases, 2 bindings), `Hotkeys/ShortcutCatalog.swift`
@@ -115,6 +115,25 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `GioDesktop/SessionHost.swift` (IPC `visibleFrames`); docs: README, USER_GUIDE (Dwindle
   layout section, shortcuts), ARCHITECTURE, TESTING (check 14d, limitation), CONTRIBUTING,
   AGENTS.md, this file. LIVE PENDING.
+- [ ] DW-03 — Config and Settings UI. NOT STARTED (run stopped at the request budget).
+  Planned: `[layout] default-layout = "scrolling" | "dwindle"`, `[dwindle] default-split-ratio`
+  (0.1-1.9) and `split-width-multiplier` (new `ConfigSection.dwindle`, `DwindleSectionConfig`,
+  `GioConfig.layoutDefaults`, `makeLayoutConfig()` filling `LayoutConfig.dwindle`),
+  `[[workspace]] layout` (`workspaceKeys`, `buildWorkspace`, `renderWorkspace`), invalid values
+  as line-numbered warnings keeping the default (the brief's rule; differs from the repo's
+  "wrong value = error"), `CommandSession.config` didSet calling
+  `manager.applyLayoutDefaults(config.layoutDefaults)` before `applyNamedWorkspaces`, template
+  keys, `LayoutSettingsForm` (default layout, ratio, multiplier) + Layout section card, layout
+  picker on the Workspaces cards. `smart-split` to be omitted (needs the pointer position when a
+  window opens; the membership sync has none) with a specific warning. Today the model already
+  supports it (`WorkspaceDefinition.layout`, `WorkspaceManager.applyLayoutDefaults`, both tested)
+  but nothing parses the keys: dwindle is reachable only through the actions.
+- [ ] DW-04 — Overview, IPC and CLI. NOT STARTED. Planned: `WorkspaceMiniature` /
+  `WorkspaceOverview` strips from dwindle frames instead of columns; `gio layout info` and
+  `gio status` with `layout` per workspace and a tree summary (`WorkspaceStackSummary`);
+  `gio layout toggle|scrolling|dwindle` (`CLICommand`, `IPCRouter` reflow, launcher
+  `describeAction`). Today the overview draws a dwindle workspace as a strip of its
+  one-window columns (wrong geometry, no window lost), and status/layout info report columns.
 
 ## Evidence
 ### DW-01
@@ -167,4 +186,6 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   SUCCEEDED. `git diff --check` clean.
 
 ## Progress
-- 2026-10-11: DW-01 implemented on `feat/dwindle` (worktree `gio-wt-dwindle`).
+- 2026-10-11: DW-01 (`cdef806`) and DW-02 (`c95f162`) committed on `feat/dwindle` (worktree
+  `gio-wt-dwindle`, not pushed, not merged), verified automatically; LIVE PENDING (check 14d).
+  DW-03 and DW-04 not started: the run hit its request budget.
