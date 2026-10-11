@@ -115,7 +115,8 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             for entry in summary.workspaces {
                 let mark = entry.isActive && summary.isFocused ? "*" : (entry.isActive ? "+" : " ")
                 let name = entry.name.map { " name=\($0)" } ?? ""
-                lines.append("\(mark)\(entry.index) columns=\(entry.columns) windows=\(entry.windows)\(name)")
+                let layout = entry.layout == .dwindle ? " layout=dwindle" : ""
+                lines.append("\(mark)\(entry.index) columns=\(entry.columns) windows=\(entry.windows)\(layout)\(name)")
             }
         }
         return lines.joined(separator: "\n")
@@ -169,7 +170,23 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             : "switched to workspace \(session.manager.current) (\(number) is beyond the stack)"
     case .layoutInfo:
         let workspace = session.manager.currentWorkspace()
+        if workspace.layout == .dwindle {
+            // DW-04: the tree, not columns (each dwindle column is one tile).
+            let focused = workspace.focusedWindow.map { "\($0.pid):\($0.elementID)" } ?? "none"
+            var lines = [
+                "layout=dwindle windows=\(workspace.dwindle.windows.count) focused=\(focused)",
+                "tree=\(dwindleTreeSummary(workspace.dwindle))",
+            ]
+            if let preselection = workspace.dwindle.preselection {
+                lines.append("preselection=\(directionName(preselection))")
+            }
+            if let maximized = workspace.dwindle.maximized {
+                lines.append("maximized=\(maximized.pid):\(maximized.elementID)")
+            }
+            return lines.joined(separator: "\n")
+        }
         var lines = [
+            "layout=scrolling",
             "columns=\(workspace.columns.count) viewportOffset=\(workspace.viewportOffset) focusedColumn=\(workspace.focusedColumn)",
         ]
         for (index, column) in workspace.columns.enumerated() {
@@ -206,5 +223,12 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             return "move unchanged (already on display \(number))"
         }
         return "moved window to display \(number)"
+    case .setLayout(let kind):
+        let current = session.manager.currentWorkspace().layout
+        let target = kind ?? current.toggled
+        guard session.manager.setLayout(target) else {
+            return "layout unchanged (workspace \(session.manager.current) is already \(target.rawValue))"
+        }
+        return "workspace \(session.manager.current) layout=\(target.rawValue)"
     }
 }

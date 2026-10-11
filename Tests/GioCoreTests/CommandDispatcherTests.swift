@@ -39,7 +39,7 @@ final class CommandDispatcherTests: XCTestCase {
         )
         XCTAssertEqual(
             parseCLICommand(["layout", "fancy"]).mapError { $0 }.failure,
-            .missingArgument(name: "info", command: "layout")
+            .missingArgument(name: "info|toggle|scrolling|dwindle", command: "layout")
         )
     }
 

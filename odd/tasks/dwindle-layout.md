@@ -95,7 +95,7 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `visibleFrames` that `SessionHost` fills before every IPC dispatch, and the registry modes).
 
 ## Tasks
-- [x] DW-01 — Model, engine and planning. Commit `cdef806`.
+- [x] DW-01 — Model, engine and planning. Commit `3980d44` (rebased from `cdef806`).
   `GioCore/Dwindle/DwindleTree.swift`, `DwindleLayoutEngine.swift`, `DwindleMembership.swift`
   (new), `Workspace/Workspace.swift` (`layout`, `dwindle`, `windows`),
   `Workspace/WorkspaceManager.swift` (`store`, `setLayout`, `toggleLayout`,
@@ -103,7 +103,7 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `Layout/LayoutEngine.swift` (`LayoutConfig.dwindle`), `Layout/DisplayReflowPlanner.swift`
   (`planDwindleDisplayLayout`), `GioDesktop/SessionHost.swift` (`isVisibleInViewport`);
   docs: `docs/ARCHITECTURE.md`, this file, AGENTS.md. LIVE PENDING.
-- [x] DW-02 — Actions and shared-action mapping. Commit `c95f162`.
+- [x] DW-02 — Actions and shared-action mapping. Commit `c978296` (rebased from `c95f162`).
   `GioCore/Dwindle/DwindleActions.swift` (new), `DwindleTree.swift` (`pinningOrientations`),
   `DwindleLayoutEngine.swift` (`orientations`), `Layout/DisplayReflowPlanner.swift` (pinning),
   `Hotkeys/HotkeyDispatcher.swift` (7 cases, 2 bindings), `Hotkeys/ShortcutCatalog.swift`
@@ -115,7 +115,7 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   `GioDesktop/SessionHost.swift` (IPC `visibleFrames`); docs: README, USER_GUIDE (Dwindle
   layout section, shortcuts), ARCHITECTURE, TESTING (check 14d, limitation), CONTRIBUTING,
   AGENTS.md, this file. LIVE PENDING.
-- [ ] DW-03 — Config and Settings UI. Commit pending.
+- [x] DW-03 — Config and Settings UI. Commit `62fea5d`.
   `Config/GioConfig.swift` (`LayoutSectionConfig.defaultLayout`, `DwindleSectionConfig`,
   `GioConfig.dwindle`, `layoutDefaults`, `makeLayoutConfig()` fills `LayoutConfig.dwindle`),
   `Config/ConfigParser.swift` (`[dwindle]` section, `applyDwindleKey`, `default-layout`,
@@ -127,12 +127,15 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   (`WorkspaceCardDraft.layout`, `workspaceLayoutOptions`, `workspaceLayoutLabel`),
   `WorkspacesSettingsView.swift` (Layout popup per card); docs: USER_GUIDE (config reference),
   TESTING (14e), ARCHITECTURE, this file. LIVE PENDING.
-- [ ] DW-04 — Overview, IPC and CLI. NOT STARTED. Planned: `WorkspaceMiniature` /
-  `WorkspaceOverview` strips from dwindle frames instead of columns; `gio layout info` and
-  `gio status` with `layout` per workspace and a tree summary (`WorkspaceStackSummary`);
-  `gio layout toggle|scrolling|dwindle` (`CLICommand`, `IPCRouter` reflow, launcher
-  `describeAction`). Today the overview draws a dwindle workspace as a strip of its
-  one-window columns (wrong geometry, no window lost), and status/layout info report columns.
+- [x] DW-04 — Overview, IPC and CLI. Commit recorded in Progress.
+  `Layout/DisplayReflowPlanner.swift` (`workspaceLayoutResult`), `Commands/WorkspaceMiniature.swift`
+  (dwindle tiles measured from the top), `GioSession/Publication/SessionFactsBuilder.swift`
+  (strips from either layout), `Dwindle/DwindleTree.swift` (`dwindleTreeSummary`),
+  `Workspace/WorkspaceStackSummary.swift` (`WorkspaceEntry.layout`), `IPC/IPCHandler.swift`
+  (status `layout`, `dwindle`), `Commands/CLICommand.swift` (`setLayout`, parse, usage),
+  `Commands/CommandDispatcher.swift` (layout info, list-workspaces, `gio layout`),
+  `GioSession/IPCRouter.swift` (reflow), `GioUI/LauncherModel.swift` (`describeAction`); docs:
+  USER_GUIDE (CLI), ARCHITECTURE, TESTING (14e), this file. LIVE PENDING.
 
 ## Evidence
 ### DW-01
@@ -205,8 +208,44 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   session applies defaults and named layouts and keeps a runtime toggle across an unchanged
   reload, PF-M transport: dwindle tile changes stay on Accessibility and a dwindle hide goes
   through the WindowServer), `DwindleWorkspaceCardTests` (card layout round trip and labels).
+- GREEN (on the rebased branch with PF-K/L/M): GioUITests 308 (53 skipped), GioSessionTests 407,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 89, GioCoreTests 1809, all 0 failures. Signed
+  `xcodebuild` BUILD SUCCEEDED. `git diff --check` clean. Before DW-03 the rebased branch was
+  green too: GioUITests 307 (53 skipped), GioSessionTests 407, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 89, GioCoreTests 1801.
+
+### DW-04
+- Decisions: the overview keeps its strip model; a dwindle workspace gives one strip fact per
+  tile (its columns are one window each, in leaf order) with frames from
+  `workspaceLayoutResult`, and `top` measured from the viewport's top so the y-down drawing
+  matches the Cocoa y-up screen (the scrolling strip keeps its old `top` measure; see the note
+  below). Tree summary notation: `(a | b)`, `(a / b)`, `(a ~ b)` for a split no layout shaped yet,
+  ratio after the sign when not 1. `gio layout info` starts with `layout=...`; scrolling output is
+  otherwise unchanged. `gio layout toggle|scrolling|dwindle` changes the live layout only (never
+  the config) and reflows without a focus intent; an unknown argument is refused with
+  `missingArgument(info|toggle|scrolling|dwindle)`.
+- Observation, not changed: the scrolling engine places a column's first window at the lowest y
+  (the bottom in Cocoa), and the miniature measures `top` from `minY`; whether stacked windows
+  read upside down on screen or in the miniature needs a live look.
+- RED by compilation: `workspaceLayoutResult`, `dwindleTreeSummary` not in scope; `CLICommand`
+  has no member `setLayout`. First GREEN run: 1 failure, `CommandDispatcherTests.
+  testParseRejectsJunk` expected the old `missingArgument(name: "info")`; updated.
+- Tests: `DwindleOverviewIPCTests` (6: strip of a dwindle workspace from tiles, top-down, none
+  parked, focus; scrolling strip unchanged; status `layout` / `dwindle` / per-workspace layouts;
+  tree summary with shapes and ratios; layout info and list-workspaces; the `gio layout` verbs
+  parse, refuse junk, switch and report).
+- GREEN: GioUITests 308 (53 skipped), GioSessionTests 407, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 89, GioCoreTests 1815, all 0 failures. Signed `xcodebuild` BUILD SUCCEEDED.
+  `git diff --check` clean.
+
+## LIVE PENDING
+Nothing in DW-01..DW-04 ran on a real desktop (the user's Gio was running; no live runs from an
+agent). Checks 14d (actions, tree behaviour, Move Edge) and 14e (config, Settings, overview,
+CLI) in `docs/TESTING.md`, signed Gio scheme.
 
 ## Progress
 - 2026-10-11: DW-01 (`cdef806`) and DW-02 (`c95f162`) committed on `feat/dwindle` (worktree
   `gio-wt-dwindle`, not pushed, not merged), verified automatically; LIVE PENDING (check 14d).
-  DW-03 and DW-04 not started: the run hit its request budget.
+- 2026-10-11: branch rebased by the main agent onto main with PF-K/L/M (DW-01 `3980d44`, DW-02
+  `c978296`, docs `9610f69`); green on the rebase. DW-03 committed as `62fea5d`; DW-04 committed
+  next (hash in the following `docs(odd)` commit). LIVE PENDING (checks 14d, 14e).

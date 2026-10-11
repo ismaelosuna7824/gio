@@ -42,6 +42,7 @@ public func queryStatus(session: CommandSession) -> String {
                 var fields: [String: Any] = [
                     "index": entry.index, "windows": entry.windows,
                     "columns": entry.columns, "active": entry.isActive,
+                    "layout": entry.layout.rawValue,
                 ]
                 // NW-02: only named workspaces carry `name` (and icon/color).
                 if let name = entry.name {
@@ -57,6 +58,15 @@ public func queryStatus(session: CommandSession) -> String {
             },
         ]
     }
+    // DW-04: the current workspace's layout, and its tree when dwindle.
+    let dwindle: Any = workspace.layout == .dwindle
+        ? [
+            "tree": dwindleTreeSummary(workspace.dwindle),
+            "windows": workspace.dwindle.windows.count,
+            "preselection": workspace.dwindle.preselection.map(directionName) as Any? ?? NSNull(),
+            "maximized": workspace.dwindle.maximized.map { "\($0.pid):\($0.elementID)" } as Any? ?? NSNull(),
+        ] as [String: Any]
+        : NSNull()
     let dict: [String: Any] = [
         "workspace": session.manager.current,
         "stacks": stacks,
@@ -66,6 +76,8 @@ public func queryStatus(session: CommandSession) -> String {
         "modes": modes,
         "floatingWindows": floating,
         "minimizedWindows": minimized,
+        "layout": workspace.layout.rawValue,
+        "dwindle": dwindle,
     ]
     guard let data = try? JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys]),
           let text = String(data: data, encoding: .utf8)
@@ -73,6 +85,16 @@ public func queryStatus(session: CommandSession) -> String {
         return "{}"
     }
     return text
+}
+
+/// `left` / `right` / `up` / `down`.
+func directionName(_ direction: FocusDirection) -> String {
+    switch direction {
+    case .left: return "left"
+    case .right: return "right"
+    case .up: return "up"
+    case .down: return "down"
+    }
 }
 
 /// Server-side argv handling shared by every transport: parse once, dispatch,

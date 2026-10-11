@@ -28,6 +28,9 @@ public enum CLICommand: Equatable, Sendable {
     /// number: 1 is the main display, the others follow in position order).
     /// The menu bar's Move to Display submenu and the launcher send it.
     case moveWindowToDisplay(Int)
+    /// DW-04 `gio layout toggle|scrolling|dwindle`: the current workspace's
+    /// layout (nil toggles).
+    case setLayout(WorkspaceLayoutKind?)
 }
 
 public enum CLICommandError: Error, Equatable, Sendable {
@@ -72,10 +75,15 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
         }
         return .success(.workspace(number))
     case "layout":
-        guard args.count > 1, args[1] == "info" else {
-            return .failure(.missingArgument(name: "info", command: "layout"))
+        switch args.count > 1 ? args[1] : "" {
+        case "info": return .success(.layoutInfo)
+        case "toggle": return .success(.setLayout(nil))
+        case let name:
+            guard let kind = WorkspaceLayoutKind(rawValue: name) else {
+                return .failure(.missingArgument(name: "info|toggle|scrolling|dwindle", command: "layout"))
+            }
+            return .success(.setLayout(kind))
         }
-        return .success(.layoutInfo)
     case "status":
         return .success(.status)
     case "setup":
@@ -127,7 +135,7 @@ public func cliUsage() -> String {
       gio focus left|right|up|down
       gio move left|right|up/down
       gio workspace 1...9
-      gio layout info
+      gio layout info|toggle|scrolling|dwindle
       gio overview
       gio move-window-to-display N
       gio status

@@ -12,10 +12,12 @@ public struct WorkspaceEntry: Equatable, Sendable {
     public let name: String?
     public let icon: String?
     public let color: String?
+    /// DW-04: the workspace's layout (status, `gio list-workspaces`).
+    public let layout: WorkspaceLayoutKind
 
     public init(
         index: Int, windows: Int, columns: Int, isActive: Bool,
-        name: String? = nil, icon: String? = nil, color: String? = nil
+        name: String? = nil, icon: String? = nil, color: String? = nil, layout: WorkspaceLayoutKind = .scrolling
     ) {
         self.index = index
         self.windows = windows
@@ -24,6 +26,7 @@ public struct WorkspaceEntry: Equatable, Sendable {
         self.name = name
         self.icon = icon
         self.color = color
+        self.layout = layout
     }
 
     /// `3` for empty, `2 windows`-free compact form used in lists: `1 (3)`.
@@ -66,7 +69,8 @@ extension WorkspaceManager {
                     isActive: workspace.id == active,
                     name: workspace.name,
                     icon: definition?.icon,
-                    color: definition?.color
+                    color: definition?.color,
+                    layout: workspace.layout
                 )
             }
             return DisplayStackSummary(

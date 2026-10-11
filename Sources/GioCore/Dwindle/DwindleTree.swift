@@ -274,3 +274,26 @@ public struct DwindleState: Equatable, Sendable {
         }
     }
 }
+
+/// DW-04: the tree in one line for `gio status` and `gio layout info`:
+/// `(a | b)` side by side, `(a / b)` stacked, `(a ~ b)` a split no layout
+/// has shaped yet; the ratio follows the sign when it is not 1
+/// (`|1.2`). Windows are `pid:elementID`. Empty for an empty tree.
+public func dwindleTreeSummary(_ state: DwindleState) -> String {
+    func describe(_ node: DwindleNode) -> String {
+        switch node {
+        case .leaf(let id):
+            return "\(id.pid):\(id.elementID)"
+        case .split(let split):
+            let sign: String
+            switch split.orientation {
+            case .horizontal?: sign = "|"
+            case .vertical?: sign = "/"
+            case nil: sign = "~"
+            }
+            let ratio = abs(split.ratio - 1) < 0.001 ? "" : String(format: "%g", Double(split.ratio))
+            return "(\(describe(split.first)) \(sign)\(ratio) \(describe(split.second)))"
+        }
+    }
+    return state.root.map(describe) ?? ""
+}

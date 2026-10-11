@@ -74,6 +74,9 @@ public final class IPCRouter: @unchecked Sendable {
             case .focus, .move, .workspace, .moveWindowToDisplay:
                 context.requestFocusIntent(command.carriesFocusIntent, previousFocus)
                 context.reflow()
+            case .setLayout:
+                // DW-04: the layout changed; the focused window stays focused.
+                context.reflow()
             case .toggleOverview:
                 context.toggleOverview()
             default:

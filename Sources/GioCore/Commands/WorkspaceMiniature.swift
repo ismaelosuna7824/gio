@@ -70,12 +70,16 @@ public func windowFactID(_ id: WindowID) -> String {
 
 /// Strip facts from a tiled workspace and the layout computed for it.
 /// Frames are shifted back by the viewport offset into strip coordinates.
+/// DW-04: a dwindle workspace (one window per column, `layout` from
+/// `workspaceLayoutResult`) gives one fact per tile, `top` measured from the
+/// viewport's top edge so the drawing (y down) matches the screen (Cocoa y up).
 public func makeWorkspaceStrip(
     workspace: Workspace, layout: LayoutResult, viewport: CGRect, displayID: UInt32, index: Int,
     application: (WindowID) -> String
 ) -> WorkspaceStripFact {
     var columns: [StripColumnFact] = []
     var focusedColumn: Int?
+    let fromTop = workspace.layout == .dwindle
     for column in workspace.columns {
         let frames = column.windows.compactMap { id in layout.frames[id].map { (id, $0) } }
         guard let first = frames.first?.1 else {
@@ -90,7 +94,7 @@ public func makeWorkspaceStrip(
             windows: frames.map { id, frame in
                 StripWindowFact(
                     id: windowFactID(id), application: application(id),
-                    top: frame.minY - viewport.minY, height: frame.height
+                    top: fromTop ? viewport.maxY - frame.maxY : frame.minY - viewport.minY, height: frame.height
                 )
             }
         ))

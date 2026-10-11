@@ -118,6 +118,24 @@ private func modesKeepingFullscreenInColumns(_ modes: [WindowID: WindowMode]) ->
     modes.mapValues { $0 == .fullscreen ? .tiled : $0 }
 }
 
+/// DW-04: a workspace's frames for read-only views (the overview strip):
+/// the strip engine for a scrolling workspace, the dwindle tiles (offset 0,
+/// the viewport as the content width) for a dwindle one. No reveal, no
+/// parking: callers only measure.
+public func workspaceLayoutResult(
+    _ workspace: Workspace, modes: [WindowID: WindowMode], engine: ScrollableLayoutEngine, viewport: CGRect
+) throws -> LayoutResult {
+    guard workspace.layout == .dwindle else {
+        return try engine.calculate(workspace: tilingWorkspace(from: workspace, modes: modes), viewport: viewport)
+    }
+    var reconciled = workspace
+    reconciled.reconcileDwindle(splitRatio: engine.config.dwindle.splitRatio)
+    let frames = try DwindleLayoutEngine(config: engine.config).layout(
+        reconciled.dwindle, viewport: viewport, modes: modesKeepingFullscreenInColumns(modes)
+    ).frames
+    return LayoutResult(frames: frames, contentWidth: viewport.width, viewportOffset: 0)
+}
+
 /// DW-01: one display's dwindle pass. Every tiled window sits in its tile
 /// (nothing scrolls, nothing parks; the viewport offset stays 0). The
 /// workspace is reconciled first, so a window the tree misses still gets a

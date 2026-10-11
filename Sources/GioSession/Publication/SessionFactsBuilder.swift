@@ -147,13 +147,16 @@ public final class SessionFactsBuilder: @unchecked Sendable {
     }
 
     /// Pure layout math on session state: the workspace's tiled windows laid
-    /// out against the display's usable frame.
+    /// out against the display's usable frame (DW-04: dwindle tiles for a
+    /// dwindle workspace).
     private func strip(
         _ workspace: Workspace, index: Int, on display: DisplayState, session: CommandSession
     ) -> WorkspaceStripFact? {
         let viewport = context.visibleFrame(display.id) ?? display.frame
-        let tiling = tilingWorkspace(from: workspace, modes: context.tileableModes())
-        guard let layout = try? context.engine().calculate(workspace: tiling, viewport: viewport) else {
+        let modes = context.tileableModes()
+        let tiling = tilingWorkspace(from: workspace, modes: modes)
+        guard let layout = try? workspaceLayoutResult(workspace, modes: modes, engine: context.engine(), viewport: viewport)
+        else {
             return nil
         }
         return makeWorkspaceStrip(
