@@ -21,6 +21,8 @@ public struct LayoutConfig: Equatable, Sendable {
     /// column lays it out in the middle of the viewport (when it fits inside
     /// the padding) instead of at the left padding.
     public var alwaysCenterSingleColumn: Bool
+    /// DW-01 `[dwindle]`: split ratio and shape bias of dwindle workspaces.
+    public var dwindle: DwindleSettings
 
     public init(
         padding: CGFloat = 8,
@@ -30,7 +32,8 @@ public struct LayoutConfig: Equatable, Sendable {
         minimumColumnWidth: CGFloat = 200,
         fullscreenGap: CGFloat = 0,
         maximizeSingleWindow: Bool = false,
-        alwaysCenterSingleColumn: Bool = false
+        alwaysCenterSingleColumn: Bool = false,
+        dwindle: DwindleSettings = DwindleSettings()
     ) {
         self.padding = padding
         self.gap = gap
@@ -40,6 +43,7 @@ public struct LayoutConfig: Equatable, Sendable {
         self.fullscreenGap = fullscreenGap
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
+        self.dwindle = dwindle
     }
 }
 

@@ -472,6 +472,28 @@ final class ReflowPlannerTests: XCTestCase {
         XCTAssertEqual(plan.plans.count, 3, "two displays, then the inactive plan")
     }
 
+    // MARK: Dwindle (DW-01)
+
+    func testADwindleWorkspaceShowsEveryTileAndHidesLikeAnyWorkspace() {
+        let world = ReflowWorld()
+        XCTAssertTrue(world.session.manager.setLayout(.dwindle))
+        let ids = world.addColumns(4)
+        let harness = PlannerHarness(world: world)
+        let (_, shown) = harness.run(animating: true, settings: .init(), centering: .none, zoomTargets: identity)
+        let usable = world.visibleFrames[ReflowWorld.left]!
+        XCTAssertEqual(Set(shown.plans[0].visible.keys), Set(ids), "every window is on screen")
+        XCTAssertTrue(shown.plans[0].parked.isEmpty, "nothing parks")
+        XCTAssertTrue(shown.plans[0].visible.values.allSatisfy { usable.contains($0) })
+        XCTAssertEqual(shown.displays[0].viewport.offset, 0)
+        XCTAssertFalse(shown.animations.isEmpty, "tiles fly like any frame change")
+
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        world.addColumns(1, pidBase: 200)
+        let (_, switched) = harness.run(animating: true, settings: .init(), centering: .none, zoomTargets: identity)
+        XCTAssertTrue(Set(ids).isSubset(of: Set(switched.plans.last!.parked.keys)), "an inactive dwindle workspace parks")
+    }
+
     // MARK: Multi-display (MM-01)
 
     /// Two displays; the right one switched from its first workspace (two

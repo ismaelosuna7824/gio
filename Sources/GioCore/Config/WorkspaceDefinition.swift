@@ -19,14 +19,18 @@ public struct WorkspaceDefinition: Equatable, Sendable {
     public var color: String?
     /// Nil means the main display.
     public var display: WorkspaceDisplayAssignment?
+    /// DW-01 `layout = "scrolling" | "dwindle"`; nil follows
+    /// `[layout] default-layout`.
+    public var layout: WorkspaceLayoutKind?
 
     public init(
         name: String, icon: String? = nil, color: String? = nil,
-        display: WorkspaceDisplayAssignment? = nil
+        display: WorkspaceDisplayAssignment? = nil, layout: WorkspaceLayoutKind? = nil
     ) {
         self.name = name
         self.icon = icon
         self.color = color
         self.display = display
+        self.layout = layout
     }
 }

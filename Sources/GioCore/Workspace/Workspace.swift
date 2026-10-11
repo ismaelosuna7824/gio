@@ -23,6 +23,13 @@ public struct Workspace: Equatable, Sendable {
     /// NW-02: set for a `[[workspace]]` (persistent, never pruned); nil for
     /// a dynamic workspace. Owned by `WorkspaceManager`: `update` keeps it.
     public var name: String?
+    /// DW-01: scrolling strip (the default) or dwindle tree. Switch it with
+    /// `settingLayout(_:splitRatio:)`, which keeps the windows.
+    public var layout: WorkspaceLayoutKind
+    /// DW-01: the dwindle tree, a view of `columns` (the one membership
+    /// list); empty while `layout` is `.scrolling`. `reconcileDwindle`
+    /// (run by `WorkspaceManager` on every write) keeps it in sync.
+    public var dwindle: DwindleState
 
     public init(
         id: WorkspaceID,
@@ -30,7 +37,9 @@ public struct Workspace: Equatable, Sendable {
         focusedColumn: Int = 0,
         focusedWindow: WindowID? = nil,
         viewportOffset: CGFloat = 0,
-        name: String? = nil
+        name: String? = nil,
+        layout: WorkspaceLayoutKind = .scrolling,
+        dwindle: DwindleState = DwindleState()
     ) {
         self.id = id
         self.name = name
@@ -38,6 +47,14 @@ public struct Workspace: Equatable, Sendable {
         self.focusedColumn = focusedColumn
         self.focusedWindow = focusedWindow
         self.viewportOffset = viewportOffset
+        self.layout = layout
+        self.dwindle = dwindle
+    }
+
+    /// Every member window in column order (the dwindle tree's leaf order
+    /// for a dwindle workspace).
+    public var windows: [WindowID] {
+        columns.flatMap(\.windows)
     }
 
     /// The focused column, or nil when the index is out of range.

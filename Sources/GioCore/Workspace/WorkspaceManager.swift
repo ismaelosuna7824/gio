@@ -55,6 +55,9 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// The display `display = "main"` (and a missing display) resolves to;
     /// nil uses the first display in the host's order.
     public private(set) var mainDisplay: DisplayID?
+    /// DW-01: the layout new workspaces start with and the ratio of new
+    /// dwindle splits (`applyLayoutDefaults`, from config).
+    public private(set) var layoutDefaults = WorkspaceLayoutDefaults()
 
     public init() {
         let first = WorkspaceID(1)
@@ -205,7 +208,9 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// windows); otherwise a new empty one is created. A named workspace no
     /// longer listed becomes dynamic in place: it keeps its windows and, if
     /// empty and not shown, is pruned like any dynamic workspace. An
-    /// unchanged list is a no-op.
+    /// unchanged list is a no-op. DW-01: a definition's `layout` (else the
+    /// default layout) is applied when the workspace is new or its `layout`
+    /// changed, so a runtime toggle survives a reload that left it alone.
     public mutating func applyNamedWorkspaces(_ definitions: [WorkspaceDefinition]) {
         var unique: [WorkspaceDefinition] = []
         for definition in definitions where !unique.contains(where: { $0.name == definition.name }) {
@@ -223,7 +228,7 @@ public struct WorkspaceManager: Equatable, Sendable {
             }
         }
         var claimed = Set<WorkspaceID>()
-        var assigned: [(WorkspaceID, String)] = []
+        var assigned: [(WorkspaceID, WorkspaceDefinition)] = []
         for (position, definition) in unique.enumerated() {
             let id: WorkspaceID
             if let match = existing[definition.name] {
@@ -236,13 +241,18 @@ public struct WorkspaceManager: Equatable, Sendable {
                 id = spawnWorkspace()
             }
             claimed.insert(id)
-            assigned.append((id, definition.name))
+            assigned.append((id, definition))
         }
         for id in existing.values where !claimed.contains(id) {
             workspaces[id]?.name = nil
         }
-        for (id, name) in assigned {
-            workspaces[id]?.name = name
+        for (id, definition) in assigned {
+            workspaces[id]?.name = definition.name
+            let previous = namedDefinitions.first { $0.name == definition.name }
+            if previous == nil || previous?.layout != definition.layout, let workspace = workspaces[id] {
+                let kind = definition.layout ?? layoutDefaults.kind
+                store(workspace.settingLayout(kind, splitRatio: layoutDefaults.splitRatio))
+            }
         }
         namedDefinitions = unique
         arrangeNamed()
@@ -390,19 +400,63 @@ public struct WorkspaceManager: Equatable, Sendable {
         return true
     }
 
+    // MARK: - Layout (DW-01)
+
+    /// DW-01: lay workspace `id` (the current one when nil) out as `kind`,
+    /// keeping every window (`Workspace.settingLayout`). False when it is
+    /// already `kind` or unknown.
+    @discardableResult
+    public mutating func setLayout(_ kind: WorkspaceLayoutKind, of id: WorkspaceID? = nil) -> Bool {
+        let target = id ?? currentID
+        guard let workspace = workspaces[target], workspace.layout != kind else {
+            return false
+        }
+        store(workspace.settingLayout(kind, splitRatio: layoutDefaults.splitRatio))
+        return true
+    }
+
+    /// DW-01 `toggle-workspace-layout`: scrolling to dwindle and back.
+    @discardableResult
+    public mutating func toggleLayout(of id: WorkspaceID? = nil) -> Bool {
+        guard let workspace = workspaces[id ?? currentID] else {
+            return false
+        }
+        return setLayout(workspace.layout.toggled, of: workspace.id)
+    }
+
+    /// DW-01: adopt config's layout defaults. New workspaces start with
+    /// `kind`; an empty workspace (nothing to rearrange) takes it at once,
+    /// except a named one whose `[[workspace]]` sets its own `layout`.
+    /// Workspaces with windows keep the layout they have. Unchanged
+    /// defaults are a no-op.
+    public mutating func applyLayoutDefaults(_ defaults: WorkspaceLayoutDefaults) {
+        guard defaults != layoutDefaults else {
+            return
+        }
+        layoutDefaults = defaults
+        let pinned = Set(namedDefinitions.filter { $0.layout != nil }.map(\.name))
+        for workspace in workspaces.values where workspace.columns.isEmpty && workspace.layout != defaults.kind {
+            if let name = workspace.name, pinned.contains(name) {
+                continue
+            }
+            store(workspace.settingLayout(defaults.kind, splitRatio: defaults.splitRatio))
+        }
+    }
+
     // MARK: - Writing
 
     /// Write back a modified workspace. Unknown IDs are ignored: the manager
     /// owns its workspaces and never adopts foreign state. Restores the
     /// stack invariants (a filled spare grows a new spare; an emptied
-    /// inactive workspace disappears).
+    /// inactive workspace disappears) and, for a dwindle workspace, the
+    /// tree's sync with its columns (DW-01).
     public mutating func update(_ workspace: Workspace) {
         guard let stored = workspaces[workspace.id], let place = location(of: workspace.id) else {
             return
         }
         var written = workspace
         written.name = stored.name
-        workspaces[workspace.id] = written
+        store(written)
         normalize(place.display)
     }
 
@@ -600,10 +654,18 @@ public struct WorkspaceManager: Equatable, Sendable {
 
     // MARK: - Internals
 
+    /// DW-01: the single write funnel; a dwindle tree is reconciled with
+    /// the columns on every write, so no path can desync them.
+    private mutating func store(_ workspace: Workspace) {
+        var reconciled = workspace
+        reconciled.reconcileDwindle(splitRatio: layoutDefaults.splitRatio)
+        workspaces[workspace.id] = reconciled
+    }
+
     private mutating func spawnWorkspace() -> WorkspaceID {
         let id = WorkspaceID(nextID)
         nextID += 1
-        workspaces[id] = Workspace(id: id)
+        workspaces[id] = Workspace(id: id, layout: layoutDefaults.kind)
         return id
     }
 
@@ -656,7 +718,7 @@ public struct WorkspaceManager: Equatable, Sendable {
             source.focusedColumn = min(source.focusedColumn, source.columns.count - 1)
             source.focusedWindow = source.columns[source.focusedColumn].focusedWindowID
         }
-        workspaces[sourceID] = source
+        store(source)
         return column
     }
 
@@ -749,7 +811,7 @@ public struct WorkspaceManager: Equatable, Sendable {
                 source.focusedWindow = source.columns[source.focusedColumn].focusedWindowID
             }
         }
-        workspaces[sourceID] = source
+        store(source)
         var detached = Column(id: ColumnID(0), width: 0, windows: [id])
         if let weight {
             detached.heightWeights[id] = weight
@@ -782,7 +844,7 @@ public struct WorkspaceManager: Equatable, Sendable {
         dest.columns.insert(placed, at: position)
         dest.focusedColumn = position
         dest.focusedWindow = placed.focusedWindowID
-        workspaces[destinationID] = dest
+        store(dest)
     }
 
     private func locate(_ id: WindowID, in workspace: Workspace) -> (Int, Int)? {

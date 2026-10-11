@@ -1202,6 +1202,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// Would `id` be inside its display's viewport under the current offset?
+    /// DW-01: a shown dwindle workspace has every window on screen.
     private func isVisibleInViewport(_ id: WindowID) -> Bool? {
         let modes = tileableModes()
         for display in displays.allDisplays() {
@@ -1209,6 +1210,9 @@ final class SessionHost: @unchecked Sendable {
                   workspace.columns.contains(where: { $0.windows.contains(id) })
             else {
                 continue
+            }
+            if workspace.layout == .dwindle {
+                return true
             }
             let viewport = visibleFrames[display.id] ?? display.frame
             guard let layout = try? engine().calculate(

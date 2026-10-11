@@ -14,7 +14,8 @@ public struct DisplayLayoutPlan: Equatable, Sendable {
 /// focused column (Niri rule: it is always visible) by scrolling minimally,
 /// lay out again from the scrolled offset, then park off-viewport columns.
 /// Same inputs always give the same plan, so a rescan that changes nothing
-/// yields frames the windows already have.
+/// yields frames the windows already have. DW-01: a dwindle workspace goes
+/// through `planDwindleDisplayLayout` instead (no scrolling, no parking).
 public func planDisplayLayout(
     workspace: Workspace,
     modes: [WindowID: WindowMode],
@@ -24,6 +25,12 @@ public func planDisplayLayout(
     otherDisplays: [CGRect],
     centering: CenterRequest = .none
 ) throws -> DisplayLayoutPlan {
+    if workspace.layout == .dwindle {
+        return try planDwindleDisplayLayout(
+            workspace: workspace, modes: modes, config: engine.config,
+            viewport: viewport, display: display, otherDisplays: otherDisplays
+        )
+    }
     var workspace = workspace
     let covering = fullscreenWindow(in: workspace, modes: modes)
     let layoutModes = covering == nil ? modesKeepingFullscreenInColumns(modes) : modes
@@ -109,6 +116,40 @@ private func layoutKeepingFullscreenSize(
 
 private func modesKeepingFullscreenInColumns(_ modes: [WindowID: WindowMode]) -> [WindowID: WindowMode] {
     modes.mapValues { $0 == .fullscreen ? .tiled : $0 }
+}
+
+/// DW-01: one display's dwindle pass. Every tiled window sits in its tile
+/// (nothing scrolls, nothing parks; the viewport offset stays 0). The
+/// workspace is reconciled first, so a window the tree misses still gets a
+/// tile. A focused fullscreen window covers the display and the others park
+/// where their tiles are (as in scrolling); an unfocused fullscreen window
+/// keeps its tile. A maximized focused window fills the area inside the
+/// padding, the others staying in their tiles behind it.
+func planDwindleDisplayLayout(
+    workspace: Workspace, modes: [WindowID: WindowMode], config: LayoutConfig,
+    viewport: CGRect, display: CGRect, otherDisplays: [CGRect]
+) throws -> DisplayLayoutPlan {
+    var workspace = workspace
+    workspace.reconcileDwindle(splitRatio: config.dwindle.splitRatio)
+    workspace.viewportOffset = 0
+    let covering = fullscreenWindow(in: workspace, modes: modes)
+    var frames = try DwindleLayoutEngine(config: config).layout(
+        workspace.dwindle, viewport: viewport, modes: modesKeepingFullscreenInColumns(modes)
+    ).frames
+    let layout = LayoutResult(frames: frames, contentWidth: viewport.width, viewportOffset: 0)
+    if let covering {
+        var parked = parkAll(frames: frames, viewport: viewport, display: display, otherDisplays: otherDisplays)
+        parked.removeValue(forKey: covering)
+        let plan = ParkingPlan(
+            visible: [covering: fullscreenFrame(display: display, usable: viewport, gap: config.fullscreenGap)],
+            parked: parked
+        )
+        return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)
+    }
+    if let maximized = workspace.dwindle.maximized, frames[maximized] != nil {
+        frames[maximized] = viewport.insetBy(dx: config.padding, dy: config.padding)
+    }
+    return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: ParkingPlan(visible: frames, parked: [:]))
 }
 
 /// Focused column's content range revealed into the viewport. Nil when

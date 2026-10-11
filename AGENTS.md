@@ -73,6 +73,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 - **Only keyboard/IPC actions focus OS windows** (`FocusIntent`, HD-01). Passive reflows (AX events, click adoption, reload, rescan) pass `focused: nil`; never add a focus call to those paths or you will steal focus. Add new focus-moving actions to `HotkeyAction.carriesFocusIntent`.
 - macOS refuses fully off-screen windows: parked windows keep a 1 pt sliver. Do not "fix" that by moving frames further out.
 - **Never leave an app's `AXEnhancedUserInterface` off** (PF-K): VoiceOver users depend on it. A new frame-write path must go through `WindowReconciler` lanes, call `EnhancedUIGuard.willWrite(pid:)` before writing and end the batch in the lane's epilogue (`batchEnded`); a motion ends its batch at the app's final-pass lane or the settle (`restoreEnhancedUI`). Gio's own pid is never read or written.
+- **Workspace layout kind (DW-01): column-only code must branch.** A workspace is `.scrolling` or `.dwindle` (`Workspace.layout`). In dwindle the columns are still the one membership list (one window each, in the tree's leaf order) and `Workspace.dwindle` is a view kept in sync by `WorkspaceManager` on every write; never store windows in the tree directly, and never assume `columns` order or widths mean geometry in dwindle. New layout-dependent code (geometry, scrolling, column actions, overview) must check `workspace.layout`.
 - Legacy code (`GioMac`, `GioApp`, `TileLayout`, `NativeTilingCoordinator`, ...) still builds and has tests. Do not reuse it for new features.
 
 ## Where decisions live
@@ -89,6 +90,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `workspace-overview.md` | Mission Control workaround, `toggle-overview` panel (WO-00..WO-01). |
 | `fluidity.md` | Slow apps vs. the final pass, registration storms, unpainted windows, floating popups stealing focus, transient-window retries; a motion-following dim was tried and reverted (PF-A..PF-F). |
 | `multi-monitor.md` | Multiple displays: primary-display flip, position order, startup placement, per-display parking, switch motion and widths (MM-01); monitor actions (MM-02); stacked displays and floating monitor moves (MM-03); no straddling, hot-plug, overview display, Move to Display, display log lines (MM-04). |
+| `dwindle-layout.md` | Dwindle layout per workspace: tree model kept in sync with the columns, engine, planning, actions, config, overview/IPC (DW-01..). |
 | `release.md` | Versioning, signed DMG, release workflow and its hardening (RL-01..RL-08) and the in-app updater and its hardening (UP-01..UP-17). |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 

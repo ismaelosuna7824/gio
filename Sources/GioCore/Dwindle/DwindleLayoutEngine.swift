@@ -1,0 +1,139 @@
+import CoreGraphics
+import Foundation
+
+/// DW-01 `[dwindle]` tuning, carried by `LayoutConfig` so every place that
+/// already builds the scrolling engine's config reaches it.
+public struct DwindleSettings: Equatable, Sendable {
+    /// `default-split-ratio`: the ratio a new split starts with (0.1...1.9,
+    /// 1 = half and half; it is the first, existing window's share times two).
+    public var splitRatio: CGFloat
+    /// `split-width-multiplier` (Hyprland): a split lays its children side
+    /// by side when `width >= height * multiplier`, else stacks them. Above
+    /// 1 favours stacking, below 1 favours side by side.
+    public var splitWidthMultiplier: CGFloat
+
+    public init(splitRatio: CGFloat = 1, splitWidthMultiplier: CGFloat = 1) {
+        self.splitRatio = splitRatio
+        self.splitWidthMultiplier = splitWidthMultiplier
+    }
+}
+
+/// Where one split was laid out and which way it divided.
+public struct DwindleSplitPlacement: Equatable, Sendable {
+    public var rect: CGRect
+    public var orientation: DwindleOrientation
+}
+
+/// DW-01: one dwindle layout. `frames` holds every tiled window; `splits`
+/// every split by path (rect and the orientation it was laid out with),
+/// which the dwindle actions read to resize or flip the right split.
+public struct DwindleLayout: Equatable, Sendable {
+    public var frames: [WindowID: CGRect]
+    public var splits: [DwindlePath: DwindleSplitPlacement]
+}
+
+/// DW-01: Hyprland-style dwindle geometry. The usable area (the viewport
+/// inset by `padding`) is divided recursively: each split gives its first
+/// child `ratio / 2` of the extent left after one `gap`, the second the
+/// rest. A split without a pinned orientation lays its children side by
+/// side when its rectangle is at least `splitWidthMultiplier` times wider
+/// than tall, else stacks them (first on top). A leaf whose window is not
+/// tiled (floating, minimized, a fullscreen window covering the display)
+/// takes no space: its sibling gets the whole split. Split boundaries are
+/// rounded to whole points; every frame is finite and at least 1x1 (an
+/// AX requirement). Pure: same inputs, same frames.
+public struct DwindleLayoutEngine: Sendable {
+    public let config: LayoutConfig
+
+    public init(config: LayoutConfig = LayoutConfig()) {
+        self.config = config
+    }
+
+    public func layout(
+        _ state: DwindleState, viewport: CGRect, modes: [WindowID: WindowMode] = [:]
+    ) throws -> DwindleLayout {
+        guard viewport.width.isFinite, viewport.height.isFinite,
+              viewport.minX.isFinite, viewport.minY.isFinite,
+              viewport.width > 0, viewport.height > 0
+        else {
+            throw LayoutError.invalidViewport
+        }
+        let multiplier = config.dwindle.splitWidthMultiplier
+        guard config.padding.isFinite, config.gap.isFinite, config.padding >= 0, config.gap >= 0,
+              multiplier.isFinite, multiplier > 0
+        else {
+            throw LayoutError.invalidConfiguration
+        }
+        let area = viewport.insetBy(dx: config.padding, dy: config.padding)
+        guard !area.isNull, area.width > 0, area.height > 0 else {
+            throw LayoutError.invalidViewport
+        }
+        var result = DwindleLayout(frames: [:], splits: [:])
+        if let root = state.root {
+            place(root, in: area, path: [], tiled: { modes[$0, default: .tiled] == .tiled }, into: &result)
+        }
+        return result
+    }
+
+    private func place(
+        _ node: DwindleNode, in rect: CGRect, path: DwindlePath,
+        tiled: (WindowID) -> Bool, into result: inout DwindleLayout
+    ) {
+        switch node {
+        case .leaf(let id):
+            if tiled(id) {
+                result.frames[id] = CGRect(
+                    x: rect.minX, y: rect.minY, width: max(rect.width, 1), height: max(rect.height, 1)
+                )
+            }
+        case .split(let split):
+            let orientation = split.orientation ?? shape(of: rect)
+            result.splits[path] = DwindleSplitPlacement(rect: rect, orientation: orientation)
+            let firstShown = split.first.windows.contains(where: tiled)
+            let secondShown = split.second.windows.contains(where: tiled)
+            guard firstShown, secondShown else {
+                // One side shows nothing: the other side gets the whole split.
+                if firstShown {
+                    place(split.first, in: rect, path: path + [.first], tiled: tiled, into: &result)
+                } else if secondShown {
+                    place(split.second, in: rect, path: path + [.second], tiled: tiled, into: &result)
+                }
+                return
+            }
+            let (first, second) = divide(rect, orientation: orientation, ratio: split.ratio)
+            place(split.first, in: first, path: path + [.first], tiled: tiled, into: &result)
+            place(split.second, in: second, path: path + [.second], tiled: tiled, into: &result)
+        }
+    }
+
+    /// Side by side when the rectangle is wide enough (Hyprland's
+    /// `split_width_multiplier` rule), stacked otherwise.
+    func shape(of rect: CGRect) -> DwindleOrientation {
+        rect.width >= rect.height * config.dwindle.splitWidthMultiplier ? .horizontal : .vertical
+    }
+
+    /// The two children's rectangles: the first takes `ratio / 2` of what
+    /// is left after the gap (left, or top in Cocoa's y-up space).
+    func divide(
+        _ rect: CGRect, orientation: DwindleOrientation, ratio: CGFloat
+    ) -> (first: CGRect, second: CGRect) {
+        let fraction = clampedDwindleRatio(ratio) / 2
+        let gap = config.gap
+        switch orientation {
+        case .horizontal:
+            let available = max(rect.width - gap, 0)
+            let firstWidth = (available * fraction).rounded()
+            return (
+                CGRect(x: rect.minX, y: rect.minY, width: firstWidth, height: rect.height),
+                CGRect(x: rect.minX + firstWidth + gap, y: rect.minY, width: available - firstWidth, height: rect.height)
+            )
+        case .vertical:
+            let available = max(rect.height - gap, 0)
+            let firstHeight = (available * fraction).rounded()
+            return (
+                CGRect(x: rect.minX, y: rect.maxY - firstHeight, width: rect.width, height: firstHeight),
+                CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: available - firstHeight)
+            )
+        }
+    }
+}
