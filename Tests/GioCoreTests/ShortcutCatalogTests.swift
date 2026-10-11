@@ -76,10 +76,18 @@ final class ShortcutCatalogTests: XCTestCase {
             XCTAssertEqual(keys("move-workspace-to-monitor-\(suffix)"), [], "unbound")
         }
         let monitors = entries.filter { $0.category == .monitors }.compactMap(\.configName)
-        XCTAssertEqual(monitors.count, 16)
+        XCTAssertEqual(monitors.count, 20)
         XCTAssertEqual(Array(monitors.prefix(4)), [
             "focus-monitor-left", "focus-monitor-right", "focus-monitor-up", "focus-monitor-down",
         ])
+        // MM-06: the edge-crossing column actions close the category, unbound.
+        XCTAssertEqual(Array(monitors.suffix(4)), [
+            "move-column-left-or-to-monitor-left", "move-column-right-or-to-monitor-right",
+            "focus-column-or-monitor-left", "focus-column-or-monitor-right",
+        ])
+        for name in monitors.suffix(4) {
+            XCTAssertEqual(keys(name), [], "\(name) ships unbound")
+        }
     }
 
     func testNiriColumnHeightAndWorkspaceEntries() {

@@ -17,7 +17,9 @@ extension HotkeyAction {
              .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
              .swapWindowLeft, .swapWindowRight,
              .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
-             .focusWorkspacePrevious, .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp:
+             .focusWorkspacePrevious, .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp,
+             .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
+             .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
              .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview,

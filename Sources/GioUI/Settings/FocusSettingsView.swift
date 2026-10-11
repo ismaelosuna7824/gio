@@ -2,7 +2,8 @@ import GioCore
 import SwiftUI
 
 /// DD-03 Focus: which indicator marks the focused window (with a preview of
-/// three sample windows), ring settings, centering and pointer behavior.
+/// three sample windows), ring settings, centering, pointer behavior and the
+/// MM-06 edge crossing to the next display.
 struct FocusSettingsView: View {
     @ObservedObject var model: DesktopModel
     @State private var draft: SettingsDraft<FocusSectionDraft>
@@ -36,6 +37,7 @@ struct FocusSettingsView: View {
             }
             scrollingCard
             pointerCard
+            displaysCard
         }
         .onReceive(model.$snapshot) { snapshot in
             draft.adopt(saved: FocusSectionDraft(config: snapshot.config))
@@ -138,6 +140,18 @@ struct FocusSettingsView: View {
                     "Focus follows mouse",
                     caption: "Focuses the window the pointer rests on for about 100 ms. Never scrolls the strip.",
                     isOn: current.focusFollowsMouse
+                )
+            }
+        }
+    }
+
+    private var displaysCard: some View {
+        SectionCard("Displays", footer: "Needs a display on that side; otherwise the column stays at the edge.") {
+            CardRow(divider: false) {
+                ToggleRow(
+                    "Move columns across displays at the edge",
+                    caption: "Move column left / right (Alt+Shift+H / L) from the first or last column sends it to the next display, entering by the edge it crossed.",
+                    isOn: current.moveCrossesMonitorAtEdge
                 )
             }
         }

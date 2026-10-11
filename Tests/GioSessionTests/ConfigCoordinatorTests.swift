@@ -130,7 +130,7 @@ final class ConfigCoordinatorTests: XCTestCase {
         let coordinator = makeCoordinator()
 
         let result = coordinator.applyConfigEdits(
-            behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true)
+            behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true, moveCrossesMonitorAtEdge: false)
         )
 
         guard case .success = result else {

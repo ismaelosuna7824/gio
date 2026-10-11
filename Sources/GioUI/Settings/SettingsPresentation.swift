@@ -428,6 +428,8 @@ public struct FocusSectionDraft: Equatable, Sendable {
     public var centerFocusedColumn: CenterFocusedColumnMode
     public var focusFollowsMouse: Bool
     public var mouseFollowsFocus: Bool
+    /// MM-06 `[behavior] move-crosses-monitor-at-edge`.
+    public var moveCrossesMonitorAtEdge: Bool
 
     public init(config: GioConfig) {
         indicator = FocusSettingsForm(config: config.focus)
@@ -435,6 +437,7 @@ public struct FocusSectionDraft: Equatable, Sendable {
         centerFocusedColumn = config.layout.centerFocusedColumn
         focusFollowsMouse = config.behavior.focusFollowsMouse
         mouseFollowsFocus = config.behavior.mouseFollowsFocus
+        moveCrossesMonitorAtEdge = config.behavior.moveCrossesMonitorAtEdge
     }
 
     /// Ring problems only count while the ring is the indicator: its
@@ -445,7 +448,10 @@ public struct FocusSectionDraft: Equatable, Sendable {
 
     public var edits: [ConfigEdit] {
         [.set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue))]
-            + behaviorEdits(focusFollowsMouse: focusFollowsMouse, mouseFollowsFocus: mouseFollowsFocus)
+            + behaviorEdits(
+                focusFollowsMouse: focusFollowsMouse, mouseFollowsFocus: mouseFollowsFocus,
+                moveCrossesMonitorAtEdge: moveCrossesMonitorAtEdge
+            )
             + ring.edits + indicator.edits
     }
 }

@@ -70,9 +70,9 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
     case .focusDown:
         return ActionInfo(id: "focus-down", name: "Focus down", summary: "Focus the window below in the current column.", category: .focus)
     case .moveColumnLeft:
-        return ActionInfo(id: "move-column-left", name: "Move column left", summary: "Swap the focused window's column with the one on its left; the column keeps its windows and sizes.", category: .move)
+        return ActionInfo(id: "move-column-left", name: "Move column left", summary: "Swap the focused window's column with the one on its left; the column keeps its windows and sizes. With move-crosses-monitor-at-edge on, the first column goes to the display on the left.", category: .move)
     case .moveColumnRight:
-        return ActionInfo(id: "move-column-right", name: "Move column right", summary: "Swap the focused window's column with the one on its right; the column keeps its windows and sizes.", category: .move)
+        return ActionInfo(id: "move-column-right", name: "Move column right", summary: "Swap the focused window's column with the one on its right; the column keeps its windows and sizes. With move-crosses-monitor-at-edge on, the last column goes to the display on the right.", category: .move)
     case .moveLeft:
         return ActionInfo(id: "move-window-left", name: "Move window into left column", summary: "Append the focused window to the left column (unbound by default; use consume-or-expel instead).", category: .move)
     case .moveRight:
@@ -167,6 +167,14 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "expand-column-to-available-width", name: "Expand column to available width", summary: "Make the focused column fill the space the other fully visible columns leave.", category: .columns)
     case .centerVisibleColumns:
         return ActionInfo(id: "center-visible-columns", name: "Center visible columns", summary: "Scroll the view so the fully visible columns sit in the middle of the display.", category: .columns)
+    case .moveColumnLeftOrToMonitorLeft:
+        return ActionInfo(id: "move-column-left-or-to-monitor-left", name: "Move column left or to monitor left", summary: "Move the column left; from the first column, send it to the display on the left as its last column, and follow it (unbound by default).", category: .monitors)
+    case .moveColumnRightOrToMonitorRight:
+        return ActionInfo(id: "move-column-right-or-to-monitor-right", name: "Move column right or to monitor right", summary: "Move the column right; from the last column, send it to the display on the right as its first column, and follow it (unbound by default).", category: .monitors)
+    case .focusColumnOrMonitorLeft:
+        return ActionInfo(id: "focus-column-or-monitor-left", name: "Focus column or monitor left", summary: "Focus the column on the left; from the first column, the display on the left (unbound by default).", category: .monitors)
+    case .focusColumnOrMonitorRight:
+        return ActionInfo(id: "focus-column-or-monitor-right", name: "Focus column or monitor right", summary: "Focus the column on the right; from the last column, the display on the right (unbound by default).", category: .monitors)
     }
 }
 
@@ -238,6 +246,8 @@ private let catalogActions: [HotkeyAction] = [
     .moveWindowToMonitor(.up), .moveWindowToMonitor(.down),
     .moveWorkspaceToMonitor(.left), .moveWorkspaceToMonitor(.right),
     .moveWorkspaceToMonitor(.up), .moveWorkspaceToMonitor(.down),
+    .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
+    .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight,
 ]
 
 /// Effective bindings: defaults minus `"none"` combos, with config bindings

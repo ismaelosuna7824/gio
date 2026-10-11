@@ -123,11 +123,14 @@ public enum MotionCause: Equatable, Sendable {
 public func motionCause(for action: HotkeyAction) -> MotionCause {
     switch action {
     case .focusLeft, .focusRight, .focusUp, .focusDown, .centerColumn,
-         .focusColumnFirst, .focusColumnLast, .centerVisibleColumns:
+         .focusColumnFirst, .focusColumnLast, .centerVisibleColumns,
+         // MM-06: usually a scroll; crossing to a display moves no window.
+         .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
         return .viewScroll
     case .moveLeft, .moveRight, .moveUp, .moveDown, .moveColumnLeft, .moveColumnRight,
          .consumeOrExpelLeft, .consumeOrExpelRight, .toggleFloating,
          .moveColumnToMonitor, .moveWindowToMonitor,
+         .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
          .moveColumnToFirst, .moveColumnToLast, .swapWindowLeft, .swapWindowRight:
         // MM-02: windows crossing to another display move like any window.
         return .windowMovement

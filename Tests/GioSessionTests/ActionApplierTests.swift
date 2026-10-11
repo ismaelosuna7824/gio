@@ -21,7 +21,9 @@ final class ActionApplierTests: XCTestCase {
             .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .focusWorkspacePrevious,
             .moveWorkspaceDown, .moveWorkspaceUp,
             .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
-            .expandColumnToAvailableWidth, .centerVisibleColumns
+            .expandColumnToAvailableWidth, .centerVisibleColumns,
+            .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
+            .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight
         ]
         for action in actions {
             switch action {
@@ -37,7 +39,9 @@ final class ActionApplierTests: XCTestCase {
                  .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp, .focusWorkspacePrevious,
                  .moveWorkspaceDown, .moveWorkspaceUp,
                  .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
-                 .expandColumnToAvailableWidth, .centerVisibleColumns:
+                 .expandColumnToAvailableWidth, .centerVisibleColumns,
+                 .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
+                 .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
                 break
             }
         }
@@ -49,6 +53,7 @@ final class ActionApplierTests: XCTestCase {
     private var engineCalls = 0
     private var modeCalls = 0
     private var fallbackCalls = 0
+    private var behavior = BehaviorSectionConfig()
 
     override func setUp() {
         world = ReflowWorld()
@@ -57,12 +62,13 @@ final class ActionApplierTests: XCTestCase {
         engineCalls = 0
         modeCalls = 0
         fallbackCalls = 0
+        behavior = BehaviorSectionConfig()
     }
 
     private func context() -> ActionApplier.Context {
         .init(
             registry: world.session.registry, displays: world.displays.allDisplays(),
-            visibleFrames: world.visibleFrames, layout: world.session.config.layout,
+            visibleFrames: world.visibleFrames, layout: world.session.config.layout, behavior: behavior,
             engine: {
                 self.engineCalls += 1
                 return self.world.engine()
@@ -476,5 +482,121 @@ final class ActionApplierTests: XCTestCase {
             XCTAssertTrue(effect.carriesFocusIntent, "\(make(.right))")
             XCTAssertNil(effect.warpsToDisplay, "\(make(.right))")
         }
+    }
+
+    // MARK: Move Edge (MM-06)
+
+    private static let edgeActions: [HotkeyAction] = [
+        .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
+        .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight,
+    ]
+
+    func testOrMonitorActionsInsideTheStripMatchTheColumnActions() {
+        let pairs: [(HotkeyAction, HotkeyAction)] = [
+            (.moveColumnLeftOrToMonitorLeft, .moveColumnLeft), (.moveColumnRightOrToMonitorRight, .moveColumnRight),
+            (.focusColumnOrMonitorLeft, .focusLeft), (.focusColumnOrMonitorRight, .focusRight),
+        ]
+        for (edge, plain) in pairs {
+            twoDisplays()
+            apply(plain)
+            let expected = world.session.manager
+            twoDisplays()
+            let effect = apply(edge)
+            XCTAssertEqual(world.session.manager, expected, "\(edge)")
+            XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left, "\(edge)")
+            XCTAssertFalse(effect.syncsShownWorkspace, "\(edge)")
+            XCTAssertTrue(effect.carriesFocusIntent, "\(edge)")
+        }
+    }
+
+    func testMoveRightOrToMonitorCrossesAtTheEdgeAndLandsFirst() {
+        twoDisplays()
+        world.focusColumn(2)
+        var expected = world.session.manager
+        XCTAssertTrue(expected.moveColumn(toDisplay: ReflowWorld.right, landing: .first))
+        let effect = apply(.moveColumnRightOrToMonitorRight)
+        XCTAssertEqual(world.session.manager, expected)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right, "focus follows")
+        XCTAssertEqual(current.focusedWindow, ids[2])
+        XCTAssertEqual(current.focusedColumn, 0)
+        XCTAssertTrue(effect.syncsShownWorkspace)
+        XCTAssertTrue(effect.carriesFocusIntent)
+
+        // Back again: the right display's only column is at both edges.
+        let back = apply(.moveColumnLeftOrToMonitorLeft)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left)
+        XCTAssertEqual(current.columns.map(\.windows), [[ids[0]], [ids[1]], [ids[2]]], "lands last")
+        XCTAssertEqual(current.focusedWindow, ids[2])
+        XCTAssertTrue(back.syncsShownWorkspace)
+    }
+
+    func testFocusOrMonitorCrossesAtTheEdge() {
+        twoDisplays()
+        world.focusColumn(2)
+        let effect = apply(.focusColumnOrMonitorRight)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right)
+        XCTAssertTrue(effect.syncsShownWorkspace)
+        XCTAssertEqual(effect.warpsToDisplay, world.visibleFrames[ReflowWorld.right], "an empty display takes the cursor")
+        XCTAssertTrue(apply(.focusColumnOrMonitorLeft).syncsShownWorkspace)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left)
+        XCTAssertEqual(current.focusedWindow, ids[2])
+    }
+
+    func testOrMonitorActionsAtAnEdgeWithoutANeighbourChangeNothing() {
+        for action in Self.edgeActions {
+            setUp()
+            world.focusColumn(action == .moveColumnLeftOrToMonitorLeft || action == .focusColumnOrMonitorLeft ? 0 : 2)
+            let before = world.session.manager
+            let effect = apply(action)
+            XCTAssertEqual(world.session.manager, before, "\(action): one display")
+            XCTAssertFalse(effect.syncsShownWorkspace, "\(action)")
+            XCTAssertNil(effect.warpsToDisplay, "\(action)")
+        }
+        twoDisplays()
+        world.focusColumn(0)
+        for action: HotkeyAction in [.moveColumnLeftOrToMonitorLeft, .focusColumnOrMonitorLeft] {
+            let before = world.session.manager
+            XCTAssertFalse(apply(action).syncsShownWorkspace, "\(action)")
+            XCTAssertEqual(world.session.manager, before, "\(action): nothing on the left")
+        }
+    }
+
+    func testTheToggleMakesMoveColumnCrossAtTheEdge() {
+        for direction in [FocusDirection.left, .right] {
+            let action: HotkeyAction = direction == .left ? .moveColumnLeft : .moveColumnRight
+            // Off: the edge stops the column.
+            twoDisplays()
+            if direction == .left {
+                // The column alone on the right display: at its left edge.
+                apply(.moveColumnToMonitor(.right))
+                XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right)
+            } else {
+                world.focusColumn(2)
+            }
+            let start = world.session.manager
+            XCTAssertFalse(apply(action).syncsShownWorkspace, "\(direction): off")
+            XCTAssertEqual(world.session.manager, start, "\(direction): off")
+
+            // On: like the or-to-monitor action.
+            behavior.moveCrossesMonitorAtEdge = true
+            world.session.manager = start
+            apply(direction == .left ? .moveColumnLeftOrToMonitorLeft : .moveColumnRightOrToMonitorRight)
+            let expected = world.session.manager
+            world.session.manager = start
+            let effect = apply(action)
+            XCTAssertEqual(world.session.manager, expected, "\(direction): on")
+            XCTAssertNotEqual(world.session.manager.focusedDisplay, start.focusedDisplay, "\(direction): focus follows")
+            XCTAssertTrue(effect.syncsShownWorkspace, "\(direction): on")
+            behavior.moveCrossesMonitorAtEdge = false
+        }
+    }
+
+    func testTheToggleLeavesAMoveInsideTheStripAlone() {
+        twoDisplays()
+        behavior.moveCrossesMonitorAtEdge = true
+        let effect = apply(.moveColumnRight)
+        XCTAssertEqual(current.columns.map(\.windows), [[ids[0]], [ids[2]], [ids[1]]])
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left)
+        XCTAssertFalse(effect.syncsShownWorkspace)
     }
 }

@@ -43,6 +43,8 @@ public enum ActionApplier {
         public var displays: [DisplayState]
         public var visibleFrames: [DisplayID: CGRect]
         public var layout: LayoutSectionConfig
+        /// MM-06: `move-crosses-monitor-at-edge` lives here.
+        public var behavior: BehaviorSectionConfig
         public var engine: () -> ScrollableLayoutEngine
         public var modes: () -> [WindowID: WindowMode]
         /// The primary screen's usable frame, used without any display.
@@ -50,13 +52,15 @@ public enum ActionApplier {
 
         public init(
             registry: WindowRegistry, displays: [DisplayState], visibleFrames: [DisplayID: CGRect],
-            layout: LayoutSectionConfig, engine: @escaping () -> ScrollableLayoutEngine,
+            layout: LayoutSectionConfig, behavior: BehaviorSectionConfig,
+            engine: @escaping () -> ScrollableLayoutEngine,
             modes: @escaping () -> [WindowID: WindowMode], fallbackViewport: @escaping () -> CGRect?
         ) {
             self.registry = registry
             self.displays = displays
             self.visibleFrames = visibleFrames
             self.layout = layout
+            self.behavior = behavior
             self.engine = engine
             self.modes = modes
             self.fallbackViewport = fallbackViewport
@@ -83,10 +87,15 @@ public enum ActionApplier {
             narrowMove(in: &workspace, .left, manager: &manager)
         case .moveRight:
             narrowMove(in: &workspace, .right, manager: &manager)
-        case .moveColumnLeft:
-            commit(moveColumn(in: workspace, direction: .left), over: workspace, manager: &manager)
-        case .moveColumnRight:
-            commit(moveColumn(in: workspace, direction: .right), over: workspace, manager: &manager)
+        case .moveColumnLeft, .moveColumnRight:
+            let direction: FocusDirection = action == .moveColumnLeft ? .left : .right
+            if context.behavior.moveCrossesMonitorAtEdge {
+                effect.syncsShownWorkspace = manager.moveColumnOrToDisplay(
+                    direction, frames: displayFrames(context)
+                ) == .crossedDisplay
+            } else {
+                commit(moveColumn(in: workspace, direction: direction), over: workspace, manager: &manager)
+            }
         case .moveUp:
             narrowMove(in: &workspace, .up, manager: &manager)
         case .moveDown:
@@ -246,6 +255,16 @@ public enum ActionApplier {
                 ),
                 over: workspace, manager: &manager
             )
+        case .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight:
+            let direction: FocusDirection = action == .moveColumnLeftOrToMonitorLeft ? .left : .right
+            effect.syncsShownWorkspace = manager.moveColumnOrToDisplay(
+                direction, frames: displayFrames(context)
+            ) == .crossedDisplay
+        case .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
+            let direction: FocusDirection = action == .focusColumnOrMonitorLeft ? .left : .right
+            effect.syncsShownWorkspace = manager.focusColumnOrDisplay(
+                direction, frames: displayFrames(context)
+            ) == .crossedDisplay
         }
         if manager.focusedDisplay != startDisplay, manager.currentWorkspace().focusedWindow == nil,
            let display = context.displays.first(where: { $0.id == manager.focusedDisplay })
@@ -301,11 +320,17 @@ public enum ActionApplier {
         _ direction: FocusDirection, manager: inout WorkspaceManager, context: Context,
         _ change: (inout WorkspaceManager, DisplayID) -> Bool
     ) -> Bool {
-        let frames = Dictionary(context.displays.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
-        guard let target = displayNeighbour(of: manager.focusedDisplay, direction: direction, frames: frames) else {
+        guard let target = displayNeighbour(
+            of: manager.focusedDisplay, direction: direction, frames: displayFrames(context)
+        ) else {
             return false
         }
         return change(&manager, target)
+    }
+
+    /// Full display frames, the geometry `displayNeighbour` works on (MM-01).
+    private static func displayFrames(_ context: Context) -> [DisplayID: CGRect] {
+        Dictionary(context.displays.map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
     }
 
     /// Fullscreen is a layout mode: the registry flips and the reflow places

@@ -260,10 +260,11 @@ public struct FocusSettingsForm: Equatable, Sendable {
     }
 }
 
-public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool) -> [ConfigEdit] {
+public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool, moveCrossesMonitorAtEdge: Bool) -> [ConfigEdit] {
     [
         .set(table: "behavior", key: "focus-follows-mouse", value: .bool(focusFollowsMouse)),
         .set(table: "behavior", key: "mouse-follows-focus", value: .bool(mouseFollowsFocus)),
+        .set(table: "behavior", key: "move-crosses-monitor-at-edge", value: .bool(moveCrossesMonitorAtEdge)),
     ]
 }
 

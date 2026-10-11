@@ -65,10 +65,15 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
     /// Consumed by the session host (HD-04): hover focus and cursor warp.
     public var focusFollowsMouse: Bool
     public var mouseFollowsFocus: Bool
+    /// MM-06 `move-crosses-monitor-at-edge`: `move-column-left/right` (and
+    /// `gio move left/right`) at the strip's edge send the column to the
+    /// neighbouring display, like `move-column-*-or-to-monitor-*`.
+    public var moveCrossesMonitorAtEdge: Bool
 
-    public init(focusFollowsMouse: Bool = false, mouseFollowsFocus: Bool = true) {
+    public init(focusFollowsMouse: Bool = false, mouseFollowsFocus: Bool = true, moveCrossesMonitorAtEdge: Bool = false) {
         self.focusFollowsMouse = focusFollowsMouse
         self.mouseFollowsFocus = mouseFollowsFocus
+        self.moveCrossesMonitorAtEdge = moveCrossesMonitorAtEdge
     }
 }
 

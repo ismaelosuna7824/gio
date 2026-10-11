@@ -36,6 +36,9 @@ public func defaultConfigTemplate() -> String {
     focus-follows-mouse = false
     # Warp the cursor to the focused window after a keyboard focus change.
     mouse-follows-focus = true
+    # With two or more displays: move-column-left / -right (Alt+Shift+H / L)
+    # at the first / last column send it to the display on that side.
+    move-crosses-monitor-at-edge = false
 
     [animations]
     enabled = true
@@ -169,6 +172,10 @@ public func defaultConfigTemplate() -> String {
     # "focus-window-or-workspace-down" / "-up" (the workspace below / above from
     # the column's last / first window), e.g.
     # "Alt+J" = "focus-window-or-workspace-down"
+    # Unbound: "move-column-left-or-to-monitor-left" / "-right-or-to-monitor-right"
+    # (from the strip's edge the column goes to the next display, entering by
+    # that edge) and "focus-column-or-monitor-left" / "-right", e.g.
+    # "Alt+Shift+Left" = "move-column-left-or-to-monitor-left"
     # "none" switches a combo off, defaults included (the app's Shortcuts
     # section writes these lines for you), e.g. "Alt+C" = "none"
 

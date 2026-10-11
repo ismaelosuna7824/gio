@@ -113,6 +113,18 @@ public enum HotkeyAction: Equatable, Sendable {
     case expandColumnToAvailableWidth
     /// NC-12 niri `center-visible-columns` (Ctrl+Alt+C).
     case centerVisibleColumns
+    /// MM-06 niri `move-column-left-or-to-monitor-left` (unbound): move the
+    /// column left; from the strip's left edge, to the display on the left,
+    /// where it lands as the last column. Focus follows.
+    case moveColumnLeftOrToMonitorLeft
+    /// MM-06 niri `move-column-right-or-to-monitor-right` (unbound): lands as
+    /// the first column of the display on the right.
+    case moveColumnRightOrToMonitorRight
+    /// MM-06 niri `focus-column-or-monitor-left` (unbound): the column on
+    /// the left, or from the first column the display on the left.
+    case focusColumnOrMonitorLeft
+    /// MM-06 niri `focus-column-or-monitor-right` (unbound).
+    case focusColumnOrMonitorRight
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -160,6 +172,8 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// Ctrl+Alt+F expands the column to the available width, Ctrl+Alt+C centers the visible columns
 /// (niri Mod+Ctrl+F / C); `focus-window-or-workspace-*` (a commented alternative in niri) and
 /// `switch-preset-column-width-back` (niri Mod+Shift+R, Gio's window-height cycle) ship unbound.
+/// MM-06: `move-column-*-or-to-monitor-*` and `focus-column-or-monitor-*` ship unbound (niri's
+/// default config binds none of them either).
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)

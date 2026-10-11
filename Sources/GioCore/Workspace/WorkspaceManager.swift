@@ -451,14 +451,16 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// column that takes its place keeps the source's focus; the source stays
     /// shown on its display, even emptied, until you leave it. False without
     /// a focused column, for the focused display or an unknown one.
+    /// MM-06: `landing` `.first` / `.last` puts it at that end of the target
+    /// strip instead (the edge-crossing moves enter by the edge they cross).
     @discardableResult
-    public mutating func moveColumn(toDisplay display: DisplayID) -> Bool {
+    public mutating func moveColumn(toDisplay display: DisplayID, landing: ColumnLanding = .afterFocused) -> Bool {
         guard display != focusedDisplay, let destinationID = activeID(on: display),
               let column = takeFocusedColumn()
         else {
             return false
         }
-        insert(column, into: destinationID, afterFocused: true)
+        insert(column, into: destinationID, at: landing)
         crossFocus(to: display)
         return true
     }
@@ -476,7 +478,7 @@ public struct WorkspaceManager: Equatable, Sendable {
         else {
             return false
         }
-        insert(column, into: destinationID, afterFocused: true)
+        insert(column, into: destinationID, at: .afterFocused)
         crossFocus(to: display)
         return true
     }
@@ -664,7 +666,7 @@ public struct WorkspaceManager: Equatable, Sendable {
         guard destinationID != currentID, let column = takeFocusedColumn() else {
             return false
         }
-        insert(column, into: destinationID, afterFocused: true)
+        insert(column, into: destinationID, at: .afterFocused)
         if let place = location(of: destinationID) {
             activate(place.index - 1, on: place.display)
         }
@@ -703,7 +705,7 @@ public struct WorkspaceManager: Equatable, Sendable {
         guard destinationID != currentID, let column = detach(id, from: currentID) else {
             return false
         }
-        insert(column, into: destinationID, afterFocused: false)
+        insert(column, into: destinationID, at: .last)
         if follow, let place = location(of: destinationID) {
             activate(place.index - 1, on: place.display)
         } else {
@@ -756,9 +758,8 @@ public struct WorkspaceManager: Equatable, Sendable {
     }
 
     /// Put `column` (windows, width, weights, maximize state) into workspace
-    /// `destinationID` under a fresh column id, focused: after the focused
-    /// column, or last.
-    private mutating func insert(_ column: Column, into destinationID: WorkspaceID, afterFocused: Bool) {
+    /// `destinationID` under a fresh column id, focused, where `landing` says.
+    private mutating func insert(_ column: Column, into destinationID: WorkspaceID, at landing: ColumnLanding) {
         var dest = workspaces[destinationID]!
         var placed = Column(
             id: ColumnID((dest.columns.map(\.id.rawValue).max() ?? 0) + 1),
@@ -769,9 +770,15 @@ public struct WorkspaceManager: Equatable, Sendable {
             widthSpec: column.widthSpec
         )
         placed.savedWidthSpec = column.savedWidthSpec
-        let position = afterFocused && !dest.columns.isEmpty
-            ? min(dest.focusedColumn + 1, dest.columns.count)
-            : dest.columns.count
+        let position: Int
+        switch landing {
+        case .afterFocused where !dest.columns.isEmpty:
+            position = min(dest.focusedColumn + 1, dest.columns.count)
+        case .first:
+            position = 0
+        case .afterFocused, .last:
+            position = dest.columns.count
+        }
         dest.columns.insert(placed, at: position)
         dest.focusedColumn = position
         dest.focusedWindow = placed.focusedWindowID

@@ -267,9 +267,10 @@ final class SettingsFormTests: XCTestCase {
             .set(table: "animations", key: "enabled", value: .bool(false)),
             .set(table: "animations", key: "duration-ms", value: .int(350)),
         ])
-        XCTAssertEqual(behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: false), [
+        XCTAssertEqual(behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: false, moveCrossesMonitorAtEdge: true), [
             .set(table: "behavior", key: "focus-follows-mouse", value: .bool(true)),
             .set(table: "behavior", key: "mouse-follows-focus", value: .bool(false)),
+            .set(table: "behavior", key: "move-crosses-monitor-at-edge", value: .bool(true)),
         ])
     }
 

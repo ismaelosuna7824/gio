@@ -544,6 +544,7 @@ final class ReflowPlannerTests: XCTestCase {
         let effect = ActionApplier.apply(action, manager: &manager, context: .init(
             registry: world.session.registry, displays: world.displays.allDisplays(),
             visibleFrames: world.visibleFrames, layout: world.session.config.layout,
+            behavior: world.session.config.behavior,
             engine: { world.engine() }, modes: { world.modes }, fallbackViewport: { nil }
         ))
         world.session.manager = manager

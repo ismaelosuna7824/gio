@@ -537,6 +537,93 @@ stuck, and sometimes windows move or rearrange when they should not."
   LoopOps 1024 (the real minimums), nothing for Slack or OrbStack.
 - Not addressed here (report part 1, the per-key delay): see the issue triage; not reproduced.
 
+## MM-06 — Move Edge: crossing displays at the strip's edge
+
+### Request (2026-10-11)
+OmniWM-inspired "Move Edge" (user decision in chat: both the niri actions and a toggle). niri's
+`move-column-left-or-to-monitor-left`, `move-column-right-or-to-monitor-right`,
+`focus-column-or-monitor-left`, `focus-column-or-monitor-right` (names and semantics checked in
+niri's `niri-ipc/src/lib.rs` and `src/layout/mod.rs`: the in-strip move first, the output only
+when it did nothing), plus OmniWM's `moveCrossesMonitorAtEdge` as
+`[behavior] move-crosses-monitor-at-edge` for the plain `move-column-left/right`. OmniWM was only
+read for behaviour (GPL-2.0); no code taken. Non-goals: Dwindle, gestures, SkyLight.
+
+### Decisions
+- Core: `WorkspaceManager.moveColumnOrToDisplay(_:frames:)` and `focusColumnOrDisplay(_:frames:)`
+  (`GioCore/Workspace/MoveEdge.swift`, pure) run `moveColumn(in:direction:)` / `moveFocus`
+  and only when that returns the workspace unchanged look up `displayNeighbour` and call
+  `moveColumn(toDisplay:landing:)` / `focusDisplay`. Result `EdgeStep` (`.unchanged`,
+  `.withinWorkspace`, `.crossedDisplay`); no neighbour, an empty workspace or up/down give
+  `.unchanged` and leave the manager untouched. Left/right only (niri has no vertical variant).
+- Landing (user requirement, differs from niri): the column enters by the edge it crossed.
+  Moving right it becomes the target workspace's **first** column, moving left its **last**
+  (`ColumnLanding.first` / `.last`); niri's `move_column_to_output` lands it after the target's
+  active column. `move-column-to-monitor-*` keep `.afterFocused` (the default argument), as do
+  `move-window-to-monitor-*` and the workspace transfers. The target's reveal is the pass's
+  usual `revealOffset` (no stored offset is touched); a test plans the target display and finds
+  the landed column inside it.
+- Focus at the edge goes to the neighbouring display's shown workspace and its own focused
+  column (`focusDisplay`, like niri's `focus_output`); an empty display gets the MM-02
+  `warpsToDisplay` cursor warp through the shared check in `ActionApplier.apply`.
+- Toggle: `BehaviorSectionConfig.moveCrossesMonitorAtEdge` (default false), parsed by
+  `applyBehaviorKey` with `applyBoolKey`. A non-boolean is a line-numbered config **error**, like
+  every other bool key (`focus-follows-mouse`, `maximize-single-window`, ...), not a warning:
+  the brief said "warning + default", but the repo's policy (CONTRIBUTING, "Add a config key")
+  makes a wrong type an error, and an invalid file keeps the WM on the previous config
+  (invariant 9). `ActionApplier.Context.behavior` carries it; with it on, `move-column-left/right`
+  go through `moveColumnOrToDisplay`. Settings > Focus > **Displays** card, toggle
+  "Move columns across displays at the edge" (`FocusSectionDraft.moveCrossesMonitorAtEdge`,
+  `behaviorEdits(..., moveCrossesMonitorAtEdge:)`; `patchGioConfig` keeps comments).
+- CLI: `gio move left/right` is the column move (FI-06), so it honours the toggle.
+  `CommandSession.displayFrames` (new; empty = unknown, the edge then stops the column) is filled
+  by `SessionHost` before every IPC dispatch; the reply on a crossing is
+  `moved column to the display on the left|right`. `IPCRouter`'s reflow syncs the shown workspace.
+  `gio focus` is unchanged (the toggle is about moving).
+- Effects: `.crossedDisplay` sets `syncsShownWorkspace`; all four actions carry a focus intent.
+  Motion causes: `.windowMovement` for the two moves, `.viewScroll` for the focus pair (usually a
+  scroll; crossing to a display moves no window).
+- Bindings: none. niri's default config binds none of the four, and Gio's free combos are not
+  niri defaults, so they ship unbound; the default binding count stays 75. Catalog: four entries
+  at the end of the Monitors category (20 entries).
+
+### Tasks
+- [x] MM-06 — Move Edge actions, landing and toggle. Commit `<pending>`; LIVE PENDING.
+  `GioCore/Hotkeys/HotkeyDispatcher.swift` (4 cases), `ShortcutCatalog.swift`,
+  `Config/ConfigParser.swift` (names, behavior key), `Config/GioConfig.swift`,
+  `Config/SettingsForms.swift`, `Config/ConfigTemplate.swift`, `Config/AnimationKinds.swift`,
+  `Focus/FocusIntent.swift`, `Workspace/WorkspaceManager.swift` (`ColumnLanding` insert),
+  `Workspace/MoveEdge.swift` (new), `Commands/CommandDispatcher.swift`,
+  `GioSession/Actions/ActionApplier.swift`, `GioDesktop/SessionHost.swift`,
+  `GioUI/Settings/FocusSettingsView.swift`, `SettingsPresentation.swift`; docs: README,
+  `docs/USER_GUIDE.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md` (check 14c, limitation),
+  AGENTS.md, this file.
+
+### Evidence
+- RED by compilation (`swift build --build-tests` before production code): `HotkeyAction` has
+  no member `moveColumnLeftOrToMonitorLeft` / `moveColumnRightOrToMonitorRight` /
+  `focusColumnOrMonitorLeft` / `focusColumnOrMonitorRight`; extra argument `landing`; extra
+  argument `moveCrossesMonitorAtEdge`; `BehaviorSectionConfig` has no member
+  `moveCrossesMonitorAtEdge`; no `.withinWorkspace` / `.crossedDisplay` / `.unchanged`.
+- Tests: `MoveEdgeTests` (13: landing first / last / after-focused; in-strip moves both ways;
+  right edge lands first and focus follows; left edge lands last; no neighbour, one display and
+  unknown geometry unchanged; empty workspace and up/down unchanged; focus within the strip
+  then across both ways; focus without a neighbour unchanged; the target plan reveals the landed
+  column both ways; config default / parse / non-boolean error / template; patch keeps comments;
+  names, unbound, focus intent, motion causes, 75 bindings; `gio move right` off and on),
+  `ActionApplierTests` (6 new: or-monitor actions inside the strip match the plain ones; move
+  right crosses and lands first, back left lands last; focus crosses with the empty-display
+  warp; no neighbour unchanged; toggle off stops / on crosses for both directions; toggle leaves
+  an in-strip move alone), `ShortcutCatalogTests` (Monitors 20, the four unbound),
+  `ConfigPatcherTests`, `SettingsPresentationTests`, `ConfigCoordinatorTests`.
+- GREEN: `swift test`, all bundles 0 failures: GioUITests 306 (53 skipped), GioSessionTests 399,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 83, GioCoreTests 1685. Signed `xcodebuild` BUILD
+  SUCCEEDED. `git diff --check` clean.
+- LIVE PENDING (nothing run on real displays; Gio was not launched): `docs/TESTING.md` check 14c.
+  With two displays side by side, bind the four actions, cross the edge both ways (lands first
+  on the right, last on the left, target scrolls to it, focus and cursor follow), press at the
+  outer edge (nothing), then turn on Settings > Focus > Displays > **Move columns across
+  displays at the edge** and repeat with `Alt+Shift+H/L` and `gio move right`.
+
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
   live check pending.
@@ -544,3 +631,5 @@ stuck, and sometimes windows move or rearrange when they should not."
 - 2026-10-08: MM-04 (live repair after the first two-display session) implemented and verified
   automatically; not committed; live check pending.
 - 2026-10-09: MM-04 committed as `e564c8d` and pushed to `main`. LIVE PENDING: hot-plug while running, the 2160x1440 left/above arrangement, Alt+O per display, Move Window to Display.
+- 2026-10-11: MM-06 (Move Edge) implemented on `feat/move-edge` and verified automatically;
+  LIVE PENDING (check 14c).

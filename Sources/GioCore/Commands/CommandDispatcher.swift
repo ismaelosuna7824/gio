@@ -20,6 +20,10 @@ public struct CommandSession {
     public var displayCount: Int?
     public var recentErrors: [String]
     public var configPath: String?
+    /// MM-06: every display's full frame, for `gio move left/right` with
+    /// `move-crosses-monitor-at-edge` (the live host fills it before each
+    /// IPC command; empty means unknown, so the edge stops the column).
+    public var displayFrames: [DisplayID: CGRect] = [:]
 
     public init(
         registry: WindowRegistry = WindowRegistry(),
@@ -104,7 +108,18 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return "focused column=\(after.focusedColumn) window=\(focused)"
     case .move(let direction):
         let before = session.manager.currentWorkspace()
-        // Same mapping as the hotkeys: left/right move the column (FI-06).
+        // Same mapping as the hotkeys: left/right move the column (FI-06),
+        // across the strip's edge with the MM-06 toggle.
+        if direction == .left || direction == .right, session.config.behavior.moveCrossesMonitorAtEdge {
+            switch session.manager.moveColumnOrToDisplay(direction, frames: session.displayFrames) {
+            case .unchanged:
+                return "move unchanged (no target)"
+            case .withinWorkspace:
+                return "moved column=\(session.manager.currentWorkspace().focusedColumn)"
+            case .crossedDisplay:
+                return "moved column to the display on the \(direction == .left ? "left" : "right")"
+            }
+        }
         let after = direction == .left || direction == .right
             ? moveColumn(in: before, direction: direction)
             : moveWindow(in: before, direction: direction)

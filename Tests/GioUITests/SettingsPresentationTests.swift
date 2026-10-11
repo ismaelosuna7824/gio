@@ -304,13 +304,15 @@ final class SettingsPresentationTests: XCTestCase {
         var config = GioConfig()
         config.layout.centerFocusedColumn = .onOverflow
         config.behavior.focusFollowsMouse = true
+        config.behavior.moveCrossesMonitorAtEdge = true
         let draft = FocusSectionDraft(config: config)
         XCTAssertEqual(draft.centerFocusedColumn, .onOverflow)
         XCTAssertTrue(draft.focusFollowsMouse)
+        XCTAssertTrue(draft.moveCrossesMonitorAtEdge, "MM-06")
         XCTAssertEqual(
             draft.edits,
             [.set(table: "layout", key: "center-focused-column", value: .string("on-overflow"))]
-                + behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true)
+                + behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true, moveCrossesMonitorAtEdge: true)
                 + draft.ring.edits + draft.indicator.edits
         )
         XCTAssertTrue(draft.problems.isEmpty)

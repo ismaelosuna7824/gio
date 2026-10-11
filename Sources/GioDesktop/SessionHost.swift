@@ -648,7 +648,13 @@ final class SessionHost: @unchecked Sendable {
         )
         ipcRouter = IPCRouter(context: .init(
             focusedWindow: { [unowned self] in session.manager.currentWorkspace().focusedWindow },
-            dispatch: { [unowned self] in dispatchIPC($0, session: &session, restartAvailable: true) },
+            dispatch: { [unowned self] argv in
+                // MM-06: `gio move left/right` may cross to a neighbouring display.
+                session.displayFrames = Dictionary(
+                    displays.allDisplays().map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first }
+                )
+                return dispatchIPC(argv, session: &session, restartAvailable: true)
+            },
             applyReloadedConfig: { [unowned self] in configCoordinator.applyReloadedConfig() },
             requestFocusIntent: { [unowned self] in focus.requestIntent(if: $0, previous: $1) },
             reflow: { [unowned self] in reflowAll() },
@@ -1903,7 +1909,7 @@ final class SessionHost: @unchecked Sendable {
         var manager = session.manager
         let effect = ActionApplier.apply(action, manager: &manager, context: .init(
             registry: session.registry, displays: displays.allDisplays(), visibleFrames: visibleFrames,
-            layout: session.config.layout, engine: { [unowned self] in engine() },
+            layout: session.config.layout, behavior: session.config.behavior, engine: { [unowned self] in engine() },
             modes: { [unowned self] in tileableModes() },
             fallbackViewport: { [probe] in probe.primaryScreenVisibleFrame }
         ))

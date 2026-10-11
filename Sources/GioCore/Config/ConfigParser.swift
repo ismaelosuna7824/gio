@@ -389,6 +389,10 @@ func applyBehaviorKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
             config.behavior.mouseFollowsFocus = $0
         }
+    case "move-crosses-monitor-at-edge":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
+            config.behavior.moveCrossesMonitorAtEdge = $0
+        }
     default:
         warnings.append("line \(line): unknown behavior key '\(key)', ignored")
     }
@@ -927,6 +931,10 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "switch-preset-column-width-back": return .switchPresetColumnWidthBack
     case "expand-column-to-available-width": return .expandColumnToAvailableWidth
     case "center-visible-columns": return .centerVisibleColumns
+    case "move-column-left-or-to-monitor-left": return .moveColumnLeftOrToMonitorLeft
+    case "move-column-right-or-to-monitor-right": return .moveColumnRightOrToMonitorRight
+    case "focus-column-or-monitor-left": return .focusColumnOrMonitorLeft
+    case "focus-column-or-monitor-right": return .focusColumnOrMonitorRight
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -975,6 +983,8 @@ public func validActionNames() -> [String] {
         "focus-workspace-previous", "move-workspace-down", "move-workspace-up",
         "focus-window-or-workspace-down", "focus-window-or-workspace-up",
         "switch-preset-column-width-back", "expand-column-to-available-width", "center-visible-columns",
+        "move-column-left-or-to-monitor-left", "move-column-right-or-to-monitor-right",
+        "focus-column-or-monitor-left", "focus-column-or-monitor-right",
     ]
 }
 
