@@ -184,7 +184,7 @@ read for the snap and focus rules.
   `50d64dd`. LIVE PENDING (see below).
 - [x] TG-04 — macOS swipe conflicts from the trackpad and Dock preferences (pure Core, read-only
   adapter), warnings in Diagnostics, Overview and Settings, `gestures conflict=` log; no
-  scroll on dwindle workspaces. Commit: see Progress. LIVE PENDING (TESTING.md 15i (j), (k)).
+  scroll on dwindle workspaces. Commit `ae25e26`. LIVE PENDING (TESTING.md 15i (j), (k)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -211,9 +211,14 @@ read for the snap and focus rules.
   'readTrackpadSystemPreferences'`); `StripGestureTests.testNoStripOnADwindleWorkspace`
   failed (a strip was returned). GREEN: `GestureConflictTests` 9, `StripGestureTests` 19,
   `TrackpadPreferencesTests` 2, `SessionFactsBuilderTests` +1, `AdvancedPresentationTests` +1.
+  Full `swift test` after TG-04 (on the Dwindle rebase): GioUITests 311 (53 skipped),
+  GioSessionTests 424, GioPOCTests 7, GioMacTests 19, GioMacOSTests 95, GioCoreTests 1875,
+  0 failures. Signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+- Input Monitoring is still unverified: TESTING.md 15i starts by recording whether
+  `gestures first contact frame` appears with Gio off, then on, in Input Monitoring.
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
   `8c41d40`, `50d64dd`, docs `fdefbbb` (the pre-rebase hashes `4df4437`, `e5b29b7`,
   `bb7b169`, `7cfe28f` are gone).
-- TG-04 committed (hash recorded in the follow-up docs commit).
+- TG-04 committed `ae25e26`.
