@@ -106,11 +106,18 @@ struct LayoutSettingsView: View {
                     PresetWidthChips(text: form.presetsText)
                 }
             }
-            CardRow(divider: false) {
+            CardRow {
                 ToggleRow(
                     "Full width when alone",
                     caption: "A workspace with one window shows it at full width, like Alt+F; a second window brings the widths back.",
                     isOn: form.maximizeSingleWindow
+                )
+            }
+            CardRow(divider: false) {
+                ToggleRow(
+                    "Center a lone column",
+                    caption: "A workspace with a single column shows it in the middle instead of at the left edge.",
+                    isOn: form.alwaysCenterSingleColumn
                 )
             }
             problems(matching: ["Default width", "Preset widths"])

@@ -68,6 +68,23 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
   than the viewport is never fully visible). Or-workspace moves animate as a workspace switch
   (a move within the column does not scroll). Expand and preset-back grow the focused window
   (focused-grow); center-visible is a view scroll.
+  Evidence: RED by compilation (`swift build --build-tests`: `HotkeyAction` has no member
+  `focusWindowOrWorkspaceDown` ... `centerVisibleColumns`, `switchPresetColumnWidthBack` and
+  `expandColumnToAvailableWidth` not in scope). Tests: `NiriColumnExtrasTests` (9), `HotkeyTests`
+  (75 bindings, Ctrl+Alt+F/C, three unbound, names), `FocusIntentTests`, `ActionApplierTests`
+  (or-workspace down syncs the shown workspace; expand and center-visible read the modes). GREEN:
+  GioUITests 306 (53 skipped), GioSessionTests 393, GioPOCTests 7, GioMacTests 19, GioMacOSTests 83,
+  GioCoreTests 1666, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  Commit `0f24c66`. LIVE PENDING.
+- [ ] NC-13 — `[layout] always-center-single-column` (default false, niri's option): a strip with
+  exactly one column narrower than the padded viewport starts at `(viewport - width) / 2`
+  (`ScrollableLayoutEngine`, `LayoutConfig.alwaysCenterSingleColumn`); the offset still clamps to
+  0. Settings > Layout > **Center a lone column** (`LayoutSettingsForm.alwaysCenterSingleColumn`).
+  RED by compilation (`extra argument 'alwaysCenterSingleColumn'`, no member). Tests:
+  `AlwaysCenterSingleColumnTests` (6: centered stack, two columns and off stay at the padding, too
+  wide keeps the padding, the reveal with `center-focused-column = always` keeps it centered,
+  parse/default/rejection, the form writes it). GREEN: GioCoreTests 1672, other bundles as NC-12, all
+  0 failures. LIVE PENDING.
 
 Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
 resolved per display; savedWidthSpec for maximize; FullscreenBook + full-display frame below

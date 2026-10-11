@@ -17,6 +17,10 @@ public struct LayoutConfig: Equatable, Sendable {
     /// strip width (what `maximize-column` gives), without touching the
     /// column's stored width, so a second window brings it back.
     public var maximizeSingleWindow: Bool
+    /// NC-13 niri `always-center-single-column`: a strip holding exactly one
+    /// column lays it out in the middle of the viewport (when it fits inside
+    /// the padding) instead of at the left padding.
+    public var alwaysCenterSingleColumn: Bool
 
     public init(
         padding: CGFloat = 8,
@@ -25,7 +29,8 @@ public struct LayoutConfig: Equatable, Sendable {
         defaultColumnProportion: CGFloat = 0.5,
         minimumColumnWidth: CGFloat = 200,
         fullscreenGap: CGFloat = 0,
-        maximizeSingleWindow: Bool = false
+        maximizeSingleWindow: Bool = false,
+        alwaysCenterSingleColumn: Bool = false
     ) {
         self.padding = padding
         self.gap = gap
@@ -34,6 +39,7 @@ public struct LayoutConfig: Equatable, Sendable {
         self.minimumColumnWidth = minimumColumnWidth
         self.fullscreenGap = fullscreenGap
         self.maximizeSingleWindow = maximizeSingleWindow
+        self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
     }
 }
 
@@ -173,7 +179,12 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         let offset = min(max(requested, 0), maxOffset)
 
         var frames: [WindowID: CGRect] = [:]
+        // NC-13: one column narrower than the padded viewport starts where it
+        // sits centered; the strip still fits, so the offset clamps to 0.
         var cursor = pad
+        if config.alwaysCenterSingleColumn, widths.count == 1, widths[0] + pad * 2 < viewport.width {
+            cursor = (viewport.width - widths[0]) / 2
+        }
         for (index, column) in framedColumns.enumerated() {
             let width = widths[index]
             let count = column.windows.count

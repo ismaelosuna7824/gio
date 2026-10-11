@@ -353,6 +353,10 @@ func applyLayoutKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
             config.layout.maximizeSingleWindow = $0
         }
+    case "always-center-single-column":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
+            config.layout.alwaysCenterSingleColumn = $0
+        }
     default:
         warnings.append("line \(line): unknown layout key '\(key)', ignored")
     }

@@ -27,6 +27,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// SW-01: a workspace with one tiled window shows it at the full strip
     /// width, like `maximize-column`; consumed by the layout engine.
     public var maximizeSingleWindow: Bool
+    /// NC-13 niri `always-center-single-column`: a workspace with a single
+    /// column shows it in the middle; consumed by the layout engine.
+    public var alwaysCenterSingleColumn: Bool
 
     public init(
         gaps: CGFloat = 8,
@@ -37,7 +40,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         presetColumnWidths: [ColumnWidthSpec] = defaultPresetColumnWidths,
         fullscreenGap: CGFloat? = nil,
         maximizeSingleWindow: Bool = true,
-        presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights
+        presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights,
+        alwaysCenterSingleColumn: Bool = false
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -48,6 +52,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.presetColumnWidths = presetColumnWidths
         self.presetWindowHeights = presetWindowHeights
         self.maximizeSingleWindow = maximizeSingleWindow
+        self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
     }
 }
 
@@ -212,7 +217,8 @@ public struct GioConfig: Sendable {
             defaultColumnWidth: fraction == nil ? layout.defaultColumnWidthPoints : nil,
             defaultColumnProportion: fraction ?? 0.5,
             fullscreenGap: layout.resolvedFullscreenGap,
-            maximizeSingleWindow: layout.maximizeSingleWindow
+            maximizeSingleWindow: layout.maximizeSingleWindow,
+            alwaysCenterSingleColumn: layout.alwaysCenterSingleColumn
         )
     }
 

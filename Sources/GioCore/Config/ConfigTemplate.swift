@@ -27,6 +27,9 @@ public func defaultConfigTemplate() -> String {
     # A workspace with a single window shows it at full width (like Alt+F);
     # a second window brings the column widths back. false keeps the width.
     maximize-single-window = true
+    # A workspace with a single column shows it in the middle of the screen
+    # instead of at the left edge (niri always-center-single-column).
+    always-center-single-column = false
 
     [behavior]
     # Focus the window the pointer rests on (~100 ms); never scrolls.
