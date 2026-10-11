@@ -153,8 +153,8 @@ read for the snap and focus rules.
   template, Settings card and form. Commit `e5b29b7`.
 - [x] TG-03 — MultitouchSupport source, touch mailbox, interactive strip scroll through the
   reconciler (SkyLight per drain, AX lanes fallback), niri snap, State commit, velocity
-  hand-off, gesture focus intent, workspace and overview swipes, Diagnostics card. Commit:
-  see Progress. LIVE PENDING (see below).
+  hand-off, gesture focus intent, workspace and overview swipes, Diagnostics card. Commit
+  `bb7b169`. LIVE PENDING (see below).
 - [ ] TG-04 — NOT DONE (run stopped at its request budget): Mission Control conflict detection
   (pure Core over `com.apple.AppleMultitouchTrackpad` /
   `com.apple.driver.AppleBluetoothMultitouch.trackpad` / `com.apple.dock` values:
@@ -187,4 +187,4 @@ read for the snap and focus rules.
 ## Progress
 - TG-01 committed `4df4437`.
 - TG-02 committed `e5b29b7`.
-- TG-03 committed (hash recorded in the follow-up docs commit).
+- TG-03 committed `bb7b169`; TG-04 (conflict detection and warning) still open.
