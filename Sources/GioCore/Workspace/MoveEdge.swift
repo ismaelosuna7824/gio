@@ -32,17 +32,35 @@ extension WorkspaceManager {
     /// moving right it becomes the target's first column, moving left its
     /// last. Focus follows; the target display's reveal then scrolls to it.
     /// Horizontal directions only; anything else is `.unchanged`.
+    /// DW-02: on a dwindle workspace the in-workspace step is `dwindleMove`
+    /// (a swap with the geometric neighbour, measured with `geometry`), and
+    /// its `.atEdge` crosses: the focused window (its own column in dwindle)
+    /// moves to the neighbouring display.
     @discardableResult
-    public mutating func moveColumnOrToDisplay(_ direction: FocusDirection, frames: [DisplayID: CGRect]) -> EdgeStep {
+    public mutating func moveColumnOrToDisplay(
+        _ direction: FocusDirection, frames: [DisplayID: CGRect], geometry: DwindleGeometry? = nil
+    ) -> EdgeStep {
         guard direction == .left || direction == .right else {
             return .unchanged
         }
         let workspace = currentWorkspace()
-        // Qualified: the manager's own `moveColumn(toDisplay:)` shadows it.
-        let moved = GioCore.moveColumn(in: workspace, direction: direction)
-        if moved != workspace {
-            update(moved)
-            return .withinWorkspace
+        if workspace.layout == .dwindle {
+            switch dwindleMove(in: workspace, direction: direction, geometry: geometry ?? .fallback(frames[focusedDisplay])) {
+            case .moved(let next):
+                update(next)
+                return .withinWorkspace
+            case .unchanged:
+                return .unchanged
+            case .atEdge:
+                break
+            }
+        } else {
+            // Qualified: the manager's own `moveColumn(toDisplay:)` shadows it.
+            let moved = GioCore.moveColumn(in: workspace, direction: direction)
+            if moved != workspace {
+                update(moved)
+                return .withinWorkspace
+            }
         }
         guard let target = displayNeighbour(of: focusedDisplay, direction: direction, frames: frames),
               moveColumn(toDisplay: target, landing: direction == .right ? .first : .last)
@@ -55,14 +73,19 @@ extension WorkspaceManager {
     /// MM-06 niri `focus-column-or-monitor-left` / `-right`: focus the
     /// neighbouring column, or from the strip's edge (or an empty workspace)
     /// the display next to the focused one that way, with its own focused
-    /// column. Horizontal directions only.
+    /// column. Horizontal directions only. DW-02: in dwindle, the geometric
+    /// neighbour (`dwindleFocus`), and the display from the tree's edge.
     @discardableResult
-    public mutating func focusColumnOrDisplay(_ direction: FocusDirection, frames: [DisplayID: CGRect]) -> EdgeStep {
+    public mutating func focusColumnOrDisplay(
+        _ direction: FocusDirection, frames: [DisplayID: CGRect], geometry: DwindleGeometry? = nil
+    ) -> EdgeStep {
         guard direction == .left || direction == .right else {
             return .unchanged
         }
         let workspace = currentWorkspace()
-        let focused = moveFocus(in: workspace, direction: direction)
+        let focused = focusNeighbour(
+            in: workspace, direction: direction, geometry: geometry ?? .fallback(frames[focusedDisplay])
+        )
         if focused != workspace {
             update(focused)
             return .withinWorkspace

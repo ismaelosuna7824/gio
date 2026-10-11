@@ -35,11 +35,17 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   window. A scrolling workspace keeps an empty tree. Consequence: a stacked scrolling column
   becomes one tile per window in dwindle, and comes back as one column per window (tree order)
   when switching back; the window set is preserved, the stacking is not.
-- **Orientation.** A split stores `orientation` nil (follow the rectangle's shape at every layout:
-  side by side when `width >= height * split-width-multiplier`) unless a preselection or
-  `dwindle-toggle-split` pins it. This is Hyprland's default (`preserve_split = false`) and equals
-  "by the aspect ratio of the leaf rect" at insertion, without the membership sync needing any
-  geometry; a workspace moved to a portrait display re-shapes itself.
+- **Orientation (DW-01, refined in DW-02).** The membership sync has no geometry, so a new split
+  stores `orientation` nil (follow the rectangle: side by side when
+  `width >= height * split-width-multiplier`), and the first pass that lays it out pins it to
+  that shape (`DwindleNode.pinningOrientations` in `planDwindleDisplayLayout`; the host stores
+  the planned workspace back, like the viewport offset). Net: decided by the aspect ratio of the
+  leaf it split, on the display that first shows it, and kept (OmniWM, Hyprland
+  `preserve_split`). DW-01 first kept every split free (Hyprland's `preserve_split = false`);
+  a DW-02 test showed the cost: growing the left half to 60% turned the right half (582x580)
+  side by side and flipped its stacked windows. The sizing actions also pin the splits they
+  measure before changing a ratio. A preselection or `dwindle-toggle-split` pins explicitly. A
+  workspace moved to a display of another shape keeps its shapes (toggle to change).
 - **Insertion.** The new window splits the selected leaf (the focused window before it
   arrived; a stale selection splits the last leaf) and takes the second half (right/bottom), or
   the preselected side (left/up first). Ratio `default-split-ratio` (first child's share x 2).
@@ -57,16 +63,58 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   layout. A `[[workspace]] layout` applies when the workspace is new or the key changed, so a
   runtime toggle survives an unrelated reload.
 - **Limits.** Learned minimum sizes and rule `min-width` / `max-width` are scrolling-only.
+- **Actions (DW-02).** Pure Core functions over `DwindleGeometry` (usable frame of the display
+  showing the workspace, modes, `LayoutConfig`); `ActionApplier.applyDwindle` is exhaustive so a
+  future action must choose: dwindle meaning, no-op, or layout-independent (`return false` to the
+  common switch). Shared mapping: focus = geometric neighbour (nearest tile past the edge that
+  overlaps on the other axis; then overlap, centre, leaf order); `move-*`, `move-column-*`,
+  `swap-window-*` = swap leaves, focus stays on the moved window; `.atEdge` lets
+  `moveColumnOrToDisplay` / `focusColumnOrDisplay` cross displays (Move Edge and
+  `move-crosses-monitor-at-edge`); `focus-window-or-workspace-*` = tile, else workspace;
+  `focus-column-first/last` = first/last leaf. A focused floating window navigates from its
+  (invisible) leaf.
+- **Resize: reuse, no `dwindle-resize-*` actions.** The width actions (`set-column-width-*`,
+  `switch-preset-column-width[-back]`) act on the nearest side-by-side split above the focused
+  window, the height actions (`set-window-height-*`, `switch-preset-window-height`,
+  `reset-window-height`) on the nearest stacked split: +-10% of that split, presets as the
+  focused window's share of the split (points measured against it), reset = half and half.
+  Existing muscle memory works; nothing new to bind.
+- **No-ops in dwindle:** `center-column`, `center-visible-columns`,
+  `expand-column-to-available-width`, `consume-or-expel-window-*`, `move-column-to-first/last`.
+  `maximize-column` = the zoom above (no native-zoom request: NZ-01 is a column-width feature).
+- **Bindings.** `toggle-workspace-layout` = `Alt+Shift+T`: the requested `Alt+Shift+Space` is
+  `toggle-floating` (a default since FI); `T` for "tiling layout" was free in every modifier set
+  Gio uses. `dwindle-balance` = `Alt+Shift+B` (OmniWM's default, free). Everything else ships
+  unbound like OmniWM's toggle/swap/preselect. Default bindings 75 -> 77. New Shortcuts category
+  **Layout**. None of the new actions carries a focus intent (the focused window stays);
+  motion causes: layout switch and swap-split `window-movement`, toggle-split and balance
+  `window-resize`, preselect `passive`.
+- **Edge semantics.** `ColumnLanding` stays as MM-06 for a scrolling target; in a dwindle target
+  the landing order is irrelevant (the arrival splits that workspace's focused window).
+- **CLI.** `gio focus` / `gio move` follow the tree (`CommandSession.dwindleGeometry`, from
+  `visibleFrames` that `SessionHost` fills before every IPC dispatch, and the registry modes).
 
 ## Tasks
-- [ ] DW-01 — Model, engine and planning. Commit pending.
+- [ ] DW-01 — Model, engine and planning. Commit `cdef806`.
   `GioCore/Dwindle/DwindleTree.swift`, `DwindleLayoutEngine.swift`, `DwindleMembership.swift`
   (new), `Workspace/Workspace.swift` (`layout`, `dwindle`, `windows`),
   `Workspace/WorkspaceManager.swift` (`store`, `setLayout`, `toggleLayout`,
   `applyLayoutDefaults`, named layouts), `Config/WorkspaceDefinition.swift` (`layout`),
   `Layout/LayoutEngine.swift` (`LayoutConfig.dwindle`), `Layout/DisplayReflowPlanner.swift`
   (`planDwindleDisplayLayout`), `GioDesktop/SessionHost.swift` (`isVisibleInViewport`);
-  docs: `docs/ARCHITECTURE.md`, this file, AGENTS.md.
+  docs: `docs/ARCHITECTURE.md`, this file, AGENTS.md. LIVE PENDING.
+- [ ] DW-02 — Actions and shared-action mapping. Commit pending.
+  `GioCore/Dwindle/DwindleActions.swift` (new), `DwindleTree.swift` (`pinningOrientations`),
+  `DwindleLayoutEngine.swift` (`orientations`), `Layout/DisplayReflowPlanner.swift` (pinning),
+  `Hotkeys/HotkeyDispatcher.swift` (7 cases, 2 bindings), `Hotkeys/ShortcutCatalog.swift`
+  (Layout category, entries), `Config/ConfigParser.swift` (names), `Config/ConfigTemplate.swift`,
+  `Config/AnimationKinds.swift`, `Focus/FocusIntent.swift`, `Workspace/MoveEdge.swift`,
+  `Workspace/WorkspaceManager.swift` (`focusWindowOrWorkspace*` geometry),
+  `Commands/CommandDispatcher.swift` (`visibleFrames`, `dwindleGeometry`, focus/move),
+  `GioSession/Actions/ActionApplier.swift` (`applyDwindle`, layout cases),
+  `GioDesktop/SessionHost.swift` (IPC `visibleFrames`); docs: README, USER_GUIDE (Dwindle
+  layout section, shortcuts), ARCHITECTURE, TESTING (check 14d, limitation), CONTRIBUTING,
+  AGENTS.md, this file. LIVE PENDING.
 
 ## Evidence
 ### DW-01
@@ -92,6 +140,31 @@ groups), gestures, SkyLight, per-monitor dwindle overrides.
   SUCCEEDED. `git diff --check` clean.
 - Not live-verified: nothing switches a workspace to dwindle before DW-02 / DW-03 (actions,
   config); see LIVE PENDING below.
+
+### DW-02
+- RED by compilation (`DwindleActions.swift` moved out of the target, `swift build
+  --build-tests`): `dwindleFocus`, `dwindleMove`, `dwindleToggleSplit`, `dwindleSwapSplit`,
+  `dwindleBalance`, `dwindlePreselect`, `dwindleResize`, `dwindleSwitchPreset`,
+  `dwindleResetSplit`, `dwindleToggleMaximize`, `dwindleFocusEnd`, `focusNeighbour`,
+  `DwindleGeometry` not in scope; extra argument `geometry` (`moveColumnOrToDisplay`,
+  `focusColumnOrDisplay`, `focusWindowOrWorkspaceDown`); `HotkeyAction` without the new cases.
+  First GREEN run: 5 failures: `testWidthStepsMoveTheNearestSideBySideSplit` (286 instead of 582:
+  the inner split flipped, which led to orientation pinning above) and the intended changes
+  (bindings 75 -> 77 in `HotkeyTests` x2 and `MoveEdgeTests`, the category list in
+  `ShortcutCatalogTests`), updated.
+- Tests: `DwindleActionsTests` (25: neighbours in all directions and the edges, a focused
+  floating window, portrait, first/last, swap and focus kept, `.atEdge`, `.unchanged`,
+  toggle-split both ways, swap-split keeps sizes, balance, preselect, maximize, width and height
+  steps, limits, presets incl. points, reset, pinning, scrolling no-ops, Move Edge inside then
+  across, into a dwindle target, without a neighbour, focus edge, focus-or-workspace, names /
+  bindings / catalog / motion causes, `gio focus` / `gio move`),
+  `DwindleMembershipTests.testTheFirstLayoutPinsEachShownSplitToItsShape`, `ActionApplierTests`
+  (6 new: layout switch, shared focus/move, column-only no-ops, sizing + maximize without native
+  zoom, dwindle-only no-ops on scrolling, Move Edge from the tree with the toggle; `allActions`
+  extended so focus intent, sync and engine/mode laziness are checked for the new cases).
+- GREEN: `swift test`, all bundles 0 failures: GioUITests 306 (53 skipped), GioSessionTests 406,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 83, GioCoreTests 1757. Signed `xcodebuild` BUILD
+  SUCCEEDED. `git diff --check` clean.
 
 ## Progress
 - 2026-10-11: DW-01 implemented on `feat/dwindle` (worktree `gio-wt-dwindle`).

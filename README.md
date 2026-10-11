@@ -9,6 +9,7 @@ Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges 
 ## What it does
 
 - **Scrollable column layout.** Windows live in columns; the focused column is always revealed by scrolling the strip minimally (Niri rule). Windows inside a column share its height.
+- **Dwindle layout per workspace.** Any workspace can switch (`Alt+Shift+T`) to a Hyprland-style dwindle tree: every window on screen, each new one splitting the focused one, with split toggles, swaps, preselection and balance; focus, moves, sizes and the edge crossing keep working there. See [Dwindle layout](docs/USER_GUIDE.md#dwindle-layout).
 - **Keyboard control** (global `Alt`-based shortcuts, all rebindable in `config.toml`): focus and move windows, cycle or step column widths, maximize a column, center a column, consume/expel windows between columns, toggle floating and fullscreen.
 - **Dynamic vertical workspaces.** Like Niri, each display has its own stack of workspaces with always one empty workspace at the bottom; emptied workspaces disappear once you leave them. Windows of inactive workspaces are hidden off the bottom corner of the display, and the switch is animated.
 - **Automatic window admission.** Every window is classified as tile, float (with a reason), ignore or suspend. Dialogs, fixed-size windows and panels float; minimized windows stay registered and rejoin their column when restored.

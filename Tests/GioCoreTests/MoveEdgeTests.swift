@@ -256,7 +256,7 @@ final class MoveEdgeTests: XCTestCase {
         XCTAssertEqual(motionCause(for: .moveColumnRightOrToMonitorRight), .windowMovement)
         XCTAssertEqual(motionCause(for: .focusColumnOrMonitorLeft), .viewScroll)
         XCTAssertEqual(motionCause(for: .focusColumnOrMonitorRight), .viewScroll)
-        XCTAssertEqual(HotkeyDispatcher().bindingCount, 75)
+        XCTAssertEqual(HotkeyDispatcher().bindingCount, 77, "DW-02 added two")
     }
 
     // MARK: - CLI

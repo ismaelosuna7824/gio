@@ -366,6 +366,39 @@ final class DwindleMembershipTests: XCTestCase {
 
     // MARK: - Planning
 
+    func testTheFirstLayoutPinsEachShownSplitToItsShape() throws {
+        let manager = dwindleManager(3)
+        let viewport = CGRect(x: 0, y: 0, width: 1000, height: 600)
+        let engine = ScrollableLayoutEngine(config: LayoutConfig(padding: 10, gap: 10))
+        func plannedRoot(_ modes: [WindowID: WindowMode]) throws -> DwindleSplit? {
+            let planned = try planDisplayLayout(
+                workspace: manager.currentWorkspace(), modes: modes, engine: engine,
+                viewport: viewport, display: viewport, otherDisplays: []
+            )
+            guard case .split(let root)? = planned.workspace.dwindle.root else {
+                return nil
+            }
+            return root
+        }
+        let shown = try XCTUnwrap(plannedRoot([:]))
+        XCTAssertEqual(shown.orientation, .horizontal)
+        guard case .split(let inner) = shown.second else {
+            return XCTFail("2 and 3 share the right half")
+        }
+        XCTAssertEqual(inner.orientation, .vertical, "pinned to the shape it got")
+        let hidden = try XCTUnwrap(plannedRoot([id(2): .floating, id(3): .floating]))
+        guard case .split(let unseen) = hidden.second else {
+            return XCTFail("the tree keeps the floating windows' leaves")
+        }
+        XCTAssertNil(unseen.orientation, "a split nothing showed stays free")
+        XCTAssertNil(manager.currentWorkspace().dwindle.root.flatMap { root -> DwindleOrientation? in
+            guard case .split(let split) = root else {
+                return nil
+            }
+            return split.orientation
+        }, "planning never writes the manager; the host stores the planned workspace")
+    }
+
     func testADwindleDisplayShowsEveryTileAndParksNothing() throws {
         let manager = dwindleManager(3)
         var workspace = manager.currentWorkspace()

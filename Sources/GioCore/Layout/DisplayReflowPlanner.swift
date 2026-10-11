@@ -121,10 +121,13 @@ private func modesKeepingFullscreenInColumns(_ modes: [WindowID: WindowMode]) ->
 /// DW-01: one display's dwindle pass. Every tiled window sits in its tile
 /// (nothing scrolls, nothing parks; the viewport offset stays 0). The
 /// workspace is reconciled first, so a window the tree misses still gets a
-/// tile. A focused fullscreen window covers the display and the others park
-/// where their tiles are (as in scrolling); an unfocused fullscreen window
-/// keeps its tile. A maximized focused window fills the area inside the
-/// padding, the others staying in their tiles behind it.
+/// tile, and the returned workspace has every split this pass laid out
+/// pinned to the orientation it got (a new split takes its shape from the
+/// first display that shows it and keeps it; the host stores it back like
+/// the viewport offset). A focused fullscreen window covers the display and
+/// the others park where their tiles are (as in scrolling); an unfocused
+/// fullscreen window keeps its tile. A maximized focused window fills the
+/// area inside the padding, the others staying in their tiles behind it.
 func planDwindleDisplayLayout(
     workspace: Workspace, modes: [WindowID: WindowMode], config: LayoutConfig,
     viewport: CGRect, display: CGRect, otherDisplays: [CGRect]
@@ -133,9 +136,11 @@ func planDwindleDisplayLayout(
     workspace.reconcileDwindle(splitRatio: config.dwindle.splitRatio)
     workspace.viewportOffset = 0
     let covering = fullscreenWindow(in: workspace, modes: modes)
-    var frames = try DwindleLayoutEngine(config: config).layout(
+    let laid = try DwindleLayoutEngine(config: config).layout(
         workspace.dwindle, viewport: viewport, modes: modesKeepingFullscreenInColumns(modes)
-    ).frames
+    )
+    workspace.dwindle.root = workspace.dwindle.root?.pinningOrientations(laid.orientations)
+    var frames = laid.frames
     let layout = LayoutResult(frames: frames, contentWidth: viewport.width, viewportOffset: 0)
     if let covering {
         var parked = parkAll(frames: frames, viewport: viewport, display: display, otherDisplays: otherDisplays)

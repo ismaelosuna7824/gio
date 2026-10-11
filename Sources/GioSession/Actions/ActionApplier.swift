@@ -74,6 +74,11 @@ public enum ActionApplier {
         var workspace = manager.currentWorkspace()
         effect.previousFocus = workspace.focusedWindow
         let startDisplay = manager.focusedDisplay
+        if workspace.layout == .dwindle,
+           applyDwindle(action, workspace: workspace, manager: &manager, context: context, effect: &effect)
+        {
+            return finish(action, effect: effect, startDisplay: startDisplay, manager: manager, context: context)
+        }
         switch action {
         case .focusLeft:
             focus(in: &workspace, .left, manager: &manager)
@@ -265,7 +270,23 @@ public enum ActionApplier {
             effect.syncsShownWorkspace = manager.focusColumnOrDisplay(
                 direction, frames: displayFrames(context)
             ) == .crossedDisplay
+        case .toggleWorkspaceLayout:
+            manager.toggleLayout()
+        case .setWorkspaceLayout(let kind):
+            manager.setLayout(kind)
+        case .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance, .dwindlePreselect, .dwindlePreselectClear:
+            // DW-02: dwindle only (`applyDwindle`); a scrolling workspace has no tree.
+            break
         }
+        return finish(action, effect: effect, startDisplay: startDisplay, manager: manager, context: context)
+    }
+
+    /// The effects every action reports once its change is stored.
+    private static func finish(
+        _ action: HotkeyAction, effect: ActionEffect, startDisplay: DisplayID, manager: WorkspaceManager,
+        context: Context
+    ) -> ActionEffect {
+        var effect = effect
         if manager.focusedDisplay != startDisplay, manager.currentWorkspace().focusedWindow == nil,
            let display = context.displays.first(where: { $0.id == manager.focusedDisplay })
         {
@@ -274,6 +295,122 @@ public enum ActionApplier {
         effect.carriesFocusIntent = action.carriesFocusIntent
         effect.growsFocusedWindow = action.growsFocusedWindow
         return effect
+    }
+
+    /// DW-02: an action on a dwindle workspace. Shared actions take their
+    /// dwindle meaning (geometric focus and swaps, Move Edge from the tree's
+    /// edge, split sizes, maximize as a zoom), column-only ones do nothing,
+    /// and anything that does not depend on the layout (workspaces, monitors,
+    /// floating, fullscreen, the layout switch) returns false for the common
+    /// switch. Exhaustive like `apply`, so a new action must pick a side.
+    private static func applyDwindle(
+        _ action: HotkeyAction, workspace: Workspace, manager: inout WorkspaceManager, context: Context,
+        effect: inout ActionEffect
+    ) -> Bool {
+        // Lazy: only the actions that measure tiles read the engine and modes.
+        func geometry() -> DwindleGeometry {
+            DwindleGeometry(
+                viewport: focusedViewport(manager: manager, context: context),
+                modes: context.modes(), config: context.engine().config
+            )
+        }
+        func move(_ direction: FocusDirection) {
+            if case .moved(let next) = dwindleMove(in: workspace, direction: direction, geometry: geometry()) {
+                manager.update(next)
+            }
+        }
+        switch action {
+        case .focusLeft, .focusRight, .focusUp, .focusDown:
+            let direction: FocusDirection = action == .focusLeft ? .left
+                : action == .focusRight ? .right : action == .focusUp ? .up : .down
+            commit(dwindleFocus(in: workspace, direction: direction, geometry: geometry()), over: workspace, manager: &manager)
+        case .moveLeft, .swapWindowLeft:
+            move(.left)
+        case .moveRight, .swapWindowRight:
+            move(.right)
+        case .moveUp:
+            move(.up)
+        case .moveDown:
+            move(.down)
+        case .moveColumnLeft, .moveColumnRight:
+            let direction: FocusDirection = action == .moveColumnLeft ? .left : .right
+            if context.behavior.moveCrossesMonitorAtEdge {
+                let measured = geometry()
+                effect.syncsShownWorkspace = manager.moveColumnOrToDisplay(
+                    direction, frames: displayFrames(context), geometry: measured
+                ) == .crossedDisplay
+            } else {
+                move(direction)
+            }
+        case .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight:
+            let direction: FocusDirection = action == .moveColumnLeftOrToMonitorLeft ? .left : .right
+            let measured = geometry()
+            effect.syncsShownWorkspace = manager.moveColumnOrToDisplay(
+                direction, frames: displayFrames(context), geometry: measured
+            ) == .crossedDisplay
+        case .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
+            let direction: FocusDirection = action == .focusColumnOrMonitorLeft ? .left : .right
+            let measured = geometry()
+            effect.syncsShownWorkspace = manager.focusColumnOrDisplay(
+                direction, frames: displayFrames(context), geometry: measured
+            ) == .crossedDisplay
+        case .focusWindowOrWorkspaceDown:
+            let measured = geometry()
+            effect.syncsShownWorkspace = manager.focusWindowOrWorkspaceDown(geometry: measured)
+        case .focusWindowOrWorkspaceUp:
+            let measured = geometry()
+            effect.syncsShownWorkspace = manager.focusWindowOrWorkspaceUp(geometry: measured)
+        case .focusColumnFirst, .focusColumnLast:
+            commit(dwindleFocusEnd(in: workspace, last: action == .focusColumnLast), over: workspace, manager: &manager)
+        case .switchPresetColumnWidth, .switchPresetColumnWidthBack:
+            let next = dwindleSwitchPreset(
+                in: workspace, axis: .horizontal, presets: context.layout.presetColumnWidths,
+                forward: action == .switchPresetColumnWidth, geometry: geometry()
+            )
+            commit(next, over: workspace, manager: &manager)
+        case .shrinkColumnWidth, .growColumnWidth:
+            let delta: CGFloat = action == .growColumnWidth ? 0.1 : -0.1
+            commit(dwindleResize(in: workspace, axis: .horizontal, by: delta, geometry: geometry()),
+                   over: workspace, manager: &manager)
+        case .switchPresetWindowHeight:
+            let next = dwindleSwitchPreset(
+                in: workspace, axis: .vertical, presets: context.layout.presetWindowHeights,
+                forward: true, geometry: geometry()
+            )
+            commit(next, over: workspace, manager: &manager)
+        case .shrinkWindowHeight, .growWindowHeight:
+            let delta: CGFloat = action == .growWindowHeight ? 0.1 : -0.1
+            commit(dwindleResize(in: workspace, axis: .vertical, by: delta, geometry: geometry()),
+                   over: workspace, manager: &manager)
+        case .resetWindowHeight:
+            commit(dwindleResetSplit(in: workspace, axis: .vertical, geometry: geometry()), over: workspace, manager: &manager)
+        case .maximizeColumn:
+            // A zoom of the focused window, not a column width: no native zoom.
+            commit(dwindleToggleMaximize(in: workspace), over: workspace, manager: &manager)
+        case .dwindleToggleSplit:
+            commit(dwindleToggleSplit(in: workspace, geometry: geometry()), over: workspace, manager: &manager)
+        case .dwindleSwapSplit:
+            commit(dwindleSwapSplit(in: workspace), over: workspace, manager: &manager)
+        case .dwindleBalance:
+            commit(dwindleBalance(in: workspace), over: workspace, manager: &manager)
+        case .dwindlePreselect(let direction):
+            commit(dwindlePreselect(in: workspace, direction: direction), over: workspace, manager: &manager)
+        case .dwindlePreselectClear:
+            commit(dwindlePreselect(in: workspace, direction: nil), over: workspace, manager: &manager)
+        case .consumeOrExpelLeft, .consumeOrExpelRight, .centerColumn, .centerVisibleColumns,
+             .expandColumnToAvailableWidth, .moveColumnToFirst, .moveColumnToLast:
+            // Column-only: every tile is on screen and there are no stacks.
+            break
+        case .workspace, .moveToWorkspace, .focusWorkspaceDown, .focusWorkspaceUp,
+             .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp, .toggleFloating, .fullscreen,
+             .toggleOverview, .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
+             .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
+             .focusWorkspacePrevious, .moveWorkspaceDown, .moveWorkspaceUp,
+             .toggleWorkspaceLayout, .setWorkspaceLayout:
+            // The same in both layouts (a dwindle column is one window).
+            return false
+        }
+        return true
     }
 
     /// MM-04: the overview (Alt+O) opens on the display the user is on

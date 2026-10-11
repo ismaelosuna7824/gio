@@ -2,11 +2,12 @@
 
 How to use Gio day to day: shortcuts, configuration, window rules, the desktop app and the command line. Everything here is derived from `defaultHotkeyBindings`, `ShortcutCatalog`, the config parser and the command grammar in the source.
 
-Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Config](#configuration-reference) · [Rules](#window-rules) · [Desktop app](#desktop-app) · [Launcher](#launcher) · [Overview](#workspace-overview) · [CLI](#command-line-gio) · [Updates](#updates) · [gio-poc](#gio-poc)
+Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Dwindle layout](#dwindle-layout) · [Config](#configuration-reference) · [Rules](#window-rules) · [Desktop app](#desktop-app) · [Launcher](#launcher) · [Overview](#workspace-overview) · [CLI](#command-line-gio) · [Updates](#updates) · [gio-poc](#gio-poc)
 
 ## Concepts
 
 - **Strip and viewport.** Each workspace is a horizontal strip of **columns**. A column stacks one or more windows vertically. The display is a viewport onto the strip and scrolls to keep the focused column visible.
+- **Layouts.** A workspace is either the scrolling strip above (the default) or a **dwindle** tree: every window on screen, each new one splitting the focused one (Hyprland's dwindle). Each workspace has its own layout; `Alt+Shift+T` (`toggle-workspace-layout`) switches the current one and keeps every window. See [Dwindle layout](#dwindle-layout).
 - **Workspaces.** Niri-style dynamic vertical stack, one per display. You start with one empty workspace. Putting a window in the last (empty) workspace opens a new empty one below it, so there is always exactly one empty workspace at the bottom. An empty workspace you are not on is removed: leave it and it disappears, and the indices below it shift up. Windows are never lost when a workspace disappears (it only ever disappears when it is empty), and a display that is unplugged hands its windows to a remaining display's stack. `Alt+1` to `Alt+9` address the workspace at that position in the focused display's stack; a number past the end of the stack goes to the empty workspace at the bottom. Windows of workspaces that no display shows are hidden off the bottom corner of the display. Every switch, up or down, animates vertically through the bottom edge because macOS cannot place windows above the menu bar. When macOS itself focuses a window on a hidden workspace (App Exposé with Control+Down, Mission Control, the Dock), Gio switches to that workspace and shows the window.
 - **Named workspaces.** Each `[[workspace]]` in the config is a named workspace. It always exists, even empty (it is never removed when you leave it), and named workspaces come first in their display's stack in config order, so `Alt+1` is the first one; dynamic workspaces follow them with the rules above (the empty one at the bottom is always dynamic). On a display that shows an empty dynamic workspace when named ones first appear (at startup), Gio opens on the first named one. Window rules with `open-on-workspace` send an app's new windows there (see [Window rules](#window-rules)). Without `[[workspace]]` nothing changes.
 - **Multiple monitors.** Each display shows one workspace of its own stack, and one display is focused: the one keyboard actions, `Alt+1`...`Alt+9` and new windows use. `Ctrl+Alt+H/J/K/L` (`focus-monitor-*`) focuses the display on that side (by position in System Settings > Displays; nothing happens when there is none) and the workspace it shows; its focused window takes the keyboard, and with `mouse-follows-focus` the cursor follows (to the window, or to the middle of the display when it shows no window). `Ctrl+Alt+Shift+H/J/K/L` (`move-column-to-monitor-*`) sends the focused column, with its windows and width, to the workspace that display shows, next to its focused column, and focus follows. `Ctrl+Alt+Cmd+H/J/K/L` (`move-window-to-monitor-*`) sends only the focused window (as its own column), and the menu bar's **Move Window to Display** submenu (or `> move-window-to-display N` in the launcher, `gio move-window-to-display N`) sends it to display N. `move-workspace-to-monitor-*` ships unbound and sends the whole workspace to that display's stack (after its active workspace, shown there); the display left behind shows the workspace below (or above when only the empty one is below). Named workspaces stay on the display config gives them: their columns can move, the workspace itself cannot. The display you leave keeps showing what it showed, even an emptied workspace, until you switch it. A floating window carried by these moves goes to the other display with its workspace: same size, same offset from the corner of the usable area, kept inside it. Hidden windows never show on another display: a display with another display right below it (an external monitor above the laptop) switches workspaces without the vertical slide, and its hidden windows hang off its bottom corner or, when the display below is in the way, off its side. No window straddles two displays: a column that would peek over an edge another display shares (the neighbour of a centered column, for example) is parked off the display's free side instead (it jumps there, no slide across the display); a peek over a free edge stays, and the focused column is always shown. Display numbers (`display = N`, the menu, the launcher) count the main display as 1 and the others by position, left to right; the log lists them (`display index=... number=N`) at startup and after every display change. Plugging or unplugging a display while Gio runs re-syncs once the burst of macOS notifications is over (a quarter second) and lays everything out without animation: a named workspace with `display = 2` moves to the new display and back to the main one when it goes.
@@ -67,9 +68,13 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | (unbound) | `move-workspace-to-monitor-left`, `-right`, `-up`, `-down` | Send the current workspace to the stack of the display on that side (after its active workspace, shown there) and follow it; the display left behind shows its next workspace. Refused for a named or empty workspace. Bind it in `[keybindings]`. |
 | (unbound) | `move-column-left-or-to-monitor-left` / `move-column-right-or-to-monitor-right` | Like `move-column-left` / `-right`; from the first (last) column, send it to the display on the left (right), where it lands as the last (first) column, and follow it (see [Crossing displays](#concepts)). Bind it, e.g. `"Alt+Shift+Left" = "move-column-left-or-to-monitor-left"`. |
 | (unbound) | `focus-column-or-monitor-left` / `focus-column-or-monitor-right` | Like `focus-left` / `-right`; from the first (last) column, focus the display on the left (right) and the workspace it shows. |
+| `Alt+Shift+T` | `toggle-workspace-layout` | Switch the current workspace between the scrolling strip and the [dwindle](#dwindle-layout) tree; every window stays, the focused one keeps the focus. |
+| (unbound) | `set-workspace-layout-scrolling` / `set-workspace-layout-dwindle` | Lay the current workspace out as the strip / the dwindle tree (nothing happens when it already is). |
+| `Alt+Shift+B` | `dwindle-balance` | Dwindle: every split of the workspace back to half and half (OmniWM's default combo). Does nothing on a scrolling workspace. |
+| (unbound) | `dwindle-toggle-split`, `dwindle-swap-split`, `dwindle-preselect-left` / `-right` / `-up` / `-down`, `dwindle-preselect-clear` | Dwindle only; see [Dwindle layout](#dwindle-layout). |
 | `Alt+Space` | (launcher, fixed) | Summon the launcher panel. Handled by the app before the action table; not configurable. |
 
-That is 75 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`), and edits it.
+That is 77 default action bindings plus the launcher. The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`), and edits it. Most actions have a dwindle meaning on a dwindle workspace; see [Dwindle layout](#dwindle-layout).
 
 Notes:
 
@@ -79,6 +84,47 @@ Notes:
 - None of the column, height or workspace-order actions has a `gio` CLI verb yet (the CLI covers `focus`, `move` and `workspace N`).
 - Fullscreen parks every tiled window where its column already is, so leaving fullscreen finds the strip unchanged.
 - Focus, move, workspace, monitor, consume/expel and fullscreen actions also move macOS keyboard focus to the target window (right away, at the start of the animation; the end of the animation only re-asserts it if focus drifted). Rapid key presses during an animation merge into one retarget per display frame. Sizing, centering and floating actions leave focus alone, and so do clicks and window events. `focus-monitor-*` onto a display that shows no window has no window to focus: keyboard focus stays where it was (only the focused display and, with `mouse-follows-focus`, the cursor move).
+
+## Dwindle layout
+
+A workspace can lay its windows out as a **dwindle** tree instead of the scrolling strip (Hyprland's dwindle; OmniWM has the same per-workspace choice). The usable display area (inside `padding`) is split in two, each half can be split in two again, and so on, with `gaps` between windows. Every window of the workspace is on screen: nothing scrolls, nothing is parked off the side. Workspaces you are not on are hidden below the display as usual.
+
+- **Switching.** `Alt+Shift+T` (`toggle-workspace-layout`) or `set-workspace-layout-scrolling` / `-dwindle`. Every window stays and the focused one keeps the focus. Going to dwindle builds the tree from the strip, left to right (a spiral: each window splits the previous one); going back gives one column per window, in the tree's order (a stacked column becomes one tile per window in dwindle and does not come back stacked).
+- **New windows** split the focused window: side by side when its tile is wider than tall, stacked otherwise, and the new window takes the right (or bottom) half. A split keeps the shape it got when it first appeared, so resizing never flips the splits inside it. `dwindle-preselect-left` / `-right` / `-up` / `-down` choose the side (and the shape) for the next new window of the workspace; `dwindle-preselect-clear` drops the choice. A window that becomes floating or is minimized keeps its place in the tree; its neighbour takes the space until it comes back.
+- **Closing** a window gives its space to its sibling.
+
+Dwindle actions (they do nothing on a scrolling workspace):
+
+| Action (config name) | Default | What it does |
+| --- | --- | --- |
+| `toggle-workspace-layout` | `Alt+Shift+T` | Scrolling to dwindle and back. |
+| `set-workspace-layout-scrolling` / `set-workspace-layout-dwindle` | unbound | Choose the layout of the current workspace. |
+| `dwindle-toggle-split` | unbound | Flip the split holding the focused window between side by side and stacked. |
+| `dwindle-swap-split` | unbound | The two halves of that split trade places; each keeps its size. |
+| `dwindle-balance` | `Alt+Shift+B` | Every split of the workspace back to half and half. |
+| `dwindle-preselect-left` / `-right` / `-up` / `-down` | unbound | The next new window opens on that side of the focused one. Used once. |
+| `dwindle-preselect-clear` | unbound | The next new window opens in the default place again. |
+
+What the shared actions do on a dwindle workspace:
+
+| Action | In dwindle |
+| --- | --- |
+| `focus-left` / `-right` / `-up` / `-down` | Focus the window next to the focused one on that side (the nearest tile that overlaps it). Nothing at the edge. |
+| `move-column-left` / `-right`, `move-up` / `-down`, `move-window-left` / `-right`, `swap-window-left` / `-right` | Trade tiles with the window on that side; focus stays on the moved window. At the edge nothing happens, except that `move-column-left` / `-right` with `move-crosses-monitor-at-edge` send the window to the display on that side. |
+| `move-column-left-or-to-monitor-left` / `-right-or-to-monitor-right`, `focus-column-or-monitor-left` / `-right` | Trade tiles (or focus) inside the tree; from its left (right) edge, send the window to (or focus) the display on that side. |
+| `focus-window-or-workspace-down` / `-up` | The tile below (above); from the bottom (top) edge, the workspace below (above). |
+| `focus-column-first` / `focus-column-last` | The first / last window in the tree's order (the top-left tile and the innermost one of a spiral). |
+| `set-column-width-plus` / `-minus` | Give the focused window's side of the nearest side-by-side split 10% more (less) of that split. Ratios stay between 5% and 95%. |
+| `switch-preset-column-width` / `-back` | Set the focused window's share of the nearest side-by-side split to the next (previous) value of `preset-column-widths` (a fraction is a share of the split, points are measured against it). |
+| `set-window-height-plus` / `-minus`, `switch-preset-window-height`, `reset-window-height` | The same on the nearest stacked split (`preset-window-heights`); reset makes it half and half. |
+| `maximize-column` | Zoom: the focused window fills the area inside the padding, the others stay in their tiles behind it; again (or focusing another window, or closing it) restores the tiles. |
+| `fullscreen` | As in the strip: the window covers the display, the other tiles are parked, and it returns to its tile when you leave fullscreen or focus another window. |
+| Workspace, monitor, floating and overview actions | As in the strip. A dwindle "column" is one window, so `move-column-to-workspace*` and `move-column-to-monitor-*` move the focused window; in a dwindle target it splits that workspace's focused window. |
+| `center-column`, `center-visible-columns`, `expand-column-to-available-width`, `consume-or-expel-window-left` / `-right`, `move-column-to-first` / `-last` | Nothing (every tile is on screen and there are no stacked columns). |
+
+`gio focus` and `gio move` follow the tree the same way.
+
+Limits: learned minimum sizes and rule `min-width` / `max-width` apply to the strip only; an app that cannot shrink to its tile overlaps its neighbour. Tabbed or grouped tiles (OmniWM's tile groups) and moving a window to the root are not implemented.
 
 ## Configuration reference
 

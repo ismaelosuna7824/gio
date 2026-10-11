@@ -37,7 +37,7 @@ final class ShortcutCatalogTests: XCTestCase {
     func testCategoriesCoverEveryEntryAndAreOrdered() {
         XCTAssertEqual(
             ShortcutCategory.allCases.map(\.title),
-            ["Focus", "Move", "Columns", "Windows", "Workspaces", "Monitors", "App"]
+            ["Focus", "Move", "Columns", "Layout", "Windows", "Workspaces", "Monitors", "App"]
         )
         let entries = shortcutCatalog(configKeybindings: [])
         for category in ShortcutCategory.allCases {

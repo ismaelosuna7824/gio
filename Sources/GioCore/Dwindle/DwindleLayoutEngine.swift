@@ -30,6 +30,11 @@ public struct DwindleSplitPlacement: Equatable, Sendable {
 public struct DwindleLayout: Equatable, Sendable {
     public var frames: [WindowID: CGRect]
     public var splits: [DwindlePath: DwindleSplitPlacement]
+
+    /// The orientation every laid-out split used (`pinningOrientations`).
+    public var orientations: [DwindlePath: DwindleOrientation] {
+        splits.mapValues(\.orientation)
+    }
 }
 
 /// DW-01: Hyprland-style dwindle geometry. The usable area (the viewport

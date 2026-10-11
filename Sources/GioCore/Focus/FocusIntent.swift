@@ -30,6 +30,10 @@ extension HotkeyAction {
             // The shown workspace and its focused window stay the same; only
             // the stack order changes.
             return false
+        case .toggleWorkspaceLayout, .setWorkspaceLayout, .dwindleToggleSplit, .dwindleSwapSplit,
+             .dwindleBalance, .dwindlePreselect, .dwindlePreselectClear:
+            // DW-02: the windows rearrange; the focused window stays focused.
+            return false
         }
     }
 }

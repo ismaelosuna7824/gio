@@ -125,6 +125,23 @@ public enum HotkeyAction: Equatable, Sendable {
     case focusColumnOrMonitorLeft
     /// MM-06 niri `focus-column-or-monitor-right` (unbound).
     case focusColumnOrMonitorRight
+    /// DW-02 `toggle-workspace-layout` (Alt+Shift+T): the current workspace
+    /// switches between the scrolling strip and the dwindle tree.
+    case toggleWorkspaceLayout
+    /// DW-02 `set-workspace-layout-scrolling` / `-dwindle` (unbound).
+    case setWorkspaceLayout(WorkspaceLayoutKind)
+    /// DW-02 `dwindle-toggle-split` (unbound): the focused window's split
+    /// flips between side by side and stacked.
+    case dwindleToggleSplit
+    /// DW-02 `dwindle-swap-split` (unbound): its two halves trade places.
+    case dwindleSwapSplit
+    /// DW-02 `dwindle-balance` (Alt+Shift+B): every split back to half and half.
+    case dwindleBalance
+    /// DW-02 `dwindle-preselect-<direction>` (unbound): where the next
+    /// window of the workspace opens next to the focused one.
+    case dwindlePreselect(FocusDirection)
+    /// DW-02 `dwindle-preselect-clear` (unbound).
+    case dwindlePreselectClear
 }
 
 /// The binding table. Later entries override earlier ones on collision, so
@@ -173,7 +190,9 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// (niri Mod+Ctrl+F / C); `focus-window-or-workspace-*` (a commented alternative in niri) and
 /// `switch-preset-column-width-back` (niri Mod+Shift+R, Gio's window-height cycle) ship unbound.
 /// MM-06: `move-column-*-or-to-monitor-*` and `focus-column-or-monitor-*` ship unbound (niri's
-/// default config binds none of them either).
+/// default config binds none of them either). DW-02: Alt+Shift+T toggles the workspace layout
+/// (Alt+Shift+Space, the first idea, is toggle-floating) and Alt+Shift+B balances the dwindle
+/// splits (OmniWM's default); the other dwindle actions ship unbound, as in OmniWM.
 public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
     func combo(_ modifiers: Set<HotkeyModifier>, _ key: String) -> HotkeyCombo {
         HotkeyCombo(modifiers: modifiers, key: key)
@@ -215,6 +234,8 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.ctrl, .alt, .shift], "I"), .moveWorkspaceUp),
         (combo([.ctrl, .alt], "F"), .expandColumnToAvailableWidth),
         (combo([.ctrl, .alt], "C"), .centerVisibleColumns),
+        (combo([.alt, .shift], "T"), .toggleWorkspaceLayout),
+        (combo([.alt, .shift], "B"), .dwindleBalance),
     ]
     for number in 1...9 {
         bindings.append((combo([.alt], "\(number)"), .workspace(number)))

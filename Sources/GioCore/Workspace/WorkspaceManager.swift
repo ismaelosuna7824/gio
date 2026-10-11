@@ -353,21 +353,22 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// column, or, from its last window (or an empty workspace), the workspace
     /// below. True only when the workspace changed (the caller syncs the
     /// shown workspace); false for a move within the column or at the bottom.
+    /// DW-02: in dwindle, the tile below (`dwindleFocus` over `geometry`).
     @discardableResult
-    public mutating func focusWindowOrWorkspaceDown() -> Bool {
-        focusWindowOrWorkspace(.down)
+    public mutating func focusWindowOrWorkspaceDown(geometry: DwindleGeometry? = nil) -> Bool {
+        focusWindowOrWorkspace(.down, geometry: geometry)
     }
 
     /// Niri `focus-window-or-workspace-up`: the window above, or the
     /// workspace above from the column's first window. Same return value.
     @discardableResult
-    public mutating func focusWindowOrWorkspaceUp() -> Bool {
-        focusWindowOrWorkspace(.up)
+    public mutating func focusWindowOrWorkspaceUp(geometry: DwindleGeometry? = nil) -> Bool {
+        focusWindowOrWorkspace(.up, geometry: geometry)
     }
 
-    private mutating func focusWindowOrWorkspace(_ direction: FocusDirection) -> Bool {
+    private mutating func focusWindowOrWorkspace(_ direction: FocusDirection, geometry: DwindleGeometry?) -> Bool {
         let workspace = currentWorkspace()
-        let next = moveFocus(in: workspace, direction: direction)
+        let next = focusNeighbour(in: workspace, direction: direction, geometry: geometry ?? .fallback(nil))
         if next != workspace {
             update(next)
             return false

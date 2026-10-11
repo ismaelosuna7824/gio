@@ -52,9 +52,11 @@ public enum DwindleSide: Equatable, Hashable, Sendable {
 public typealias DwindlePath = [DwindleSide]
 
 /// DW-01: one split of the dwindle tree. `orientation` nil follows the
-/// shape of the split's rectangle at every layout (wider than tall, scaled
-/// by `split-width-multiplier`: side by side), like Hyprland's default
-/// `preserve_split = false`; a preselection or `dwindle-toggle-split` pins it.
+/// shape of the split's rectangle (wider than tall, scaled by
+/// `split-width-multiplier`: side by side). The first layout that shows a
+/// new split pins it to that shape (`pinningOrientations`), so the split
+/// keeps it when ratios or neighbours change later (OmniWM, Hyprland's
+/// `preserve_split`); a preselection or `dwindle-toggle-split` pins it too.
 public struct DwindleSplit: Equatable, Sendable {
     public var orientation: DwindleOrientation?
     public var ratio: CGFloat
@@ -182,6 +184,21 @@ public indirect enum DwindleNode: Equatable, Sendable {
             split.second = split.second.mappingSplits(transform)
             return .split(transform(split))
         }
+    }
+
+    /// The tree with every unpinned split pinned to the orientation it was
+    /// laid out with (`orientations`, by path; splits not laid out, inside
+    /// a side that showed nothing, stay unpinned).
+    public func pinningOrientations(_ orientations: [DwindlePath: DwindleOrientation], at path: DwindlePath = []) -> DwindleNode {
+        guard case .split(var split) = self else {
+            return self
+        }
+        if split.orientation == nil {
+            split.orientation = orientations[path]
+        }
+        split.first = split.first.pinningOrientations(orientations, at: path + [.first])
+        split.second = split.second.pinningOrientations(orientations, at: path + [.second])
+        return .split(split)
     }
 }
 

@@ -662,6 +662,11 @@ final class SessionHost: @unchecked Sendable {
                 session.displayFrames = Dictionary(
                     displays.allDisplays().map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first }
                 )
+                // DW-02: `gio focus` / `gio move` measure dwindle tiles in the usable frames.
+                session.visibleFrames = Dictionary(
+                    displays.allDisplays().map { ($0.id, visibleFrames[$0.id] ?? $0.frame) },
+                    uniquingKeysWith: { first, _ in first }
+                )
                 return dispatchIPC(argv, session: &session, restartAvailable: true)
             },
             applyReloadedConfig: { [unowned self] in configCoordinator.applyReloadedConfig() },

@@ -23,7 +23,10 @@ final class ActionApplierTests: XCTestCase {
             .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
             .expandColumnToAvailableWidth, .centerVisibleColumns,
             .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
-            .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight
+            .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight,
+            .toggleWorkspaceLayout, .setWorkspaceLayout(.scrolling), .setWorkspaceLayout(.dwindle),
+            .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance, .dwindlePreselect(.left),
+            .dwindlePreselectClear
         ]
         for action in actions {
             switch action {
@@ -41,7 +44,9 @@ final class ActionApplierTests: XCTestCase {
                  .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp, .switchPresetColumnWidthBack,
                  .expandColumnToAvailableWidth, .centerVisibleColumns,
                  .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
-                 .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
+                 .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight,
+                 .toggleWorkspaceLayout, .setWorkspaceLayout, .dwindleToggleSplit, .dwindleSwapSplit,
+                 .dwindleBalance, .dwindlePreselect, .dwindlePreselectClear:
                 break
             }
         }
@@ -205,6 +210,174 @@ final class ActionApplierTests: XCTestCase {
         XCTAssertEqual(current.columns[0].windows, [ids[0], ids[1]])
         apply(.consumeOrExpelRight)
         XCTAssertEqual(current.columns.count, 3)
+    }
+
+    // MARK: Dwindle (DW-02)
+
+    /// The setUp strip (three windows, focus on the middle one) as a dwindle
+    /// spiral: 1 on the left half, 2 top right, 3 bottom right.
+    private func switchToDwindle() {
+        XCTAssertTrue(world.session.manager.setLayout(.dwindle))
+    }
+
+    private var dwindleGeometry: DwindleGeometry {
+        DwindleGeometry(
+            viewport: world.visibleFrames[ReflowWorld.left]!, modes: world.modes, config: world.engine().config
+        )
+    }
+
+    func testTheLayoutActionsSwitchTheCurrentWorkspaceAndKeepItsWindows() {
+        let windows = Set(current.windows)
+        apply(.toggleWorkspaceLayout)
+        XCTAssertEqual(current.layout, .dwindle)
+        XCTAssertEqual(Set(current.dwindle.windows), windows)
+        XCTAssertEqual(current.focusedWindow, ids[1])
+        apply(.setWorkspaceLayout(.dwindle))
+        XCTAssertEqual(current.layout, .dwindle, "already dwindle")
+        apply(.setWorkspaceLayout(.scrolling))
+        XCTAssertEqual(current.layout, .scrolling)
+        XCTAssertEqual(Set(current.windows), windows)
+        apply(.toggleWorkspaceLayout)
+        apply(.toggleWorkspaceLayout)
+        XCTAssertEqual(current.layout, .scrolling)
+        XCTAssertEqual(engineCalls, 0, "switching layouts needs no geometry")
+    }
+
+    func testSharedFocusAndMoveActionsFollowTheTree() {
+        let focusCases: [(HotkeyAction, FocusDirection)] = [
+            (.focusLeft, .left), (.focusRight, .right), (.focusUp, .up), (.focusDown, .down),
+        ]
+        for (action, direction) in focusCases {
+            setUp()
+            switchToDwindle()
+            let expected = dwindleFocus(in: current, direction: direction, geometry: dwindleGeometry)
+            apply(action)
+            XCTAssertEqual(current, expected, "\(action)")
+        }
+        let moveCases: [(HotkeyAction, FocusDirection)] = [
+            (.moveLeft, .left), (.moveRight, .right), (.moveUp, .up), (.moveDown, .down),
+            (.moveColumnLeft, .left), (.moveColumnRight, .right), (.swapWindowLeft, .left), (.swapWindowRight, .right),
+        ]
+        for (action, direction) in moveCases {
+            setUp()
+            switchToDwindle()
+            var expected = current
+            if case .moved(let next) = dwindleMove(in: current, direction: direction, geometry: dwindleGeometry) {
+                expected = next
+            }
+            apply(action)
+            XCTAssertEqual(current, expected, "\(action)")
+            XCTAssertEqual(current.focusedWindow, ids[1], "\(action): the moved window keeps the focus")
+        }
+        setUp()
+        switchToDwindle()
+        apply(.moveLeft)
+        XCTAssertEqual(current.dwindle.windows, [ids[1], ids[0], ids[2]], "2 traded tiles with 1")
+        setUp()
+        switchToDwindle()
+        apply(.focusColumnFirst)
+        XCTAssertEqual(current.focusedWindow, ids[0])
+        apply(.focusColumnLast)
+        XCTAssertEqual(current.focusedWindow, ids[2])
+    }
+
+    func testColumnOnlyActionsAreNoOpsInDwindle() {
+        let noOps: [HotkeyAction] = [
+            .centerColumn, .centerVisibleColumns, .expandColumnToAvailableWidth,
+            .consumeOrExpelLeft, .consumeOrExpelRight, .moveColumnToFirst, .moveColumnToLast,
+        ]
+        for action in noOps {
+            setUp()
+            switchToDwindle()
+            let before = world.session.manager
+            apply(action)
+            XCTAssertEqual(world.session.manager, before, "\(action)")
+        }
+    }
+
+    func testSizingActionsResizeTheTreeAndMaximizeZoomsWithoutNativeZoom() {
+        let cases: [(HotkeyAction, (Workspace) -> Workspace)] = [
+            (.growColumnWidth, { dwindleResize(in: $0, axis: .horizontal, by: 0.1, geometry: self.dwindleGeometry) }),
+            (.shrinkColumnWidth, { dwindleResize(in: $0, axis: .horizontal, by: -0.1, geometry: self.dwindleGeometry) }),
+            (.growWindowHeight, { dwindleResize(in: $0, axis: .vertical, by: 0.1, geometry: self.dwindleGeometry) }),
+            (.shrinkWindowHeight, { dwindleResize(in: $0, axis: .vertical, by: -0.1, geometry: self.dwindleGeometry) }),
+            (.switchPresetColumnWidth, {
+                dwindleSwitchPreset(in: $0, axis: .horizontal, presets: self.world.session.config.layout.presetColumnWidths,
+                                    forward: true, geometry: self.dwindleGeometry)
+            }),
+            (.switchPresetColumnWidthBack, {
+                dwindleSwitchPreset(in: $0, axis: .horizontal, presets: self.world.session.config.layout.presetColumnWidths,
+                                    forward: false, geometry: self.dwindleGeometry)
+            }),
+            (.switchPresetWindowHeight, {
+                dwindleSwitchPreset(in: $0, axis: .vertical, presets: self.world.session.config.layout.presetWindowHeights,
+                                    forward: true, geometry: self.dwindleGeometry)
+            }),
+            (.dwindleToggleSplit, { dwindleToggleSplit(in: $0, geometry: self.dwindleGeometry) }),
+            (.dwindleSwapSplit, { dwindleSwapSplit(in: $0) }),
+            (.dwindlePreselect(.left), { dwindlePreselect(in: $0, direction: .left) }),
+        ]
+        for (action, core) in cases {
+            setUp()
+            switchToDwindle()
+            let expected = core(current)
+            XCTAssertNotEqual(expected, current, "\(action) changes something")
+            apply(action)
+            XCTAssertEqual(current, expected, "\(action)")
+        }
+        setUp()
+        switchToDwindle()
+        func ratios() -> [CGFloat] {
+            var found: [CGFloat] = []
+            _ = current.dwindle.root?.mappingSplits { split in
+                found.append(split.ratio)
+                return split
+            }
+            return found
+        }
+        apply(.growColumnWidth)
+        apply(.growWindowHeight)
+        XCTAssertEqual(ratios().map { ($0 * 10).rounded() / 10 }, [1.2, 0.8], "inner split first, then the root")
+        apply(.resetWindowHeight)
+        XCTAssertEqual(ratios().map { ($0 * 10).rounded() / 10 }, [1, 0.8], "reset evens the stacked split only")
+        apply(.dwindleBalance)
+        XCTAssertEqual(ratios(), [1, 1], "balance evens every split")
+        apply(.dwindlePreselect(.up))
+        apply(.dwindlePreselectClear)
+        XCTAssertNil(current.dwindle.preselection)
+        let zoom = apply(.maximizeColumn)
+        XCTAssertNil(zoom.zoomRequest, "native zoom is a column feature")
+        XCTAssertEqual(current.dwindle.maximized, ids[1])
+        XCTAssertTrue(zoom.growsFocusedWindow)
+        apply(.maximizeColumn)
+        XCTAssertNil(current.dwindle.maximized)
+    }
+
+    func testDwindleOnlyActionsLeaveAScrollingWorkspaceAlone() {
+        for action in [HotkeyAction.dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance, .dwindlePreselect(.down),
+                       .dwindlePreselectClear] {
+            setUp()
+            let before = world.session.manager
+            apply(action)
+            XCTAssertEqual(world.session.manager, before, "\(action)")
+        }
+    }
+
+    func testMoveEdgeCrossesFromTheTreesEdgeWithTheToggle() {
+        world = ReflowWorld(twoDisplays: true)
+        XCTAssertTrue(world.session.manager.setLayout(.dwindle))
+        ids = world.addColumns(2, on: ReflowWorld.left)
+        world.addColumns(1, pidBase: 200, on: ReflowWorld.right)
+        behavior.moveCrossesMonitorAtEdge = true
+        apply(.moveColumnLeft)
+        XCTAssertEqual(current.dwindle.windows, [ids[1], ids[0]], "inside the tree: a swap")
+        let crossed = apply(.moveColumnRight)
+        XCTAssertEqual(current.dwindle.windows, [ids[0], ids[1]])
+        let edge = apply(.moveColumnRight)
+        XCTAssertFalse(crossed.syncsShownWorkspace)
+        XCTAssertTrue(edge.syncsShownWorkspace, "from the right edge to the display on the right")
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right)
+        XCTAssertEqual(current.windows.first, ids[1], "lands first on the right display")
     }
 
     // MARK: Workspaces

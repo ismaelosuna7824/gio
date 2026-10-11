@@ -131,7 +131,9 @@ public func motionCause(for action: HotkeyAction) -> MotionCause {
          .consumeOrExpelLeft, .consumeOrExpelRight, .toggleFloating,
          .moveColumnToMonitor, .moveWindowToMonitor,
          .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
-         .moveColumnToFirst, .moveColumnToLast, .swapWindowLeft, .swapWindowRight:
+         .moveColumnToFirst, .moveColumnToLast, .swapWindowLeft, .swapWindowRight,
+         // DW-02: a layout switch or a swap rearranges the windows.
+         .toggleWorkspaceLayout, .setWorkspaceLayout, .dwindleSwapSplit:
         // MM-02: windows crossing to another display move like any window.
         return .windowMovement
     case .workspace, .moveToWorkspace, .focusWorkspaceDown, .focusWorkspaceUp,
@@ -144,10 +146,12 @@ public func motionCause(for action: HotkeyAction) -> MotionCause {
         return .workspaceSwitch
     case .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .maximizeColumn,
          .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
-         .switchPresetColumnWidthBack, .expandColumnToAvailableWidth:
+         .switchPresetColumnWidthBack, .expandColumnToAvailableWidth,
+         .dwindleToggleSplit, .dwindleBalance:
         return .windowResize
-    case .toggleOverview:
-        // The app opens a panel; nothing moves.
+    case .toggleOverview, .dwindlePreselect, .dwindlePreselectClear:
+        // The overview is the app's panel; a preselection only marks where the
+        // next window goes. Nothing moves.
         return .passive
     }
 }

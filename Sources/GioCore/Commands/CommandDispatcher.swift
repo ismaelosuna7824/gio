@@ -24,6 +24,25 @@ public struct CommandSession {
     /// `move-crosses-monitor-at-edge` (the live host fills it before each
     /// IPC command; empty means unknown, so the edge stops the column).
     public var displayFrames: [DisplayID: CGRect] = [:]
+    /// DW-02: every display's usable frame, for `gio focus` / `gio move` on
+    /// a dwindle workspace (the live host fills it with `displayFrames`;
+    /// empty falls back to the full frame, then a 1800x1000 area).
+    public var visibleFrames: [DisplayID: CGRect] = [:]
+
+    /// DW-02: the geometry the dwindle verbs measure tiles with: the focused
+    /// display's usable frame, the registry's modes (minimized windows have
+    /// no tile) and the layout config.
+    public var dwindleGeometry: DwindleGeometry {
+        let display = manager.focusedDisplay
+        var modes: [WindowID: WindowMode] = [:]
+        for window in registry.managedWindows() {
+            modes[window.id] = window.isMinimized ? .floating : window.mode
+        }
+        return DwindleGeometry(
+            viewport: visibleFrames[display] ?? displayFrames[display] ?? DwindleGeometry.fallback(nil).viewport,
+            modes: modes, config: config.makeLayoutConfig()
+        )
+    }
 
     public init(
         registry: WindowRegistry = WindowRegistry(),
@@ -99,7 +118,7 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return lines.joined(separator: "\n")
     case .focus(let direction):
         let before = session.manager.currentWorkspace()
-        let after = moveFocus(in: before, direction: direction)
+        let after = focusNeighbour(in: before, direction: direction, geometry: session.dwindleGeometry)
         guard after != before else {
             return "focus unchanged (no target)"
         }
@@ -108,10 +127,12 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         return "focused column=\(after.focusedColumn) window=\(focused)"
     case .move(let direction):
         let before = session.manager.currentWorkspace()
+        let geometry = before.layout == .dwindle ? session.dwindleGeometry : nil
         // Same mapping as the hotkeys: left/right move the column (FI-06),
-        // across the strip's edge with the MM-06 toggle.
+        // across the strip's edge with the MM-06 toggle. DW-02: in dwindle
+        // every direction swaps with the geometric neighbour.
         if direction == .left || direction == .right, session.config.behavior.moveCrossesMonitorAtEdge {
-            switch session.manager.moveColumnOrToDisplay(direction, frames: session.displayFrames) {
+            switch session.manager.moveColumnOrToDisplay(direction, frames: session.displayFrames, geometry: geometry) {
             case .unchanged:
                 return "move unchanged (no target)"
             case .withinWorkspace:
@@ -120,9 +141,17 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
                 return "moved column to the display on the \(direction == .left ? "left" : "right")"
             }
         }
-        let after = direction == .left || direction == .right
-            ? moveColumn(in: before, direction: direction)
-            : moveWindow(in: before, direction: direction)
+        let after: Workspace
+        if let geometry {
+            guard case .moved(let moved) = dwindleMove(in: before, direction: direction, geometry: geometry) else {
+                return "move unchanged (no target)"
+            }
+            after = moved
+        } else {
+            after = direction == .left || direction == .right
+                ? moveColumn(in: before, direction: direction)
+                : moveWindow(in: before, direction: direction)
+        }
         guard after != before else {
             return "move unchanged (no target)"
         }

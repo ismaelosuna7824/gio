@@ -939,6 +939,17 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-column-right-or-to-monitor-right": return .moveColumnRightOrToMonitorRight
     case "focus-column-or-monitor-left": return .focusColumnOrMonitorLeft
     case "focus-column-or-monitor-right": return .focusColumnOrMonitorRight
+    case "toggle-workspace-layout": return .toggleWorkspaceLayout
+    case "set-workspace-layout-scrolling": return .setWorkspaceLayout(.scrolling)
+    case "set-workspace-layout-dwindle": return .setWorkspaceLayout(.dwindle)
+    case "dwindle-toggle-split": return .dwindleToggleSplit
+    case "dwindle-swap-split": return .dwindleSwapSplit
+    case "dwindle-balance": return .dwindleBalance
+    case "dwindle-preselect-left": return .dwindlePreselect(.left)
+    case "dwindle-preselect-right": return .dwindlePreselect(.right)
+    case "dwindle-preselect-up": return .dwindlePreselect(.up)
+    case "dwindle-preselect-down": return .dwindlePreselect(.down)
+    case "dwindle-preselect-clear": return .dwindlePreselectClear
     default: break
     }
     if text.hasPrefix("workspace ") {
@@ -989,6 +1000,10 @@ public func validActionNames() -> [String] {
         "switch-preset-column-width-back", "expand-column-to-available-width", "center-visible-columns",
         "move-column-left-or-to-monitor-left", "move-column-right-or-to-monitor-right",
         "focus-column-or-monitor-left", "focus-column-or-monitor-right",
+        "toggle-workspace-layout", "set-workspace-layout-scrolling", "set-workspace-layout-dwindle",
+        "dwindle-toggle-split", "dwindle-swap-split", "dwindle-balance",
+        "dwindle-preselect-left", "dwindle-preselect-right", "dwindle-preselect-up", "dwindle-preselect-down",
+        "dwindle-preselect-clear",
     ]
 }
 

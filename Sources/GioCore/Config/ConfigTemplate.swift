@@ -180,6 +180,13 @@ public func defaultConfigTemplate() -> String {
     # (from the strip's edge the column goes to the next display, entering by
     # that edge) and "focus-column-or-monitor-left" / "-right", e.g.
     # "Alt+Shift+Left" = "move-column-left-or-to-monitor-left"
+    # Layouts: "toggle-workspace-layout" (Alt+Shift+T) switches the current
+    # workspace between the scrolling strip and the dwindle tree (every window
+    # on screen, each new one splitting the focused one); unbound:
+    # "set-workspace-layout-scrolling" / "-dwindle". Dwindle only:
+    # "dwindle-balance" (Alt+Shift+B, every split half and half); unbound:
+    # "dwindle-toggle-split", "dwindle-swap-split",
+    # "dwindle-preselect-left|right|up|down", "dwindle-preselect-clear".
     # "none" switches a combo off, defaults included (the app's Shortcuts
     # section writes these lines for you), e.g. "Alt+C" = "none"
 

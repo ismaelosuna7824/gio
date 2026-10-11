@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 75)
+        XCTAssertEqual(dispatcher.bindingCount, 77)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -140,7 +140,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultCombosAreUnique() {
         let combos = defaultHotkeyBindings().map(\.0)
-        XCTAssertEqual(combos.count, 75)
+        XCTAssertEqual(combos.count, 77)
         XCTAssertEqual(Set(combos).count, combos.count, "a default combo is bound twice")
         XCTAssertFalse(combos.contains(launcherHotkey), "Alt+Space stays the launcher")
     }

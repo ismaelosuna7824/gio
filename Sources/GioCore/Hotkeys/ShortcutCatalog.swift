@@ -2,13 +2,14 @@ import Foundation
 
 /// Reference grouping for the Shortcuts screen, in display order.
 public enum ShortcutCategory: CaseIterable, Sendable {
-    case focus, move, columns, windows, workspaces, monitors, app
+    case focus, move, columns, layout, windows, workspaces, monitors, app
 
     public var title: String {
         switch self {
         case .focus: return "Focus"
         case .move: return "Move"
         case .columns: return "Columns"
+        case .layout: return "Layout"
         case .windows: return "Windows"
         case .workspaces: return "Workspaces"
         case .monitors: return "Monitors"
@@ -175,6 +176,34 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "focus-column-or-monitor-left", name: "Focus column or monitor left", summary: "Focus the column on the left; from the first column, the display on the left (unbound by default).", category: .monitors)
     case .focusColumnOrMonitorRight:
         return ActionInfo(id: "focus-column-or-monitor-right", name: "Focus column or monitor right", summary: "Focus the column on the right; from the last column, the display on the right (unbound by default).", category: .monitors)
+    case .toggleWorkspaceLayout:
+        return ActionInfo(id: "toggle-workspace-layout", name: "Toggle workspace layout", summary: "Switch the current workspace between the scrolling strip and the dwindle tree that fills the display; every window stays.", category: .layout)
+    case .setWorkspaceLayout(let kind):
+        let summary = kind == .dwindle
+            ? "Lay the current workspace out as a dwindle tree: every window on screen, each new one splitting the focused one (unbound by default)."
+            : "Lay the current workspace out as the scrolling strip of columns (unbound by default)."
+        return ActionInfo(id: "set-workspace-layout-\(kind.rawValue)", name: "\(kind == .dwindle ? "Dwindle" : "Scrolling") layout", summary: summary, category: .layout)
+    case .dwindleToggleSplit:
+        return ActionInfo(id: "dwindle-toggle-split", name: "Toggle split", summary: "Dwindle: flip the split holding the focused window between side by side and stacked (unbound by default).", category: .layout)
+    case .dwindleSwapSplit:
+        return ActionInfo(id: "dwindle-swap-split", name: "Swap split", summary: "Dwindle: swap the two halves of the split holding the focused window; each keeps its size (unbound by default).", category: .layout)
+    case .dwindleBalance:
+        return ActionInfo(id: "dwindle-balance", name: "Balance splits", summary: "Dwindle: give every split of the workspace half and half again.", category: .layout)
+    case .dwindlePreselect(let direction):
+        let side = monitorSide(direction)
+        return ActionInfo(id: "dwindle-preselect-\(side)", name: "Preselect \(side)", summary: "Dwindle: the next window of this workspace opens \(preselectPlace(direction)) the focused one (unbound by default).", category: .layout)
+    case .dwindlePreselectClear:
+        return ActionInfo(id: "dwindle-preselect-clear", name: "Clear preselection", summary: "Dwindle: the next window opens in the default place again, right of or below the focused one (unbound by default).", category: .layout)
+    }
+}
+
+/// Where a preselected window opens, for the summaries.
+private func preselectPlace(_ direction: FocusDirection) -> String {
+    switch direction {
+    case .left: return "on the left of"
+    case .right: return "on the right of"
+    case .up: return "above"
+    case .down: return "below"
     }
 }
 
@@ -248,6 +277,10 @@ private let catalogActions: [HotkeyAction] = [
     .moveWorkspaceToMonitor(.up), .moveWorkspaceToMonitor(.down),
     .moveColumnLeftOrToMonitorLeft, .moveColumnRightOrToMonitorRight,
     .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight,
+    .toggleWorkspaceLayout, .setWorkspaceLayout(.scrolling), .setWorkspaceLayout(.dwindle),
+    .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance,
+    .dwindlePreselect(.left), .dwindlePreselect(.right), .dwindlePreselect(.up), .dwindlePreselect(.down),
+    .dwindlePreselectClear,
 ]
 
 /// Effective bindings: defaults minus `"none"` combos, with config bindings
