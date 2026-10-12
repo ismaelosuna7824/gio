@@ -470,7 +470,7 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7, Mac 19, MacOS
   95, Core 1916 (+13); signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING: checklist 15h/15j
   (`skylight probe` lines).
-- [x] PF-Q — The motion-start focus runs off the session queue, so it no longer holds the first
+- [x] PF-Q (`a303d9b`) — The motion-start focus runs off the session queue, so it no longer holds the first
   tick of a flight or a retarget. Changes: `WindowReconciler.focusSoon`/`waitForFocusIdle`
   (replace `focusNow`/`FocusNowResult`), focus queue, locked PF-I gate, `reconcile` waits for
   pending focus before its own; `FocusCoordinator.focusAtMotionStart` takes a non-returning
@@ -482,7 +482,7 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   line). GREEN: `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7,
   Mac 19, MacOS 95, Core 1919 (+3); signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING:
   checklist 15j (f), compare the gap from `hotkey` to the next tick.
-- [x] PF-R — `anim done` of live and AX runs reports `missed=M hitches=H`. Changes:
+- [x] PF-R (`95417ba`) — `anim done` of live and AX runs reports `missed=M hitches=H`. Changes:
   `MotionSummary.missed` (line, equality), `MotionPlayer` counts missed intervals,
   `MotionDriver.start` passes the timer interval for AX runs too. RED (compile): `swift build
   --build-tests` failed `value of type 'MotionSummary' has no member 'missed'`
@@ -521,3 +521,8 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   link for the AX motion not adopted (Decisions, PF-M).
 - 2026-10-11: PF-O (`4443c13`, live renderer, default) committed on `feat/live-renderer`; all
   bundles green, signed build succeeded; LIVE PENDING (checklist 15j).
+- 2026-10-12: PF-P (`ab3b0fe`, probe evidence, retries), PF-Q (`a303d9b`, motion-start focus
+  off the session queue) and PF-R (`95417ba`, `missed`/`hitches` for live and AX) committed on
+  `main`, not pushed; all bundles green, signed build succeeded; LIVE PENDING (checklists 15h,
+  15j). The `skylight probe` lines of the next live session decide whether this Mac takes
+  SkyLight moves of other apps' windows at all (Decisions, PF-P).
