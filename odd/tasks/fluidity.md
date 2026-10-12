@@ -353,7 +353,7 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
 - [x] PF-N — WindowServer aligned with the app after every followed-up SkyLight move, SkyLight
   render repair before the nudges. Commit `b2ed03e`. Recorded and evidenced as TG-05 in
   `trackpad-gestures.md`. LIVE PENDING: checklists 15h and 15i (l).
-- [x] PF-O — Live renderer (real windows through SkyLight per tick, resizing windows on AX), the
+- [x] PF-O (`4443c13`) — Live renderer (real windows through SkyLight per tick, resizing windows on AX), the
   default. Changes: `RendererKind.live` (default in `AnimationsSectionConfig`, template, parser
   messages), `effectiveRenderer`/`rendererReason`/`RendererLogGate` take `windowServer:`,
   `planMotionTransports(..., renderer:gestureSettle:)` (replaces `moveVisible:`),
@@ -410,5 +410,5 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   (checklists 15g and 15h). Branch rebased by the coordinator onto MM-06 (hashes above are the
   rebased ones). PF-M (per-tick SkyLight motion and the runtime probe) implemented; display
   link for the AX motion not adopted (Decisions, PF-M).
-- 2026-10-11: PF-O (live renderer, default) implemented on `feat/live-renderer`; all bundles
-  green, signed build succeeded; LIVE PENDING (checklist 15j).
+- 2026-10-11: PF-O (`4443c13`, live renderer, default) committed on `feat/live-renderer`; all
+  bundles green, signed build succeeded; LIVE PENDING (checklist 15j).
