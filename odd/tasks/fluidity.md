@@ -516,7 +516,7 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   `testALiveFlightLogsItsRendererAndHitches`). GREEN: `swift test` all bundles 0 failures: UI
   312 (53 skipped), Session 436, POC 7, Mac 19, MacOS 95, Core 1919; signed `xcodebuild` BUILD
   SUCCEEDED. LIVE PENDING: checklist 15j (compare `missed`/`hitches` across renderers).
-- [x] PF-S — SkyLight and the live renderer removed; snapshot is the default renderer again.
+- [x] PF-S (`3511e90`) — SkyLight and the live renderer removed; snapshot is the default renderer again.
   Deleted: `GioMacOS/WindowServer/SkyLight.swift`, `GioCore/Reconciliation/WindowServerTransport.swift`
   (mover protocol, status, ledger, probe, `planWindowServerFirst`), `GioCore/Animation/MotionTransport.swift`
   (`planMotionTransports`), their tests (`SkyLightTests`, `WindowServerTransportTests`,
@@ -580,5 +580,6 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   `main`, not pushed; all bundles green, signed build succeeded; LIVE PENDING (checklists 15h,
   15j). The `skylight probe` lines of the next live session decide whether this Mac takes
   SkyLight moves of other apps' windows at all (Decisions, PF-P).
-- 2026-10-12: PF-S (SkyLight and the live renderer removed, snapshot default again) on `main`,
-  not pushed; all bundles green; LIVE PENDING (checklists 15b, 15i, row 5).
+- 2026-10-12: PF-S (`3511e90`, SkyLight and the live renderer removed, snapshot default again)
+  committed on `main`, not pushed; all bundles green, signed build succeeded; LIVE PENDING
+  (checklists 15b, 15i, row 5).

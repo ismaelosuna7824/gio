@@ -301,5 +301,5 @@ read for the snap and focus rules.
   `bb7b169`, `7cfe28f` are gone).
 - TG-04 committed `ae25e26`.
 - TG-05 (with PF-N) committed `b2ed03e` on `main`, not pushed; LIVE PENDING.
-- 2026-10-12: PF-S removed SkyLight: TG-03's frames go through the Accessibility lanes only and
-  TG-05's alignment and SkyLight repair are gone (Decisions).
+- 2026-10-12: PF-S (`3511e90`) removed SkyLight: TG-03's frames go through the Accessibility
+  lanes only and TG-05's alignment and SkyLight repair are gone (Decisions).
