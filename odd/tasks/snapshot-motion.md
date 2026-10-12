@@ -1054,7 +1054,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   LIVE PENDING (`docs/TESTING.md` 15h): Alt+F on Safari, Xcode and a chat app (maximized size captured before,
   `mode=crossfade`): no dark area beside the window while it grows.
 
-- [x] SM-29 (commit recorded below) — A resized window hands off only once it repainted its new size.
+- [x] SM-29 (`5baf960`) — A resized window hands off only once it repainted its new size.
   Report (2026-10-12, Spanish): after maximizing (Alt+F) "sale como un cuadro a la derecha y en VS Code
   parpadea". Evidence: 60 fps screen recording of VS Code (pid 13261, Electron) Alt+F at 14:50:31.852Z, first
   maximize of the session (`snapshot resize id=13261:10 mode=fill`, `anim done ... duration=378ms
