@@ -1032,7 +1032,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   log `snapshot resize ... mode=crossfade|fill|crop`, never `snapshot scaled`; pure scrolls unchanged; no new
   main-thread hitches in `anim done` for resize flights.
 
-- [x] SM-28 (`<pending>`) — A growing window never shows a black box beside its start image.
+- [x] SM-28 (`f4bd1d4`) — A growing window never shows a black box beside its start image.
   Report (2026-10-12, Spanish, after SM-27): "ya no está mucho el bug que se desproporciona la imagen, pero ...
   sale como un cuadro negro a un lado". Log: every Alt+F of Safari `snapshot resize id=5634:5 mode=crossfade`.
   Cause: SM-27 kept the start image opaque at the bottom and faded the target-size image in on top, so until
