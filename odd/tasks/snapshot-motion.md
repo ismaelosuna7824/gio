@@ -1049,8 +1049,10 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   RED (observed, compile): `OverlayResizeTests.testAGrowingTargetThatCoversTheFlightIsOpaqueUnderTheFadingStartImage`,
   `testShrinkingBackOverAnUnderlaidTargetFadesTheStartImageInOnTop`,
   `testOnlyAnImageAsLargeAsEveryFrameOfTheFlightCoversIt` (extra argument `underlay`, no `order`,
-  no `overlayFaceCovers`). GREEN: see Progress. LIVE PENDING (`docs/TESTING.md` 15h): Alt+F on Safari, Xcode and
-  a chat app (maximized size captured before, `mode=crossfade`): no dark area beside the window while it grows.
+  no `overlayFaceCovers`). GREEN: GioUITests 310 (53 skipped), GioSessionTests 431, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 92, GioCoreTests 1896, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  LIVE PENDING (`docs/TESTING.md` 15h): Alt+F on Safari, Xcode and a chat app (maximized size captured before,
+  `mode=crossfade`): no dark area beside the window while it grows.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
