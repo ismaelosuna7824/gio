@@ -97,8 +97,11 @@ public enum SnapshotDrive: Equatable, Sendable {
 /// check starts `SnapshotHandoff.earlyLead` before the deadline the overlay
 /// reports (`deadlineArmed`), so the overlay usually goes at the deadline,
 /// and apps that painted `PaintTrustBook.cleanChecksToTrust` times in a row
-/// are not checked. Session queue only; `primed`/`deadlineArmed`/
-/// `layersFinished`/`aborted` are called from main and hop on.
+/// are not checked. SM-29: a resized window is always checked, with the
+/// size it grew from and its background (`SnapshotPaintProbe`), so a partly
+/// painted or stale window holds the overlay too. Session queue only;
+/// `primed`/`deadlineArmed`/`layersFinished`/`aborted` are called from main
+/// and hop on.
 public final class SnapshotFlightController: @unchecked Sendable {
     public struct Context {
         public var displayFrames: () -> [CGRect]
@@ -123,11 +126,12 @@ public final class SnapshotFlightController: @unchecked Sendable {
         public var collectWrites: () -> Void
         /// FI-05: schedule the render check when candidates are waiting.
         public var scheduleRenderCheck: () -> Void
-        /// SM-14: tiny captures of these windows at these (target) frames and
-        /// the blank test, off the session queue; `answer` may run on any
+        /// SM-14: tiny captures of these windows at their target frames and
+        /// the blank test (SM-29: the size and grown-region tests of
+        /// resized windows), off the session queue; `answer` may run on any
         /// thread. A window missing from the answer counts as `unknown`.
         public var checkPaint: (
-            [WindowID: CGRect], @escaping @Sendable ([WindowID: SnapshotPaintVerdict]) -> Void
+            [WindowID: SnapshotPaintProbe], @escaping @Sendable (SnapshotPaintAnswer) -> Void
         ) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
@@ -141,7 +145,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             publishIndicators: @escaping () -> Void, collectWrites: @escaping () -> Void,
             scheduleRenderCheck: @escaping () -> Void,
             checkPaint: @escaping (
-                [WindowID: CGRect], @escaping @Sendable ([WindowID: SnapshotPaintVerdict]) -> Void
+                [WindowID: SnapshotPaintProbe], @escaping @Sendable (SnapshotPaintAnswer) -> Void
             ) -> Void,
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -195,6 +199,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// SM-27: the size of the image each layer started with (its bottom
     /// face), for the resize mode a retarget logs.
     private var imageSizes: [WindowID: CGSize] = [:]
+    /// SM-29: the content background of each layer's images (the target
+    /// size's edge fill, else the start's), for the grown-region test.
+    private var backgrounds: [WindowID: ThemeColor] = [:]
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -256,6 +263,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             }
             cache.flies(item.id, use, at: now)
             imageSizes[item.id] = use.entry.frame.size
+            backgrounds[item.id] = use.target?.fill ?? use.entry.fill
             byDisplay[item.displayIndex, default: []].append(
                 OverlayFlightItem(
                     id: item.id, image: use.entry.face, target: use.target?.face, from: item.from, to: item.to
@@ -370,6 +378,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             return .ax
         case .snapshot(let items, let holes):
             imageSizes = [:]
+            backgrounds = [:]
             let flights = makeFlights(items, holes: holes, images: images, now: now)
             guard !flights.isEmpty else {
                 return .ax
@@ -468,7 +477,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let delay = SnapshotHandoff.earlyCheckTime(deadline: deadline, now: now) - now
             scheduler.asyncAfter(delay) { [weak self] in
                 guard let self, !context.isShuttingDown(), gate.isActive, token == gate.currentToken,
-                      let (check, step) = handoff.prepare(windows: paintCheckWindows())
+                      let (check, step) = handoff.prepare(windows: paintCheckWindows().windows)
                 else {
                     return
                 }
@@ -555,7 +564,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
             )
         )
         context.collectWrites()
-        let (token, step) = handoff.begin(windows: paintCheckWindows(), now: context.now())
+        let check = paintCheckWindows()
+        let (token, step) = handoff.begin(windows: check.windows, resized: check.resized, now: context.now())
         if handoff.isHolding {
             scheduler.asyncAfter(SnapshotHandoff.cap) { [weak self] in
                 guard let self, !context.isShuttingDown(),
@@ -571,14 +581,17 @@ public final class SnapshotFlightController: @unchecked Sendable {
 
     /// The windows whose paint the hand-off waits for. SM-16: the hole
     /// windows came into view through their holes (always checked); SM-19:
-    /// the others of trusted apps are skipped.
-    private func paintCheckWindows() -> Set<WindowID> {
+    /// the others of trusted apps are skipped; SM-29: except resized ones
+    /// (`resized`: those of `windows` that changed size).
+    private func paintCheckWindows() -> (windows: Set<WindowID>, resized: Set<WindowID>) {
         let screens = context.displayFrames()
         let candidates = snapshotPaintCheckWindows(
             starts: origins, targets: targets, screens: screens,
             covered: displays.sorted().filter { screens.indices.contains($0) }.map { screens[$0] }
         ).union(holes.keys)
-        return trust.windowsToCheck(candidates, holes: Set(holes.keys))
+        let resized = snapshotResizedWindows(starts: origins, targets: targets).intersection(candidates)
+        let windows = trust.windowsToCheck(candidates, always: resized.union(holes.keys))
+        return (windows, resized)
     }
 
     private func advanceHandoff(_ step: SnapshotHandoff.Step, token: Int) {
@@ -599,16 +612,27 @@ public final class SnapshotFlightController: @unchecked Sendable {
         }
     }
 
-    /// The capture runs off the queue; its answer hops back on.
+    /// The capture runs off the queue; its answer hops back on. SM-29: a
+    /// resized window's probe carries the size it grew from and its
+    /// background.
     private func checkPaint(_ ids: Set<WindowID>, token: Int) {
-        let frames = targets.filter { ids.contains($0.key) }
-        context.checkPaint(frames) { [weak self] verdicts in
+        var probes: [WindowID: SnapshotPaintProbe] = [:]
+        for id in ids {
+            guard let frame = targets[id] else {
+                continue
+            }
+            let start = origins[id].map(\.size).flatMap { snapshotResized(from: $0, to: frame.size) ? $0 : nil }
+            probes[id] = SnapshotPaintProbe(frame: frame, resizedFrom: start, background: backgrounds[id])
+        }
+        context.checkPaint(probes) { [weak self] answer in
             self?.scheduler.async { [weak self] in
                 guard let self, !context.isShuttingDown(), handoff.isCurrent(token) else {
                     return
                 }
-                trust.record(verdicts.filter { ids.contains($0.key) })
-                guard let step = handoff.record(token, verdicts: verdicts, now: context.now()) else {
+                trust.record(answer.verdicts.filter { ids.contains($0.key) })
+                guard let step = handoff.record(
+                    token, verdicts: answer.verdicts, samples: answer.samples, now: context.now()
+                ) else {
                     return
                 }
                 advanceHandoff(step, token: token)
@@ -641,6 +665,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         origins = [:]
         targets = [:]
         holes = [:]
+        backgrounds = [:]
     }
 
     private func setHoles(_ next: [SnapshotHole]) {

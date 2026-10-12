@@ -188,16 +188,19 @@ public final class SnapshotCapturer: @unchecked Sendable {
         _ = await refreshCache(managed: managed)
     }
 
-    /// SM-14: whether each window painted at `frame` (its target, already
-    /// written): a capture `snapshotPaintCheckPixelSize` wide and the SM-10
-    /// blank test (sparse grid confirmed by the dense scan). A window that
-    /// cannot be matched or captured is left out (`unknown` for the caller).
-    /// Nothing is cached; one debug line per check.
+    /// SM-14: whether each window painted at its probe's frame (its target,
+    /// already written): a capture `snapshotPaintCheckPixelSize` wide and the
+    /// SM-10 blank test (sparse grid confirmed by the dense scan). SM-29: a
+    /// resized window is also judged on the size the WindowServer reports
+    /// and on the strips it grew into (`snapshotPaintVerdict`); every
+    /// capture's sparse samples go back for the stability check. A window
+    /// that cannot be matched or captured is left out (`unknown` for the
+    /// caller). Nothing is cached; one debug line per check.
     public func paintCheck(
-        windows: [WindowID: CGRect], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
-    ) async -> [WindowID: SnapshotPaintVerdict] {
+        windows: [WindowID: SnapshotPaintProbe], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+    ) async -> SnapshotPaintAnswer {
         guard #available(macOS 14.0, *) else {
-            return [:]
+            return SnapshotPaintAnswer()
         }
         return await paintCheckSCK(windows: windows, primaryDisplayHeight: primaryDisplayHeight)
     }
@@ -285,9 +288,10 @@ public final class SnapshotCapturer: @unchecked Sendable {
 
     @available(macOS 14.0, *)
     private func paintCheckSCK(
-        windows: [WindowID: CGRect], primaryDisplayHeight: CGFloat
-    ) async -> [WindowID: SnapshotPaintVerdict] {
+        windows probes: [WindowID: SnapshotPaintProbe], primaryDisplayHeight: CGFloat
+    ) async -> SnapshotPaintAnswer {
         let began = DispatchTime.now().uptimeNanoseconds
+        let windows = probes.mapValues(\.frame)
         let candidates = windowServerSnapshotCandidates(
             pids: Set(windows.keys.map(\.pid)), displayHeight: primaryDisplayHeight
         )
@@ -301,37 +305,49 @@ public final class SnapshotCapturer: @unchecked Sendable {
         let lookup = await ensureCache(
             managed: Set(windows.keys), needed: Set(matched.map(\.windowID)), needsDisplays: false
         )
-        var verdicts: [WindowID: SnapshotPaintVerdict] = [:]
+        var answer = SnapshotPaintAnswer()
         if let cache = lookup.cache {
-            await withTaskGroup(of: (WindowID, SnapshotPaintVerdict).self) { group in
+            await withTaskGroup(of: (WindowID, SnapshotPaintVerdict, [UInt32]).self) { group in
                 for entry in matched {
-                    guard let window = cache.windows[entry.windowID] else {
+                    guard let window = cache.windows[entry.windowID], let probe = probes[entry.id] else {
                         continue
                     }
                     let boxed = Box(value: window)
-                    let pixels = snapshotPaintCheckPixelSize(points: windows[entry.id]?.size ?? .zero)
+                    let pixels = snapshotPaintCheckPixelSize(points: probe.frame.size)
+                    let windowSize = candidates.first { $0.windowID == entry.windowID }?.frame.size
                     group.addTask {
                         guard let image = try? await Self.captureWindow(boxed.value, pixels: pixels) else {
-                            return (entry.id, .unknown)
+                            return (entry.id, .unknown, [])
                         }
-                        let blank = snapshotLooksBlank(
-                            samples: snapshotSamples(of: image), dense: { snapshotDenseSamples(of: image) }
+                        let samples = snapshotSamples(of: image)
+                        let strips = probe.resizedFrom.map {
+                            snapshotGrownStrips(
+                                from: $0, to: probe.frame.size, pixelWidth: image.width, pixelHeight: image.height
+                            )
+                        } ?? []
+                        let verdict = snapshotPaintVerdict(
+                            probe, windowSize: windowSize, samples: samples,
+                            dense: { snapshotDenseSamples(of: image) },
+                            strips: strips.map { snapshotStripSamples(of: image, in: $0) }
                         )
-                        return (entry.id, blank ? .blank : .painted)
+                        return (entry.id, verdict, samples)
                     }
                 }
-                for await (id, verdict) in group {
-                    verdicts[id] = verdict
+                for await (id, verdict, samples) in group {
+                    answer.verdicts[id] = verdict
+                    answer.samples[id] = samples
                 }
             }
         }
         let millis = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
+        let verdicts = answer.verdicts.values
         GioLog.record(
             .debug,
-            "snapshot paint check windows=\(windows.count) painted=\(verdicts.values.filter { $0 == .painted }.count) "
-                + "blank=\(verdicts.values.filter { $0 == .blank }.count) ms=\(Int(millis.rounded()))"
+            "snapshot paint check windows=\(windows.count) painted=\(verdicts.filter { $0 == .painted }.count) "
+                + "blank=\(verdicts.filter { $0 == .blank }.count) partial=\(verdicts.filter { $0 == .partial }.count) "
+                + "ms=\(Int(millis.rounded()))"
         )
-        return verdicts
+        return answer
     }
 
     @available(macOS 14.0, *)
@@ -787,6 +803,18 @@ func snapshotSamples(of image: CGImage, grid: Int = 5) -> [UInt32] {
 /// draw, independent of the image size).
 func snapshotDenseSamples(of image: CGImage, grid: Int = 64) -> [UInt32] {
     snapshotDrawSamples(image, width: grid, height: grid)
+}
+
+/// SM-29: the samples of one grown strip (`snapshotGrownStrips`, image
+/// pixels, top-left origin) for `snapshotStripUnpainted`: the crop drawn
+/// into at most 64x64 (nearest neighbour; every pixel of a small strip), in
+/// sRGB like the SM-27 edge fill it is compared with. Empty when the strip
+/// is outside the image.
+func snapshotStripSamples(of image: CGImage, in strip: CGRect, grid: Int = 64) -> [UInt32] {
+    guard let crop = image.cropping(to: strip), let space = CGColorSpace(name: CGColorSpace.sRGB) else {
+        return []
+    }
+    return snapshotDrawSamples(crop, width: min(crop.width, grid), height: min(crop.height, grid), space: space)
 }
 
 /// SM-27: 64 samples along the capture's edge line (`snapshotEdgeLine`,

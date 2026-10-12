@@ -1054,6 +1054,75 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   LIVE PENDING (`docs/TESTING.md` 15h): Alt+F on Safari, Xcode and a chat app (maximized size captured before,
   `mode=crossfade`): no dark area beside the window while it grows.
 
+- [x] SM-29 (commit recorded below) — A resized window hands off only once it repainted its new size.
+  Report (2026-10-12, Spanish): after maximizing (Alt+F) "sale como un cuadro a la derecha y en VS Code
+  parpadea". Evidence: 60 fps screen recording of VS Code (pid 13261, Electron) Alt+F at 14:50:31.852Z, first
+  maximize of the session (`snapshot resize id=13261:10 mode=fill`, `anim done ... duration=378ms
+  renderer=snapshot`, `snapshot flight layers=2 cacheAgeMs=3180 fps=120`) and, for every Alt+F of VS Code and
+  Tern in the session, `snapshot handoff waited ms=0 windows=0 painted=0`. Frame by frame: flight smooth
+  (f15-f36); f37-f38 the real window at its new size with its grown right part an unpainted black box; f39-f40
+  its old layout (explorer at the old x, black beyond the old width) in the new frame; f41 the final layout:
+  ~67 ms of garbage after the hand-off.
+  Cause: (a) the app was trusted (SM-19, 5 clean checks), so the resized window was never checked; (b) the
+  SM-14/SM-10 blank test only detects a fully blank window, so a partly painted one passes anyway.
+  Decisions (pure in `GioCore/Snapshot/SnapshotHandoff.swift`; GioSession wires, GioMacOS samples):
+  1. Resized windows are always checked: `snapshotResizedWindows` (start vs target size, 1 pt) joins the holes
+     in `PaintTrustBook.windowsToCheck(_:always:)` (renamed from `holes:`); trust still skips pure moves; a
+     `partial` verdict resets the app's clean run like `blank`.
+  2. Partial paint: each checked window gets a `SnapshotPaintProbe` (target frame, the size it grew from, the
+     content background = SM-27 edge fill of its target-size image, else its start image). New verdict
+     `partial` (`snapshotPaintVerdict`): the WindowServer still reports the start size (write not landed; an
+     early check 80 ms before the deadline can run before a slow Electron AX write); else the SM-10 blank
+     test; else any strip the window grew into (`snapshotGrownStrips`: right of the old width, below the old
+     height, in the 96 px capture, inset 2 pt/1 px from the old edge and rim, clear of the corners) is
+     unpainted (`snapshotStripUnpainted`: transparent, or one uniform colour that is not the window's
+     background within 0.04, or black when it is unknown). Cheap: the strips are cropped from the same capture
+     (`snapshotStripSamples`, at most 64x64 samples in sRGB like the fill); no extra capture. A full-height
+     strip crosses title, tool and status bars, so a painted strip is practically never uniform; a uniform
+     strip equal to the background (a terminal growing into black) is painted.
+  3. Stale layout: in the recording the old-layout frames (f39-f40) left the grown strip black, so (2)
+     catches them. Beyond that, a window that read `partial` is caught repainting and is released only after
+     two consecutive painted reads that match (`snapshotPaintStable` over the 45 sparse samples the blank test
+     already takes; at most 1 in 16 may differ by more than 16 per channel: a cursor, scaling noise); a
+     contradicting read is logged as `stale`. Cost: one round (30 ms re-check + ~56 ms capture) only on holds
+     that caught a partial paint. Rejected: comparing with the target-size cached image (none on the reported
+     first maximize; any content change since its capture would hold to the cap); requiring two matching
+     reads for every resized window (one extra round on every resize, also for apps that paint at once).
+  4. Cap unchanged at 300 ms: observed repaint ~67 ms after the deadline plus the confirming read ~230 ms.
+     While held the overlay shows the landed layers (target-size image when cached, on top per SM-28; the start
+     image over its fill on a first maximize).
+  5. Log: `snapshot handoff waited ms=N windows=N painted=N` + ` resized=N` (checked windows that changed size,
+     when above 0) + ` held=partial|stale`; debug `snapshot paint check ... partial=N`.
+  Limits: a stale layout that already fills the grown strip and is never read `partial` passes; a window that
+  refuses a resize entirely (WindowServer keeps the start size) holds to the cap; the vertical top-left
+  anchoring of old content is inferred (the recording showed only a width change).
+  RED (observed, compile): `SnapshotHandoffTests` (`testAResizedWindowIsCheckedEvenWhenItsAppIsTrusted`,
+  `testAPartialReadMakesATrustedAppCheckedAgain`,
+  `testTheRegionAWindowGrewIntoIsItsRightAndBottomStripsInsideTheRimAndCorners`,
+  `testNoStripForAShrinkOrAGrowthNarrowerThanAPixel`, `testAUniformStripUnlikeTheWindowBackgroundIsUnpainted`,
+  `testAStripWithContentOrTheWindowBackgroundIsPainted`,
+  `testAResizedWindowReadsPartialWhenNotYetResizedOrItsGrownStripIsUnpainted`,
+  `testTwoReadsAreStableWhenAtMostOneSampleInSixteenChanged`,
+  `testAPartlyPaintedWindowIsReleasedOnlyAfterTwoMatchingPaintedReads`,
+  `testAPaintedReadThatChangedWasStaleAndIsConfirmedAgain`, `testAnEarlyPartialReadHoldsAtTheDeadlineUntilConfirmed`,
+  `testAPaintedReadWithoutSamplesCannotBeConfirmedAndReleases`, `testAResizedWindowPaintedAtOnceNeedsNoConfirmation`,
+  `testTheCapReleasesAWindowStillRepainting`, `testTheLogLineNamesResizedWindowsAndWhatHeldThem`: no
+  `partial`, `snapshotGrownStrips`, `snapshotResizedWindows`, `always:` ...),
+  `SnapshotFlightTests.testAResizedWindowOfATrustedAppIsCheckedAndHeldUntilItsRepaintSettles` (no
+  `SnapshotPaintProbe`/`SnapshotPaintAnswer`), `SnapshotSamplingTests.testTheStripAWindowGrewIntoReadsUnpaintedUntilItsContentArrives`,
+  `testTheStripOfAWindowGrownDownIsItsBottomRows` (no `snapshotStripSamples`). Re-pinned:
+  `windowsToCheck(_:holes:)` -> `always:` (3 call sites, `testHoleWindowsAreAlwaysChecked`).
+  GREEN: full `swift test`: GioUITests 310 (53 skipped), GioSessionTests 432, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 94, GioCoreTests 1911, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean. Not unit-tested (compile-checked): the ScreenCaptureKit capture in `SnapshotCapturer.paintCheckSCK`
+  and the `SessionHost` wiring.
+  LIVE PENDING (`docs/TESTING.md` 15i): with VS Code trusted (5+ scrolls across it), Alt+F (first maximize and
+  again), Alt+F back, Alt+R presets, then the same on Safari/Terminal: no black box and no old-layout flash after
+  the overlay leaves (60 fps recording, frame by frame); every resize logs `resized=1` (never `windows=0`);
+  VS Code's holds `held=partial` under 300 ms; note the `ms` values (the hold should be ~150-250 ms for
+  Electron, ~0 for native apps) and any `ms=300` (an app that never repaints its grown strip, or refuses the
+  size).
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.
@@ -1101,3 +1170,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-08: SM-22 (hidden workspaces at half resolution, cap min(8 display-fulls, 3 % RAM), coverage stops only when a half image goes) uncommitted, all bundles green. Next: signed build, then the SM-22 LIVE PENDING list.
 - 2026-10-08: SM-22 committed as `fdca808` and pushed. Live (22:33-22:35 UTC, 332 presses, 70 workspace switches): 93/94 flights as images (1 fallback: first motion after launch), fps median 117 (min 108), single flights with a hitch 15 %, 0 holes, no `coverage stopped`, cache 255-267 MB, cap `pixels=67334400 ramMB=24576`, Chrome matched `by=order`.
 - 2026-10-12: live report of a black box beside a growing window (SM-27 crossfade); SM-28 (the covering target image goes under the fading start image) committed. Next: the SM-28 LIVE PENDING check.
+- 2026-10-12: live recording of VS Code Alt+F showed a black box where the window grew and its old layout for ~67 ms after the hand-off (app trusted, blank test blind to partial paints); SM-29 (resized windows always checked, grown-strip and size test, two matching reads after a partial one) committed and pushed. Next: the SM-29 LIVE PENDING check.

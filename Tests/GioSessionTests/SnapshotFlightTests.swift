@@ -58,9 +58,11 @@ final class SnapshotFlightTests: XCTestCase {
         /// Seconds the cache's clock advances on every read (0: none).
         var cacheDriftPerRead: TimeInterval = 0
         var cacheReads = 0
-        /// SM-14: the paint checks asked for and their pending answers.
+        /// SM-14: the paint checks asked for (target frames) and their
+        /// pending answers; SM-29: the probes they carried.
         var paintChecks: [[WindowID: CGRect]] = []
-        var paintAnswers: [@Sendable ([WindowID: SnapshotPaintVerdict]) -> Void] = []
+        var paintProbes: [[WindowID: SnapshotPaintProbe]] = []
+        var paintAnswers: [@Sendable (SnapshotPaintAnswer) -> Void] = []
         /// SM-18: usable frames per display (nil: the display frames).
         var usableFrames: [CGRect]?
     }
@@ -131,8 +133,9 @@ final class SnapshotFlightTests: XCTestCase {
                 publishIndicators: { overlay.events.append("publish") },
                 collectWrites: { overlay.events.append("collect") },
                 scheduleRenderCheck: { world.renderChecks += 1 },
-                checkPaint: { frames, answer in
-                    world.paintChecks.append(frames)
+                checkPaint: { probes, answer in
+                    world.paintChecks.append(probes.mapValues(\.frame))
+                    world.paintProbes.append(probes)
                     world.paintAnswers.append(answer)
                 },
                 log: { world.logs.append(($0, $1)) },
@@ -151,15 +154,18 @@ final class SnapshotFlightTests: XCTestCase {
     }
 
     /// Runs one refresh and completes its capture with `images` and, unless
-    /// told otherwise, a backdrop for the one display.
+    /// told otherwise, a backdrop for the one display. `fills`: SM-27 edge
+    /// fills of the captured images.
     @discardableResult
-    private func refresh(_ images: [WindowID: CGRect], backdrop: Bool = true) -> CGImage {
+    private func refresh(
+        _ images: [WindowID: CGRect], backdrop: Bool = true, fills: [WindowID: ThemeColor] = [:]
+    ) -> CGImage {
         cache.schedule()
         scheduler.advance(by: 0.3)
         let done = world.completions.removeLast()
         let backdropImage = image()
         done(SnapshotCaptureOutcome(
-            images: images.mapValues { CapturedImage(image: image(), frame: $0) },
+            images: images.reduce(into: [:]) { $0[$1.key] = CapturedImage(image: image(), frame: $1.value, fill: fills[$1.key]) },
             backdrops: backdrop ? [CapturedBackdropImage(image: backdropImage, displayFrame: SessionFixture.screen)] : []
         ))
         scheduler.runPending()
@@ -600,8 +606,8 @@ final class SnapshotFlightTests: XCTestCase {
         scheduler.runPending()
     }
 
-    private func answerPaint(_ verdicts: [WindowID: SnapshotPaintVerdict]) {
-        world.paintAnswers.removeFirst()(verdicts)
+    private func answerPaint(_ verdicts: [WindowID: SnapshotPaintVerdict], samples: [WindowID: [UInt32]] = [:]) {
+        world.paintAnswers.removeFirst()(SnapshotPaintAnswer(verdicts: verdicts, samples: samples))
         scheduler.runPending()
     }
 
@@ -798,6 +804,51 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(world.paintChecks.count, PaintTrustBook.cleanChecksToTrust, "trusted: no check")
         XCTAssertFalse(flight.isActive)
         XCTAssertEqual(world.logs.last { $0.1.hasPrefix("snapshot handoff") }?.1, "snapshot handoff waited ms=0 windows=0 painted=0")
+    }
+
+    // MARK: SM-29 resized windows always checked; partial and stale paints hold
+
+    func testAResizedWindowOfATrustedAppIsCheckedAndHeldUntilItsRepaintSettles() {
+        let fill = ThemeColor(red: 0.1, green: 0.1, blue: 0.1)
+        refresh([idA: a, idB: b], fills: [idA: fill])
+        for _ in 0..<PaintTrustBook.cleanChecksToTrust {
+            let token = flyInFromParked()
+            scheduler.advance(by: 0.3 - SnapshotHandoff.earlyLead)
+            answerPaint([idA: .painted])
+            scheduler.advance(by: SnapshotHandoff.earlyLead)
+            flight.layersFinished(token)
+            scheduler.runPending()
+        }
+        let checks = world.paintChecks.count
+
+        // Alt+F: idA grows from the column size; no image of the new size yet.
+        let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
+        let (animation, plan) = resize(idA, from: a, to: wide)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let token = overlay.begins.last!.token
+        deferPass()
+        flight.primed(token, ok: true)
+        scheduler.runPending()
+        flight.layersFinished(token)
+        scheduler.runPending()
+
+        XCTAssertEqual(world.paintChecks.count, checks + 1, "resized: checked although its app is trusted")
+        XCTAssertEqual(
+            world.paintProbes.last, [idA: SnapshotPaintProbe(frame: wide, resizedFrom: a.size, background: fill)],
+            "the size it grew from and the background its image showed"
+        )
+        answerPaint([idA: .partial])
+        scheduler.advance(by: SnapshotHandoff.recheckInterval)
+        let settled: [UInt32] = (0..<45).map { UInt32($0) << 24 | 0xFF }
+        answerPaint([idA: .painted], samples: [idA: settled])
+        XCTAssertEqual(overlay.ends, PaintTrustBook.cleanChecksToTrust, "one painted read after a partial one is not enough")
+        scheduler.advance(by: SnapshotHandoff.recheckInterval)
+        answerPaint([idA: .painted], samples: [idA: settled])
+        XCTAssertEqual(overlay.ends, PaintTrustBook.cleanChecksToTrust + 1)
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(world.logs.contains {
+            $0 == (.info, "snapshot handoff waited ms=60 windows=1 painted=1 resized=1 held=partial")
+        })
     }
 
     /// Keys already queued merge into one retarget, and it runs on the next

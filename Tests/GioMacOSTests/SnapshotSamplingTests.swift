@@ -128,4 +128,52 @@ final class SnapshotSamplingTests: XCTestCase {
         }
         XCTAssertEqual(snapshotEdgeSamples(of: dot, pixelsPerPoint: 1), [])
     }
+
+    // MARK: SM-29 grown strips
+
+    /// An editor grown from 300 to 400 px wide whose new right part is still
+    /// an unpainted black box (Electron after a resize), then painted.
+    func testTheStripAWindowGrewIntoReadsUnpaintedUntilItsContentArrives() {
+        let background = ThemeColor(red: 0.12, green: 0.12, blue: 0.12)
+        let strips = snapshotGrownStrips(
+            from: CGSize(width: 300, height: 300), to: CGSize(width: 400, height: 300), pixelWidth: 400, pixelHeight: 300
+        )
+        XCTAssertEqual(strips.count, 1)
+        let partial = image(width: 400, height: 300) { context in
+            context.setFillColor(CGColor(red: 0.12, green: 0.12, blue: 0.12, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 300, height: 300))
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 0, alpha: 1))
+            context.fill(CGRect(x: 300, y: 0, width: 100, height: 300))
+        }
+        let samples = snapshotStripSamples(of: partial, in: strips[0])
+        XCTAssertFalse(samples.isEmpty)
+        XCTAssertTrue(snapshotStripUnpainted(samples: samples, background: background))
+
+        let painted = image(width: 400, height: 300) { context in
+            context.setFillColor(CGColor(red: 0.12, green: 0.12, blue: 0.12, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+            context.setFillColor(CGColor(red: 0.2, green: 0.2, blue: 0.2, alpha: 1))
+            context.fill(CGRect(x: 0, y: 270, width: 400, height: 30))
+        }
+        XCTAssertFalse(snapshotStripUnpainted(samples: snapshotStripSamples(of: painted, in: strips[0]), background: background))
+    }
+
+    /// Strips are in image pixels with a top-left origin: a window grown
+    /// downwards is judged on its bottom rows.
+    func testTheStripOfAWindowGrownDownIsItsBottomRows() {
+        let strips = snapshotGrownStrips(
+            from: CGSize(width: 400, height: 200), to: CGSize(width: 400, height: 300), pixelWidth: 400, pixelHeight: 300
+        )
+        XCTAssertEqual(strips.count, 1)
+        let grownDown = image(width: 400, height: 300) { context in
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 100, width: 400, height: 200))
+            context.setFillColor(CGColor(red: 0, green: 0.4, blue: 0.8, alpha: 1))
+            context.fill(CGRect(x: 0, y: 270, width: 400, height: 30))
+        }
+        XCTAssertTrue(
+            snapshotStripUnpainted(samples: snapshotStripSamples(of: grownDown, in: strips[0]), background: nil),
+            "the bottom 100 px are still transparent"
+        )
+    }
 }

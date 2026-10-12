@@ -385,11 +385,12 @@ final class SessionHost: @unchecked Sendable {
                     }
                 },
                 // SM-14: tiny captures off the session queue; the answer hops back.
-                checkPaint: { [unowned self, snapshotCapturer] frames, answer in
+                // SM-29: probes carry a resized window's start size and background.
+                checkPaint: { [unowned self, snapshotCapturer] probes, answer in
                     let (screens, primary) = displayParameters.captureScreens
                     Task.detached {
                         answer(await snapshotCapturer.paintCheck(
-                            windows: frames, displays: screens, primaryDisplayHeight: primary
+                            windows: probes, displays: screens, primaryDisplayHeight: primary
                         ))
                     }
                 },

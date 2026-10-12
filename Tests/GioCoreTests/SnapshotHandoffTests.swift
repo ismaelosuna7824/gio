@@ -247,11 +247,11 @@ final class SnapshotHandoffTests: XCTestCase {
             book.record([id(1): .painted, id(2): .painted])
         }
         XCTAssertFalse(book.isTrusted(10), "a check with two windows counts once")
-        XCTAssertEqual(book.windowsToCheck([id(1), other(1)], holes: []), [id(1), other(1)])
+        XCTAssertEqual(book.windowsToCheck([id(1), other(1)], always: []), [id(1), other(1)])
         book.record([id(1): .painted])
         XCTAssertTrue(book.isTrusted(10))
         XCTAssertFalse(book.isTrusted(20))
-        XCTAssertEqual(book.windowsToCheck([id(1), id(3), other(1)], holes: []), [other(1)])
+        XCTAssertEqual(book.windowsToCheck([id(1), id(3), other(1)], always: []), [other(1)])
     }
 
     func testABlankMakesATrustedAppCheckedAgain() {
@@ -283,7 +283,227 @@ final class SnapshotHandoffTests: XCTestCase {
         for _ in 0..<5 {
             book.record([id(1): .painted])
         }
-        XCTAssertEqual(book.windowsToCheck([id(1), id(2)], holes: [id(2)]), [id(2)])
+        XCTAssertEqual(book.windowsToCheck([id(1), id(2)], always: [id(2)]), [id(2)])
+    }
+
+    // MARK: SM-29 resized windows, partial and stale paints
+
+    func testAResizedWindowIsCheckedEvenWhenItsAppIsTrusted() {
+        var book = PaintTrustBook()
+        for _ in 0..<5 {
+            book.record([id(1): .painted])
+        }
+        let resized = snapshotResizedWindows(
+            starts: [id(1): win(0, width: 400), id(2): win(0), id(3): parked],
+            targets: [id(1): win(0, width: 900), id(2): win(300), id(4): win(500)]
+        )
+        XCTAssertEqual(resized, [id(1)], "a move keeps its size; no start: not known to be resized")
+        XCTAssertEqual(book.windowsToCheck([id(1), id(2)], always: resized), [id(1)], "trust skips only the move")
+    }
+
+    func testAPartialReadMakesATrustedAppCheckedAgain() {
+        var book = PaintTrustBook()
+        for _ in 0..<5 {
+            book.record([id(1): .painted])
+        }
+        book.record([id(1): .partial])
+        XCTAssertFalse(book.isTrusted(10))
+    }
+
+    func testTheRegionAWindowGrewIntoIsItsRightAndBottomStripsInsideTheRimAndCorners() {
+        // 800 -> 1600 pt wide, captured 96 x 54: 1 px rim inset, 1 px corners.
+        XCTAssertEqual(
+            snapshotGrownStrips(
+                from: CGSize(width: 800, height: 900), to: CGSize(width: 1600, height: 900), pixelWidth: 96, pixelHeight: 54
+            ),
+            [CGRect(x: 49, y: 1, width: 46, height: 52)]
+        )
+        // 300 -> 600 pt high, captured 96 x 144 (top-left origin): corners 3 px.
+        XCTAssertEqual(
+            snapshotGrownStrips(
+                from: CGSize(width: 400, height: 300), to: CGSize(width: 400, height: 600), pixelWidth: 96, pixelHeight: 144
+            ),
+            [CGRect(x: 3, y: 73, width: 90, height: 70)]
+        )
+        XCTAssertEqual(
+            snapshotGrownStrips(
+                from: CGSize(width: 800, height: 450), to: CGSize(width: 1600, height: 900), pixelWidth: 96, pixelHeight: 54
+            ).count, 2
+        )
+    }
+
+    func testNoStripForAShrinkOrAGrowthNarrowerThanAPixel() {
+        XCTAssertEqual(
+            snapshotGrownStrips(
+                from: CGSize(width: 1600, height: 900), to: CGSize(width: 800, height: 900), pixelWidth: 96, pixelHeight: 108
+            ), []
+        )
+        XCTAssertEqual(
+            snapshotGrownStrips(
+                from: CGSize(width: 1590, height: 900), to: CGSize(width: 1600, height: 900), pixelWidth: 96, pixelHeight: 54
+            ), []
+        )
+    }
+
+    private let black: UInt32 = 0x0000_00FF
+    private let sidebar: UInt32 = 0x1818_18FF
+    private var sidebarColour: ThemeColor { ThemeColor(red: 0x18 / 255, green: 0x18 / 255, blue: 0x18 / 255) }
+
+    func testAUniformStripUnlikeTheWindowBackgroundIsUnpainted() {
+        XCTAssertTrue(snapshotStripUnpainted(samples: Array(repeating: 0, count: 16), background: sidebarColour), "transparent")
+        XCTAssertTrue(snapshotStripUnpainted(samples: Array(repeating: black, count: 16), background: sidebarColour))
+        XCTAssertTrue(snapshotStripUnpainted(samples: Array(repeating: black, count: 16), background: nil), "black, no background known")
+    }
+
+    func testAStripWithContentOrTheWindowBackgroundIsPainted() {
+        XCTAssertFalse(snapshotStripUnpainted(samples: Array(repeating: sidebar, count: 16), background: sidebarColour))
+        XCTAssertFalse(
+            snapshotStripUnpainted(samples: Array(repeating: black, count: 16), background: ThemeColor(red: 0, green: 0, blue: 0)),
+            "a black terminal grew into black"
+        )
+        XCTAssertFalse(snapshotStripUnpainted(samples: Array(repeating: black, count: 15) + [sidebar], background: nil))
+        XCTAssertFalse(snapshotStripUnpainted(samples: Array(repeating: sidebar, count: 16), background: nil))
+        XCTAssertFalse(snapshotStripUnpainted(samples: [], background: nil), "no samples: no evidence")
+    }
+
+    func testAResizedWindowReadsPartialWhenNotYetResizedOrItsGrownStripIsUnpainted() {
+        let content = (0..<45).map { UInt32($0) << 8 | 0xFF }
+        let probe = SnapshotPaintProbe(
+            frame: win(0, width: 900), resizedFrom: CGSize(width: 400, height: 800), background: sidebarColour
+        )
+        let unpainted = [Array(repeating: black, count: 16)]
+        let filled = [Array(repeating: sidebar, count: 15) + [black]]
+        func verdict(_ size: CGSize?, _ samples: [UInt32], _ strips: [[UInt32]]) -> SnapshotPaintVerdict {
+            snapshotPaintVerdict(probe, windowSize: size, samples: samples, dense: { samples }, strips: strips)
+        }
+        let target = CGSize(width: 900, height: 800)
+        XCTAssertEqual(verdict(CGSize(width: 400, height: 800), content, filled), .partial, "the write has not landed")
+        XCTAssertEqual(verdict(target, Array(repeating: black, count: 45), unpainted), .blank)
+        XCTAssertEqual(verdict(target, content, unpainted), .partial)
+        XCTAssertEqual(verdict(target, content, filled), .painted)
+        XCTAssertEqual(verdict(nil, content, filled), .painted, "size unknown: the capture decides")
+        XCTAssertEqual(
+            verdict(CGSize(width: 700, height: 800), content, filled), .painted,
+            "the app chose another size (a minimum): not waiting for the target"
+        )
+        XCTAssertEqual(
+            snapshotPaintVerdict(
+                SnapshotPaintProbe(frame: win(0)), windowSize: CGSize(width: 100, height: 100), samples: content,
+                dense: { content }, strips: []
+            ),
+            .painted, "not resized: the SM-14 blank test only"
+        )
+    }
+
+    func testTwoReadsAreStableWhenAtMostOneSampleInSixteenChanged() {
+        let read = (0..<45).map { UInt32($0) << 24 | 0xFF }
+        var cursor = read
+        cursor[7] = 0xFFFF_FFFF
+        cursor[30] = 0xFFFF_FFFF
+        XCTAssertTrue(snapshotPaintStable(read, read))
+        XCTAssertTrue(snapshotPaintStable(read, cursor), "a blinking cursor")
+        var moved = cursor
+        moved[12] = 0xFFFF_FFFF
+        XCTAssertFalse(snapshotPaintStable(read, moved), "the layout changed")
+        var tinted = read
+        for index in tinted.indices {
+            tinted[index] += 0x0400_0000
+        }
+        XCTAssertTrue(snapshotPaintStable(read, tinted), "scaling noise")
+        XCTAssertFalse(snapshotPaintStable([], []))
+        XCTAssertFalse(snapshotPaintStable(read, Array(read.dropLast())))
+    }
+
+    private let stale = (0..<45).map { UInt32($0) << 24 | 0xFF }
+    private let final = (0..<45).map { UInt32(200 - $0) << 24 | 0xFF }
+
+    func testAPartlyPaintedWindowIsReleasedOnlyAfterTwoMatchingPaintedReads() {
+        var handoff = SnapshotHandoff()
+        let (token, step) = handoff.begin(windows: [id(1), id(2)], resized: [id(1)], now: 10)
+        XCTAssertEqual(step, .check([id(1), id(2)]))
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .partial, id(2): .painted], now: 10.05),
+            .recheck([id(1)], after: SnapshotHandoff.recheckInterval)
+        )
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.14),
+            .recheck([id(1)], after: SnapshotHandoff.recheckInterval),
+            "caught repainting: the first painted read may be a stale layout"
+        )
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.23),
+            .release(SnapshotHandoffSummary(
+                waitedMilliseconds: 230, windows: 2, painted: 2, held: true, resized: 1, reason: .partial
+            ))
+        )
+    }
+
+    func testAPaintedReadThatChangedWasStaleAndIsConfirmedAgain() {
+        var handoff = SnapshotHandoff()
+        let (token, _) = handoff.begin(windows: [id(1)], resized: [id(1)], now: 10)
+        _ = handoff.record(token, verdicts: [id(1): .partial], now: 10.05)
+        _ = handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): stale], now: 10.1)
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.15),
+            .recheck([id(1)], after: SnapshotHandoff.recheckInterval), "the content changed: not settled yet"
+        )
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.2),
+            .release(SnapshotHandoffSummary(
+                waitedMilliseconds: 200, windows: 1, painted: 1, held: true, resized: 1, reason: .stale
+            ))
+        )
+    }
+
+    func testAnEarlyPartialReadHoldsAtTheDeadlineUntilConfirmed() {
+        var handoff = SnapshotHandoff()
+        let token = handoff.prepare(windows: [id(1)])!.token
+        XCTAssertNil(handoff.record(token, verdicts: [id(1): .partial], now: 10.22))
+        let (landed, step) = handoff.begin(windows: [id(1)], resized: [id(1)], now: 10.3)
+        XCTAssertEqual(landed, token)
+        XCTAssertEqual(step, .check([id(1)]))
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.35),
+            .recheck([id(1)], after: SnapshotHandoff.recheckInterval)
+        )
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.4),
+            .release(SnapshotHandoffSummary(
+                waitedMilliseconds: 100, windows: 1, painted: 1, held: true, resized: 1, reason: .partial
+            ))
+        )
+    }
+
+    func testAPaintedReadWithoutSamplesCannotBeConfirmedAndReleases() {
+        var handoff = SnapshotHandoff()
+        let (token, _) = handoff.begin(windows: [id(1)], resized: [id(1)], now: 10)
+        _ = handoff.record(token, verdicts: [id(1): .partial], now: 10.05)
+        XCTAssertEqual(
+            handoff.record(token, verdicts: [id(1): .painted], now: 10.1),
+            .release(SnapshotHandoffSummary(
+                waitedMilliseconds: 100, windows: 1, painted: 1, held: true, resized: 1, reason: .partial
+            ))
+        )
+    }
+
+    func testAResizedWindowPaintedAtOnceNeedsNoConfirmation() {
+        var handoff = SnapshotHandoff()
+        let (token, _) = handoff.begin(windows: [id(1)], resized: [id(1)], now: 10)
+        let step = handoff.record(token, verdicts: [id(1): .painted], samples: [id(1): final], now: 10.008)
+        let summary = SnapshotHandoffSummary(waitedMilliseconds: 8, windows: 1, painted: 1, held: false, resized: 1)
+        XCTAssertEqual(step, .release(summary))
+        XCTAssertEqual(summary.logLevel, .debug)
+        XCTAssertEqual(summary.logLine, "snapshot handoff waited ms=8 windows=1 painted=1 resized=1")
+    }
+
+    func testTheCapReleasesAWindowStillRepainting() {
+        var handoff = SnapshotHandoff()
+        let (token, _) = handoff.begin(windows: [id(1)], resized: [id(1)], now: 10)
+        _ = handoff.record(token, verdicts: [id(1): .partial], now: 10.05)
+        XCTAssertEqual(
+            handoff.capReached(token, now: 10.3),
+            SnapshotHandoffSummary(waitedMilliseconds: 300, windows: 1, painted: 0, held: true, resized: 1, reason: .partial)
+        )
     }
 
     // MARK: log line
@@ -295,5 +515,15 @@ final class SnapshotHandoffTests: XCTestCase {
         let quick = SnapshotHandoffSummary(waitedMilliseconds: 9, windows: 1, painted: 1, held: false)
         XCTAssertEqual(quick.logLine, "snapshot handoff waited ms=9 windows=1 painted=1")
         XCTAssertEqual(quick.logLevel, .debug)
+    }
+
+    func testTheLogLineNamesResizedWindowsAndWhatHeldThem() {
+        let partial = SnapshotHandoffSummary(
+            waitedMilliseconds: 230, windows: 2, painted: 2, held: true, resized: 1, reason: .partial
+        )
+        XCTAssertEqual(partial.logLine, "snapshot handoff waited ms=230 windows=2 painted=2 resized=1 held=partial")
+        XCTAssertEqual(partial.logLevel, .info)
+        let stale = SnapshotHandoffSummary(waitedMilliseconds: 200, windows: 1, painted: 1, held: true, resized: 1, reason: .stale)
+        XCTAssertEqual(stale.logLine, "snapshot handoff waited ms=200 windows=1 painted=1 resized=1 held=stale")
     }
 }
