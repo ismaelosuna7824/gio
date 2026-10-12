@@ -14,10 +14,13 @@ public struct SnapshotCacheEntry<Image> {
     public let pixels: Int
     /// SM-22: the resolution the image was captured at.
     public let resolution: SnapshotResolution
+    /// SM-27: the fill sampled from the image's right edge at capture
+    /// (`snapshotEdgeFill`); nil for a see-through edge.
+    public let fill: ThemeColor?
 
     public init(
         image: Image, frame: CGRect, capturedAt: TimeInterval, lastUsed: TimeInterval, pixels: Int,
-        resolution: SnapshotResolution = .full
+        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil
     ) {
         self.image = image
         self.frame = frame
@@ -25,6 +28,12 @@ public struct SnapshotCacheEntry<Image> {
         self.lastUsed = lastUsed
         self.pixels = pixels
         self.resolution = resolution
+        self.fill = fill
+    }
+
+    /// SM-27: the image as a layer draws it, at the size it was captured at.
+    public var face: SnapshotFace<Image> {
+        SnapshotFace(image: image, size: frame.size, fill: fill)
     }
 }
 
@@ -97,7 +106,8 @@ public let snapshotMaxAge: TimeInterval = 180
 
 /// SM-09: a settle refresh re-captures an image older than this even when
 /// nothing marked it dirty (a window may repaint without any signal).
-/// SM-11: also the age up to which an image of another size may fly scaled.
+/// SM-11: also the age up to which an image of another size may fly (SM-27:
+/// at its own size, cropped or over its fill, never scaled).
 public let snapshotSoftAge: TimeInterval = 30
 
 /// SM-09: the per-display backdrop (desktop, icons, unmanaged windows) is
@@ -134,11 +144,18 @@ func snapshotSameSize(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
     abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
 }
 
-/// SM-11: the image a flight uses and whether it flies scaled (captured at
-/// another size; the layer scales it to its bounds).
+/// SM-11: the image a flight uses. SM-27: with the image of the target size
+/// (crossfaded to) and how the layer shows the window without stretching it.
 public struct SnapshotCacheUse<Image> {
     public let entry: SnapshotCacheEntry<Image>
-    public let scaled: Bool
+    /// Captured at another size than the start frame (only while younger
+    /// than the soft age).
+    public let otherSize: Bool
+    /// The newest image of the target frame's size, whatever its age (the
+    /// start image itself on a move); nil when none is cached.
+    public let target: SnapshotCacheEntry<Image>?
+    /// Nil for a pure move with an image of the window's size.
+    public let resize: SnapshotResizeMode?
 }
 
 public struct SnapshotCache<Image> {
@@ -173,29 +190,42 @@ public struct SnapshotCache<Image> {
 
     /// SM-11: the image a flight from `startFrame` uses: the newest one of
     /// that size, whatever its age (SM-24); otherwise the newest image of
-    /// another size while younger than `softAge`, scaled. No start frame:
-    /// the newest image. Nil: the flight falls back.
+    /// another size while younger than `softAge`. No start frame: the
+    /// newest image. Nil: the flight falls back. SM-27: with the newest image
+    /// of `targetFrame`'s size (any age, like the start size) and the
+    /// resize mode the layer draws with.
     public func usableEntry(
-        _ id: WindowID, startFrame: CGRect?, now: TimeInterval,
+        _ id: WindowID, startFrame: CGRect?, targetFrame: CGRect? = nil, now: TimeInterval,
         softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2
     ) -> SnapshotCacheUse<Image>? {
-        guard let startFrame else {
-            return entry(id).map { SnapshotCacheUse(entry: $0, scaled: false) }
+        let chosen: (entry: SnapshotCacheEntry<Image>, otherSize: Bool)
+        if let startFrame {
+            if let match = entry(id, matching: startFrame, tolerance: tolerance) {
+                chosen = (match, false)
+            } else if let newest = entry(id), now - newest.capturedAt <= softAge {
+                chosen = (newest, true)
+            } else {
+                return nil
+            }
+        } else if let newest = entry(id) {
+            chosen = (newest, false)
+        } else {
+            return nil
         }
-        if let match = entry(id, matching: startFrame, tolerance: tolerance) {
-            return SnapshotCacheUse(entry: match, scaled: false)
-        }
-        if let newest = entry(id), now - newest.capturedAt <= softAge {
-            return SnapshotCacheUse(entry: newest, scaled: true)
-        }
-        return nil
+        let target = targetFrame.flatMap { entry(id, matching: $0, tolerance: tolerance) }
+        let from = startFrame?.size ?? chosen.entry.frame.size
+        let resize = snapshotResizeMode(
+            image: chosen.entry.frame.size, target: target?.frame.size, from: from, to: targetFrame?.size ?? from,
+            tolerance: tolerance
+        )
+        return SnapshotCacheUse(entry: chosen.entry, otherSize: chosen.otherSize, target: target, resize: resize)
     }
 
     /// Stores the image as the window's image of its size. A third size
     /// replaces the least recently used one of the window.
     public mutating func store(
         _ id: WindowID, image: Image, frame: CGRect, pixels: Int, at now: TimeInterval,
-        resolution: SnapshotResolution = .full
+        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil
     ) {
         var list = entries[id] ?? []
         list.removeAll { snapshotSameSize($0.frame, frame, tolerance: 2) }
@@ -205,7 +235,8 @@ public struct SnapshotCache<Image> {
             list.remove(at: oldest)
         }
         list.append(SnapshotCacheEntry(
-            image: image, frame: frame, capturedAt: now, lastUsed: now, pixels: pixels, resolution: resolution
+            image: image, frame: frame, capturedAt: now, lastUsed: now, pixels: pixels, resolution: resolution,
+            fill: fill
         ))
         entries[id] = list
     }

@@ -3,14 +3,17 @@ import Foundation
 import GioCore
 import GioMacOS
 
-/// One captured window image and the frame it was captured at.
+/// One captured window image, the frame it was captured at and (SM-27) the
+/// fill sampled from its right edge.
 public struct CapturedImage: @unchecked Sendable {
     public let image: CGImage
     public let frame: CGRect
+    public let fill: ThemeColor?
 
-    public init(image: CGImage, frame: CGRect) {
+    public init(image: CGImage, frame: CGRect, fill: ThemeColor? = nil) {
         self.image = image
         self.frame = frame
+        self.fill = fill
     }
 }
 
@@ -260,24 +263,53 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
 
     // MARK: Flight images (SM-11, read by the flight controller)
 
-    /// The image a flight from `startFrame` would use at `now` (see
-    /// `SnapshotCache.usableEntry`): the one of that size, or a fresh one of
-    /// the other size (the layer scales it to its bounds). Nil start: any
-    /// image within the max age. A lookup only; SM-13: the flight looks
-    /// each window up once and flies exactly that image (`flies`).
+    /// The image a flight from `startFrame` to `targetFrame` would use at
+    /// `now` (see `SnapshotCache.usableEntry`): the one of the start size, or
+    /// a fresh one of the other size, and (SM-27) the one of the target size
+    /// to crossfade to. Nil start: any image within the max age. A lookup
+    /// only; SM-13: the flight looks each window up once and flies exactly
+    /// that image (`flies`).
     public func flightImage(
-        _ id: WindowID, startFrame: CGRect?, at now: TimeInterval
+        _ id: WindowID, startFrame: CGRect?, targetFrame: CGRect? = nil, at now: TimeInterval
     ) -> SnapshotCacheUse<CGImage>? {
-        cache.usableEntry(id, startFrame: startFrame, now: now)
+        cache.usableEntry(id, startFrame: startFrame, targetFrame: targetFrame, now: now)
     }
 
-    /// The chosen image flies: that size is marked used (the LRU order); a
-    /// scaled one (a fresh image beats an AX fallback) is logged at debug.
+    /// The chosen images fly: their sizes are marked used (the LRU order).
+    /// SM-27: a layer that is not a pure move logs how it resizes without
+    /// stretching (debug).
     public func flies(_ id: WindowID, _ use: SnapshotCacheUse<CGImage>, at now: TimeInterval) {
         cache.touch(id, frame: use.entry.frame, at: now)
-        if use.scaled {
-            context.log(.debug, "snapshot scaled id=\(id.pid):\(id.elementID)")
+        if let target = use.target {
+            cache.touch(id, frame: target.frame, at: now)
         }
+        if let mode = use.resize {
+            logResize(id, mode)
+        }
+    }
+
+    /// SM-27: a flying layer is retargeted from `from` to `to`: the face of
+    /// `to`'s size it fades to (the one it already shows or fades to when
+    /// the size stays), nil when none is cached (the overlay then fades to
+    /// its closest face). A new size is logged: `crossfade` with a face,
+    /// otherwise `fill`/`crop` against the layer's start `image` size.
+    public func retargetFace(
+        _ id: WindowID, image: CGSize, from: CGRect, to: CGRect, at now: TimeInterval
+    ) -> SnapshotFace<CGImage>? {
+        let entry = cache.entry(id, matching: to)
+        if let entry {
+            cache.touch(id, frame: entry.frame, at: now)
+        }
+        let resized = abs(from.width - to.width) > 2 || abs(from.height - to.height) > 2
+        if resized,
+           let mode = entry != nil ? .crossfade : snapshotResizeMode(image: image, target: nil, from: from.size, to: to.size) {
+            logResize(id, mode)
+        }
+        return entry?.face
+    }
+
+    private func logResize(_ id: WindowID, _ mode: SnapshotResizeMode) {
+        context.log(.debug, "snapshot resize id=\(id.pid):\(id.elementID) mode=\(mode.rawValue)")
     }
 
     // MARK: Backdrop (SM-09, read by the flight controller)
@@ -767,7 +799,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             cache.store(
                 id, image: snapshot.image, frame: snapshot.frame,
                 pixels: snapshot.image.width * snapshot.image.height, at: now,
-                resolution: half.contains(id) ? .half : .full
+                resolution: half.contains(id) ? .half : .full, fill: snapshot.fill
             )
             dirty.removeValue(forKey: id)
         }

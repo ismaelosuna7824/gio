@@ -1011,23 +1011,64 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertFalse(world.logs.contains { $0.1.contains("secret") }, "never a title")
     }
 
-    // MARK: Flight images (SM-11)
+    // MARK: Flight images (SM-11, SM-27)
 
-    func testFlightPrefersTheMatchingSizeAndFliesAFreshImageScaled() throws {
+    func testFlightPrefersTheMatchingSizeAndLogsHowItResizesWithoutStretching() throws {
         refresh([idA: a, idB: b])
         let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
-        XCTAssertEqual(cache.flightImage(idA, startFrame: a.offsetBy(dx: 300, dy: 0), at: scheduler.now)?.scaled, false)
-        let same = try XCTUnwrap(cache.flightImage(idA, startFrame: a, at: scheduler.now))
+        XCTAssertEqual(cache.flightImage(idA, startFrame: a.offsetBy(dx: 300, dy: 0), at: scheduler.now)?.otherSize, false)
+        let same = try XCTUnwrap(cache.flightImage(idA, startFrame: a, targetFrame: a.offsetBy(dx: 300, dy: 0), at: scheduler.now))
         cache.flies(idA, same, at: scheduler.now)
-        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot scaled") })
-        let scaled = try XCTUnwrap(cache.flightImage(idA, startFrame: wide, at: scheduler.now), "fresh: scaled beats a fallback")
-        XCTAssertTrue(scaled.scaled)
-        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot scaled") }, "a lookup alone logs nothing")
-        cache.flies(idA, scaled, at: scheduler.now)
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot scaled id=1:1") })
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize") }, "a move resizes nothing")
+        let grow = try XCTUnwrap(cache.flightImage(idA, startFrame: a, targetFrame: wide, at: scheduler.now))
+        XCTAssertNil(grow.target, "never captured maximized")
+        XCTAssertEqual(grow.resize, .fill)
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize") }, "a lookup alone logs nothing")
+        cache.flies(idA, grow, at: scheduler.now)
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=fill") })
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot scaled") }, "nothing is scaled any more")
+        let other = try XCTUnwrap(cache.flightImage(idA, startFrame: wide, at: scheduler.now), "fresh: the other size beats a fallback")
+        XCTAssertTrue(other.otherSize)
+        XCTAssertEqual(other.resize, .fill)
         scheduler.advance(by: 31)
-        XCTAssertNil(cache.flightImage(idA, startFrame: wide, at: scheduler.now), "too old to scale")
+        XCTAssertNil(cache.flightImage(idA, startFrame: wide, at: scheduler.now), "the other size only while fresh")
         XCTAssertNotNil(cache.flightImage(idA, startFrame: a, at: scheduler.now))
+    }
+
+    /// A capture's edge fill is kept with its image; with both sizes the
+    /// layer crossfades, and a retarget to a new size is told the face of
+    /// that size (or none) and logged once.
+    func testCapturedFillsAreKeptAndBothSizesCrossfade() throws {
+        let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
+        let white = ThemeColor(red: 1, green: 1, blue: 1)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        world.completions.removeLast()(SnapshotCaptureOutcome(
+            images: [
+                idA: CapturedImage(image: image(), frame: wide, fill: white),
+                idB: CapturedImage(image: image(), frame: b),
+            ],
+            backdrops: [CapturedBackdropImage(image: image(for: screen), displayFrame: screen)]
+        ))
+        scheduler.runPending()
+        XCTAssertEqual(cache.cache.entry(idA)?.fill, white)
+        XCTAssertNil(cache.cache.entry(idB)?.fill)
+        refresh([idA: a])
+        let grow = try XCTUnwrap(cache.flightImage(idA, startFrame: a, targetFrame: wide, at: scheduler.now))
+        XCTAssertEqual(grow.target?.fill, white)
+        XCTAssertEqual(grow.resize, .crossfade)
+        cache.flies(idA, grow, at: scheduler.now)
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+
+        let back = cache.retargetFace(idA, image: a.size, from: wide, to: a.offsetBy(dx: 20, dy: 0), at: scheduler.now)
+        XCTAssertEqual(back?.size, a.size)
+        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") }.count, 2)
+        let onward = cache.retargetFace(idB, image: b.size, from: b, to: b.offsetBy(dx: 20, dy: 0), at: scheduler.now)
+        XCTAssertEqual(onward?.size, b.size, "same size: the face it is fading to, no log")
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
+        let first = cache.retargetFace(idB, image: b.size, from: b, to: wide, at: scheduler.now)
+        XCTAssertNil(first, "never captured at that size")
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=2:2 mode=fill") })
     }
 
     // MARK: Close ghost cache (NA-03)

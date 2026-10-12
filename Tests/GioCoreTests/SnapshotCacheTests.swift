@@ -107,7 +107,7 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertEqual(cache.entry(id(2))?.resolution, .full, "full unless said otherwise")
         let use = cache.usableEntry(id(1), startFrame: frame, now: 101)
         XCTAssertEqual(use?.entry.image, "half")
-        XCTAssertEqual(use?.scaled, false)
+        XCTAssertEqual(use?.otherSize, false)
         let strip = snapshotStripSelection(
             cache: cache, strip: [(id(1), frame), (id(2), frame)], dirty: [:], excluded: [], now: 101
         )
@@ -285,7 +285,7 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertTrue(snapshotTypingHopDue(now: 10.5, lastHop: 10, interval: 0.5))
     }
 
-    // MARK: SM-11 two sizes per window, scaled fallback, off-screen, miss log
+    // MARK: SM-11 two sizes per window, other-size fallback, off-screen, miss log
 
     private let maximized = CGRect(x: 0, y: 0, width: 1600, height: 600)
 
@@ -317,26 +317,84 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(1), image: "m", frame: maximized, pixels: 1, at: 2)
         let small = cache.usableEntry(id(1), startFrame: frame.offsetBy(dx: 900, dy: 0), now: 10)
         XCTAssertEqual(small?.entry.image, "s")
-        XCTAssertEqual(small?.scaled, false)
+        XCTAssertEqual(small?.otherSize, false)
         XCTAssertEqual(cache.usableEntry(id(1), startFrame: maximized, now: 10)?.entry.image, "m")
         XCTAssertEqual(cache.usableEntry(id(1), startFrame: nil, now: 10)?.entry.image, "m", "no frame: the newest")
     }
 
-    func testWithoutAMatchingSizeAFreshImageFliesScaled() {
+    /// SM-27: the other-size image is drawn at its own size (cropped or over
+    /// the fill), never scaled; the soft age still bounds it.
+    func testWithoutAMatchingSizeAFreshImageOfTheOtherSizeFlies() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "s", frame: frame, pixels: 1, at: 100)
         let use = cache.usableEntry(id(1), startFrame: maximized, now: 120)
         XCTAssertEqual(use?.entry.image, "s")
-        XCTAssertEqual(use?.scaled, true)
+        XCTAssertEqual(use?.otherSize, true)
+        XCTAssertEqual(use?.resize, .fill, "a column image on a maximized frame: unscaled over the fill")
         XCTAssertNil(cache.usableEntry(id(1), startFrame: maximized, now: 131), "older than the soft age: fall back")
-        XCTAssertEqual(cache.usableEntry(id(1), startFrame: frame, now: 131)?.scaled, false, "matching size: any age")
+        XCTAssertEqual(cache.usableEntry(id(1), startFrame: frame, now: 131)?.otherSize, false, "matching size: any age")
         XCTAssertNil(cache.usableEntry(id(2), startFrame: frame, now: 101))
+    }
+
+    // MARK: SM-27 resize without stretching
+
+    /// Alt+F with both sizes cached: the layer starts on the column image and
+    /// crossfades into the maximized one; back again the other way round.
+    func testAResizeFlightGetsTheImageOfItsTargetSizeToCrossfadeTo() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1)
+        cache.store(id(1), image: "maximized", frame: maximized, pixels: 1, at: 2)
+        let grow = cache.usableEntry(id(1), startFrame: frame, targetFrame: maximized, now: 10)
+        XCTAssertEqual(grow?.entry.image, "column")
+        XCTAssertEqual(grow?.target?.image, "maximized")
+        XCTAssertEqual(grow?.resize, .crossfade)
+        let shrink = cache.usableEntry(id(1), startFrame: maximized, targetFrame: frame.offsetBy(dx: 40, dy: 0), now: 10)
+        XCTAssertEqual(shrink?.entry.image, "maximized")
+        XCTAssertEqual(shrink?.target?.image, "column")
+        XCTAssertEqual(shrink?.resize, .crossfade)
+    }
+
+    /// The first maximize of a window (never captured at that size): no
+    /// second image, the column image stays unscaled over its edge fill;
+    /// shrinking without the smaller image crops the larger one.
+    func testWithoutTheTargetSizeTheStartImageFillsOrCrops() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1)
+        let grow = cache.usableEntry(id(1), startFrame: frame, targetFrame: maximized, now: 10)
+        XCTAssertEqual(grow?.entry.image, "column")
+        XCTAssertNil(grow?.target)
+        XCTAssertEqual(grow?.resize, .fill)
+        cache.store(id(2), image: "maximized", frame: maximized, pixels: 1, at: 1)
+        let shrink = cache.usableEntry(id(2), startFrame: maximized, targetFrame: frame, now: 10)
+        XCTAssertNil(shrink?.target)
+        XCTAssertEqual(shrink?.resize, .crop)
+    }
+
+    func testAPureMoveNeedsNoResizeAndItsTargetIsTheSameImage() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1)
+        cache.store(id(1), image: "maximized", frame: maximized, pixels: 1, at: 2)
+        let move = cache.usableEntry(id(1), startFrame: frame, targetFrame: frame.offsetBy(dx: 900, dy: 0), now: 10)
+        XCTAssertEqual(move?.target?.image, "column")
+        XCTAssertNil(move?.resize)
+        XCTAssertNil(cache.usableEntry(id(1), startFrame: frame, now: 10)?.resize, "no target frame: a move")
+    }
+
+    func testAnEntryKeepsTheFillSampledFromItsEdge() {
+        var cache = SnapshotCache<String>()
+        let white = ThemeColor(red: 1, green: 1, blue: 1)
+        cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1, fill: white)
+        cache.store(id(2), image: "clear", frame: frame, pixels: 1, at: 1)
+        XCTAssertEqual(cache.entry(id(1))?.fill, white)
+        XCTAssertEqual(cache.entry(id(1))?.face, SnapshotFace(image: "column", size: frame.size, fill: white))
+        XCTAssertNil(cache.entry(id(2))?.fill, "no fill unless sampled")
     }
 
     /// Live 2026-10-09 21:38: Tern's column-size image was pruned 30 s into
     /// a maximize (`pruned images=1 reason=size`); Alt+F back to a column then
-    /// flew the maximized image squeezed into the column (`snapshot scaled`)
-    /// for the 7 s of the next burst, until a settle captured the new size.
+    /// flew the maximized image squeezed into the column (`snapshot scaled`,
+    /// SM-27 never scales any more) for the 7 s of the next burst, until a
+    /// settle captured the new size.
     func testBothSizesOfAWindowSurviveSettlesSoAToggleBackFliesItsOwnImage() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 0)
@@ -345,7 +403,7 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertTrue(pruned.images.isEmpty, "the size it is not at now stays")
         let back = cache.usableEntry(id(1), startFrame: frame, now: 100)
         XCTAssertEqual(back?.entry.image, "column")
-        XCTAssertEqual(back?.scaled, false)
+        XCTAssertEqual(back?.otherSize, false)
     }
 
     /// Live 2026-10-09 21:27: after a 3-4 min pause the images of the strip's
@@ -358,7 +416,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(1), image: "old", frame: frame, pixels: 1, at: 0)
         let use = cache.usableEntry(id(1), startFrame: frame.offsetBy(dx: 1800, dy: 0), now: 3600)
         XCTAssertEqual(use?.entry.image, "old")
-        XCTAssertEqual(use?.scaled, false)
+        XCTAssertEqual(use?.otherSize, false)
         XCTAssertEqual(cache.usableEntry(id(1), startFrame: nil, now: 3600)?.entry.image, "old", "no frame: the newest")
         let pruned = cache.prune(now: 3600, currentFrame: { _ in self.frame }, displayFrames: [])
         XCTAssertTrue(pruned.images.isEmpty, "a settle keeps it")

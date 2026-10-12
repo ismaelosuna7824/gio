@@ -976,6 +976,62 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   `min size learned` (21:50:26, captured 21:50:27), the first Alt+F of Tern and of WhatsApp (captured 1 s later).
   Still LIVE PENDING: the SM-24 idle path (no gap over 2 s between keys in this session).
 
+- [x] SM-27 — Resize flights never stretch window content (niri-style clip and crossfade).
+  Report (2026-10-11, Spanish): "como son imágenes, al querer hacer grande o reacomodar las cosas se ve un poco
+  como que se estira". Log: `snapshot scaled id=5195:4`, `snapshot scaled id=30401:8` right after
+  `hotkey maximizeColumn`. Cause: the image layer used `contentsGravity .resize` with the animated bounds, so
+  every resize (and SM-11's other-size image) scaled the picture non-uniformly; a retarget that changed a
+  layer's size stretched it too, without any log.
+  Decisions (pure in `GioCore/Snapshot/OverlayResize.swift`; `GioUI` `SnapshotOverlay` only applies them):
+  1. Never scale non-uniformly. The image layer is a clip (animated frame, corner radius 10, masked; shadow,
+     dim, ring unchanged) whose bounds hang from its top-left corner (`overlayClipBounds`: origin `(0, -h)`,
+     y up), so faces placed from the origin stay on the window's top-left while the bounds animate. A pure
+     move with a matching image (2 pt) still draws it as the clip's contents (`overlayDrawsDirect`).
+  2. Faces: each image at its own captured size (`SnapshotFace`; SM-22 half images scale uniformly ×2) over a
+     solid fill out to the largest frame of the track (`overlayReach`, overshoot included). `OverlayCrossfade`:
+     bottom face (start image) opaque; the target-size image (`SnapshotCacheUse.target`, any age like SM-24's
+     start size) fades in on top. Curve: smoothstep over the resize progress (`overlayResizeProgress`: largest
+     size change, clamped), done at `overlayCrossfadeSpan` = 60 %: with the default spring ~70 ms of a ~350 ms
+     Alt+F, a dissolve over several frames without a lingering double exposure of two text layouts; the target
+     image alone shows for the rest of the flight, so the last overlay frame is the landing size (no pop at the
+     hand-off, which is unchanged).
+  3. Missing target image (first maximize): `fill` (start image unscaled, flat fill where the frame outgrows it)
+     or `crop` (shrinking: cut off, never squashed). Fill = per-channel median of 64 samples down a column 2 pt
+     inside the right edge between the rounded corners, taken at capture off the session queue
+     (`snapshotEdgeLine`/`snapshotEdgeFill` pure, `snapshotEdgeSamples` GioMacOS, stored in
+     `SnapshotCacheEntry.fill`). Chosen over a 9-slice stretch of the last pixel row/column: text, scrollbars or
+     sidebars crossing the edge smear into streaks, which reads as stretching again; the right edge crosses every
+     band of the window in proportion to its height, so its median is the content background (the bottom edge is
+     often a status bar). A see-through edge gets no fill.
+  4. Retargets: the session hands each retargeted layer the image of its new size (`retargetFlight(images:)`,
+     `SnapshotCacheRefresher.retargetFace`); the overlay evaluates the old track's progress at the elapsed time
+     and starts the new opacities there (`retargeted(at:toward:)`), next to the carried velocity: same image ->
+     the fade continues, a face it has -> the faces above fade out (Alt+F back mid-flight), a new one -> fades in
+     on top, none -> fades to its face closest in size (`overlayClosestFace`).
+  5. Log: debug `snapshot resize id=P:E mode=crossfade|fill|crop` at flight start and when a retarget changes a
+     window's size; `snapshot scaled` is gone (`SnapshotCacheUse.scaled` renamed `otherSize`).
+  RED (observed, compile): `OverlayResizeTests` (20 new: mode, curve, progress, crossfade state and retargets,
+  keyframes, direct drawing, clip/face geometry, reach, edge line, median fill, face),
+  `SnapshotCacheTests.testAResizeFlightGetsTheImageOfItsTargetSizeToCrossfadeTo`,
+  `testWithoutTheTargetSizeTheStartImageFillsOrCrops`, `testAPureMoveNeedsNoResizeAndItsTargetIsTheSameImage`,
+  `testAnEntryKeepsTheFillSampledFromItsEdge`, `SnapshotSamplingTests.testTheEdgeFillIsTheContentBackgroundBesideBarsAndRim`,
+  `testATransparentOrTinyCaptureHasNoEdgeFill`, `SnapshotCacheRefresherTests.testCapturedFillsAreKeptAndBothSizesCrossfade`,
+  `SnapshotFlightTests.testAResizingLayerCarriesTheImageOfItsTargetSizeAndEveryImageItsOwnSize`,
+  `testARetargetGivesEveryLayerTheImageOfItsNewSize` (missing `OverlayCrossfade`, `snapshotResizeMode`,
+  `SnapshotFace`, `fill:`...). Re-pinned: `.scaled` -> `.otherSize` (5 cache tests),
+  `testWithoutAMatchingSizeAFreshImageFliesScaled` -> `...OfTheOtherSizeFlies` (mode `.fill`),
+  `testFlightPrefersTheMatchingSizeAndFliesAFreshImageScaled` -> `...AndLogsHowItResizesWithoutStretching`.
+  GREEN: full `swift test`: GioUITests 310 (53 skipped), GioSessionTests 431, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 92, GioCoreTests 1893, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean. Not unit-tested (compile-checked): the Core Animation layer tree in `SnapshotOverlay` (`WindowLayers`,
+  `FaceLayers`), the capture-time sampling call in `SnapshotCapturer`.
+  LIVE PENDING (`docs/TESTING.md` 15h): with an editor, a terminal, a browser and a chat app, Alt+F (first
+  maximize and again), Alt+F back and twice quickly, Alt+R presets, Ctrl+Alt+F, Alt+[ / Alt+], Alt+F then
+  Alt+L, dwindle Alt+R / split toggle: text never looks stretched or squashed, the dissolve reads as a fade (not
+  a pop, not a double exposure), no jump at the hand-off, the first-maximize fill matches the window background;
+  log `snapshot resize ... mode=crossfade|fill|crop`, never `snapshot scaled`; pure scrolls unchanged; no new
+  main-thread hitches in `anim done` for resize flights.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.

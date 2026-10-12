@@ -95,4 +95,37 @@ final class SnapshotSamplingTests: XCTestCase {
         }
         XCTAssertEqual(snapshotSamples(of: dot).count, 45)
     }
+
+    // MARK: SM-27 edge fill
+
+    /// A window with a dark title bar, a blue status bar and a 1 px rim on
+    /// its right edge: the fill is the content background.
+    func testTheEdgeFillIsTheContentBackgroundBesideBarsAndRim() throws {
+        let window = image(width: 400, height: 300) { context in
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+            context.setFillColor(CGColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1))
+            context.fill(CGRect(x: 0, y: 272, width: 400, height: 28))
+            context.setFillColor(CGColor(red: 0, green: 0.4, blue: 0.8, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 400, height: 22))
+            context.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
+            context.fill(CGRect(x: 399, y: 0, width: 1, height: 300))
+        }
+        let samples = snapshotEdgeSamples(of: window, pixelsPerPoint: 1)
+        XCTAssertEqual(samples.count, 64)
+        let fill = try XCTUnwrap(snapshotEdgeFill(samples: samples))
+        XCTAssertEqual(fill.red, 1, accuracy: 2 / 255)
+        XCTAssertEqual(fill.green, 1, accuracy: 2 / 255)
+        XCTAssertEqual(fill.blue, 1, accuracy: 2 / 255)
+    }
+
+    func testATransparentOrTinyCaptureHasNoEdgeFill() {
+        let clear = image(width: 300, height: 200) { _ in }
+        XCTAssertNil(snapshotEdgeFill(samples: snapshotEdgeSamples(of: clear, pixelsPerPoint: 1)))
+        let dot = image(width: 1, height: 1) { context in
+            context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        XCTAssertEqual(snapshotEdgeSamples(of: dot, pixelsPerPoint: 1), [])
+    }
 }

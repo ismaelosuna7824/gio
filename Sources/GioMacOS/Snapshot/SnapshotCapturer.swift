@@ -30,6 +30,9 @@ public struct CapturedSnapshot: @unchecked Sendable {
     public let image: CGImage
     public let frame: CGRect
     public let scale: CGFloat
+    /// SM-27: the flat fill a resize shows where the frame outgrows the
+    /// image (`snapshotEdgeFill` of its right edge); nil for a see-through edge.
+    public let fill: ThemeColor?
 }
 
 /// A display image without the animated windows and Gio's own windows.
@@ -536,8 +539,10 @@ public final class SnapshotCapturer: @unchecked Sendable {
         var snapshots: [WindowID: CapturedSnapshot] = [:]
         for (id, image) in out.images {
             let frame = request.windows[id] ?? .zero
+            let scale = captureScale(request, id: id, frame: frame)
             snapshots[id] = CapturedSnapshot(
-                id: id, image: image, frame: frame, scale: captureScale(request, id: id, frame: frame)
+                id: id, image: image, frame: frame, scale: scale,
+                fill: snapshotEdgeFill(samples: snapshotEdgeSamples(of: image, pixelsPerPoint: scale))
             )
         }
         var backdrops: [UInt32: CapturedBackdrop] = [:]
@@ -784,13 +789,28 @@ func snapshotDenseSamples(of image: CGImage, grid: Int = 64) -> [UInt32] {
     snapshotDrawSamples(image, width: grid, height: grid)
 }
 
-private func snapshotDrawSamples(_ image: CGImage, width: Int, height: Int) -> [UInt32] {
+/// SM-27: 64 samples along the capture's edge line (`snapshotEdgeLine`,
+/// pure) for `snapshotEdgeFill`: a one-pixel-wide crop drawn into a 1x64
+/// bitmap (nearest neighbour, cost independent of the image size), in sRGB
+/// like the overlay's colours. Empty when the image is too small.
+func snapshotEdgeSamples(of image: CGImage, pixelsPerPoint: CGFloat, count: Int = 64) -> [UInt32] {
+    guard let line = snapshotEdgeLine(
+        pixelWidth: image.width, pixelHeight: image.height, pixelsPerPoint: pixelsPerPoint
+    ), let edge = image.cropping(to: line), let space = CGColorSpace(name: CGColorSpace.sRGB) else {
+        return []
+    }
+    return snapshotDrawSamples(edge, width: 1, height: count, space: space)
+}
+
+private func snapshotDrawSamples(
+    _ image: CGImage, width: Int, height: Int, space: CGColorSpace = CGColorSpaceCreateDeviceRGB()
+) -> [UInt32] {
     let count = width * height
     var pixels = [UInt8](repeating: 0, count: count * 4)
     let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
         guard let context = CGContext(
             data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
-            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ) else {
             return false
         }

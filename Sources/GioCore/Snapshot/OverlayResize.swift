@@ -1,0 +1,263 @@
+import CoreGraphics
+import Foundation
+
+// SM-27: a layer whose frame changes size never stretches its window
+// (live report: "como son imágenes ... se ve un poco como que se estira").
+// Like niri's resize: every image is drawn at its own size, hanging from the
+// window's top-left corner and clipped to the animated frame (corner radius
+// and shadow unchanged); the start-size image crossfades into the
+// target-size one along the resize. Without a target-size image the start
+// image stays unscaled: what it does not cover shows a flat fill sampled
+// from its right edge (growing), and what the frame no longer covers is cut
+// off (shrinking). A flat fill was chosen over stretching the last pixel
+// column/row (a 9-slice): a line of text, a scrollbar or a sidebar crossing
+// the edge would be smeared into streaks, which reads as stretching again.
+
+/// How a layer shows a window whose frame and image sizes differ.
+public enum SnapshotResizeMode: String, Equatable, Sendable {
+    /// Start image fading into the image of the target size, both unscaled.
+    case crossfade
+    /// One image, unscaled, over its edge fill where the frame outgrows it.
+    case fill
+    /// One image, unscaled, cut off by a frame smaller than it.
+    case crop
+}
+
+private func sameSize(_ a: CGSize, _ b: CGSize, tolerance: CGFloat) -> Bool {
+    abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
+}
+
+/// The mode of a layer drawing an `image` (its own size, points) from a
+/// frame of size `from` to one of size `to`, with `target` the size of the
+/// target-size image when one is cached. Nil: the image fits both frames
+/// (a pure move; `tolerance` is the cache's size match).
+public func snapshotResizeMode(
+    image: CGSize, target: CGSize?, from: CGSize, to: CGSize, tolerance: CGFloat = 2
+) -> SnapshotResizeMode? {
+    if let target, !sameSize(target, image, tolerance: tolerance) {
+        return .crossfade
+    }
+    if sameSize(image, from, tolerance: tolerance), sameSize(image, to, tolerance: tolerance) {
+        return nil
+    }
+    let reach = CGSize(width: max(from.width, to.width), height: max(from.height, to.height))
+    if image.width < reach.width - tolerance || image.height < reach.height - tolerance {
+        return .fill
+    }
+    return .crop
+}
+
+// MARK: crossfade
+
+/// Fraction of the resize (not of the time) by which the target-size image
+/// is fully opaque. Gio's spring covers distance early (niri's default: 60 %
+/// of an Alt+F within ~70 ms of a ~350 ms flight), so the dissolve lasts a
+/// few frames (no pop) while the double exposure of two text layouts never
+/// lingers, and the target image alone shows for the rest of the flight:
+/// the last frame before the hand-off is the image of the size the real
+/// window lands at.
+public let overlayCrossfadeSpan = 0.6
+
+/// Weight of the fade at `progress` of the resize: smoothstep over
+/// `0...overlayCrossfadeSpan`, flat at both ends (no visible start or stop).
+public func overlayCrossfadeWeight(progress: Double) -> Double {
+    let x = min(max(progress / overlayCrossfadeSpan, 0), 1)
+    return x * x * (3 - 2 * x)
+}
+
+/// How far `geometry` is along `track`, 0...1 (clamped: a spring overshoot
+/// or a carried velocity away from the target never leaves the range). The
+/// largest size change leads; a track that keeps its size follows its
+/// largest move; a track that does neither is done.
+public func overlayResizeProgress(track: FlightTrack, geometry: LayerGeometry) -> Double {
+    let sizes: [(start: CGFloat, end: CGFloat, now: CGFloat)] = [
+        (track.start.bounds.width, track.end.bounds.width, geometry.bounds.width),
+        (track.start.bounds.height, track.end.bounds.height, geometry.bounds.height),
+    ]
+    let moves: [(start: CGFloat, end: CGFloat, now: CGFloat)] = [
+        (track.start.position.x, track.end.position.x, geometry.position.x),
+        (track.start.position.y, track.end.position.y, geometry.position.y),
+    ]
+    for axes in [sizes, moves] {
+        guard let lead = axes.max(by: { abs($0.start - $0.end) < abs($1.start - $1.end) }),
+              abs(lead.start - lead.end) >= SpringParameters.minimumThreshold
+        else {
+            continue
+        }
+        let progress = 1 - Double((lead.now - lead.end) / (lead.start - lead.end))
+        return min(max(progress, 0), 1)
+    }
+    return 1
+}
+
+/// The images (faces) of one layer, bottom to top, and the opacity of each
+/// at the start and at the end of the current track. The bottom face (the
+/// image the layer started with) stays opaque, so nothing behind the
+/// window shows through mid-fade; a face fades in on top of it, or out.
+public struct OverlayCrossfade: Equatable, Sendable {
+    public private(set) var from: [Double]
+    public private(set) var to: [Double]
+
+    /// One face, opaque.
+    public init() {
+        from = [1]
+        to = [1]
+    }
+
+    public var count: Int { from.count }
+
+    /// Every face's opacity at `progress` of the current track.
+    public func opacities(at progress: Double) -> [Double] {
+        let weight = overlayCrossfadeWeight(progress: progress)
+        return zip(from, to).map { $0 + ($1 - $0) * weight }
+    }
+
+    /// A new track from `progress` of the current one, fading to face
+    /// `index` (`count`: a new face on top, transparent at first). The faces
+    /// above it fade out, it fades in, the ones below keep their opacity
+    /// (hidden by it at the end). Continuous: the new track starts at the
+    /// opacities this one has at `progress`.
+    public func retargeted(at progress: Double, toward index: Int) -> OverlayCrossfade {
+        var current = opacities(at: progress)
+        if index >= current.count {
+            current.append(0)
+        }
+        let face = min(index, current.count - 1)
+        var next = current
+        for above in next.indices where above > face {
+            next[above] = 0
+        }
+        next[face] = 1
+        var crossfade = self
+        crossfade.from = current
+        crossfade.to = next
+        return crossfade
+    }
+}
+
+/// The face to fade to when no image of the new size is cached: the one
+/// whose size is closest to it (ties: the lower face). The layer then lands
+/// on one image, unscaled over its fill or cut off, instead of a mix.
+public func overlayClosestFace(_ sizes: [CGSize], to target: CGSize) -> Int {
+    var best = 0
+    var distance = CGFloat.infinity
+    for (index, size) in sizes.enumerated() {
+        let candidate = abs(size.width - target.width) + abs(size.height - target.height)
+        if candidate < distance {
+            best = index
+            distance = candidate
+        }
+    }
+    return best
+}
+
+/// Every face's opacity at each keyframe of `track` (one array per face,
+/// index-aligned with `keyframes.times`): sampled from the same spring as
+/// the geometry, so the fade follows the resize and lands exactly on `to`.
+public func overlayCrossfadeKeyframes(
+    _ crossfade: OverlayCrossfade, track: FlightTrack, keyframes: FlightKeyframes
+) -> [[Double]] {
+    var values = Array(repeating: [Double](), count: crossfade.count)
+    for geometry in keyframes.geometries {
+        let opacities = crossfade.opacities(at: overlayResizeProgress(track: track, geometry: geometry))
+        for face in opacities.indices {
+            values[face].append(opacities[face])
+        }
+    }
+    return values
+}
+
+// MARK: drawing
+
+/// A layer may draw its one image straight into its frame (the layer's own
+/// contents, as before SM-27) only when that image fits the start and end
+/// frames (within the cache's 2 pt): a pure move. Anything else draws faces.
+public func overlayDrawsDirect(
+    image: CGSize, faces: Int, start: CGSize, end: CGSize, tolerance: CGFloat = 2
+) -> Bool {
+    faces == 1 && sameSize(image, start, tolerance: tolerance) && sameSize(image, end, tolerance: tolerance)
+}
+
+/// Bounds of the clipping layer for a frame of `size`: its top-left corner
+/// at the layer's own origin (y up, so the bounds hang below it). Sublayers
+/// placed from that origin stay on the window's top-left corner while the
+/// bounds grow or shrink (Cocoa/AX conversion stays in `overlayLayerGeometry`).
+public func overlayClipBounds(_ size: CGSize) -> CGRect {
+    CGRect(x: 0, y: -size.height, width: size.width, height: size.height)
+}
+
+/// One face inside the clip: the image at its own size and the fill under
+/// it out to `reach` (the largest frame of the flight), both hanging from
+/// the top-left corner.
+public func overlayFaceFrames(image: CGSize, reach: CGSize) -> (image: CGRect, fill: CGRect) {
+    (overlayClipBounds(image), overlayClipBounds(reach))
+}
+
+/// The largest width and height among `sizes` (zero for none).
+public func overlayReach(_ sizes: some Sequence<CGSize>) -> CGSize {
+    sizes.reduce(.zero) { CGSize(width: max($0.width, $1.width), height: max($0.height, $1.height)) }
+}
+
+// MARK: edge fill
+
+/// The pixel column a capture's fill is sampled along (image pixels,
+/// top-left origin): 2 pt in from the right edge (past the window's 1 px
+/// rim) between the rounded corners. The right edge runs through every
+/// horizontal band of the window (title bar, toolbar, content, status bar)
+/// in proportion to its height, so its median is the content background;
+/// the bottom edge is often all status bar or input field. Nil when the
+/// image is too small.
+public func snapshotEdgeLine(pixelWidth: Int, pixelHeight: Int, pixelsPerPoint: CGFloat) -> CGRect? {
+    let inset = Int((2 * pixelsPerPoint).rounded())
+    let corner = Int((overlayWindowCornerRadius * pixelsPerPoint).rounded(.up))
+    let x = pixelWidth - 1 - inset
+    let height = pixelHeight - 2 * corner
+    guard x >= 0, height > 0 else {
+        return nil
+    }
+    return CGRect(x: x, y: corner, width: 1, height: height)
+}
+
+/// The fill of a capture from its edge samples (packed premultiplied RGBA,
+/// alpha in the low byte): the per-channel median of the samples at least
+/// half opaque, unpremultiplied. The median, not the mean: a title bar or a
+/// line of text crossing the edge is a minority and does not tint it. Nil
+/// for a see-through edge (the fill stays clear there, like the window).
+public func snapshotEdgeFill(samples: [UInt32]) -> ThemeColor? {
+    var channels: [[Double]] = [[], [], []]
+    for sample in samples {
+        let alpha = Double(sample & 0xFF)
+        guard alpha >= 0x80 else {
+            continue
+        }
+        for channel in 0..<3 {
+            let value = Double((sample >> (24 - 8 * UInt32(channel))) & 0xFF)
+            channels[channel].append(min(value / alpha, 1))
+        }
+    }
+    guard !channels[0].isEmpty else {
+        return nil
+    }
+    let medians = channels.map { values in
+        values.sorted()[values.count / 2]
+    }
+    return ThemeColor(red: medians[0], green: medians[1], blue: medians[2])
+}
+
+/// One image a window layer can show: the image, its own size in points
+/// (the frame it was captured at; SM-22 half-resolution images too) and the
+/// fill sampled from its edge.
+public struct SnapshotFace<Image> {
+    public let image: Image
+    public let size: CGSize
+    public let fill: ThemeColor?
+
+    public init(image: Image, size: CGSize, fill: ThemeColor?) {
+        self.image = image
+        self.size = size
+        self.fill = fill
+    }
+}
+
+extension SnapshotFace: Equatable where Image: Equatable {}
+extension SnapshotFace: @unchecked Sendable {}

@@ -11,8 +11,8 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     var events: [String] = []
     var begins: [(token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations)] = []
     var retargets: [(
-        token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
+        holes: [WindowID: CGRect], decorations: OverlayDecorations
     )] = []
     var flies: [Int] = []
     var ends = 0
@@ -31,11 +31,11 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     }
 
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
+        holes: [WindowID: CGRect], decorations: OverlayDecorations
     ) {
         events.append("retarget:\(token)")
-        retargets.append((token, targets, adds, holes, decorations))
+        retargets.append((token, targets, images, adds, holes, decorations))
     }
 
     func endFlight() {
@@ -814,5 +814,55 @@ final class SnapshotFlightTests: XCTestCase {
         scheduler.runPending()
         XCTAssertEqual(world.reflows, 1)
         XCTAssertEqual(scheduler.pendingCount, 0)
+    }
+
+    // MARK: SM-27 resize without stretching
+
+    private let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
+
+    /// Window A captured at the column size and maximized, B at its size.
+    private func cacheBothSizesOfA() {
+        refresh([idA: wide, idB: b])
+        refresh([idA: a])
+    }
+
+    private func resize(_ id: WindowID, from: CGRect, to: CGRect) -> (WindowAnimation, ParkingPlan) {
+        var visible = fixture.physicalFrames
+        visible[id] = to
+        return (WindowAnimation(id: id, from: from, to: to, duration: 0.3), ParkingPlan(visible: visible))
+    }
+
+    func testAResizingLayerCarriesTheImageOfItsTargetSizeAndEveryImageItsOwnSize() throws {
+        cacheBothSizesOfA()
+        let (animation, plan) = resize(idA, from: a, to: wide)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        let item = try XCTUnwrap(items.first { $0.id == idA })
+        XCTAssertEqual(item.image.size, a.size, "drawn at the size it was captured at")
+        XCTAssertEqual(item.target?.size, wide.size)
+        let still = try XCTUnwrap(items.first { $0.id == idB })
+        XCTAssertTrue(still.target?.image === still.image.image, "a move: its own image again, nothing to fade")
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertEqual(world.logs.filter { $0.1.hasPrefix("snapshot resize") }.count, 1)
+    }
+
+    /// Alt+F while a scroll flies: the layer is told the image of its new
+    /// size; a layer keeping its size is told the image it already shows,
+    /// so a running fade carries on.
+    func testARetargetGivesEveryLayerTheImageOfItsNewSize() throws {
+        cacheBothSizesOfA()
+        let (first, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [first], plans: [plan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize") })
+        let (second, plan2) = resize(idA, from: first.to, to: wide)
+        XCTAssertEqual(flight.drive(animations: [second], plans: [plan2], spring: .niri), .flying)
+        let retarget = try XCTUnwrap(overlay.retargets.first)
+        XCTAssertEqual(retarget.images[idA]?.size, wide.size, "fade to the maximized image")
+        XCTAssertEqual(retarget.images[idB]?.size, b.size, "same size: the image it already shows")
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
     }
 }

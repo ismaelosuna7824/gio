@@ -155,10 +155,13 @@ final class SessionHost: @unchecked Sendable {
     /// `overlayBegin` primes the overlay and reports back through
     /// `snapshotPrimed`; `overlayFly` starts the tracks after the real writes.
     /// SM-16: the `[CGRect]` are the holes cut in the backdrops (targets of
-    /// the windows that fly without a layer).
+    /// the windows that fly without a layer). SM-27: the retarget's
+    /// `[WindowID: SnapshotFace<CGImage>]` are the images of the new sizes.
     var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
     var overlayFly: ((Int) -> Void)?
-    var overlayRetarget: ((Int, [WindowID: CGRect], [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
+    var overlayRetarget: ((
+        Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [SnapshotDisplayFlight], [CGRect], OverlayDecorations
+    ) -> Void)?
     var overlayEnd: (() -> Void)?
     /// Main thread: removes a running flight at once (mouse down); true when one ran.
     var overlayAbortForMouseDown: (() -> Bool)?
@@ -322,7 +325,9 @@ final class SessionHost: @unchecked Sendable {
                     Task.detached {
                         let result = await snapshotCapturer.capture(request)
                         done(SnapshotCaptureOutcome(
-                            images: result.snapshots.mapValues { CapturedImage(image: $0.image, frame: $0.frame) },
+                            images: result.snapshots.mapValues {
+                                CapturedImage(image: $0.image, frame: $0.frame, fill: $0.fill)
+                            },
                             backdrops: result.backdrops.values.map {
                                 CapturedBackdropImage(image: $0.image, displayFrame: $0.frame)
                             },
@@ -2200,10 +2205,12 @@ private final class HostOverlayPort: OverlayPort {
     }
 
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
+        holes: [WindowID: CGRect], decorations: OverlayDecorations
     ) {
-        host.overlayRetarget?(token, targets, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations)
+        host.overlayRetarget?(
+            token, targets, images, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations
+        )
     }
 
     func endFlight() {
@@ -2215,7 +2222,9 @@ private extension SnapshotDisplayFlight {
     init(_ flight: OverlayFlight) {
         self.init(
             displayFrame: flight.displayFrame, usableFrame: flight.usableFrame, backdrop: flight.backdrop,
-            items: flight.items.map { SnapshotOverlayItem(id: $0.id, image: $0.image, from: $0.from, to: $0.to) }
+            items: flight.items.map {
+                SnapshotOverlayItem(id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to)
+            }
         )
     }
 }

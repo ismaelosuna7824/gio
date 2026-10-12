@@ -32,16 +32,23 @@ import QuartzCore
 // begin and on retarget only. The root layer is clear, so a hole is
 // transparent down to the real window under the panel.
 
-/// One window image to fly. Frames are Cocoa global coordinates.
+/// One window image to fly. Frames are Cocoa global coordinates. SM-27:
+/// `image` is drawn at its own size, never scaled; `target` is the image of
+/// the `to` size it crossfades to (the same image on a move, nil when none
+/// is cached).
 public struct SnapshotOverlayItem: @unchecked Sendable {
     public let id: WindowID
-    public let image: CGImage
+    public let image: SnapshotFace<CGImage>
+    public let target: SnapshotFace<CGImage>?
     public let from: CGRect
     public let to: CGRect
 
-    public init(id: WindowID, image: CGImage, from: CGRect, to: CGRect) {
+    public init(
+        id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect
+    ) {
         self.id = id
         self.image = image
+        self.target = target
         self.from = from
         self.to = to
     }
@@ -83,13 +90,58 @@ private func displayKey(_ frame: CGRect) -> String {
     "\(Int(frame.minX)),\(Int(frame.minY)),\(Int(frame.width)),\(Int(frame.height))"
 }
 
+@MainActor private let noActions: [String: CAAction] = [
+    "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "frame": NSNull(), "shadowPath": NSNull(),
+    "hidden": NSNull(), "opacity": NSNull(), "borderColor": NSNull(), "borderWidth": NSNull(),
+    "backgroundColor": NSNull(), "sublayers": NSNull(),
+]
+
+/// SM-27: one image a window layer can show, inside its clip: a group
+/// (whose opacity the crossfade animates) holding the edge fill and, on top,
+/// the image at its own size, both hanging from the clip's top-left corner.
+@MainActor
+private final class FaceLayers {
+    let source: SnapshotFace<CGImage>
+    let group = CALayer()
+    let fill = CALayer()
+    let image = CALayer()
+
+    init(_ source: SnapshotFace<CGImage>) {
+        self.source = source
+        for layer in [group, fill, image] {
+            layer.actions = noActions
+        }
+        group.frame = .zero
+        if let color = source.fill {
+            fill.backgroundColor = NSColor(srgbRed: color.red, green: color.green, blue: color.blue, alpha: 1).cgColor
+        }
+        image.contents = source.image
+        // The layer is the image's own size (points), so `.resize` scales
+        // uniformly (an SM-22 half-resolution image doubles), never stretches.
+        image.contentsGravity = .resize
+        image.magnificationFilter = .linear
+        image.minificationFilter = .linear
+        group.addSublayer(fill)
+        group.addSublayer(image)
+    }
+
+    func layout(reach: CGSize) {
+        let frames = overlayFaceFrames(image: source.size, reach: reach)
+        image.frame = frames.image
+        fill.frame = frames.fill
+    }
+}
+
 /// The layers of one window, bottom to top: the shadow it casts into the
-/// gaps (precomputed `shadowPath`, no offscreen pass), the image, the dim
-/// fill and the ring. All four follow the same track, so they move as one.
+/// gaps (precomputed `shadowPath`, no offscreen pass), the clipped image,
+/// the dim fill and the ring. All four follow the same track, so they move
+/// as one. SM-27: the clip has the window's frame and corner radius; a pure
+/// move draws its image as the clip's own contents (as before), anything
+/// else draws faces inside it (`OverlayCrossfade`): never a stretched image.
 @MainActor
 private final class WindowLayers {
     let shadow = CALayer()
-    let image = CALayer()
+    let clip = CALayer()
     let dim = CALayer()
     let ring = CALayer()
     /// Where the window flies from and to; `startedAt` (CA media time) is
@@ -97,15 +149,21 @@ private final class WindowLayers {
     var track: FlightTrack
     var startedAt: CFTimeInterval?
     private var ringWidth: CGFloat = 0
+    /// SM-27: the images the layer can show, bottom to top, the fade between
+    /// them, and their layers once the clip draws faces (empty while it draws
+    /// the first image directly).
+    private var sources: [SnapshotFace<CGImage>]
+    private var crossfade = OverlayCrossfade()
+    private var faces: [FaceLayers] = []
+    /// The largest frame of the current track (keyframes included): how far
+    /// the fills reach.
+    private var reach: CGSize = .zero
 
-    var all: [CALayer] { [shadow, image, dim, ring] }
+    var all: [CALayer] { [shadow, clip, dim, ring] }
 
-    init(image contents: CGImage, scale: CGFloat, track: FlightTrack) {
+    init(image source: SnapshotFace<CGImage>, scale: CGFloat, track: FlightTrack) {
         self.track = track
-        let noActions: [String: CAAction] = [
-            "contents": NSNull(), "bounds": NSNull(), "position": NSNull(), "shadowPath": NSNull(),
-            "hidden": NSNull(), "opacity": NSNull(), "borderColor": NSNull(), "borderWidth": NSNull(),
-        ]
+        sources = [source]
         for layer in all {
             layer.actions = noActions
             layer.contentsScale = scale
@@ -115,17 +173,14 @@ private final class WindowLayers {
         shadow.shadowOpacity = overlayWindowShadow.opacity
         shadow.shadowRadius = overlayWindowShadow.radius
         shadow.shadowOffset = overlayWindowShadow.offset
-        image.zPosition = 1
-        image.contents = contents
-        // `.resize` stretches the image to the layer bounds whatever its
-        // pixel size, so `contentsScale` (the screen's, for the shadow,
-        // dim and ring) never sizes it: SM-22 half-resolution images and
-        // SM-11 other-size images fill the window frame like full ones.
-        image.contentsGravity = .resize
-        image.cornerRadius = overlayWindowCornerRadius
-        image.masksToBounds = true
-        image.magnificationFilter = .linear
-        image.minificationFilter = .linear
+        clip.zPosition = 1
+        clip.contents = source.image
+        // A pure move: the image fills the frame it matches (within 2 pt).
+        clip.contentsGravity = .resize
+        clip.cornerRadius = overlayWindowCornerRadius
+        clip.masksToBounds = true
+        clip.magnificationFilter = .linear
+        clip.minificationFilter = .linear
         dim.zPosition = 2
         dim.backgroundColor = NSColor.black.cgColor
         dim.cornerRadius = overlayWindowCornerRadius
@@ -135,12 +190,58 @@ private final class WindowLayers {
         apply(track.start)
     }
 
+    /// SM-27: progress of the resize `elapsed` seconds into the track.
+    func progress(at elapsed: TimeInterval, spring: SpringParameters) -> Double {
+        overlayResizeProgress(track: track, geometry: track.state(at: elapsed, spring: spring).geometry)
+    }
+
+    /// SM-27: the current track (already set) fades, from `progress` of the
+    /// previous one, to `target` (the image of the end size: a face it has,
+    /// or a new one on top), or without one to its face closest in size.
+    func fade(to target: SnapshotFace<CGImage>?, progress: Double) {
+        let index: Int
+        if let target {
+            index = sources.firstIndex { $0.image === target.image } ?? sources.count
+            if index == sources.count {
+                sources.append(target)
+            }
+        } else {
+            index = overlayClosestFace(sources.map(\.size), to: track.end.bounds.size)
+        }
+        crossfade = crossfade.retargeted(at: progress, toward: index)
+        if faces.isEmpty, overlayDrawsDirect(
+            image: sources[0].size, faces: sources.count, start: track.start.bounds.size, end: track.end.bounds.size
+        ) {
+            return
+        }
+        clip.contents = nil
+        for source in sources.dropFirst(faces.count) {
+            let face = FaceLayers(source)
+            faces.append(face)
+            clip.addSublayer(face.group)
+        }
+        let opacities = crossfade.opacities(at: startedAt == nil ? 0 : 1)
+        for (face, opacity) in zip(faces, opacities) {
+            face.group.opacity = Float(opacity)
+        }
+        layoutFaces(reach: overlayReach([reach, track.start.bounds.size, track.end.bounds.size]))
+    }
+
+    private func layoutFaces(reach: CGSize) {
+        self.reach = reach
+        for face in faces {
+            face.layout(reach: reach)
+        }
+    }
+
     /// Model values (no implicit animation) for every layer.
     func apply(_ geometry: LayerGeometry) {
-        for layer in [shadow, image, dim] {
+        for layer in [shadow, clip, dim] {
             layer.position = geometry.position
-            layer.bounds = geometry.bounds
         }
+        shadow.bounds = geometry.bounds
+        dim.bounds = geometry.bounds
+        clip.bounds = overlayClipBounds(geometry.bounds.size)
         shadow.shadowPath = overlayShadowPath(bounds: geometry.bounds, cornerRadius: overlayWindowCornerRadius)
         let outset = overlayRingGeometry(window: geometry, width: ringWidth)
         ring.position = outset.position
@@ -178,10 +279,17 @@ private final class WindowLayers {
         let bounds = keyframes.geometries.map { NSValue(rect: $0.bounds) }
         let moves = track.start.position != track.end.position
         let resizes = track.start.bounds != track.end.bounds
-        for layer in [shadow, image, dim] {
+        for layer in [shadow, clip, dim] {
             Self.setTrack(layer, "position", values: moves ? positions : nil, times: times, keyframes: keyframes, beginTime: beginTime)
+        }
+        for layer in [shadow, dim] {
             Self.setTrack(layer, "bounds", values: resizes ? bounds : nil, times: times, keyframes: keyframes, beginTime: beginTime)
         }
+        Self.setTrack(
+            clip, "bounds",
+            values: resizes ? keyframes.geometries.map { NSValue(rect: overlayClipBounds($0.bounds.size)) } : nil,
+            times: times, keyframes: keyframes, beginTime: beginTime
+        )
         Self.setTrack(
             shadow, "shadowPath",
             values: resizes
@@ -195,10 +303,26 @@ private final class WindowLayers {
             ring, "bounds", values: resizes ? outsets.map { NSValue(rect: $0.bounds) } : nil,
             times: times, keyframes: keyframes, beginTime: beginTime
         )
+        guard !faces.isEmpty else {
+            return
+        }
+        // SM-27: the fills reach the largest frame of this track (a spring
+        // overshoot included); each face's opacity follows the resize.
+        layoutFaces(reach: overlayReach(keyframes.geometries.map(\.bounds.size)))
+        let opacities = overlayCrossfadeKeyframes(crossfade, track: track, keyframes: keyframes)
+        for (face, values) in zip(faces, opacities) {
+            face.group.opacity = Float(values.last ?? 1)
+            let fades = values.contains { $0 != values.first }
+            Self.setTrack(
+                face.group, "opacity", values: fades ? values.map { NSNumber(value: Float($0)) } : nil,
+                times: times, keyframes: keyframes, beginTime: beginTime
+            )
+        }
     }
 
     func removeAnimations() {
         all.forEach { $0.removeAllAnimations() }
+        faces.forEach { $0.group.removeAllAnimations() }
     }
 
     func removeFromSuperlayer() {
@@ -357,11 +481,13 @@ final class SnapshotOverlay {
 
     /// Retarget flying layers (from where they are now, carrying their
     /// velocity) and add layers for windows that joined. Layers still primed
-    /// only change their target. Returns the longest settle time of the
-    /// tracks started here (0 while primed).
+    /// only change their target. SM-27: each fades on from where its
+    /// crossfade is to the image of its new size (`images`; without one, its
+    /// closest image). Returns the longest settle time of the tracks started
+    /// here (0 while primed).
     func retarget(
-        targets: [WindowID: CGRect], adding items: [SnapshotOverlayItem], holes: [CGRect],
-        decorations: OverlayDecorations, now: CFTimeInterval
+        targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adding items: [SnapshotOverlayItem],
+        holes: [CGRect], decorations: OverlayDecorations, now: CFTimeInterval
     ) -> TimeInterval {
         var settle = 0.0
         CATransaction.begin()
@@ -377,10 +503,13 @@ final class SnapshotOverlay {
             }
             let end = overlayLayerGeometry(frame: frame, in: area.panelFrame, flipped: root.isFlipped)
             if let startedAt = layers.startedAt {
+                let progress = layers.progress(at: now - startedAt, spring: spring)
                 layers.track = layers.track.retargeted(to: end, at: now - startedAt, spring: spring)
+                layers.fade(to: images[id], progress: progress)
                 settle = max(settle, start(layers, at: now))
             } else {
                 layers.track.end = end
+                layers.fade(to: images[id], progress: 0)
             }
         }
         if windows.values.contains(where: { $0.startedAt != nil }) {
@@ -430,6 +559,7 @@ final class SnapshotOverlay {
                 end: overlayLayerGeometry(frame: item.to, in: area.panelFrame, flipped: root.isFlipped)
             )
         )
+        layers.fade(to: item.target, progress: 0)
         layers.all.forEach { root.layer?.addSublayer($0) }
         windows[item.id] = layers
         return layers
@@ -592,10 +722,11 @@ public final class SnapshotOverlayController {
     }
 
     /// Retarget layers and add new ones for the same flight `token`;
-    /// `holes` replaces every backdrop's holes (SM-16).
+    /// `holes` replaces every backdrop's holes (SM-16); `images` are the
+    /// images of the retargeted layers' new sizes (SM-27).
     public func retarget(
-        token: Int, targets: [WindowID: CGRect], adding flights: [SnapshotDisplayFlight], holes: [CGRect],
-        decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        adding flights: [SnapshotDisplayFlight], holes: [CGRect], decorations: OverlayDecorations
     ) {
         self.token = token
         armWatchdog()
@@ -609,7 +740,9 @@ public final class SnapshotOverlayController {
             let added = flights.first { displayKey($0.displayFrame) == key }?.items ?? []
             settle = max(
                 settle,
-                overlay.retarget(targets: mine, adding: added, holes: holes, decorations: decorations, now: now)
+                overlay.retarget(
+                    targets: mine, images: images, adding: added, holes: holes, decorations: decorations, now: now
+                )
             )
         }
         flightTravel = max(

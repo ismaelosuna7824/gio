@@ -2,16 +2,23 @@ import CoreGraphics
 import Foundation
 import GioCore
 
-/// One window image to fly. Frames are Cocoa global coordinates.
+/// One window image to fly. Frames are Cocoa global coordinates. SM-27:
+/// `image` is drawn at its own size, never scaled; `target` is the image of
+/// the `to` size the layer crossfades to (the same image on a move, nil
+/// when none is cached).
 public struct OverlayFlightItem: @unchecked Sendable {
     public let id: WindowID
-    public let image: CGImage
+    public let image: SnapshotFace<CGImage>
+    public let target: SnapshotFace<CGImage>?
     public let from: CGRect
     public let to: CGRect
 
-    public init(id: WindowID, image: CGImage, from: CGRect, to: CGRect) {
+    public init(
+        id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect
+    ) {
         self.id = id
         self.image = image
+        self.target = target
         self.from = from
         self.to = to
     }
@@ -49,10 +56,12 @@ public protocol OverlayPort: AnyObject {
     )
     /// The real windows' writes are dispatched: start the springs.
     func flyFlight(token: Int)
-    /// `holes` replaces the flight's whole hole set.
+    /// `holes` replaces the flight's whole hole set. SM-27: `images` holds,
+    /// for each retargeted layer, the image of its new size when cached
+    /// (the layer fades to it; without one, to its closest image).
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
+        holes: [WindowID: CGRect], decorations: OverlayDecorations
     )
     /// Remove the overlay at once.
     func endFlight()
@@ -183,6 +192,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// SM-16: windows visible at their target without a layer, at that
     /// target; the backdrop is cut there.
     private var holes: [WindowID: CGRect] = [:]
+    /// SM-27: the size of the image each layer started with (its bottom
+    /// face), for the resize mode a retarget logs.
+    private var imageSizes: [WindowID: CGSize] = [:]
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -243,8 +255,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 continue
             }
             cache.flies(item.id, use, at: now)
+            imageSizes[item.id] = use.entry.frame.size
             byDisplay[item.displayIndex, default: []].append(
-                OverlayFlightItem(id: item.id, image: use.entry.image, from: item.from, to: item.to)
+                OverlayFlightItem(
+                    id: item.id, image: use.entry.face, target: use.target?.face, from: item.from, to: item.to
+                )
             )
         }
         return byDisplay.keys.sorted().compactMap { index in
@@ -287,12 +302,15 @@ public final class SnapshotFlightController: @unchecked Sendable {
         let now = context.now()
         // SM-11: the image of the start size, or a fresh one of the other size.
         // SM-13: looked up once per window; the layers fly exactly that image.
+        // SM-27: with the image of the target size the layer crossfades to.
         var images: [WindowID: SnapshotCacheUse<CGImage>] = [:]
         let usable: (WindowID) -> Bool = { [cache] id in
             if images[id] != nil {
                 return true
             }
-            guard let use = cache.flightImage(id, startFrame: starts[id] ?? targets[id], at: now) else {
+            guard let use = cache.flightImage(
+                id, startFrame: starts[id] ?? targets[id], targetFrame: targets[id], at: now
+            ) else {
                 return false
             }
             images[id] = use
@@ -302,6 +320,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             // SM-14: a retarget during the hold flies on; the hold is over.
             handoff.cancel()
             origins.merge(starts) { joined, _ in joined }
+            let previousTargets = self.targets
             self.targets.merge(targets) { _, latest in latest }
             let plan = planSnapshotRetarget(
                 active: ids, starts: starts, targets: targets, displays: screens,
@@ -312,9 +331,19 @@ public final class SnapshotFlightController: @unchecked Sendable {
             // SM-16: the hole set follows the latest targets and layers.
             let previous = holes
             setHoles(snapshotHoles(layered: ids, targets: self.targets, displays: screens, activeDisplays: displays))
+            // SM-27: every retargeted layer fades to the image of its new
+            // size (the one it shows or fades to when the size stays).
+            var faces: [WindowID: SnapshotFace<CGImage>] = [:]
+            for (id, frame) in plan.retargets.sorted(by: { $0.key < $1.key }) {
+                let from = previousTargets[id] ?? starts[id] ?? frame
+                faces[id] = cache.retargetFace(
+                    id, image: imageSizes[id] ?? from.size, from: from, to: frame, at: now
+                )
+            }
             let token = gate.retarget()
             overlay.retargetFlight(
-                token: token, targets: plan.retargets, adds: makeFlights(plan.adds, images: images, now: now),
+                token: token, targets: plan.retargets, images: faces,
+                adds: makeFlights(plan.adds, images: images, now: now),
                 holes: holes, decorations: context.decorations(targets)
             )
             if !plan.uncovered.isEmpty {
@@ -340,6 +369,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             cache.schedule(delay: 0.05)
             return .ax
         case .snapshot(let items, let holes):
+            imageSizes = [:]
             let flights = makeFlights(items, holes: holes, images: images, now: now)
             guard !flights.isEmpty else {
                 return .ax

@@ -157,11 +157,12 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { overlay.fly(token: token) }
             }
         }
-        host.overlayRetarget = { token, targets, flights, holes, decorations in
+        host.overlayRetarget = { token, targets, images, flights, holes, decorations in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     overlay.retarget(
-                        token: token, targets: targets, adding: flights, holes: holes, decorations: decorations
+                        token: token, targets: targets, images: images, adding: flights, holes: holes,
+                        decorations: decorations
                     )
                 }
             }
