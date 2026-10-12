@@ -1123,7 +1123,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   Electron, ~0 for native apps) and any `ms=300` (an app that never repaints its grown strip, or refuses the
   size).
 
-- [x] SM-30 (commit pending) — Resized windows fly a fresh image of their new size and fade into the real window.
+- [x] SM-30 (`83ddfec`) — Resized windows fly a fresh image of their new size and fade into the real window.
   Report (2026-10-12, Spanish, after SM-29): on Alt+F "sigue parpadeando ... hay espacios en blanco": a big
   coloured box beside the window and a flicker at the end. Evidence: 60 fps screen recording plus log (contact
   sheets of VS Code and Slack). (a) VS Code (Electron) max to half: `snapshot resize id=13261:4 mode=crossfade` at
