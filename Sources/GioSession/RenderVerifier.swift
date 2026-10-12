@@ -5,14 +5,11 @@ import GioCore
 /// FI-05 / PA-04 render verification: ~150 ms after a settle that wrote
 /// visible windows, compare the frames the settle already read or verified
 /// with the on-screen WindowServer list (no AX read, no all-Spaces
-/// snapshot). A mismatch gets one repair chain per window per settle, each
-/// step re-checked 100 ms later. TG-05: a window the WindowServer draws away
-/// from its app's frame first moves there through SkyLight (when usable);
-/// then (or without SkyLight, or for a window not drawn at all) a corrective
-/// position nudge, and PF-C: a failed position nudge escalates once to a
-/// size nudge, and only a failed size nudge makes the window
-/// render-unverifiable. Session queue only. Logs carry app names, never
-/// titles.
+/// snapshot). A mismatch gets one corrective position nudge per window per
+/// settle and a re-check 100 ms later; PF-C: a failed position nudge
+/// escalates once to a size nudge, and only a failed size nudge makes the
+/// window render-unverifiable. Session queue only. Logs carry app names,
+/// never titles.
 public final class RenderVerifier: @unchecked Sendable {
     public struct Context {
         public var isShuttingDown: () -> Bool
@@ -29,11 +26,6 @@ public final class RenderVerifier: @unchecked Sendable {
         public var serverWindows: () -> [ServerWindow]
         /// Writes the nudge steps through the reconciler; the windows written.
         public var nudge: ([WindowID: [CGRect]]) -> [WindowID]
-        /// TG-05: SkyLight is usable (`[behavior] skylight`, symbols, probe).
-        public var windowServerAvailable: () -> Bool
-        /// TG-05: moves windows through SkyLight to the frames their apps
-        /// report, through the reconciler; the windows moved.
-        public var alignWindowServer: ([WindowID: CGRect]) -> Set<WindowID>
         /// A frame Gio just wrote, so its echo events are dropped.
         public var recordEcho: (WindowID, CGRect, TimeInterval) -> Void
         public var appName: (pid_t) -> String
@@ -46,8 +38,6 @@ public final class RenderVerifier: @unchecked Sendable {
             isReady: @escaping () -> Bool, visibleTargets: @escaping () -> [WindowID: CGRect],
             viewports: @escaping () -> [CGRect], serverWindows: @escaping () -> [ServerWindow],
             nudge: @escaping ([WindowID: [CGRect]]) -> [WindowID],
-            windowServerAvailable: @escaping () -> Bool,
-            alignWindowServer: @escaping ([WindowID: CGRect]) -> Set<WindowID>,
             recordEcho: @escaping (WindowID, CGRect, TimeInterval) -> Void,
             appName: @escaping (pid_t) -> String, log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -61,8 +51,6 @@ public final class RenderVerifier: @unchecked Sendable {
             self.viewports = viewports
             self.serverWindows = serverWindows
             self.nudge = nudge
-            self.windowServerAvailable = windowServerAvailable
-            self.alignWindowServer = alignWindowServer
             self.recordEcho = recordEcho
             self.appName = appName
             self.log = log
@@ -166,62 +154,23 @@ public final class RenderVerifier: @unchecked Sendable {
                 renderMismatchLine(id: mismatch.id, app: context.appName(mismatch.id.pid), ax: mismatch.ax, ws: mismatch.ws)
             )
         }
-        // One repair chain per window per settle: SkyLight first for a window
-        // drawn away from its app's frame (TG-05), else the position nudge.
-        let claimed = Set(book.claimNudges(mismatches.map(\.id)))
-        let plan = planRenderRepairs(
-            mismatches.filter { claimed.contains($0.id) }, windowServer: context.windowServerAvailable()
-        )
-        var stages: [WindowID: RepairStage] = [:]
-        if !plan.windowServer.isEmpty {
-            let moved = context.alignWindowServer(plan.windowServer)
-            for id in moved where plan.windowServer[id] != nil {
-                stages[id] = .windowServer
-            }
-        }
-        // What SkyLight did not move is nudged at once, like the rest.
-        let refused = plan.windowServer.keys.filter { stages[$0] == nil }
-        let nudged = nudge(plan.nudge + refused, tier: .position, targets: targets)
-        for id in nudged {
-            stages[id] = .nudge(.position)
-        }
-        scheduleRecheck(token: token, stages: stages, axFrames: axFrames, targets: targets)
-    }
-
-    /// TG-05: the step of a window's repair chain a re-check judges.
-    private enum RepairStage: Equatable {
-        /// SkyLight moved it to the frame its app reports.
-        case windowServer
-        /// Accessibility nudge of this tier (FI-05, PF-C).
-        case nudge(NudgeTier)
-    }
-
-    /// Nudges `ids` at `tier` through the reconciler; the windows written.
-    private func nudge(_ ids: [WindowID], tier: NudgeTier, targets: [WindowID: CGRect]) -> [WindowID] {
+        // Corrective nudge through the reconciler, once per window per settle.
         let viewports = context.viewports()
         var steps: [WindowID: [CGRect]] = [:]
-        for id in ids {
+        for id in book.claimNudges(mismatches.map(\.id)) {
             guard let target = targets[id] else {
                 continue
             }
             let viewport = viewports.first { $0.intersects(target) } ?? target
-            steps[id] = planNudge(target: target, viewport: viewport, tier: tier)
+            steps[id] = planNudge(target: target, viewport: viewport)
         }
-        guard !steps.isEmpty else {
-            return []
-        }
-        return context.nudge(steps)
-    }
-
-    private func scheduleRecheck(
-        token: Int, stages: [WindowID: RepairStage], axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]
-    ) {
-        guard !stages.isEmpty else {
+        let written = context.nudge(steps)
+        guard !written.isEmpty else {
             return
         }
-        recordEchoes(Array(stages.keys), targets: targets)
+        recordEchoes(written, targets: targets)
         scheduler.asyncAfter(0.1) { [weak self] in
-            self?.recheck(token: token, stages: stages, axFrames: axFrames, targets: targets)
+            self?.recheck(token: token, written: written, axFrames: axFrames, targets: targets, tier: .position)
         }
     }
 
@@ -235,51 +184,44 @@ public final class RenderVerifier: @unchecked Sendable {
     }
 
     private func recheck(
-        token: Int, stages: [WindowID: RepairStage], axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]
+        token: Int, written: [WindowID], axFrames: [WindowID: CGRect], targets: [WindowID: CGRect],
+        tier: NudgeTier
     ) {
         guard mayRun(token) else {
             return
         }
-        let ids = Set(stages.keys)
+        let subset = targets.filter { written.contains($0.key) }
         let still = Set(
-            verdict(axFrames: axFrames.filter { ids.contains($0.key) }, targets: targets.filter { ids.contains($0.key) })
-                .mismatches.map(\.id)
+            verdict(axFrames: axFrames.filter { written.contains($0.key) }, targets: subset).mismatches.map(\.id)
         )
-        var positions: [WindowID] = []
-        var sizes: [WindowID] = []
-        for id in ids.sorted() {
+        let viewports = context.viewports()
+        var escalate: [WindowID: [CGRect]] = [:]
+        for id in written {
             let fixed = !still.contains(id)
-            let app = context.appName(id.pid)
-            switch stages[id]! {
-            case .windowServer:
-                context.log(fixed ? .info : .warn, renderRepairLine(id: id, app: app, fixed: fixed))
-                if !fixed {
-                    positions.append(id)
-                }
-            case .nudge(let tier):
-                context.log(fixed ? .info : .warn, renderNudgeLine(id: id, app: app, tier: tier, fixed: fixed))
-                if !fixed, tier == .position {
-                    sizes.append(id)
-                    continue
-                }
-                markUnverifiableIfFailed(id, fixed: fixed)
+            context.log(
+                fixed ? .info : .warn, renderNudgeLine(id: id, app: context.appName(id.pid), tier: tier, fixed: fixed)
+            )
+            if !fixed, tier == .position, let target = targets[id] {
+                let viewport = viewports.first { $0.intersects(target) } ?? target
+                escalate[id] = planNudge(target: target, viewport: viewport, tier: .size)
+                continue
             }
+            markUnverifiableIfFailed(id, fixed: fixed)
         }
-        var next: [WindowID: RepairStage] = [:]
-        // A failed SkyLight repair falls back to the position nudge; a
-        // position nudge it could not write ends the chain quietly, like a
-        // first nudge that wrote nothing.
-        for id in nudge(positions, tier: .position, targets: targets) {
-            next[id] = .nudge(.position)
+        guard !escalate.isEmpty else {
+            return
         }
-        let resized = nudge(sizes, tier: .size, targets: targets)
-        for id in sizes where !resized.contains(id) {
+        let resized = context.nudge(escalate)
+        for id in escalate.keys where !resized.contains(id) {
             markUnverifiableIfFailed(id, fixed: false)
         }
-        for id in resized {
-            next[id] = .nudge(.size)
+        guard !resized.isEmpty else {
+            return
         }
-        scheduleRecheck(token: token, stages: next, axFrames: axFrames, targets: targets)
+        recordEchoes(resized, targets: targets)
+        scheduler.asyncAfter(0.1) { [weak self] in
+            self?.recheck(token: token, written: resized, axFrames: axFrames, targets: targets, tier: .size)
+        }
     }
 
     private func markUnverifiableIfFailed(_ id: WindowID, fixed: Bool) {

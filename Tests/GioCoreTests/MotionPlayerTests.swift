@@ -282,4 +282,41 @@ final class MotionPlayerTests: XCTestCase {
         clock.now = 1
         XCTAssertEqual(player.tick().summary?.dropped, 4)
     }
+
+    /// PF-R: a run counts the ticks that came more than 1.5 frame intervals
+    /// after the previous one (hitches) and the display intervals no tick
+    /// covered (`missed`, comparable with the snapshot line's
+    /// expected-minus-presented `dropped`); `dropped` keeps its meaning.
+    /// Every frame went to the app's Accessibility lane.
+    func testARunCountsLateTicksAndMissedFrames() throws {
+        let clock = FakeClock(), sink = FakeSink()
+        let player = makePlayer(clock, sink)
+        player.start([slide(id(1))], frameInterval: 0.1)
+        for now in [0.0, 0.1, 0.4, 0.5] {
+            clock.now = now
+            XCTAssertNil(player.tick().summary)
+        }
+        clock.now = 1.0
+        let summary = try XCTUnwrap(player.tick().summary)
+        XCTAssertEqual(summary.renderer, "ax")
+        XCTAssertEqual(summary.hitches, 2, "0.1 -> 0.4 and 0.5 -> 1.0 came late")
+        XCTAssertEqual(summary.missed, 6, "two intervals skipped after 0.1, four after 0.5")
+        XCTAssertEqual(summary.frames, 5)
+        XCTAssertTrue(summary.logLine.contains(" dropped=0 missed=6 hitches=2 "), summary.logLine)
+        XCTAssertTrue(summary.logLine.hasSuffix("renderer=ax grewAtStart=0"), summary.logLine)
+        XCTAssertEqual(sink.accepted.count, 4, "the first tick at t=0 moves nothing")
+    }
+
+    /// PF-R: without a timer interval there is no measurement: both counts
+    /// are absent from the line.
+    func testARunWithoutAFrameIntervalReportsNoMissedOrHitches() throws {
+        let clock = FakeClock(), sink = FakeSink()
+        let player = makePlayer(clock, sink)
+        player.start([slide(id(1))])
+        clock.now = 1
+        let summary = try XCTUnwrap(player.tick().summary)
+        XCTAssertNil(summary.hitches)
+        XCTAssertNil(summary.missed)
+        XCTAssertFalse(summary.logLine.contains("missed="), summary.logLine)
+    }
 }

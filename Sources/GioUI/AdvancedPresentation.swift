@@ -223,7 +223,7 @@ public func diagnosticChecklist(
             badge: "Granted",
             summary: facts.screenRecordingGranted
                 ? "Accessibility and Screen Recording are granted."
-                : "Accessibility is granted. Screen Recording is only needed by the snapshot renderer and the overview thumbnails.",
+                : "Accessibility is granted. Screen Recording is only needed by the snapshot renderer.",
             details: permissionDetails
         )
     }
@@ -270,38 +270,19 @@ public func diagnosticChecklist(
         }
     )
 
-    // PF-L: how hidden and revealed windows move, animated or not.
-    let transport = [
-        facts.windowServer.available
-            ? "Hidden windows: SkyLight, then Accessibility (\(facts.windowServer.reason))"
-            : "Hidden windows: Accessibility only (\(facts.windowServer.reason))",
-    ]
     let renderer: DiagnosticCheck
     func card(_ status: StatusKind, badge: String, summary: String) -> DiagnosticCheck {
         DiagnosticCheck(
             id: "renderer", title: "Renderer", symbol: "wand.and.stars", tint: .pink, status: status,
-            badge: badge, summary: summary, details: transport
+            badge: badge, summary: summary, details: []
         )
     }
-    let effective = effectiveRenderer(
-        config: config.animations, permission: facts.screenRecordingGranted, windowServer: facts.windowServer.available
-    )
     if !config.animations.enabled {
         renderer = card(.neutral, badge: "Off", summary: "Animations are off; windows move instantly.")
-    } else if effective == .live {
-        renderer = card(
-            .ok, badge: "Live",
-            summary: "Moves the real windows through the WindowServer at the display's refresh rate; windows that change size move through Accessibility."
-        )
-    } else if effective == .snapshot {
+    } else if effectiveRenderer(config: config.animations, permission: facts.screenRecordingGranted) == .snapshot {
         renderer = card(
             .ok, badge: "Snapshot",
             summary: "Slides window images at the display's refresh rate, then places the windows once."
-        )
-    } else if config.animations.renderer == .live {
-        renderer = card(
-            .warning, badge: "Fallback",
-            summary: "Live is selected but SkyLight is unavailable (\(facts.windowServer.reason)), so windows move through Accessibility."
         )
     } else if wantsSnapshot {
         renderer = card(
@@ -361,8 +342,7 @@ private func gesturesCheck(_ status: GestureSourceStatus, conflicts: [GestureCon
 }
 
 /// "Test Snapshot Capture" only makes sense while the snapshot renderer
-/// is the one in use (SkyLight plays no part in that choice).
+/// is the one in use.
 public func showsSnapshotCaptureTest(config: GioConfig, screenRecording: Bool) -> Bool {
-    config.animations.enabled
-        && effectiveRenderer(config: config.animations, permission: screenRecording, windowServer: false) == .snapshot
+    config.animations.enabled && effectiveRenderer(config: config.animations, permission: screenRecording) == .snapshot
 }

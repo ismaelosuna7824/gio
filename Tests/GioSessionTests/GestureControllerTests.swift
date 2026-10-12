@@ -5,23 +5,17 @@ import XCTest
 @testable import GioSession
 
 /// TG-03: the session side of trackpad gestures: recognized swipes move the
-/// strip through the reconciler's sink while the fingers are down; the
-/// release commits State and hands the velocity to the settle; an extra
-/// finger or a mouse button abandons; vertical swipes map to actions.
+/// strip through the reconciler's sink (the apps' Accessibility motion
+/// lanes) while the fingers are down; the release commits State and hands
+/// the velocity to the settle; an extra finger or a mouse button abandons;
+/// vertical swipes map to actions.
 final class GestureControllerTests: XCTestCase {
     private final class Sink: MotionFrameSink {
-        var serverAccepts = true
-        var serverWrites: [[MotionWrite]] = []
-        var laneWrites: [MotionWrite] = []
+        var laneWrites: [(pid: pid_t, writes: [MotionWrite])] = []
 
         func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool {
-            laneWrites += writes
+            laneWrites.append((pid, writes))
             return true
-        }
-
-        func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID> {
-            serverWrites.append(writes)
-            return serverAccepts ? Set(writes.map(\.id)) : []
         }
 
         func takeMotionStats() -> [pid_t: MotionWriteStats] { [:] }
@@ -115,19 +109,13 @@ final class GestureControllerTests: XCTestCase {
         // Natural: 0.05 of the trackpad to the left scrolls 50 pt to the right.
         XCTAssertEqual(world.sampled[id(1)]?.minX, -42)
         XCTAssertEqual(world.sampled[id(2)]?.minX, 566)
-        XCTAssertEqual(Set(world.sink.serverWrites.flatMap { $0 }.map(\.id)), [id(1), id(2)])
-        XCTAssertTrue(world.sink.laneWrites.isEmpty, "the WindowServer took every window")
+        XCTAssertEqual(world.sink.laneWrites.count, 1, "one submission to the app's lane for the drain")
+        XCTAssertEqual(world.sink.laneWrites.first?.pid, 10)
+        XCTAssertEqual(Set(world.sink.laneWrites.flatMap(\.writes).map(\.id)), [id(1), id(2)])
         XCTAssertEqual(Set(world.unverified), [id(1), id(2)])
         XCTAssertEqual(controller.animatingPids, [10])
         XCTAssertEqual(world.ringPublishes, 1, "the ring follows the focused window")
         XCTAssertEqual(world.manager.currentWorkspace().viewportOffset, 0, "State does not move while the fingers do")
-    }
-
-    func testWithoutTheWindowServerTheFramesGoThroughTheLanes() {
-        world.sink.serverAccepts = false
-        controller.deliver(swipeLeft(steps: 2))
-        XCTAssertEqual(Set(world.sink.laneWrites.map(\.id)), [id(1), id(2)])
-        XCTAssertEqual(world.sampled[id(2)]?.minX, 516)
     }
 
     func testReleaseCommitsStateAndHandsTheVelocityToTheSettle() throws {
@@ -176,7 +164,7 @@ final class GestureControllerTests: XCTestCase {
         world.hasSurface = false
         controller.deliver(swipeLeft(steps: 3) + [frame(0.04, fingers: 0, x: 0)])
         XCTAssertEqual(world.calls, [])
-        XCTAssertTrue(world.sink.serverWrites.isEmpty)
+        XCTAssertTrue(world.sink.laneWrites.isEmpty)
         XCTAssertTrue(world.releases.isEmpty)
     }
 

@@ -158,21 +158,4 @@ final class DwindleConfigTests: XCTestCase {
         session.config = config
         XCTAssertEqual(session.manager.workspace(id: code)?.layout, .scrolling, "a changed key applies")
     }
-
-    // MARK: - Motion (PF-M)
-
-    func testDwindleTileChangesStayOnAccessibilityAndHiddenOnesUseTheWindowServer() {
-        let viewport = CGRect(x: 0, y: 0, width: 1000, height: 600)
-        let id = WindowID(pid: 4, elementID: 1)
-        let resized = WindowAnimation(
-            id: id, from: CGRect(x: 10, y: 10, width: 980, height: 580),
-            to: CGRect(x: 10, y: 10, width: 485, height: 580), duration: 0.2
-        )
-        let hidden = WindowAnimation(
-            id: id, from: CGRect(x: 10, y: 10, width: 485, height: 580),
-            to: CGRect(x: 10, y: -579, width: 485, height: 580), duration: 0.2
-        )
-        let planned = planMotionTransports([resized, hidden], viewports: [viewport], enabled: true, ownPID: 1, renderer: .ax)
-        XCTAssertEqual(planned.map(\.transport), [.accessibility, .windowServer])
-    }
 }

@@ -126,26 +126,23 @@ public final class MotionDriver: @unchecked Sendable {
     /// Begin, or retarget the running motion. The player is created once,
     /// with the first sink it is given. The first tick runs from the
     /// scheduler, never inside this call (PF-Q: the host's motion-start
-    /// focus no longer runs on this queue at all). PF-O: `renderer` is the
-    /// effective one (`.live` or `.ax`; the snapshot overlay never runs
-    /// here) and names the run in `anim done`; PF-R: every run counts the
-    /// ticks that came late against the timer's interval (hitches) and the
-    /// frame intervals no tick covered (missed).
-    public func start(_ animations: [WindowAnimation], sink: MotionFrameSink, renderer: RendererKind = .ax) {
+    /// focus no longer runs on this queue at all). PF-R: every run counts
+    /// the ticks that came late against the timer's interval (hitches) and
+    /// the frame intervals no tick covered (missed).
+    public func start(_ animations: [WindowAnimation], sink: MotionFrameSink) {
         let player = self.player ?? MotionPlayer(
             sink: sink, clock: context.playerClock, appName: context.playerAppName
         )
         self.player = player
         // A display-rate timer on the session queue: a tick only samples and
-        // hands frames to per-app lanes or one SkyLight transaction (never an
-        // AX call here), so it costs microseconds, and sampling by elapsed
-        // time keeps late ticks honest. PA-03: paced to the display holding
-        // the moving windows (60 Hz -> 16.7 ms, 120 Hz -> 8.3 ms), fixed for
-        // this motion.
+        // hands frames to per-app lanes (never an AX call here), so it costs
+        // microseconds, and sampling by elapsed time keeps late ticks
+        // honest. PA-03: paced to the display holding the moving windows
+        // (60 Hz -> 16.7 ms, 120 Hz -> 8.3 ms), fixed for this motion.
         let interval = timerInterval ?? frameInterval(
             for: motionRefreshRate(animations: animations, displays: context.displayRefreshes())
         )
-        player.start(animations, renderer: renderer == .live ? .live : .ax, frameInterval: interval)
+        player.start(animations, frameInterval: interval)
         lastAnimations = animations
         resizeProbes.probe(of: animations.filter { $0.sizeSchedule == .atStart }, frames: { $0.from })
         // Motion frames are unverified: the final pass must read these windows,

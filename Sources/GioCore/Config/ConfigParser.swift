@@ -410,10 +410,6 @@ func applyBehaviorKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
             config.behavior.moveCrossesMonitorAtEdge = $0
         }
-    case "skylight":
-        applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
-            config.behavior.skyLight = $0
-        }
     default:
         warnings.append("line \(line): unknown behavior key '\(key)', ignored")
     }
@@ -480,14 +476,14 @@ func applyAnimationsKey(
         }
     } else if key == "renderer" {
         guard case .string(let text) = value else {
-            errors.append("line \(line): animations.renderer expects \"live\", \"snapshot\" or \"ax\"")
+            errors.append("line \(line): animations.renderer expects \"snapshot\" or \"ax\"")
             return
         }
         if let kind = RendererKind(rawValue: text) {
             config.animations.renderer = kind
         } else {
             warnings.append(
-                "line \(line): animations.renderer '\(text)' is not \"live\", \"snapshot\" or \"ax\", using the default"
+                "line \(line): animations.renderer '\(text)' is not \"snapshot\" or \"ax\", using the default"
             )
         }
     } else if key == "spring-damping-ratio" {

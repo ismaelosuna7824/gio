@@ -215,21 +215,4 @@ final class StripGestureTests: XCTestCase {
         XCTAssertEqual(workspaceSwipeAction(.up, natural: false), .focusWorkspaceUp)
         XCTAssertEqual(workspaceSwipeAction(.down, natural: false), .focusWorkspaceDown)
     }
-
-    // MARK: - Transport of the settle
-
-    func testGestureSettleMovesVisibleSameSizeFlightsThroughTheWindowServer() {
-        let from = CGRect(x: 100, y: 8, width: 600, height: 784)
-        let slide = WindowAnimation(id: id(1), from: from, to: from.offsetBy(dx: -84, dy: 0), duration: 0.2)
-        var grow = WindowAnimation(id: id(2), from: from, to: CGRect(x: 0, y: 8, width: 900, height: 784), duration: 0.2)
-        grow.sizeSchedule = .fromStart
-        let normal = planMotionTransports([slide, grow], viewports: [viewport], enabled: true, ownPID: 1, renderer: .ax)
-        XCTAssertEqual(normal.map(\.transport), [.accessibility, .accessibility])
-        let settle = planMotionTransports(
-            [slide, grow], viewports: [viewport], enabled: true, ownPID: 1, renderer: .ax, gestureSettle: true
-        )
-        XCTAssertEqual(settle.map(\.transport), [.windowServer, .accessibility], "a resizing flight stays on Accessibility")
-        let off = planMotionTransports([slide], viewports: [viewport], enabled: false, ownPID: 1, renderer: .ax, gestureSettle: true)
-        XCTAssertEqual(off.map(\.transport), [.accessibility])
-    }
 }

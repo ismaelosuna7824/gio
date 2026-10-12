@@ -43,7 +43,6 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(config.layout.centerFocusedColumn, .never)
         XCTAssertFalse(config.behavior.focusFollowsMouse)
         XCTAssertTrue(config.behavior.mouseFollowsFocus)
-        XCTAssertTrue(config.behavior.skyLight)
         XCTAssertTrue(config.animations.enabled)
         XCTAssertTrue(config.keybindings.isEmpty)
         XCTAssertTrue(config.rules.isEmpty)
@@ -107,7 +106,6 @@ final class ConfigTests: XCTestCase {
             "[layout]\npadding = \"wide\"\n",
             "[layout]\ndefault-column-width = 0\n",
             "[behavior]\nfocus-follows-mouse = \"yes\"\n",
-            "[behavior]\nskylight = \"off\"\n",
             "[keybindings]\n\"Alt+H\" = \"fly\"\n",
             "[keybindings]\n\"H\" = \"focus-left\"\n",
             "[[window-rules]]\nmode = \"floating\"\n",
@@ -125,13 +123,6 @@ final class ConfigTests: XCTestCase {
         }
     }
 
-    /// PF-L: `[behavior] skylight` turns the private WindowServer transport off.
-    func testSkyLightCanBeTurnedOff() throws {
-        let (config, warnings) = try parseGioConfig("[behavior]\nskylight = false\n").get()
-        XCTAssertTrue(warnings.isEmpty)
-        XCTAssertFalse(config.behavior.skyLight)
-    }
-
     func testLoaderFallsBackToDefaultsOnInvalid() {
         let path = writeTemp("gaps = -1\n")
         let (config, messages) = loadGioConfig(at: path)
@@ -144,6 +135,16 @@ final class ConfigTests: XCTestCase {
         let (config, warnings) = try parseGioConfig(doc).get()
         XCTAssertEqual(config.layout.gaps, 4)
         XCTAssertEqual(warnings.count, 2)
+    }
+
+    /// PF-S: `[behavior] skylight` was removed with the SkyLight transport.
+    /// An old config keeps loading: the key is an unknown key, warned and
+    /// ignored, and the other behavior keys still apply.
+    func testRemovedSkyLightKeyWarnsAsUnknown() throws {
+        let doc = "[behavior]\nskylight = false\nfocus-follows-mouse = true\n"
+        let (config, warnings) = try parseGioConfig(doc).get()
+        XCTAssertTrue(config.behavior.focusFollowsMouse)
+        XCTAssertEqual(warnings, ["line 2: unknown behavior key 'skylight', ignored"])
     }
 
     func testMissingFileIsSilentDefaults() {

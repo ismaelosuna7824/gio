@@ -202,39 +202,11 @@ final class AdvancedPresentationTests: XCTestCase {
         var config = GioConfig()
         config.animations.renderer = .ax
         XCTAssertEqual(check(checklist(facts(sr: false), config: config), "permissions").status, .ok)
-        config.animations.renderer = .live
-        XCTAssertEqual(check(checklist(facts(sr: false), config: config), "permissions").status, .ok)
         config.animations.renderer = .snapshot
         let list = checklist(facts(sr: false), config: config)
         XCTAssertEqual(check(list, "permissions").status, .warning)
         XCTAssertEqual(check(list, "renderer").status, .warning)
         XCTAssertEqual(check(checklist(facts(), config: config), "renderer").badge, "Snapshot")
-    }
-
-    /// PF-O: the Renderer card shows the effective renderer: Live while the
-    /// SkyLight transport is usable, a Fallback warning naming why it is not
-    /// (the motion is then the Accessibility renderer's).
-    func testRendererCardShowsLiveOrItsFallback() {
-        func facts(_ status: WindowServerTransportStatus) -> SessionFacts {
-            SessionFacts(
-                configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
-                currentWorkspace: 1, displays: [], windows: [], screenRecordingGranted: false, windowServer: status
-            )
-        }
-        let live = check(checklist(facts(windowServerTransportStatus(enabled: true, missingSymbols: []))), "renderer")
-        XCTAssertEqual(live.status, .ok)
-        XCTAssertEqual(live.badge, "Live")
-        let failed = check(
-            checklist(facts(windowServerTransportStatus(enabled: true, missingSymbols: [], probe: .failed))), "renderer"
-        )
-        XCTAssertEqual(failed.status, .warning)
-        XCTAssertEqual(failed.badge, "Fallback")
-        XCTAssertEqual(
-            failed.summary, "Live is selected but SkyLight is unavailable (probe-failed), so windows move through Accessibility."
-        )
-        let off = check(checklist(facts(windowServerTransportStatus(enabled: false, missingSymbols: []))), "renderer")
-        XCTAssertEqual(off.badge, "Fallback")
-        XCTAssertTrue(off.summary.contains("(config-off)"))
     }
 
     func testConfigurationAndSocketProblems() {
@@ -245,30 +217,6 @@ final class AdvancedPresentationTests: XCTestCase {
         XCTAssertEqual(check(list, "session").status, .error)
         XCTAssertEqual(check(checklist(facts(exists: false)), "configuration").badge, "Defaults")
         XCTAssertEqual(check(checklist(facts(displays: 2)), "displays").badge, "2 displays")
-    }
-
-    /// PF-L: the Renderer card says how hidden windows move, and why.
-    func testRendererCardNamesTheHiddenWindowTransport() {
-        var available = facts()
-        available = SessionFacts(
-            configPath: available.configPath, configExists: true, configMessages: [], accessibilityGranted: true,
-            currentWorkspace: 1, displays: [], windows: [], screenRecordingGranted: true,
-            windowServer: windowServerTransportStatus(enabled: true, missingSymbols: [])
-        )
-        XCTAssertTrue(check(checklist(available), "renderer").details.contains(
-            "Hidden windows: SkyLight, then Accessibility (symbols-resolved)"
-        ))
-        var config = GioConfig()
-        config.animations.enabled = false
-        let off = SessionFacts(
-            configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
-            currentWorkspace: 1, displays: [], windows: [],
-            windowServer: windowServerTransportStatus(enabled: true, missingSymbols: ["SLSTransactionCreate"])
-        )
-        XCTAssertEqual(
-            check(checklist(off, config: config), "renderer").details,
-            ["Hidden windows: Accessibility only (missing-symbols:SLSTransactionCreate)"]
-        )
     }
 
     func testRendererOffWhenAnimationsAreDisabled() {

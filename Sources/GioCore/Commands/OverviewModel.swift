@@ -56,9 +56,6 @@ public struct SessionFacts: Equatable, Sendable {
     /// DD-02: the focused display's current workspace as a strip, for the
     /// Overview miniature; nil when no layout was available.
     public let strip: WorkspaceStripFact?
-    /// PF-L: whether hidden and revealed windows move through the private
-    /// WindowServer transport (SkyLight) first, and why.
-    public let windowServer: WindowServerTransportStatus
     /// TG-03: whether trackpad gestures run, and why.
     public let gestures: GestureSourceStatus
     /// TG-04: Gio's gestures that macOS performs too (system swipes on).
@@ -69,13 +66,11 @@ public struct SessionFacts: Equatable, Sendable {
         accessibilityGranted: Bool, currentWorkspace: Int,
         displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
         strip: WorkspaceStripFact? = nil,
-        windowServer: WindowServerTransportStatus = WindowServerTransportStatus(available: false, reason: "unknown"),
         gestures: GestureSourceStatus = GestureSourceStatus(available: false, reason: "unknown"),
         gestureConflicts: [GestureConflict] = []
     ) {
         self.gestures = gestures
         self.gestureConflicts = gestureConflicts
-        self.windowServer = windowServer
         self.configPath = configPath
         self.configExists = configExists
         self.configMessages = configMessages

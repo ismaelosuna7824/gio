@@ -21,8 +21,6 @@ public final class AXWindowActuator: WindowActuator {
         let element: AXUIElement
         let appElement: AXUIElement
         let pid: pid_t
-        /// PF-L: the window's `CGWindowID`, read once at registration.
-        let windowNumber: UInt32?
     }
 
     /// Reflow lanes read handles and the flip from several threads while the
@@ -51,17 +49,6 @@ public final class AXWindowActuator: WindowActuator {
 
     private var flip: AXVerticalFlip {
         stateLock.withLock { storedFlip }
-    }
-
-    /// PF-L: the current Cocoa/AX flip, for the WindowServer transport.
-    public var verticalFlip: AXVerticalFlip {
-        flip
-    }
-
-    /// PF-L: the window's `CGWindowID` (`_AXUIElementGetWindow` at
-    /// registration), pid-guarded like every other access; nil when unknown.
-    public func windowServerID(of id: WindowID) -> UInt32? {
-        handle(for: id)?.windowNumber
     }
 
     /// - Parameter displayHeight: FULL display height for the AX flip
@@ -106,12 +93,8 @@ public final class AXWindowActuator: WindowActuator {
         }
         _ = AXUIElementSetMessagingTimeout(element, Self.messagingTimeoutSeconds)
         _ = AXUIElementSetMessagingTimeout(appElement, Self.messagingTimeoutSeconds)
-        // PF-L: one call per new window, bounded by the timeout just set.
-        let windowNumber = AXWindowNumber.read(element)
         stateLock.withLock {
-            storedHandles[elementID] = Handle(
-                element: element, appElement: appElement, pid: pid, windowNumber: windowNumber
-            )
+            storedHandles[elementID] = Handle(element: element, appElement: appElement, pid: pid)
             handleIndex.insert(elementID: elementID, pid: pid, element: element)
         }
     }

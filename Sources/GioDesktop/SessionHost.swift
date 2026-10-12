@@ -122,14 +122,6 @@ final class SessionHost: @unchecked Sendable {
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
     private var trustedFrames = TrustedFrames()
-    /// PF-L: the SkyLight WindowServer transport (nil when this macOS lacks a
-    /// symbol it needs, named in `skyLightMissing`); loaded once, with the
-    /// actuator, in `initialSync`.
-    private var skyLight: SkyLightWindowMover?
-    private var skyLightMissing: [String]?
-    /// PF-M: the transport state the last pass used; a change (probe
-    /// verdict, reload) republishes the facts, which log it.
-    private var lastWindowServerStatus: WindowServerTransportStatus?
     /// TG-03: trackpad gestures: recognition and the interactive scroll
     /// (session queue), fed by the mailbox (its own lock) from
     /// MultitouchSupport's callback thread, which never touches session state.
@@ -282,7 +274,6 @@ final class SessionHost: @unchecked Sendable {
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
             prefetchSnapshotContent: { [unowned self] in snapshotRefresher.prefetchIfNeeded(permissionGranted: $0) },
-            windowServerStatus: { [unowned self] in windowServerStatus() },
             gestureStatus: { [unowned self] in
                 gestureSourceStatus(
                     enabled: session.config.gestures.anyEnabled, missingSymbols: multitouchMissing,
@@ -303,10 +294,6 @@ final class SessionHost: @unchecked Sendable {
                 viewports: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
                 serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 nudge: { [unowned self] in reconciler?.nudge(steps: $0) ?? [] },
-                // TG-05: a window drawn away from its app's frame moves
-                // there through SkyLight (the reconciler) before any nudge.
-                windowServerAvailable: { [unowned self] in windowServerStatus().available },
-                alignWindowServer: { [unowned self] in reconciler?.alignWindowServer(to: $0) ?? [] },
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 appName: { [unowned self] in appName($0) },
                 log: { GioLog.record($0, $1) }
@@ -324,8 +311,7 @@ final class SessionHost: @unchecked Sendable {
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
-                            config: session.config.animations, permission: hasScreenRecordingPermission(),
-                            windowServer: windowServerStatus().available
+                            config: session.config.animations, permission: hasScreenRecordingPermission()
                         ) == .snapshot
                 },
                 ghostCacheWanted: { [unowned self] in
@@ -873,9 +859,6 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator, !ids.isEmpty else {
             return nil
         }
-        // PF-L: an app that never learned the WindowServer hid its window
-        // would report it on screen and the restore would skip it.
-        reconciler?.syncWindowServerMoves()
         return WindowReconciler(actuator: actuator)
             .restoreOffscreen(ids: ids, displays: restoreDisplays())
     }
@@ -1266,13 +1249,6 @@ final class SessionHost: @unchecked Sendable {
             snapshotCapturer.setWindowOrderReader { pid in
                 axWindowOrder(pid: pid) { handles.id(matching: $0, pid: pid) }
             }
-            // PF-L: SkyLight is opened once; window ids come from the
-            // actuator, frames cross into SkyLight's space with its flip.
-            let loaded = SkyLightWindowMover.load(
-                windowIDs: { handles.windowServerID(of: $0) }, flip: { handles.verticalFlip }
-            )
-            skyLight = loaded.mover
-            skyLightMissing = loaded.missing
         }
         actuator?.countsCalls = GioLog.minimumLevel <= .debug
         // MM-01: displays first, so every startup window lands in the stack
@@ -1525,21 +1501,12 @@ final class SessionHost: @unchecked Sendable {
         // is still stuck so a hung app is never written twice at once.
         // PF-K: it switches `AXEnhancedUserInterface` off around each app's
         // write batch (never Gio's own pid) and back on at the batch's end.
-        // PF-L: it moves parks, reveals and same-size pre-positions through
-        // SkyLight first while `[behavior] skylight` and the runtime allow it.
         let reconciler = self.reconciler ?? WindowReconciler(
             actuator: actuator,
             appName: { [probe] in probe.applicationName($0) },
-            enhancedUI: AXEnhancedUserInterfaceSwitch(),
-            windowServer: skyLight
+            enhancedUI: AXEnhancedUserInterfaceSwitch()
         )
         self.reconciler = reconciler
-        let windowServer = windowServerStatus()
-        reconciler.windowServerEnabled = windowServer.available
-        if let previous = lastWindowServerStatus, previous != windowServer {
-            publishSnapshot()
-        }
-        lastWindowServerStatus = windowServer
         let settings = session.config.animations
         // NA-04: the triggering action picks the pass's animation; a kind
         // that is off makes its pass instant.
@@ -1624,21 +1591,6 @@ final class SessionHost: @unchecked Sendable {
             canAnimateSize: { resizeCapability.canAnimateSize(resizeKey($0)) },
             focused: focus.pendingIntentTarget(parked: Set(plans.flatMap { $0.parked.keys })) ?? sizingTarget
         )
-        // PF-M: hide and reveal flights move through SkyLight per tick (one
-        // transaction for all of them) with no Accessibility write until the
-        // final pass; flights between two visible frames stay on their lanes.
-        // PF-O: the live renderer moves every same-size flight that way,
-        // visible ones included; resizing ones stay on their lanes. Without
-        // SkyLight the effective renderer is ax. TG-03: a gesture's settle
-        // moves visible ones through it too.
-        let renderer = effectiveRenderer(
-            config: settings, permission: hasScreenRecordingPermission(), windowServer: windowServer.available
-        )
-        animations = planMotionTransports(
-            animations, viewports: displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame },
-            enabled: windowServer.available, ownPID: ProcessInfo.processInfo.processIdentifier,
-            renderer: renderer, gestureSettle: gestureRelease != nil
-        )
         // SM-04/SM-08: with the snapshot renderer the real windows get one
         // write to their final frames (the instant pass) under an overlay
         // that draws an opaque picture and flies their images on the GPU. The overlay must be on
@@ -1670,9 +1622,9 @@ final class SessionHost: @unchecked Sendable {
                         instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: true, placement: placement, reconciler: reconciler)
                     },
                     fallback: { [unowned self] in
-                        motionPass(
+                        axMotionPass(
                             animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
-                            zoomJob: zoomJob, renderer: .ax, reconciler: reconciler
+                            zoomJob: zoomJob, reconciler: reconciler
                         )
                     }
                 )
@@ -1683,21 +1635,20 @@ final class SessionHost: @unchecked Sendable {
             overlayFlight.end()
         }
         if !animations.isEmpty && !snapshotFlight {
-            motionPass(
+            axMotionPass(
                 animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
-                zoomJob: zoomJob, renderer: renderer, reconciler: reconciler
+                zoomJob: zoomJob, reconciler: reconciler
             )
             return
         }
         instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: snapshotFlight, placement: placement, reconciler: reconciler)
     }
 
-    /// The motion player (the live and AX renderers): pre-positions, then
-    /// the motion driver moves every frame of the animation through the
-    /// reconciler (SkyLight per tick or the apps' lanes, per flight).
-    private func motionPass(
+    /// The AX renderer: pre-positions, then the motion driver writes every
+    /// frame of the animation through the reconciler.
+    private func axMotionPass(
         animations: [WindowAnimation], plans: [ParkingPlan], prepositions: [WindowID: CGRect], entries: Set<WindowID>,
-        zoomJob: NativeZoomController.Job?, renderer: RendererKind, reconciler: WindowReconciler<AXWindowActuator>
+        zoomJob: NativeZoomController.Job?, reconciler: WindowReconciler<AXWindowActuator>
     ) {
         // PF-02: entries (new windows) are written at once and merge into
         // a running motion; only switch pre-positions wait for its lanes.
@@ -1716,7 +1667,7 @@ final class SessionHost: @unchecked Sendable {
                 reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
             }
         }
-        motion.start(animations, sink: reconciler, renderer: renderer)
+        motion.start(animations, sink: reconciler)
         openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
         // FI-06: the keyboard follows the logical focus right away instead
         // of after the animation; the final pass only re-asserts a drift.
@@ -1766,8 +1717,7 @@ final class SessionHost: @unchecked Sendable {
             let report = reconciler.reconcile(
                 frames: plan.visible, parked: plan.parked,
                 focused: planFocus, currentlyFocused: nil,
-                trusted: trustedFrames,
-                windowServerFirst: windowServerFirst(visible: plan.visible, parked: plan.parked)
+                trusted: trustedFrames
             )
             foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus, placement: placement)
             zoomWriteFailures.formUnion(report.failed)
@@ -1801,8 +1751,7 @@ final class SessionHost: @unchecked Sendable {
             parked.merge(plan.parked) { _, new in new }
         }
         let pass = reconciler.dispatch(
-            frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames,
-            windowServerFirst: windowServerFirst(visible: visible, parked: parked)
+            frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames
         )
         let now = ProcessInfo.processInfo.systemUptime
         // SM-13: a write lands on its lane up to `landingBounds` after now
@@ -1822,30 +1771,6 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         dispatchedWrites.append((pass, visible, parked, focusTarget))
-    }
-
-    /// PF-L: the parks and reveals of a pass that SkyLight moves first
-    /// (decided in Core from the frames Gio knows).
-    private func windowServerFirst(visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget]) -> Set<WindowID> {
-        guard reconciler?.windowServerEnabled == true else {
-            return []
-        }
-        return planWindowServerFirst(
-            visible: visible, parked: parked, current: physicalFrames,
-            displays: displays.allDisplays().map(\.frame), ownPID: ProcessInfo.processInfo.processIdentifier
-        )
-    }
-
-    /// PF-L: `[behavior] skylight`, what this macOS offers and (PF-M) the
-    /// runtime probe's verdict.
-    private func windowServerStatus() -> WindowServerTransportStatus {
-        guard let skyLightMissing else {
-            return WindowServerTransportStatus(available: false, reason: "not-loaded")
-        }
-        return windowServerTransportStatus(
-            enabled: session.config.behavior.skyLight, missingSymbols: skyLightMissing,
-            probe: reconciler?.windowServerProbe ?? .unverified
-        )
     }
 
     /// SM-12: fold every pass dispatched under the overlay, oldest first

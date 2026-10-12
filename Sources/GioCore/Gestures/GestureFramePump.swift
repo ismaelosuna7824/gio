@@ -4,11 +4,10 @@ import Foundation
 /// TG-03: hands each gesture step's frames to the windows through a
 /// `MotionFrameSink` (the session's `WindowReconciler`, so invariant 3
 /// holds: the reconciler owns every write). Like `MotionPlayer.tick`, but
-/// driven by the fingers instead of a clock: every changed window goes into
-/// one WindowServer transaction first (a strip that moves as one piece),
-/// what the WindowServer did not take goes to its app's Accessibility lane
-/// (latest frame wins). Origins round to whole points; a change within the
-/// writer's tolerance is not written. Not thread-safe: session queue only.
+/// driven by the fingers instead of a clock: every changed window goes to its
+/// app's Accessibility motion lane, one submission per app per step (latest
+/// frame wins). Origins round to whole points; a change within the writer's
+/// tolerance is not written. Not thread-safe: session queue only.
 public final class GestureFramePump {
     private let sink: MotionFrameSink
     private var submitted: [WindowID: CGRect]
@@ -24,7 +23,7 @@ public final class GestureFramePump {
 
     /// One step. Returns the frames the windows are being moved to.
     public func pump(_ targets: [WindowID: CGRect]) -> [WindowID: CGRect] {
-        var writes: [MotionWrite] = []
+        var lanes: [pid_t: [MotionWrite]] = [:]
         for id in targets.keys.sorted() {
             let target = targets[id]!
             let frame = CGRect(
@@ -35,30 +34,16 @@ public final class GestureFramePump {
                 continue
             }
             if differs(frame, last) {
-                writes.append(MotionWrite(id: id, from: last, to: frame))
+                lanes[id.pid, default: []].append(MotionWrite(id: id, from: last, to: frame))
             }
-        }
-        guard !writes.isEmpty else {
-            return [:]
         }
         var written: [WindowID: CGRect] = [:]
-        let moved = sink.submitWindowServerMotion(writes)
-        var lanes: [pid_t: [MotionWrite]] = [:]
-        for write in writes {
-            if moved.contains(write.id) {
-                written[write.id] = write.to
-            } else {
-                lanes[write.id.pid, default: []].append(write)
-            }
-        }
         for pid in lanes.keys.sorted() where sink.submitMotion(pid: pid, writes: lanes[pid]!) {
             for write in lanes[pid]! {
                 written[write.id] = write.to
+                submitted[write.id] = write.to
             }
-        }
-        for (id, frame) in written {
-            submitted[id] = frame
-            pids.insert(id.pid)
+            pids.insert(pid)
         }
         return written
     }

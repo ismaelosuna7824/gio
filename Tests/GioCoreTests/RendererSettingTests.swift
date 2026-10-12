@@ -2,13 +2,11 @@ import XCTest
 @testable import GioCore
 
 /// SM-01: `[animations] renderer` and the pure choice between the snapshot
-/// (ScreenCaptureKit) renderer and the Accessibility motion. PF-O: the live
-/// renderer (real windows through SkyLight) is the default.
+/// (ScreenCaptureKit) renderer and the Accessibility motion.
 final class RendererSettingTests: XCTestCase {
-    func testDefaultIsLiveAndEveryValueParses() throws {
-        XCTAssertEqual(defaultGioConfig().animations.renderer, .live)
-        XCTAssertEqual(AnimationsSectionConfig().renderer, .live)
-        for kind in ["live", "snapshot", "ax"] {
+    func testDefaultIsSnapshotAndBothValuesParse() throws {
+        XCTAssertEqual(defaultGioConfig().animations.renderer, .snapshot)
+        for kind in ["snapshot", "ax"] {
             let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"\(kind)\"\n").get()
             XCTAssertTrue(warnings.isEmpty)
             XCTAssertEqual(config.animations.renderer.rawValue, kind)
@@ -17,10 +15,22 @@ final class RendererSettingTests: XCTestCase {
 
     func testUnknownRendererWarnsAndKeepsDefault() throws {
         let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"gpu\"\n").get()
-        XCTAssertEqual(config.animations.renderer, .live)
+        XCTAssertEqual(config.animations.renderer, .snapshot)
         XCTAssertEqual(warnings.count, 1)
         XCTAssertTrue(warnings[0].contains("animations.renderer"))
-        XCTAssertTrue(warnings[0].contains("\"live\""))
+    }
+
+    /// PF-S: the live renderer was removed with SkyLight. A config that still
+    /// says `"live"` gets the ordinary unknown-value warning and the snapshot
+    /// default; nothing else in the file is affected.
+    func testRemovedLiveRendererWarnsAndKeepsTheSnapshotDefault() throws {
+        let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"live\"\nduration-ms = 180\n").get()
+        XCTAssertEqual(config.animations.renderer, .snapshot)
+        XCTAssertEqual(config.animations.durationMilliseconds, 180)
+        XCTAssertEqual(
+            warnings, ["line 2: animations.renderer 'live' is not \"snapshot\" or \"ax\", using the default"]
+        )
+        XCTAssertNil(RendererKind(rawValue: "live"))
     }
 
     func testNonStringRendererIsAnError() {
@@ -30,8 +40,7 @@ final class RendererSettingTests: XCTestCase {
     func testTemplateDeclaresRenderer() throws {
         let (config, warnings) = try parseGioConfig(defaultConfigTemplate()).get()
         XCTAssertTrue(warnings.isEmpty)
-        XCTAssertEqual(config.animations.renderer, .live)
-        XCTAssertTrue(defaultConfigTemplate().contains("renderer = \"live\""))
+        XCTAssertEqual(config.animations.renderer, .snapshot)
     }
 
     func testAnimationEditsCarryRendererWhenGiven() {
@@ -49,35 +58,21 @@ final class RendererSettingTests: XCTestCase {
     func testSnapshotOnlyWhenConfiguredAndGranted() {
         var animations = AnimationsSectionConfig()
         animations.renderer = .snapshot
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: true, windowServer: true), .snapshot)
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: false, windowServer: true), .ax)
+        XCTAssertEqual(effectiveRenderer(config: animations, permission: true), .snapshot)
+        XCTAssertEqual(effectiveRenderer(config: animations, permission: false), .ax)
         animations.renderer = .ax
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: true, windowServer: true), .ax)
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: false, windowServer: true), .ax)
-    }
-
-    /// PF-O: live needs the SkyLight transport (config on, symbols, probe
-    /// not failed); without it the motion is the AX renderer's. Screen
-    /// Recording plays no part.
-    func testLiveOnlyWithTheWindowServerTransport() {
-        var animations = AnimationsSectionConfig()
-        animations.renderer = .live
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: false, windowServer: true), .live)
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: true, windowServer: true), .live)
-        XCTAssertEqual(effectiveRenderer(config: animations, permission: true, windowServer: false), .ax)
+        XCTAssertEqual(effectiveRenderer(config: animations, permission: true), .ax)
+        XCTAssertEqual(effectiveRenderer(config: animations, permission: false), .ax)
     }
 
     func testReasonNamesWhyTheRendererWasChosen() {
         var animations = AnimationsSectionConfig()
         animations.renderer = .snapshot
-        XCTAssertEqual(rendererReason(config: animations, permission: true, windowServer: false), "configured")
-        XCTAssertEqual(rendererReason(config: animations, permission: false, windowServer: true), "screen-recording-missing")
+        XCTAssertEqual(rendererReason(config: animations, permission: true), "configured")
+        XCTAssertEqual(rendererReason(config: animations, permission: false), "screen-recording-missing")
         animations.renderer = .ax
-        XCTAssertEqual(rendererReason(config: animations, permission: true, windowServer: true), "config-ax")
-        XCTAssertEqual(rendererReason(config: animations, permission: false, windowServer: false), "config-ax")
-        animations.renderer = .live
-        XCTAssertEqual(rendererReason(config: animations, permission: false, windowServer: true), "configured")
-        XCTAssertEqual(rendererReason(config: animations, permission: true, windowServer: false), "skylight-unavailable")
+        XCTAssertEqual(rendererReason(config: animations, permission: true), "config-ax")
+        XCTAssertEqual(rendererReason(config: animations, permission: false), "config-ax")
     }
 
     func testLogGateEmitsOnlyOnChange() {
@@ -85,28 +80,16 @@ final class RendererSettingTests: XCTestCase {
         var animations = AnimationsSectionConfig()
         animations.renderer = .snapshot
         XCTAssertEqual(
-            gate.line(config: animations, permission: false, windowServer: true),
+            gate.line(config: animations, permission: false),
             "renderer effective=ax reason=screen-recording-missing"
         )
-        XCTAssertNil(gate.line(config: animations, permission: false, windowServer: true))
+        XCTAssertNil(gate.line(config: animations, permission: false))
         XCTAssertEqual(
-            gate.line(config: animations, permission: true, windowServer: true), "renderer effective=snapshot reason=configured"
+            gate.line(config: animations, permission: true), "renderer effective=snapshot reason=configured"
         )
-        XCTAssertNil(gate.line(config: animations, permission: true, windowServer: true))
+        XCTAssertNil(gate.line(config: animations, permission: true))
         animations.renderer = .ax
-        XCTAssertEqual(
-            gate.line(config: animations, permission: true, windowServer: true), "renderer effective=ax reason=config-ax"
-        )
-        animations.renderer = .live
-        XCTAssertEqual(
-            gate.line(config: animations, permission: false, windowServer: true), "renderer effective=live reason=configured"
-        )
-        // The probe refuted SkyLight mid-session: the fallback is logged once.
-        XCTAssertEqual(
-            gate.line(config: animations, permission: false, windowServer: false),
-            "renderer effective=ax reason=skylight-unavailable"
-        )
-        XCTAssertNil(gate.line(config: animations, permission: false, windowServer: false))
+        XCTAssertEqual(gate.line(config: animations, permission: true), "renderer effective=ax reason=config-ax")
     }
 
     func testOverviewAndDiagnosticsReportScreenRecording() {

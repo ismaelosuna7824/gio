@@ -70,7 +70,6 @@ final class SessionFactsBuilderTests: XCTestCase {
     private func make(
         _ fixture: SessionFixture, logs: Recorder<String>, prefetches: Recorder<Bool>,
         screenRecording: Bool = true, exists: Bool = false,
-        windowServer: WindowServerTransportStatus = windowServerTransportStatus(enabled: true, missingSymbols: []),
         gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1),
         conflicts: [GestureConflict] = []
     ) -> SessionFactsBuilder {
@@ -90,7 +89,6 @@ final class SessionFactsBuilderTests: XCTestCase {
             configFileExists: { _ in exists },
             homeDirectory: { "/Users/test" },
             prefetchSnapshotContent: { prefetches.append($0) },
-            windowServerStatus: { windowServer },
             gestureStatus: { gestures },
             gestureConflicts: { conflicts },
             log: { _, line in logs.append(line) }
@@ -144,46 +142,29 @@ final class SessionFactsBuilderTests: XCTestCase {
         _ = builder.facts()
         _ = builder.facts()
         XCTAssertEqual(logs.values.filter { $0.hasPrefix("renderer ") }.count, 1)
-        let snapshot = effectiveRenderer(
-            config: fixture.session.config.animations, permission: true, windowServer: true
-        ) == .snapshot
+        let snapshot = effectiveRenderer(config: fixture.session.config.animations, permission: true) == .snapshot
         XCTAssertEqual(prefetches.values, [snapshot, snapshot])
     }
 
-    /// PF-O: the default live renderer needs SkyLight. Without it (config
-    /// off, missing symbols, a failed probe) the log says the motion falls
-    /// back to the AX renderer, once per change, and the snapshot content is
-    /// not prefetched; with it the line names `live`.
-    func testLiveFallsBackToAXWithoutSkyLightAndSaysWhy() {
+    /// PF-S: the default renderer is snapshot again: with Screen Recording
+    /// the log names it and the snapshot content is prefetched; without it
+    /// the motion falls back to the AX renderer and says why.
+    func testTheDefaultSnapshotRendererFallsBackToAXWithoutScreenRecording() {
         let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
-        XCTAssertEqual(fixture.session.config.animations.renderer, .live)
-        let failed = windowServerTransportStatus(enabled: true, missingSymbols: [], probe: .failed)
+        XCTAssertEqual(fixture.session.config.animations.renderer, .snapshot)
         let logs = Recorder<String>()
         let prefetches = Recorder<Bool>()
-        let builder = make(fixture, logs: logs, prefetches: prefetches, windowServer: failed)
-        _ = builder.facts()
-        _ = builder.facts()
+        _ = make(fixture, logs: logs, prefetches: prefetches).facts()
+        XCTAssertEqual(logs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=snapshot reason=configured"])
+        XCTAssertEqual(prefetches.values, [true])
+
+        let missingLogs = Recorder<String>()
+        let missingPrefetches = Recorder<Bool>()
+        _ = make(fixture, logs: missingLogs, prefetches: missingPrefetches, screenRecording: false).facts()
         XCTAssertEqual(
-            logs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=ax reason=skylight-unavailable"]
+            missingLogs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=ax reason=screen-recording-missing"]
         )
-        XCTAssertEqual(prefetches.values, [false, false])
-
-        let liveLogs = Recorder<String>()
-        _ = make(fixture, logs: liveLogs, prefetches: Recorder()).facts()
-        XCTAssertEqual(liveLogs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=live reason=configured"])
-    }
-
-    /// PF-L: the WindowServer transport state is logged once (again only
-    /// when it changes) and published for Diagnostics.
-    func testSkyLightStatusIsLoggedOnceAndPublished() {
-        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
-        let logs = Recorder<String>()
-        let off = windowServerTransportStatus(enabled: false, missingSymbols: [])
-        let builder = make(fixture, logs: logs, prefetches: Recorder(), windowServer: off)
-        let facts = builder.facts()
-        _ = builder.facts()
-        XCTAssertEqual(facts.windowServer, off)
-        XCTAssertEqual(logs.values.filter { $0.hasPrefix("skylight ") }, ["skylight available=false reason=config-off"])
+        XCTAssertEqual(missingPrefetches.values, [false])
     }
 
     /// TG-03: whether trackpad gestures run is logged once (again only when

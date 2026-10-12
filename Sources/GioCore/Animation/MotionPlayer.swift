@@ -22,17 +22,9 @@ public struct MotionWrite: Equatable, Sendable {
 /// as `MotionWriteStats.drops`.
 public protocol MotionFrameSink: AnyObject {
     func submitMotion(pid: pid_t, writes: [MotionWrite]) -> Bool
-    /// PF-M: one tick's WindowServer frames, all in one transaction. Returns
-    /// the windows moved; the player writes the others through Accessibility
-    /// in the same tick. Never blocks.
-    func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID>
     /// Per-app write stats accumulated since the last call (aggregated in
     /// place; no per-write entries).
     func takeMotionStats() -> [pid_t: MotionWriteStats]
-}
-
-public extension MotionFrameSink {
-    func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID> { [] }
 }
 
 /// What one finished animation cost, for the live fps judgement.
@@ -51,15 +43,14 @@ public struct MotionSummary: Equatable, Sendable {
     public let grewAtStart: Int
     /// Per-pid write stats of this run (feeds `ResizeCapability`); not part of equality.
     public let appStats: [pid_t: MotionWriteStats]
-    /// SM-04: `ax` (frames written through Accessibility), `snapshot` (GPU
-    /// overlay) or PF-O `live` (same-size windows through SkyLight per tick).
+    /// SM-04: `ax` (frames written through Accessibility) or `snapshot` (GPU overlay).
     public let renderer: String
     /// SM-12: snapshot flights, display-link intervals over 1.5 refresh
-    /// intervals; PF-O: player runs, timer ticks over 1.5 frame intervals
-    /// after the previous one (PF-R: AX runs too). Nil (and absent from the
-    /// line) without a measurement.
+    /// intervals; PF-R: AX runs, timer ticks over 1.5 frame intervals after
+    /// the previous one. Nil (and absent from the line) without a
+    /// measurement.
     public let hitches: Int?
-    /// PF-R: player runs, the frame intervals no tick covered (a tick 3.2
+    /// PF-R: AX runs, the frame intervals no tick covered (a tick 3.2
     /// intervals after the previous one missed 2), comparable with the
     /// snapshot line's expected-minus-presented `dropped`. Nil (and absent)
     /// for snapshot flights and without a timer interval.
@@ -102,11 +93,10 @@ public struct MotionSummary: Equatable, Sendable {
         )
     }
 
-    /// `anim done windows=N frames=F dropped=D [missed=M] [hitches=H] duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|live|snapshot grewAtStart=G`
-    /// AX and live: `frames` counts sampled display ticks, `dropped` counts
-    /// per-app frames skipped because that app was still writing (live: only
-    /// the resizing windows have app lanes), `missed` the frame intervals no
-    /// tick covered and `hitches` the late ticks (PF-R: both renderers).
+    /// `anim done windows=N frames=F dropped=D [missed=M] [hitches=H] duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|snapshot grewAtStart=G`
+    /// AX: `frames` counts sampled display ticks, `dropped` counts per-app
+    /// frames skipped because that app was still writing, `missed` the frame
+    /// intervals no tick covered and `hitches` the late ticks (PF-R).
     /// Snapshot (SM-12): presented frames, expected minus presented, and
     /// hitches. IDs and app names only.
     public var logLine: String {
@@ -150,9 +140,8 @@ public final class MotionPlayer {
     private var runUsedSpring = false
     private var runSizeAnimated: Set<WindowID> = []
     private var runGrewAtStart: Set<WindowID> = []
-    /// PF-O: the renderer named in the run's summary and the timer interval
-    /// its late ticks are measured against (nil: no hitch count, AX runs).
-    private var renderer: RendererKind = .ax
+    /// PF-R: the timer interval the run's late ticks are measured against
+    /// (nil: no measurement).
     private var frameInterval: TimeInterval?
     private var hitches = 0
     /// PF-R: frame intervals no tick covered this run.
@@ -179,10 +168,10 @@ public final class MotionPlayer {
     /// old ones and time restarts, while the run's counters continue. A spring
     /// flight inherits the velocity its predecessor had at the last sampled
     /// instant (NF-04), so rapid retargets flow instead of restarting from rest.
-    /// PF-O: `renderer` names the run in its summary and, with
-    /// `frameInterval` (the timer's), ticks later than 1.5 intervals after
-    /// the previous one count as hitches; the latest start sets both.
-    public func start(_ next: [WindowAnimation], renderer: RendererKind = .ax, frameInterval: TimeInterval? = nil) {
+    /// PF-R: with `frameInterval` (the timer's), ticks later than 1.5
+    /// intervals after the previous one count as hitches and the intervals
+    /// no tick covered as missed; the latest start sets it.
+    public func start(_ next: [WindowAnimation], frameInterval: TimeInterval? = nil) {
         guard !next.isEmpty else {
             return
         }
@@ -201,7 +190,6 @@ public final class MotionPlayer {
             missed = 0
             lastTickAt = nil
         }
-        self.renderer = renderer
         self.frameInterval = frameInterval
         var previous: [WindowID: WindowAnimation] = [:]
         for animation in animations {
@@ -254,7 +242,6 @@ public final class MotionPlayer {
         frames += 1
         var sampled: [WindowID: CGRect] = [:]
         var perPid: [pid_t: [MotionWrite]] = [:]
-        var serverWrites: [MotionWrite] = []
         for animation in animations {
             let frame = wholePoints(
                 animation.motionFrame(at: elapsed), size: animation.sizeSchedule.interpolates
@@ -262,25 +249,9 @@ public final class MotionPlayer {
             sampled[animation.id] = frame
             let last = submitted[animation.id] ?? animation.from
             if differs(frame, last) {
-                let write = MotionWrite(id: animation.id, from: last, to: frame)
-                if animation.transport == .windowServer {
-                    serverWrites.append(write)
-                } else {
-                    perPid[animation.id.pid, default: []].append(write)
-                }
-            }
-        }
-        // PF-M/PF-O: WindowServer flights first (hide and reveal; with the
-        // live renderer every same-size one), in one transaction; what the
-        // WindowServer did not take goes through Accessibility this tick.
-        if !serverWrites.isEmpty {
-            let moved = sink.submitWindowServerMotion(serverWrites)
-            for write in serverWrites {
-                if moved.contains(write.id) {
-                    submitted[write.id] = write.to
-                } else {
-                    perPid[write.id.pid, default: []].append(write)
-                }
+                perPid[animation.id.pid, default: []].append(
+                    MotionWrite(id: animation.id, from: last, to: frame)
+                )
             }
         }
         for pid in perPid.keys.sorted() {
@@ -320,7 +291,7 @@ public final class MotionPlayer {
             dropped: dropped + stats.values.reduce(0) { $0 + $1.drops },
             duration: clock() - runStart, slowest: slowest,
             curve: runUsedSpring ? "spring" : "ease-out",
-            sizeAnimated: runSizeAnimated.count, appStats: stats, renderer: renderer.rawValue,
+            sizeAnimated: runSizeAnimated.count, appStats: stats,
             grewAtStart: runGrewAtStart.count, hitches: frameInterval == nil ? nil : hitches,
             missed: frameInterval == nil ? nil : missed
         )

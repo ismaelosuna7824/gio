@@ -41,6 +41,12 @@ real windows at the end showed ("se ve como que es una imagen"). OmniWM moves th
 (AX per tick for visible ones, SkyLight for hidden ones; `HidingEval`). The user chose a new
 renderer `"live"` that moves the real windows, as the default (PF-O).
 
+## Scope (user choice 2026-10-12, SkyLight removed)
+After living with PF-L..PF-P the user chose to remove SkyLight completely and go back to what
+Gio had before PF-L: the snapshot renderer by default, Accessibility as the only window
+transport ("se sentía más fluido"). Kept: PF-K, PF-Q, PF-R, the trackpad gestures (their
+frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 (PF-S).
+
 ## Decisions
 - PF-A: no lane wait in `MotionPlayer.finish`; the final pass waits only for the apps it
   writes, for `finalPassMotionGrace` (100 ms). Apps still writing are deferred
@@ -237,6 +243,24 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   presented) or an AX line (no `hitches`). Every player run (live and AX) now reports
   `missed=M` (sum over ticks of round(gap / interval) - 1) and `hitches=H` against the timer's
   interval; `dropped` keeps its meaning so older AX lines stay comparable. Snapshot lines are
+  unchanged.
+- PF-S (2026-10-12, supersedes PF-L, PF-M, PF-N/TG-05, PF-O and PF-P): SkyLight and the live
+  renderer are removed. Evidence: a live probe on this Mac (10 SkyLight commits moving another
+  app's window to x=-48) left the window at x=8, which fits PF-P's finding that the live
+  renderer never ran (`skylight probe result=failed` in every session since `b2ed03e`) and the
+  TG-05 drift; every SkyLight path was dead weight that cost a frozen ~75 ms per probe trial,
+  extra follow-up writes (pending windows written even when the app reported the target) and
+  the PF-N alignment transactions. The user also found the snapshot default smoother. Clean
+  cutover, no flag: renderer kinds are `snapshot` (default) and `ax` again
+  (`effectiveRenderer(config:permission:)`); the reconciler, the motion player and the render
+  check are back to their pre-PF-L behaviour (render check: position nudge, then the PF-C size
+  nudge); `_AXUIElementGetWindow` goes too (nothing kept needs the window id: native zoom and
+  the snapshot capturer match WindowServer windows by frame). Old configs keep loading:
+  `renderer = "live"` gets the ordinary unknown-value warning and the snapshot default,
+  `[behavior] skylight` the ordinary unknown-key warning. Gestures: `GestureFramePump` hands
+  every changed window to its app's Accessibility motion lane (one submission per app per
+  drain, latest frame wins); the release settle stays on the motion player with the release
+  velocity whatever the renderer. PF-R stays for AX runs (`missed=`/`hitches=`); PF-Q is
   unchanged.
 
 ## Tasks
@@ -492,6 +516,36 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   `testALiveFlightLogsItsRendererAndHitches`). GREEN: `swift test` all bundles 0 failures: UI
   312 (53 skipped), Session 436, POC 7, Mac 19, MacOS 95, Core 1919; signed `xcodebuild` BUILD
   SUCCEEDED. LIVE PENDING: checklist 15j (compare `missed`/`hitches` across renderers).
+- [x] PF-S — SkyLight and the live renderer removed; snapshot is the default renderer again.
+  Deleted: `GioMacOS/WindowServer/SkyLight.swift`, `GioCore/Reconciliation/WindowServerTransport.swift`
+  (mover protocol, status, ledger, probe, `planWindowServerFirst`), `GioCore/Animation/MotionTransport.swift`
+  (`planMotionTransports`), their tests (`SkyLightTests`, `WindowServerTransportTests`,
+  `WindowServerMotionTests`, `WindowServerProbeTests`, `WindowServerAlignmentTests`,
+  `LiveRendererSettleTests`). Restored to their `5a54258` state: `Animation.swift` (no
+  `transport`), `RendererChoice.swift`, `RenderVerification.swift` and `RenderVerifier.swift`
+  (no `planRenderRepairs`), `AXWindowActuator.swift` (no window number or flip accessor),
+  Onboarding, Overview Motion tile and Animations renderer card; `Reconciler.swift` is
+  `5a54258` plus PF-Q. Edited: `MotionFrameSink` (no `submitWindowServerMotion`),
+  `MotionPlayer.start(_:frameInterval:)`, `MotionDriver.start(_:sink:)`, `GestureFramePump`
+  (lanes only), `[behavior] skylight` and `RendererKind.live` gone (config, parser, template),
+  `SessionFacts.windowServer` and the `skylight available=` log gone, Diagnostics Renderer
+  card, `SessionHost` (no transport loading, status, `windowServerFirst`, transport planning,
+  `syncWindowServerMoves`; `axMotionPass` again); docs: README (Private APIs: MultitouchSupport
+  only; Animation and Why Screen Recording back to the snapshot default), USER_GUIDE,
+  ARCHITECTURE (invariant 10 and the WindowServer transport section removed), TESTING (15h and
+  15j removed, their PF-Q/PF-R checks moved to row 5, 15i through Accessibility), AGENTS.md
+  (rule 11 removed). Migrated tests: PF-R's player test to `MotionPlayerTests`, the driver's to
+  `MotionDriverTests.testAFlightLogsItsHitchesAndMissedFrames`, the gesture sink tests to lanes
+  (`GestureFramePumpTests`, `GestureControllerTests`), the facts builder's renderer test to the
+  snapshot default. RED (compile): `swift build --build-tests` failed `missing argument for
+  parameter 'windowServer' in call` in the restored `RendererSettingTests` (with
+  `testRemovedLiveRendererWarnsAndKeepsTheSnapshotDefault`, `ConfigTests
+  .testRemovedSkyLightKeyWarnsAsUnknown` and the lane-only `GestureFramePumpTests` in the same
+  batch). GREEN: `swift test` all bundles 0 failures: UI 310 (53 skipped), Session 428, POC 7,
+  Mac 19, MacOS 90, Core 1869; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  LIVE PENDING: checklist 15b (snapshot default), 15i (gestures
+  through Accessibility: the strip follows the fingers, no `render mismatch` after a settle) and
+  row 5 (PF-Q/PF-R on `renderer = "ax"`).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -526,3 +580,5 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   `main`, not pushed; all bundles green, signed build succeeded; LIVE PENDING (checklists 15h,
   15j). The `skylight probe` lines of the next live session decide whether this Mac takes
   SkyLight moves of other apps' windows at all (Decisions, PF-P).
+- 2026-10-12: PF-S (SkyLight and the live renderer removed, snapshot default again) on `main`,
+  not pushed; all bundles green; LIVE PENDING (checklists 15b, 15i, row 5).

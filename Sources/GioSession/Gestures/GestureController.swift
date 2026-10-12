@@ -31,11 +31,11 @@ public enum GestureAbandon: String, Equatable, Sendable {
 /// - Scroll: while the fingers are down the strip of the display under them
 ///   follows the fingers. Each batch of frames lays the strip out at the
 ///   gesture's offset (no reveal) and hands the frames to the reconciler's
-///   motion sink: one WindowServer transaction for every changed window when
-///   SkyLight is usable, else the apps' Accessibility lanes. State does not
-///   move meanwhile. On release the snap is committed to State (offset and
-///   focus) and the session runs an animated pass whose springs start with
-///   the release velocity.
+///   motion sink: every changed window on its app's Accessibility motion
+///   lane (latest frame wins). State does not move meanwhile. On release
+///   the snap is committed to State (offset and focus) and the session runs
+///   an animated pass on the motion player whose springs start with the
+///   release velocity.
 /// - An extra finger or a mouse button abandons the scroll: State is
 ///   untouched and the session lays the strip out as State says.
 /// - Vertical swipes switch workspace (`focus-workspace-up/down`) or toggle

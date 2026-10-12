@@ -19,8 +19,6 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var homeDirectory: () -> String
         /// SM-02b: refresh the shareable content when the snapshot renderer is in force.
         public var prefetchSnapshotContent: (Bool) -> Void
-        /// PF-L: the WindowServer transport's state (config, symbols, probe).
-        public var windowServerStatus: () -> WindowServerTransportStatus
         /// TG-03: whether trackpad gestures run (symbols, config, devices).
         public var gestureStatus: () -> GestureSourceStatus
         /// TG-04: Gio's gestures macOS performs too (from its preferences).
@@ -34,12 +32,10 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             screenRecordingGranted: @escaping () -> Bool, accessibilityGranted: @escaping () -> Bool,
             configFileExists: @escaping (String) -> Bool, homeDirectory: @escaping () -> String,
             prefetchSnapshotContent: @escaping (Bool) -> Void,
-            windowServerStatus: @escaping () -> WindowServerTransportStatus,
             gestureStatus: @escaping () -> GestureSourceStatus,
             gestureConflicts: @escaping () -> [GestureConflict],
             log: @escaping (LogLevel, String) -> Void
         ) {
-            self.windowServerStatus = windowServerStatus
             self.gestureStatus = gestureStatus
             self.gestureConflicts = gestureConflicts
             self.session = session
@@ -60,8 +56,6 @@ public final class SessionFactsBuilder: @unchecked Sendable {
     private let context: Context
     /// SM-01: logs the effective renderer only when it changes.
     private var rendererLog = RendererLogGate()
-    /// PF-L: logs `skylight available=... reason=...` once, then on change.
-    private var windowServerLog = WindowServerStatusLogGate()
     /// TG-03: logs `gestures available=... reason=...` once, then on change.
     private var gestureLog = GestureStatusLogGate()
     /// TG-04: logs `gestures conflict=...` once, then on change.
@@ -100,22 +94,12 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         }
         let path = session.configPath ?? (context.homeDirectory() + "/.config/gio/config.toml")
         let screenRecording = context.screenRecordingGranted()
-        let windowServer = context.windowServerStatus()
-        // PF-O: the live renderer stands on the SkyLight transport; a failed
-        // probe republishes the facts, so the fallback is logged then.
-        if let line = rendererLog.line(
-            config: session.config.animations, permission: screenRecording, windowServer: windowServer.available
-        ) {
+        if let line = rendererLog.line(config: session.config.animations, permission: screenRecording) {
             context.log(.info, line)
         }
         context.prefetchSnapshotContent(
-            effectiveRenderer(
-                config: session.config.animations, permission: screenRecording, windowServer: windowServer.available
-            ) == .snapshot
+            effectiveRenderer(config: session.config.animations, permission: screenRecording) == .snapshot
         )
-        if let line = windowServerLog.line(for: windowServer) {
-            context.log(.info, line)
-        }
         let gestures = context.gestureStatus()
         if let line = gestureLog.line(for: gestures) {
             context.log(.info, line)
@@ -136,7 +120,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
                 )
             },
             windows: windows, screenRecordingGranted: screenRecording,
-            strip: workspaceStrip(), windowServer: windowServer, gestures: gestures, gestureConflicts: conflicts
+            strip: workspaceStrip(), gestures: gestures, gestureConflicts: conflicts
         )
     }
 

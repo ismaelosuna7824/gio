@@ -94,21 +94,11 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
     /// (`consume-or-expel-window-*`, `move-up/down`, `gio move`) at the
     /// workspace's edge sends the window (`moveWindowOrToDisplay`).
     public var moveCrossesMonitorAtEdge: Bool
-    /// PF-L: `skylight`: hidden and revealed windows move through the private
-    /// WindowServer transport first when it is available (default on);
-    /// false keeps the Accessibility-only path.
-    public var skyLight: Bool
 
-    public init(
-        focusFollowsMouse: Bool = false,
-        mouseFollowsFocus: Bool = true,
-        moveCrossesMonitorAtEdge: Bool = false,
-        skyLight: Bool = true
-    ) {
+    public init(focusFollowsMouse: Bool = false, mouseFollowsFocus: Bool = true, moveCrossesMonitorAtEdge: Bool = false) {
         self.focusFollowsMouse = focusFollowsMouse
         self.mouseFollowsFocus = mouseFollowsFocus
         self.moveCrossesMonitorAtEdge = moveCrossesMonitorAtEdge
-        self.skyLight = skyLight
     }
 }
 
@@ -134,8 +124,7 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var springStiffness: Double
     /// PA-06: whether growing windows interpolate their size during flight.
     public var resize: ResizeMode
-    /// PF-O: `live` (default) needs the SkyLight transport, SM-01 `snapshot`
-    /// needs Screen Recording; both fall back to `ax`.
+    /// SM-01: `snapshot` (default) needs Screen Recording; falls back to `ax`.
     public var renderer: RendererKind
     /// When the focused window that grows gets its final size: `start`
     /// (default, first frame) or `end` (FI-03, final pass).
@@ -159,7 +148,7 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .live,
+        renderer: RendererKind = .snapshot,
         focusedGrow: FocusedGrowMode = .start,
         nativeZoom: Bool = true,
         closeGhost: Bool = false,

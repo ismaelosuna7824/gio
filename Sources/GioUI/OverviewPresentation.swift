@@ -41,18 +41,12 @@ public struct MotionOverview: Equatable, Sendable {
 }
 
 /// How windows move right now: the effective renderer and the curve.
-public func motionSummary(_ config: AnimationsSectionConfig, screenRecording: Bool, windowServer: Bool) -> MotionOverview {
+public func motionSummary(_ config: AnimationsSectionConfig, screenRecording: Bool) -> MotionOverview {
     guard config.enabled else {
         return MotionOverview(value: "Off", detail: "Windows move instantly")
     }
-    let value = switch effectiveRenderer(config: config, permission: screenRecording, windowServer: windowServer) {
-    case .live: "Live"
-    case .snapshot: "Snapshot"
-    case .ax: "Accessibility"
-    }
-    if config.renderer == .live, !windowServer {
-        return MotionOverview(value: value, detail: "Live needs SkyLight")
-    }
+    let renderer = effectiveRenderer(config: config, permission: screenRecording)
+    let value = renderer == .snapshot ? "Snapshot" : "Accessibility"
     if config.renderer == .snapshot, !screenRecording {
         return MotionOverview(value: value, detail: "Snapshot needs Screen Recording")
     }

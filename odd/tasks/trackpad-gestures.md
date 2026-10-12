@@ -214,6 +214,18 @@ read for the snap and focus rules.
   (one chain per window per settle). The fix lives in the SkyLight transport, so it applies to
   every `reconcile` pass that followed SkyLight moves (PF-L parks and reveals, PF-M flights),
   recorded as PF-N in `fluidity.md`.
+- PF-S removal (2026-10-12, `fluidity.md`): SkyLight is gone, so the SkyLight parts above no
+  longer apply. Removed from TG-03: the per-drain SkyLight transaction (`GestureFramePump`
+  now hands every changed window to its app's Accessibility motion lane, one submission per
+  app per drain, latest frame wins; that was the fallback path), the pump's
+  `submitWindowServerMotion` entry point, the ledger follow-up of invariant 10, and the
+  settle's same-size flights on SkyLight (`planMotionTransports(gestureSettle:)`); the settle
+  still runs on the motion player with the release velocity, never under the snapshot
+  overlay. Removed from TG-05 entirely: `alignWindowServer` after the final pass, the
+  SkyLight render repair (`planRenderRepairs`, `render repair ... via=skylight`) and
+  `WindowServerAlignmentTests`; the render check is back to the position and size nudges.
+  [INFERENCE] The drift TG-05 measured needs SkyLight transactions to exist, so without them
+  it should not occur (LIVE PENDING, TESTING.md 15i).
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -221,16 +233,16 @@ read for the snap and focus rules.
 - [x] TG-02 — `[gestures]` table: parse, validate (warnings keep defaults, finger conflicts),
   template, Settings card and form. Commit `8c41d40`.
 - [x] TG-03 — MultitouchSupport source, touch mailbox, interactive strip scroll through the
-  reconciler (SkyLight per drain, AX lanes fallback), niri snap, State commit, velocity
-  hand-off, gesture focus intent, workspace and overview swipes, Diagnostics card. Commit
-  `50d64dd`. LIVE PENDING (see below).
+  reconciler (SkyLight per drain, AX lanes fallback; since PF-S AX lanes only), niri snap,
+  State commit, velocity hand-off, gesture focus intent, workspace and overview swipes,
+  Diagnostics card. Commit `50d64dd`. LIVE PENDING (see below).
 - [x] TG-04 — macOS swipe conflicts from the trackpad and Dock preferences (pure Core, read-only
   adapter), warnings in Diagnostics, Overview and Settings, `gestures conflict=` log; no
   scroll on dwindle workspaces. Commit `ae25e26`. LIVE PENDING (TESTING.md 15i (j), (k)).
 - [x] TG-05 — After a swipe the WindowServer drew windows 33-1832 pt from the frames their apps
   reported; the final pass now aligns the WindowServer with every followed-up window, and
   the render check repairs drawn mismatches through SkyLight before nudging (PF-N). Commit
-  `b2ed03e`. LIVE PENDING (TESTING.md 15i (l), 15h).
+  `b2ed03e`. Removed with SkyLight by PF-S (Decisions). LIVE PENDING (TESTING.md 15i (l)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -289,3 +301,5 @@ read for the snap and focus rules.
   `bb7b169`, `7cfe28f` are gone).
 - TG-04 committed `ae25e26`.
 - TG-05 (with PF-N) committed `b2ed03e` on `main`, not pushed; LIVE PENDING.
+- 2026-10-12: PF-S removed SkyLight: TG-03's frames go through the Accessibility lanes only and
+  TG-05's alignment and SkyLight repair are gone (Decisions).

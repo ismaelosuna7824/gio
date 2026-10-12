@@ -256,7 +256,7 @@ struct OnboardingContent: View {
         permissionStep(
             icon: SectionIcon(symbol: "record.circle", tint: .pink, size: 64),
             title: "Screen Recording (Optional)",
-            why: "Only the overview thumbnails and the optional snapshot renderer and close ghost need it: they capture images of your windows. Gio records nothing and saves nothing. Skip this unless you want them.",
+            why: "Only the experimental snapshot renderer needs it: it animates captured images of your windows, then places them once. Gio records nothing and saves nothing. Skip this unless you want to try it.",
             phase: screenRecordingStepPhase(granted: screenRecordingGranted, requested: screenRecordingRequested),
             idleText: "Not granted. Open System Settings to turn it on, or skip this step.",
             showsProgress: false,

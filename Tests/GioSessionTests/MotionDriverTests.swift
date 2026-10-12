@@ -211,22 +211,15 @@ final class MotionDriverTests: XCTestCase {
         XCTAssertEqual(world.physical[a], CGRect(x: 400, y: 0, width: 800, height: 600))
     }
 
-    /// PF-O: the driver hands the run's renderer and its timer interval to
-    /// the player, so a live flight logs `renderer=live` with its hitches;
-    /// PF-R: both renderers log missed frames and hitches against the timer.
-    func testAPlayerFlightLogsItsRendererHitchesAndMissedFrames() {
-        driver.start([flight(a, duration: 0.05)], sink: sink, renderer: .live)
+    /// PF-R: the driver hands its timer interval to the player, so an AX
+    /// flight logs missed frames and hitches against the timer.
+    func testAFlightLogsItsHitchesAndMissedFrames() {
+        driver.start([flight(a, duration: 0.05)], sink: sink)
         advance(by: 0.1)
-        let live = world.logs.map(\.1).filter { $0.hasPrefix("anim done") }
-        XCTAssertEqual(live.count, 1)
-        XCTAssertTrue(live[0].contains(" missed=0 hitches=0 "), live[0])
-        XCTAssertTrue(live[0].contains("renderer=live"), live[0])
-
-        driver.start([flight(b, duration: 0.05)], sink: sink)
-        advance(by: 0.1)
-        let ax = world.logs.map(\.1).filter { $0.hasPrefix("anim done") }.last!
-        XCTAssertTrue(ax.contains(" missed=0 hitches=0 "), ax)
-        XCTAssertTrue(ax.contains("renderer=ax"), ax)
+        let lines = world.logs.map(\.1).filter { $0.hasPrefix("anim done") }
+        XCTAssertEqual(lines.count, 1)
+        XCTAssertTrue(lines[0].contains(" missed=0 hitches=0 "), lines[0])
+        XCTAssertTrue(lines[0].contains("renderer=ax"), lines[0])
     }
 
     func testStopClearsAnimatingPidsAndResetsTheCoalescer() {
