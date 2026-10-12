@@ -976,7 +976,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   `min size learned` (21:50:26, captured 21:50:27), the first Alt+F of Tern and of WhatsApp (captured 1 s later).
   Still LIVE PENDING: the SM-24 idle path (no gap over 2 s between keys in this session).
 
-- [x] SM-27 — Resize flights never stretch window content (niri-style clip and crossfade).
+- [x] SM-27 (`9392362`) — Resize flights never stretch window content (niri-style clip and crossfade).
   Report (2026-10-11, Spanish): "como son imágenes, al querer hacer grande o reacomodar las cosas se ve un poco
   como que se estira". Log: `snapshot scaled id=5195:4`, `snapshot scaled id=30401:8` right after
   `hotkey maximizeColumn`. Cause: the image layer used `contentsGravity .resize` with the animated bounds, so
