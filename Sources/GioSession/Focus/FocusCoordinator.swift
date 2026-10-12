@@ -457,13 +457,15 @@ public final class FocusCoordinator: @unchecked Sendable {
 
     /// FI-06: at motion start the keyboard follows the logical focus right
     /// away instead of after the animation; the final pass only re-asserts a
-    /// drift. `focusNow` raises the window and returns true when it failed.
+    /// drift. PF-Q: `focusNow` hands the raise off (the reconciler runs it on
+    /// its focus queue) and returns at once, so the motion's ticks are not
+    /// held; a refusal is logged by the reconciler (`focus failed`).
     public func focusAtMotionStart(
-        parked: Set<WindowID>, plans: [ParkingPlan], focusNow: (WindowID) -> Bool
+        parked: Set<WindowID>, plans: [ParkingPlan], focusNow: (WindowID) -> Void
     ) {
         if let target = focusIntent.takeImmediate(parked: parked, now: context.now()) {
-            let failed = focusNow(target)
-            context.log(.debug, "focus now id=\(target.pid):\(target.elementID) failed=\(failed)")
+            focusNow(target)
+            context.log(.debug, "focus now id=\(target.pid):\(target.elementID) async=true")
             if warpAfterFocus {
                 warpCursorToFocus(target, plans: plans)
             }

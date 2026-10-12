@@ -151,7 +151,7 @@ final class FocusCoordinatorTests: XCTestCase {
         focus = makeCoordinator(ownPID: 2)
         focusLogically(1)
         focus.requestIntent(if: true, previous: ids[0])
-        focus.focusAtMotionStart(parked: [], plans: plans(1)) { _ in false }
+        focus.focusAtMotionStart(parked: [], plans: plans(1)) { _ in }
         world.frontmost = 2
 
         let settle = focus.takeSettleFocus(parked: [])
@@ -438,12 +438,13 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertNil(focus.pendingIntentTarget(parked: [ids[1]]))
 
         var raised: [WindowID] = []
+        // PF-Q: the closure only hands the focus off (the reconciler runs it
+        // on its own queue); nothing waits for its result here.
         focus.focusAtMotionStart(parked: [], plans: plans(1)) {
             raised.append($0)
-            return false
         }
         XCTAssertEqual(raised, [ids[1]])
-        XCTAssertTrue(world.logs.contains { $0.1 == "focus now id=2:2 failed=false" })
+        XCTAssertTrue(world.logs.contains { $0.1 == "focus now id=2:2 async=true" })
         XCTAssertEqual(world.warps, [center(1)])
 
         // The app kept its other window focused: one reassert at the settle.

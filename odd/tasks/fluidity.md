@@ -213,6 +213,24 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   once). Rejected: OmniWM's explicit probe move of a foreign window (Gio's probe never moves a
   window by itself, PF-M); re-verifying after `verified` (a mid-session refusal would freeze
   flights until the final pass; not observed, left out).
+- PF-Q (smoothness, both player renderers): the motion's ticks run on the session queue,
+  which is also where FI-06 raised the focused window at every motion start and retarget.
+  `focusAXWindow` activates the app and polls until it is frontmost: in the 02:49 session
+  `hotkey focusLeft` to `focus now` took 17, 22, 18 and 12 ms for four presses (57.055/.072,
+  .201/.223, .352/.370, .475/.487), Xcode and Safari the slowest. The first tick of each flight
+  and the next tick of each retarget waited that long, and the elapsed-time sampling then jumped
+  the spring forward (1.5-5 frames at 120 Hz). Decision: `WindowReconciler.focusSoon` runs the
+  raise on a serial focus queue and returns at once; submission order is kept; refusals log
+  through the PF-I gate (now behind a lock); `reconcile` waits up to 300 ms for pending ones
+  before its own focus so the final pass stays the last word. `focus now ... failed=` became
+  `focus now ... async=true`. `dispatch`'s focus step (snapshot overlay passes) does not wait:
+  motion-start focus runs only for player motions, and a snapshot pass right after one would
+  focus the same logical target. Other jank sources checked: the tick itself makes no AX call,
+  reads nothing per tick except the probe's two `CGWindowListCopyWindowInfo` reads while a trial
+  runs, and logs nothing; the focus ring hop to main is async. Not done: display-link-driven
+  ticks (a `CADisplayLink` needs a run loop thread and a hop to the session queue per frame;
+  the measured stalls are session-queue work, which a display link would wait behind just the
+  same; the strict `DispatchSourceTimer` already keeps absolute deadlines, no drift).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -444,6 +462,18 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   then retry through the reconciler, an Accessibility write makes the probe forget). GREEN:
   `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7, Mac 19, MacOS
   95, Core 1916 (+13). LIVE PENDING: checklist 15h/15j (`skylight probe` lines).
+- [x] PF-Q — The motion-start focus runs off the session queue, so it no longer holds the first
+  tick of a flight or a retarget. Changes: `WindowReconciler.focusSoon`/`waitForFocusIdle`
+  (replace `focusNow`/`FocusNowResult`), focus queue, locked PF-I gate, `reconcile` waits for
+  pending focus before its own; `FocusCoordinator.focusAtMotionStart` takes a non-returning
+  closure and logs `focus now ... async=true`; `SessionHost.motionPass` calls `focusSoon`. RED
+  (compile): `swift build --build-tests` failed `value of type 'WindowReconciler<...>' has no
+  member 'focusSoon'` / `'waitForFocusIdle'` (`MotionStartFocusTests`: does not hold the
+  caller, ordered and before the settle focus, refusal logged once; `ReconcilerTests` and
+  `ReconcileFailureTests` ported from `focusNow`; `FocusCoordinatorTests` expects the new
+  line). GREEN: `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7,
+  Mac 19, MacOS 95, Core 1919 (+3); signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING:
+  checklist 15j (f), compare the gap from `hotkey` to the next tick.
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

@@ -1720,8 +1720,9 @@ final class SessionHost: @unchecked Sendable {
         openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
         // FI-06: the keyboard follows the logical focus right away instead
         // of after the animation; the final pass only re-asserts a drift.
+        // PF-Q: off the session queue, so the first tick is not held.
         focus.focusAtMotionStart(parked: Set(plans.flatMap { $0.parked.keys }), plans: plans) {
-            reconciler.focusNow($0) == .failed
+            reconciler.focusSoon($0)
         }
         if let zoomJob {
             nativeZoom.start(zoomJob)

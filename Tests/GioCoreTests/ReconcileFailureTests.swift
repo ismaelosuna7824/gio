@@ -148,7 +148,8 @@ final class ReconcileFailureTests: XCTestCase {
             reconciler.reconcile(frames: [:], focused: id(13), currentlyFocused: nil)
         }
         clock.set(2)
-        XCTAssertEqual(reconciler.focusNow(id(13)), .failed)
+        reconciler.focusSoon(id(13))
+        XCTAssertTrue(reconciler.waitForFocusIdle(timeout: 2))
         clock.set(3)
         _ = reconciler.collect(reconciler.dispatch(frames: [:], focused: id(13), currentlyFocused: nil))
         clock.set(61)

@@ -48,19 +48,21 @@ final class ReconcilerTests: XCTestCase {
         case unfocusable
     }
 
-    func testFocusNowFocusesWithoutWritingAnyFrame() {
+    func testFocusSoonFocusesWithoutWritingAnyFrame() {
         let actuator = MockActuator()
         let reconciler = WindowReconciler(actuator: actuator)
-        XCTAssertEqual(reconciler.focusNow(id(3)), .focused)
+        reconciler.focusSoon(id(3))
+        XCTAssertTrue(reconciler.waitForFocusIdle(timeout: 2))
         XCTAssertEqual(actuator.focuses, [id(3)])
         XCTAssertTrue(actuator.sets.isEmpty)
     }
 
-    func testFocusNowReportsAFailedFocus() {
+    func testFocusSoonSurvivesAFailedFocus() {
         let actuator = MockActuator()
         actuator.failingFocus = [id(3)]
         let reconciler = WindowReconciler(actuator: actuator)
-        XCTAssertEqual(reconciler.focusNow(id(3)), .failed)
+        reconciler.focusSoon(id(3))
+        XCTAssertTrue(reconciler.waitForFocusIdle(timeout: 2))
         XCTAssertTrue(actuator.focuses.isEmpty)
     }
 

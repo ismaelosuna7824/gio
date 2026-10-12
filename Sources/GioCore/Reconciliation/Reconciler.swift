@@ -126,8 +126,13 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     private let motion: MotionBook
     private let motionLanes: MotionLanes
     private var failureGate = FailureLogGate()
-    /// PF-I: refused focus lines, once per window per minute. Calling thread only.
+    /// PF-I: refused focus lines, once per window per minute. PF-Q: the
+    /// focus queue logs refusals too, so the gate has its own lock.
     private var focusFailureGate = FocusFailureLogGate()
+    private let focusFailureLock = NSLock()
+    /// PF-Q: motion-start focus calls (`focusSoon`), serial, off the caller.
+    private let focusQueue = DispatchQueue(label: "gio.focus", qos: .userInteractive)
+    private let focusPending = DispatchGroup()
     /// SM-12: the newest dispatched lane per app (supersession) and the
     /// newest dispatched focus step (moved behind a newer write of its
     /// window). Calling thread only.
@@ -344,6 +349,9 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         var focusMilliseconds = 0.0
         var focusCalls = 0
         if let focused, focused != currentlyFocused, parked[focused] == nil {
+            // PF-Q: a motion-start focus still on the focus queue lands
+            // first (bounded), so this pass's focus is the last word.
+            waitForFocusIdle(timeout: 0.3)
             let tracks = actuator.tracksCalls
             let callsBefore = tracks ? actuator.axCallCount(forPid: focused.pid) : 0
             let focusStart = clock()
@@ -688,30 +696,50 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         logFailures(report)
     }
 
-    /// FI-06: outcome of an immediate focus call.
-    public enum FocusNowResult: Equatable, Sendable {
-        case focused
-        case failed
+    /// FI-06 / PF-Q: focus one window at a motion's start, without waiting
+    /// for the motion lanes, without writing any frame and without holding
+    /// the caller: the call (`focusAXWindow` activates the app and polls
+    /// until it is frontmost, 12-45 ms live) runs on a serial focus queue,
+    /// in submission order, so the motion's first tick and a retarget's next
+    /// one are not held back. A refused focus is logged like any other
+    /// (PF-I gate). `reconcile` waits for these before its own focus, so
+    /// the final pass still focuses last.
+    public func focusSoon(_ id: WindowID) {
+        let runner = FocusRunner(
+            focus: { [actuator] in try actuator.focus(id: $0) },
+            failed: { [weak self] in self?.logFocusFailure($0, reason: $1) }
+        )
+        focusPending.enter()
+        focusQueue.async { [focusPending] in
+            defer { focusPending.leave() }
+            do {
+                try runner.focus(id)
+            } catch {
+                runner.failed(id, focusFailureKind(error))
+            }
+        }
     }
 
-    /// FI-06: focus one window right now, without waiting for the motion
-    /// lanes and without writing any frame. Keyboard focus follows the
-    /// logical focus at the start of an animation.
-    public func focusNow(_ id: WindowID) -> FocusNowResult {
-        do {
-            try actuator.focus(id: id)
-            return .focused
-        } catch {
-            logFocusFailure(id, reason: focusFailureKind(error))
-            return .failed
-        }
+    /// PF-Q: wait until every `focusSoon` call returned; false on timeout.
+    @discardableResult
+    public func waitForFocusIdle(timeout: TimeInterval) -> Bool {
+        focusPending.wait(timeout: .now() + timeout) == .success
+    }
+
+    /// PF-Q: a motion-start focus call carried to the focus queue. The
+    /// actuator is already called from lane threads; the failure log takes
+    /// its own lock.
+    private struct FocusRunner: @unchecked Sendable {
+        let focus: (WindowID) throws -> Void
+        let failed: (WindowID, String) -> Void
     }
 
     /// PF-I: a refused focus repeats once per key press onto the window;
     /// log it once per window per minute, with the reason and the count held
-    /// back since the previous line.
+    /// back since the previous line. PF-Q: called from the focus queue too.
     private func logFocusFailure(_ id: WindowID, reason: String) {
-        guard let suppressed = focusFailureGate.admit(id, now: clock()) else {
+        let admitted = focusFailureLock.withLock { focusFailureGate.admit(id, now: clock()) }
+        guard let suppressed = admitted else {
             return
         }
         GioLog.record(
