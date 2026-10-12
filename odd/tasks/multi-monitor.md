@@ -597,6 +597,12 @@ read for behaviour (GPL-2.0); no code taken. Non-goals: Dwindle, gestures, SkyLi
   `GioUI/Settings/FocusSettingsView.swift`, `SettingsPresentation.swift`; docs: README,
   `docs/USER_GUIDE.md`, `docs/ARCHITECTURE.md`, `docs/TESTING.md` (check 14c, limitation),
   AGENTS.md, this file.
+- NC-14 (`29bf70a`, `odd/tasks/niri-controls.md`) extends Move Edge to the window move
+  (`consume-or-expel-window-*` on Alt+Shift+H/L, `move-up/down`, `gio move`) through
+  `WorkspaceManager.moveWindowOrToDisplay`, with OmniWM's landing (stacked at the bottom of the
+  target column nearest the entering edge) and vertical crossing; `move-column-left/right` moved
+  to Alt+Shift+Comma/Period and keep this task's crossing. The MM-06 `gio move` column test was
+  replaced (the CLI is the window move now).
 
 ### Evidence
 - RED by compilation (`swift build --build-tests` before production code): `HotkeyAction` has

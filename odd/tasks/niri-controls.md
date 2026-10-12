@@ -85,6 +85,51 @@ Not yet authorized: dynamic vertical Niri workspaces, overview, trackpad scrolli
   wide keeps the padding, the reveal with `center-focused-column = always` keeps it centered,
   parse/default/rejection, the form writes it). GREEN: GioCoreTests 1672, other bundles as NC-12, all
   0 failures; signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING.
+- [ ] NC-14 (`29bf70a`, branch `feat/move-window`) — OmniWM's window move on Alt+Shift+H/L (user
+  request 2026-10-11: one display, OmniWM felt more fluid; Gio's log showed `hotkey moveColumnLeft`
+  then `applied=0` at the edge). OmniWM read for behaviour only (GPL-2.0, `CommandHandler.swift`
+  72-76, `NiriLayoutHandler+WindowMovement.swift`, `+WorkspaceInsertion.swift`,
+  `NiriLayoutEngine+ColumnConsumption.swift`); no code taken. Decisions:
+  - No new `HotkeyAction`: OmniWM's left/right move is niri's `consume-or-expel-window-left/right`
+    (stacked: own column on that side; alone: the neighbour's bottom, active) and its up/down is
+    `move-up/down`; they are composed, not duplicated. Alt+Shift+H/L bind
+    `consume-or-expel-window-left/right` (Alt+[ / Alt+] stay, niri's Mod+[ / ]).
+  - Edge: pure `WorkspaceManager.moveWindowOrToDisplay(_:frames:crossesAtEdge:geometry:)`
+    (`MoveEdge.swift`) runs the in-workspace step and only when it is a no-op and Move Edge
+    (`move-crosses-monitor-at-edge`) is on crosses to `displayNeighbour` (four directions).
+    Landing = OmniWM's (consume into the target column nearest the entering edge, at its bottom,
+    active), not MM-06's new-column landing: `WindowLanding.bottomOfFirstColumn` moving right,
+    `.bottomOfLastColumn` moving left, `.bottomOfFocusedColumn` up/down (OmniWM ranks by
+    geometry; Core has no window frames, the focused column is the revealed one); an empty or
+    dwindle target gets its own column (`moveWindow(toDisplay:landing:)`). One display or none
+    that way: unchanged, no wrap-around (as OmniWM).
+  - Move Edge applies to `consume-or-expel-window-*` (so Alt+[ / ] too) and `move-up/down`;
+    `move-column-left/right` keep their MM-06 crossing.
+  - Dwindle: the same actions swap with the geometric neighbour (`dwindleMove`) and cross from
+    the tree's edge (consume-or-expel used to be a no-op there).
+  - Bindings: `move-column-left/right` moved to Alt+Shift+Comma/Period (`<` / `>`), not
+    Alt+Shift+Left/Right: Option+Shift+arrows are word selection in every text field and the tap
+    would swallow them. Default bindings 77 -> 79. The user's `Alt+Shift+BracketLeft/Right` =
+    `swap-window-left/right` overrides are untouched (test).
+  - CLI: `gio move left|right|up|down` follows the hotkeys and is now the window move
+    (`moved window to the display on the right` when it crosses); before, left/right moved the
+    column. MM-06's `gio move` column test moved to `WindowMoveEdgeTests`.
+  RED: `swift build --build-tests` failed (`value of type 'WorkspaceManager' has no member
+  'moveWindowOrToDisplay'`); after the code, the old binding/count/CLI tests failed as expected
+  (`HotkeyTests`, `ShortcutCatalogTests`, `KeybindingEditingTests`, `CommandDispatcherTests`,
+  `DwindleActionsTests`, `MoveEdgeTests`, `ActionApplierTests` no-op list) and were updated.
+  Tests: `WindowMoveEdgeTests` (18: stacked expel L/R with toggle on/off, stacked in the edge
+  column stays inside, lone consume L/R at the bottom and active, edge with toggle off, the only
+  column on one display in four directions, cross right/left into the first/last column, empty
+  target, no display that way, up/down in the column, top/bottom crossing with the toggle,
+  empty workspace, dwindle swap and crossing, dwindle target, CLI, bindings and names, the
+  user's swap overrides); `ActionApplierTests` +4 (toggle off/on crossing and back, inside the
+  workspace, one display no-op, dwindle). GREEN: GioUITests 311 (53 skipped), GioSessionTests 432,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 95, GioCoreTests 1899, all 0 failures (the known
+  `LauncherPanelAnimationTests.testTheSlideInLandsOnTheRequestedFrame` passed in this run);
+  signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. Docs: USER_GUIDE tables,
+  README, ARCHITECTURE, TESTING (checks 4, 14c, new 14f), CONTRIBUTING count, config template,
+  Settings > Focus > Displays copy. LIVE PENDING (TESTING.md 14f).
 
 Evidence NC-01..05 (route: one delegated writer): ColumnWidthSpec (standard/proportion/points)
 resolved per display; savedWidthSpec for maximize; FullscreenBook + full-display frame below
@@ -181,3 +226,5 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-09-29: user live feedback "si parece mejor". Feature closed; next work in odd/tasks/desktop-app.md.
 - 2026-10-08: NC-08..NC-11 code-complete (`e564c8d`, parent commits). LIVE PENDING.
 - 2026-10-09: NC-08..NC-11 committed as `e564c8d` and pushed to `main`. LIVE PENDING (TESTING.md 7b).
+- 2026-10-11: NC-14 (window move on Alt+Shift+H/L, column move on Alt+Shift+< / >) committed as
+  `29bf70a` on `feat/move-window` (not pushed, not merged); LIVE PENDING (check 14f).
