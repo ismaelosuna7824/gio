@@ -318,8 +318,8 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   LIVE PENDING: checklist 15h (glide of leaving/entering columns and switch
   drop/rise with Chrome and Electron, `skylight probe result=verified`, fallback).
 - [x] PF-N — WindowServer aligned with the app after every followed-up SkyLight move, SkyLight
-  render repair before the nudges. Recorded and evidenced as TG-05 in `trackpad-gestures.md`
-  (same commit). LIVE PENDING: checklists 15h and 15i (l).
+  render repair before the nudges. Commit `b2ed03e`. Recorded and evidenced as TG-05 in
+  `trackpad-gestures.md`. LIVE PENDING: checklists 15h and 15i (l).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

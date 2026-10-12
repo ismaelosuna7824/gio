@@ -230,7 +230,7 @@ read for the snap and focus rules.
 - [x] TG-05 — After a swipe the WindowServer drew windows 33-1832 pt from the frames their apps
   reported; the final pass now aligns the WindowServer with every followed-up window, and
   the render check repairs drawn mismatches through SkyLight before nudging (PF-N). Commit
-  recorded in Progress. LIVE PENDING (TESTING.md 15i (l), 15h).
+  `b2ed03e`. LIVE PENDING (TESTING.md 15i (l), 15h).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -288,3 +288,4 @@ read for the snap and focus rules.
   `8c41d40`, `50d64dd`, docs `fdefbbb` (the pre-rebase hashes `4df4437`, `e5b29b7`,
   `bb7b169`, `7cfe28f` are gone).
 - TG-04 committed `ae25e26`.
+- TG-05 (with PF-N) committed `b2ed03e` on `main`, not pushed; LIVE PENDING.
