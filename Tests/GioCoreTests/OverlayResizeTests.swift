@@ -141,6 +141,35 @@ final class OverlayResizeTests: XCTestCase {
         XCTAssertEqual(middle.opacities(at: 1), [1, 0], "every face above the target fades out")
     }
 
+    func testAGrowingTargetThatCoversTheFlightIsOpaqueUnderTheFadingStartImage() {
+        // Live: growing with the target image fading in on top showed the
+        // backdrop (a black box) beside the start image until the fade ended.
+        let grow = OverlayCrossfade().retargeted(at: 0, toward: 1, underlay: true)
+        XCTAssertEqual(grow.order, [1, 0], "the target image is drawn under the start image")
+        XCTAssertEqual(grow.opacities(at: 0), [1, 1], "every point of the growing frame is covered from the first frame")
+        XCTAssertEqual(grow.opacities(at: 0.3)[0], 0.5, accuracy: 1e-12)
+        XCTAssertEqual(grow.opacities(at: 0.6), [0, 1])
+        XCTAssertEqual(grow.opacities(at: 1), [0, 1], "the last frame shows the target image alone")
+    }
+
+    func testShrinkingBackOverAnUnderlaidTargetFadesTheStartImageInOnTop() {
+        let grow = OverlayCrossfade().retargeted(at: 0, toward: 1, underlay: true)
+        let back = grow.retargeted(at: 0.3, toward: 0)
+        XCTAssertEqual(back.order, [1, 0])
+        XCTAssertEqual(back.opacities(at: 0)[0], 0.5, accuracy: 1e-12, "continuous: no pop")
+        XCTAssertEqual(back.opacities(at: 0)[1], 1, "the larger image keeps covering the shrinking frame")
+        XCTAssertEqual(back.opacities(at: 1), [1, 1])
+        let again = back.retargeted(at: 0.3, toward: 1)
+        XCTAssertEqual(again.opacities(at: 1), [0, 1], "growing again fades the image above it out")
+    }
+
+    func testOnlyAnImageAsLargeAsEveryFrameOfTheFlightCoversIt() {
+        XCTAssertTrue(overlayFaceCovers(image: maximized, start: column, end: maximized))
+        XCTAssertFalse(overlayFaceCovers(image: column, start: maximized, end: column), "shrinking: the start image covers")
+        XCTAssertTrue(overlayFaceCovers(image: CGSize(width: maximized.width - 1, height: maximized.height), start: column, end: maximized),
+                      "within the cache's 2 pt")
+    }
+
     func testWithoutAnImageOfTheNewSizeTheClosestFaceWins() {
         XCTAssertEqual(overlayClosestFace([column, maximized], to: CGSize(width: 1500, height: 900)), 1)
         XCTAssertEqual(overlayClosestFace([column, maximized], to: CGSize(width: 900, height: 900)), 0)

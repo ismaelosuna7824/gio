@@ -90,18 +90,23 @@ public func overlayResizeProgress(track: FlightTrack, geometry: LayerGeometry) -
     return 1
 }
 
-/// The images (faces) of one layer, bottom to top, and the opacity of each
-/// at the start and at the end of the current track. The bottom face (the
-/// image the layer started with) stays opaque, so nothing behind the
-/// window shows through mid-fade; a face fades in on top of it, or out.
+/// The images (faces) of one layer, their drawing order (`order`, face
+/// indices bottom to top) and the opacity of each at the start and at the
+/// end of the current track. The bottom face stays opaque, so nothing behind
+/// the window shows through mid-fade; a face fades in on top of it, or out.
+/// SM-28: a new face that covers every frame of the flight (a grow) goes
+/// under the others, opaque at once, and the faces above it fade out: the
+/// growing frame never shows what is behind the window.
 public struct OverlayCrossfade: Equatable, Sendable {
     public private(set) var from: [Double]
     public private(set) var to: [Double]
+    public private(set) var order: [Int]
 
     /// One face, opaque.
     public init() {
         from = [1]
         to = [1]
+        order = [0]
     }
 
     public var count: Int { from.count }
@@ -113,26 +118,41 @@ public struct OverlayCrossfade: Equatable, Sendable {
     }
 
     /// A new track from `progress` of the current one, fading to face
-    /// `index` (`count`: a new face on top, transparent at first). The faces
-    /// above it fade out, it fades in, the ones below keep their opacity
-    /// (hidden by it at the end). Continuous: the new track starts at the
-    /// opacities this one has at `progress`.
-    public func retargeted(at progress: Double, toward index: Int) -> OverlayCrossfade {
+    /// `index` (`count`: a new face, on top and transparent at first, or
+    /// with `underlay` at the bottom and opaque). The faces drawn above it
+    /// fade out, it fades in, the ones below keep their opacity (hidden by it
+    /// at the end). Continuous: the new track starts at the opacities this
+    /// one has at `progress`.
+    public func retargeted(at progress: Double, toward index: Int, underlay: Bool = false) -> OverlayCrossfade {
         var current = opacities(at: progress)
+        var crossfade = self
         if index >= current.count {
-            current.append(0)
+            current.append(underlay ? 1 : 0)
+            if underlay {
+                crossfade.order.insert(current.count - 1, at: 0)
+            } else {
+                crossfade.order.append(current.count - 1)
+            }
         }
         let face = min(index, current.count - 1)
+        let position = crossfade.order.firstIndex(of: face)!
         var next = current
-        for above in next.indices where above > face {
+        for above in crossfade.order[(position + 1)...] {
             next[above] = 0
         }
         next[face] = 1
-        var crossfade = self
         crossfade.from = current
         crossfade.to = next
         return crossfade
     }
+}
+
+/// SM-28: an image as large as every frame of a flight from `start` to
+/// `end` (within the cache's 2 pt; a spring overshoot is not counted): drawn
+/// under the others, it leaves nothing of the frame uncovered.
+public func overlayFaceCovers(image: CGSize, start: CGSize, end: CGSize, tolerance: CGFloat = 2) -> Bool {
+    let reach = overlayReach([start, end])
+    return image.width >= reach.width - tolerance && image.height >= reach.height - tolerance
 }
 
 /// The face to fade to when no image of the new size is cached: the one

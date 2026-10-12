@@ -200,15 +200,21 @@ private final class WindowLayers {
     /// or a new one on top), or without one to its face closest in size.
     func fade(to target: SnapshotFace<CGImage>?, progress: Double) {
         let index: Int
+        var underlay = false
         if let target {
             index = sources.firstIndex { $0.image === target.image } ?? sources.count
             if index == sources.count {
                 sources.append(target)
+                // SM-28: a growing window's new-size image goes under the
+                // start image, so the growing frame is covered from the start.
+                underlay = overlayFaceCovers(
+                    image: target.size, start: track.start.bounds.size, end: track.end.bounds.size
+                )
             }
         } else {
             index = overlayClosestFace(sources.map(\.size), to: track.end.bounds.size)
         }
-        crossfade = crossfade.retargeted(at: progress, toward: index)
+        crossfade = crossfade.retargeted(at: progress, toward: index, underlay: underlay)
         if faces.isEmpty, overlayDrawsDirect(
             image: sources[0].size, faces: sources.count, start: track.start.bounds.size, end: track.end.bounds.size
         ) {
@@ -219,6 +225,9 @@ private final class WindowLayers {
             let face = FaceLayers(source)
             faces.append(face)
             clip.addSublayer(face.group)
+        }
+        for (position, face) in crossfade.order.enumerated() {
+            faces[face].group.zPosition = CGFloat(position)
         }
         let opacities = crossfade.opacities(at: startedAt == nil ? 0 : 1)
         for (face, opacity) in zip(faces, opacities) {

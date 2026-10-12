@@ -1032,6 +1032,26 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   log `snapshot resize ... mode=crossfade|fill|crop`, never `snapshot scaled`; pure scrolls unchanged; no new
   main-thread hitches in `anim done` for resize flights.
 
+- [x] SM-28 (`<pending>`) — A growing window never shows a black box beside its start image.
+  Report (2026-10-12, Spanish, after SM-27): "ya no está mucho el bug que se desproporciona la imagen, pero ...
+  sale como un cuadro negro a un lado". Log: every Alt+F of Safari `snapshot resize id=5634:5 mode=crossfade`.
+  Cause: SM-27 kept the start image opaque at the bottom and faded the target-size image in on top, so until
+  the fade ended (60 % of the resize) the part of the growing frame beyond the start image showed only the
+  start face's fill, or nothing (a see-through edge: the backdrop's black fill) through a half-transparent
+  target image.
+  Decision (pure, `OverlayCrossfade`): faces get a drawing order (`order`, bottom to top). A new target face
+  that covers every frame of the flight (`overlayFaceCovers`: as large as the start and end sizes, 2 pt; a grow)
+  goes under the others, opaque at once (`retargeted(at:toward:underlay: true)`), and the faces above it fade
+  out: every point of the growing frame shows the new-size content from the first frame, and the start image
+  dissolves away over it with the same curve. Shrinking is unchanged (the larger start image covers, the
+  target fades in on top); a retarget back over an underlaid face fades the start image in on top again
+  (order kept, continuous). The overlay sets each face's `zPosition` from `order`.
+  RED (observed, compile): `OverlayResizeTests.testAGrowingTargetThatCoversTheFlightIsOpaqueUnderTheFadingStartImage`,
+  `testShrinkingBackOverAnUnderlaidTargetFadesTheStartImageInOnTop`,
+  `testOnlyAnImageAsLargeAsEveryFrameOfTheFlightCoversIt` (extra argument `underlay`, no `order`,
+  no `overlayFaceCovers`). GREEN: see Progress. LIVE PENDING (`docs/TESTING.md` 15h): Alt+F on Safari, Xcode and
+  a chat app (maximized size captured before, `mode=crossfade`): no dark area beside the window while it grows.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.
@@ -1078,3 +1098,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-08: SM-08..SM-21 committed as `fa27a03` (with PF-I) and pushed to `main`. Last live session (21:57-21:59 UTC, 293 presses, 79/80 flights as images): fps median 117 (min 110), single flights with a hitch 20 %, hand-off wait 0 ms (max 12), 8 holes (after `snapshot coverage stopped cap reached images=12`), cache 259 MB. Open: hidden-workspace images vs the cap (half resolution or a higher cap), Xcode window `31952:13` refusing focus (-25201).
 - 2026-10-08: SM-22 (hidden workspaces at half resolution, cap min(8 display-fulls, 3 % RAM), coverage stops only when a half image goes) uncommitted, all bundles green. Next: signed build, then the SM-22 LIVE PENDING list.
 - 2026-10-08: SM-22 committed as `fdca808` and pushed. Live (22:33-22:35 UTC, 332 presses, 70 workspace switches): 93/94 flights as images (1 fallback: first motion after launch), fps median 117 (min 108), single flights with a hitch 15 %, 0 holes, no `coverage stopped`, cache 255-267 MB, cap `pixels=67334400 ramMB=24576`, Chrome matched `by=order`.
+- 2026-10-12: live report of a black box beside a growing window (SM-27 crossfade); SM-28 (the covering target image goes under the fading start image) committed. Next: the SM-28 LIVE PENDING check.
