@@ -71,17 +71,17 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
     case .focusDown:
         return ActionInfo(id: "focus-down", name: "Focus down", summary: "Focus the window below in the current column.", category: .focus)
     case .moveColumnLeft:
-        return ActionInfo(id: "move-column-left", name: "Move column left", summary: "Swap the focused window's column with the one on its left; the column keeps its windows and sizes. With move-crosses-monitor-at-edge on, the first column goes to the display on the left.", category: .move)
+        return ActionInfo(id: "move-column-left", name: "Move column left", summary: "Swap the focused window's column with the one on its left; the column keeps its windows and sizes. With move-crosses-monitor-at-edge on, the first column goes to the display on the left. Alt+Shift+H moves only the window.", category: .move)
     case .moveColumnRight:
-        return ActionInfo(id: "move-column-right", name: "Move column right", summary: "Swap the focused window's column with the one on its right; the column keeps its windows and sizes. With move-crosses-monitor-at-edge on, the last column goes to the display on the right.", category: .move)
+        return ActionInfo(id: "move-column-right", name: "Move column right", summary: "Swap the focused window's column with the one on its right; the column keeps its windows and sizes. With move-crosses-monitor-at-edge on, the last column goes to the display on the right. Alt+Shift+L moves only the window.", category: .move)
     case .moveLeft:
         return ActionInfo(id: "move-window-left", name: "Move window into left column", summary: "Append the focused window to the left column (unbound by default; use consume-or-expel instead).", category: .move)
     case .moveRight:
         return ActionInfo(id: "move-window-right", name: "Move window into right column", summary: "Append the focused window to the right column (unbound by default; use consume-or-expel instead).", category: .move)
     case .moveUp:
-        return ActionInfo(id: "move-up", name: "Move window up", summary: "Move the focused window up within its column.", category: .move)
+        return ActionInfo(id: "move-up", name: "Move window up", summary: "Move the focused window up within its column. With move-crosses-monitor-at-edge on, from the column's top it goes to the display above.", category: .move)
     case .moveDown:
-        return ActionInfo(id: "move-down", name: "Move window down", summary: "Move the focused window down within its column.", category: .move)
+        return ActionInfo(id: "move-down", name: "Move window down", summary: "Move the focused window down within its column. With move-crosses-monitor-at-edge on, from the column's bottom it goes to the display below.", category: .move)
     case .workspace:
         return ActionInfo(id: "workspace N", name: "Go to workspace N", summary: "Switch to workspace 1 to 9.", category: .workspaces)
     case .moveToWorkspace:
@@ -109,9 +109,9 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
     case .centerColumn:
         return ActionInfo(id: "center-column", name: "Center column", summary: "Scroll the view so the focused column is centered.", category: .columns)
     case .consumeOrExpelLeft:
-        return ActionInfo(id: "consume-or-expel-window-left", name: "Consume or expel left", summary: "Pull the window into the left column, or push it out into its own column.", category: .columns)
+        return ActionInfo(id: "consume-or-expel-window-left", name: "Move window left", summary: "Consume or expel: a window sharing its column moves out into its own column on the left; a window alone in its column joins the bottom of the left column. With move-crosses-monitor-at-edge on, a lone window in the first column goes to the display on the left.", category: .move)
     case .consumeOrExpelRight:
-        return ActionInfo(id: "consume-or-expel-window-right", name: "Consume or expel right", summary: "Pull the window into the right column, or push it out into its own column.", category: .columns)
+        return ActionInfo(id: "consume-or-expel-window-right", name: "Move window right", summary: "Consume or expel: a window sharing its column moves out into its own column on the right; a window alone in its column joins the bottom of the right column. With move-crosses-monitor-at-edge on, a lone window in the last column goes to the display on the right.", category: .move)
     case .toggleOverview:
         return ActionInfo(id: "toggle-overview", name: "Workspace overview", summary: "Show every workspace of this display as a row of window thumbnails; pick one to go there.", category: .workspaces)
     case .focusMonitor(let direction):
@@ -256,11 +256,11 @@ private func withParameter(_ text: String, of action: HotkeyAction) -> String {
 private let catalogActions: [HotkeyAction] = [
     .focusLeft, .focusRight, .focusUp, .focusDown, .focusColumnFirst, .focusColumnLast,
     .focusWindowOrWorkspaceDown, .focusWindowOrWorkspaceUp,
+    .consumeOrExpelLeft, .consumeOrExpelRight, .moveUp, .moveDown,
     .moveColumnLeft, .moveColumnRight, .moveColumnToFirst, .moveColumnToLast,
-    .moveLeft, .moveRight, .moveUp, .moveDown, .swapWindowLeft, .swapWindowRight,
+    .moveLeft, .moveRight, .swapWindowLeft, .swapWindowRight,
     .switchPresetColumnWidth, .switchPresetColumnWidthBack, .shrinkColumnWidth, .growColumnWidth,
     .maximizeColumn, .expandColumnToAvailableWidth, .centerColumn, .centerVisibleColumns,
-    .consumeOrExpelLeft, .consumeOrExpelRight,
     .toggleFloating, .fullscreen,
     .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
     .workspace(1), .moveToWorkspace(1), .moveColumnToWorkspace(1),

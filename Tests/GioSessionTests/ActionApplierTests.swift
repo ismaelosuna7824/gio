@@ -257,6 +257,8 @@ final class ActionApplierTests: XCTestCase {
         let moveCases: [(HotkeyAction, FocusDirection)] = [
             (.moveLeft, .left), (.moveRight, .right), (.moveUp, .up), (.moveDown, .down),
             (.moveColumnLeft, .left), (.moveColumnRight, .right), (.swapWindowLeft, .left), (.swapWindowRight, .right),
+            // NC-14: the window move swaps in dwindle too.
+            (.consumeOrExpelLeft, .left), (.consumeOrExpelRight, .right),
         ]
         for (action, direction) in moveCases {
             setUp()
@@ -284,7 +286,7 @@ final class ActionApplierTests: XCTestCase {
     func testColumnOnlyActionsAreNoOpsInDwindle() {
         let noOps: [HotkeyAction] = [
             .centerColumn, .centerVisibleColumns, .expandColumnToAvailableWidth,
-            .consumeOrExpelLeft, .consumeOrExpelRight, .moveColumnToFirst, .moveColumnToLast,
+            .moveColumnToFirst, .moveColumnToLast,
         ]
         for action in noOps {
             setUp()
@@ -771,5 +773,78 @@ final class ActionApplierTests: XCTestCase {
         XCTAssertEqual(current.columns.map(\.windows), [[ids[0]], [ids[2]], [ids[1]]])
         XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left)
         XCTAssertFalse(effect.syncsShownWorkspace)
+    }
+
+    // MARK: Window move (NC-14)
+
+    private var worldFrames: [DisplayID: CGRect] {
+        Dictionary(world.displays.allDisplays().map { ($0.id, $0.frame) }, uniquingKeysWith: { first, _ in first })
+    }
+
+    func testTheWindowMoveCrossesFromTheEdgeOnlyWithTheToggle() {
+        twoDisplays()
+        world.focusColumn(2)
+        let start = world.session.manager
+        let off = apply(.consumeOrExpelRight)
+        XCTAssertEqual(world.session.manager, start, "off: the last column's lone window stays")
+        XCTAssertFalse(off.syncsShownWorkspace)
+
+        behavior.moveCrossesMonitorAtEdge = true
+        var expected = start
+        XCTAssertEqual(
+            expected.moveWindowOrToDisplay(.right, frames: worldFrames, crossesAtEdge: true), .crossedDisplay
+        )
+        let on = apply(.consumeOrExpelRight)
+        XCTAssertEqual(world.session.manager, expected)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right, "focus follows the window")
+        XCTAssertEqual(current.focusedWindow, ids[2])
+        XCTAssertTrue(on.syncsShownWorkspace)
+        XCTAssertTrue(on.carriesFocusIntent)
+
+        let back = apply(.consumeOrExpelLeft)
+        XCTAssertTrue(back.syncsShownWorkspace)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.left)
+        XCTAssertEqual(current.columns.map(\.windows), [[ids[0]], [ids[1], ids[2]]], "stacked into the last column")
+        XCTAssertEqual(current.focusedWindow, ids[2])
+    }
+
+    func testTheWindowMoveInsideTheWorkspaceIgnoresTheToggle() {
+        twoDisplays()
+        behavior.moveCrossesMonitorAtEdge = true
+        let effect = apply(.consumeOrExpelRight)
+        XCTAssertEqual(current.columns.map(\.windows), [[ids[0]], [ids[2], ids[1]]], "consumed at the bottom")
+        XCTAssertEqual(current.focusedWindow, ids[1])
+        XCTAssertFalse(effect.syncsShownWorkspace)
+        XCTAssertEqual(apply(.moveUp).syncsShownWorkspace, false)
+        XCTAssertEqual(current.columns[1].windows, [ids[1], ids[2]], "up inside the column")
+    }
+
+    func testTheWindowMoveWithOneDisplayDoesNothingAtTheEdge() {
+        behavior.moveCrossesMonitorAtEdge = true
+        world.focusColumn(0)
+        for action: HotkeyAction in [.consumeOrExpelLeft, .moveUp, .moveDown] {
+            let before = world.session.manager
+            let effect = apply(action)
+            XCTAssertEqual(world.session.manager, before, "\(action): one display, no wrap-around")
+            XCTAssertFalse(effect.syncsShownWorkspace, "\(action)")
+            XCTAssertNil(effect.warpsToDisplay, "\(action)")
+        }
+    }
+
+    func testTheWindowMoveCrossesFromTheTreesEdgeInDwindle() {
+        world = ReflowWorld(twoDisplays: true)
+        XCTAssertTrue(world.session.manager.setLayout(.dwindle))
+        ids = world.addColumns(2, on: ReflowWorld.left)
+        world.addColumns(1, pidBase: 200, on: ReflowWorld.right)
+        apply(.consumeOrExpelLeft)
+        XCTAssertEqual(current.dwindle.windows, [ids[1], ids[0]], "inside the tree: a swap")
+        apply(.consumeOrExpelRight)
+        let start = world.session.manager
+        XCTAssertFalse(apply(.consumeOrExpelRight).syncsShownWorkspace, "off: the tree's edge stops it")
+        XCTAssertEqual(world.session.manager, start)
+        behavior.moveCrossesMonitorAtEdge = true
+        XCTAssertTrue(apply(.consumeOrExpelRight).syncsShownWorkspace)
+        XCTAssertEqual(world.session.manager.focusedDisplay, ReflowWorld.right)
+        XCTAssertEqual(current.focusedWindow, ids[1])
     }
 }

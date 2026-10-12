@@ -524,16 +524,47 @@ public struct WorkspaceManager: Equatable, Sendable {
     /// its column (repairs as `moveWindow(_:to:)`) and lands as its own new
     /// column after the focused column of the workspace `display` shows;
     /// focus follows it. False without a focused window, for the focused
-    /// display or an unknown one.
+    /// display or an unknown one. NC-14: `landing` can stack it at the
+    /// bottom of a target column instead (`WindowLanding`).
     @discardableResult
-    public mutating func moveWindow(toDisplay display: DisplayID) -> Bool {
+    public mutating func moveWindow(toDisplay display: DisplayID, landing: WindowLanding = .ownColumnAfterFocused) -> Bool {
         guard display != focusedDisplay, let destinationID = activeID(on: display),
               let id = currentWorkspace().focusedWindow,
               let column = detach(id, from: currentID)
         else {
             return false
         }
-        insert(column, into: destinationID, at: .afterFocused)
+        let target = workspaces[destinationID]!
+        let stackInto: Int?
+        switch landing {
+        case .ownColumnAfterFocused:
+            stackInto = nil
+        case .bottomOfFirstColumn:
+            stackInto = 0
+        case .bottomOfLastColumn:
+            stackInto = target.columns.count - 1
+        case .bottomOfFocusedColumn:
+            stackInto = min(target.focusedColumn, target.columns.count - 1)
+        }
+        // A dwindle column holds one window (DW-01): there it is a new tile.
+        if let index = stackInto, index >= 0, index < target.columns.count, target.layout == .scrolling {
+            var dest = target
+            dest.columns[index].windows.append(id)
+            if let weight = column.heightWeights[id] {
+                dest.columns[index].heightWeights[id] = weight
+            }
+            dest.columns[index].focusedWindowIndex = dest.columns[index].windows.count - 1
+            dest.focusedColumn = index
+            dest.focusedWindow = id
+            store(dest)
+        } else {
+            let place: ColumnLanding = switch landing {
+            case .bottomOfFirstColumn: .first
+            case .bottomOfLastColumn: .last
+            case .ownColumnAfterFocused, .bottomOfFocusedColumn: .afterFocused
+            }
+            insert(column, into: destinationID, at: place)
+        }
         crossFocus(to: display)
         return true
     }

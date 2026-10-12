@@ -122,13 +122,15 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(column?.action, .moveColumnToWorkspace(1))
     }
 
-    func testAltShiftHLMoveColumnsAndOldStackingMovesAreUnbound() {
+    func testAltShiftHLMoveWindowsAndOldStackingMovesAreUnbound() {
         let entries = shortcutCatalog(configKeybindings: [])
         func keys(_ name: String) -> [String] {
             entries.first { $0.configName == name }?.bindings.map { $0.combo.describe() } ?? ["missing"]
         }
-        XCTAssertEqual(keys("move-column-left"), ["Alt+Shift+H"])
-        XCTAssertEqual(keys("move-column-right"), ["Alt+Shift+L"])
+        XCTAssertEqual(keys("move-column-left"), ["Alt+Shift+Comma"])
+        XCTAssertEqual(keys("move-column-right"), ["Alt+Shift+Period"])
+        XCTAssertEqual(Set(keys("consume-or-expel-window-left")), ["Alt+Shift+H", "Alt+BracketLeft"])
+        XCTAssertEqual(Set(keys("consume-or-expel-window-right")), ["Alt+Shift+L", "Alt+BracketRight"])
         XCTAssertEqual(keys("move-window-left"), [])
         XCTAssertEqual(keys("move-window-right"), [])
         XCTAssertEqual(keys("move-up"), ["Alt+Shift+K"])
@@ -173,7 +175,7 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertEqual(filterShortcuts(entries, query: "").count, entries.count)
         XCTAssertTrue(filterShortcuts(entries, query: "center").contains { $0.configName == "center-column" })
         XCTAssertTrue(filterShortcuts(entries, query: "FOCUS-LEFT").contains { $0.configName == "focus-left" })
-        XCTAssertTrue(filterShortcuts(entries, query: "alt+shift+h").contains { $0.configName == "move-column-left" })
+        XCTAssertTrue(filterShortcuts(entries, query: "alt+shift+h").contains { $0.configName == "consume-or-expel-window-left" })
         XCTAssertTrue(filterShortcuts(entries, query: "zzzzqq").isEmpty)
     }
 }

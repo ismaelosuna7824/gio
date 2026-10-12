@@ -14,11 +14,16 @@ public enum HotkeyAction: Equatable, Sendable {
     case moveLeft
     /// Legacy `move-window-right`; see `moveLeft`.
     case moveRight
-    /// Niri `move-column-left` (Alt+Shift+H): swap the column with its neighbour.
+    /// Niri `move-column-left` (Alt+Shift+Comma, `<`; Alt+Shift+H until
+    /// NC-14): swap the column with its neighbour.
     case moveColumnLeft
-    /// Niri `move-column-right` (Alt+Shift+L).
+    /// Niri `move-column-right` (Alt+Shift+Period, `>`).
     case moveColumnRight
+    /// `move-up` (Alt+Shift+K): the window trades places with the one above
+    /// in its column; from the column's top, with Move Edge, to the display
+    /// above (NC-14 `moveWindowOrToDisplay`).
     case moveUp
+    /// `move-down` (Alt+Shift+J); see `moveUp`.
     case moveDown
     case workspace(Int)
     case moveToWorkspace(Int)
@@ -42,9 +47,11 @@ public enum HotkeyAction: Equatable, Sendable {
     case maximizeColumn
     /// Niri `center-column` (Alt+C).
     case centerColumn
-    /// Niri `consume-or-expel-window-left` (Alt+BracketLeft).
+    /// Niri `consume-or-expel-window-left` (Alt+Shift+H and Alt+BracketLeft):
+    /// NC-14 the OmniWM window move; from the workspace's left edge, with
+    /// Move Edge, to the display on the left (`moveWindowOrToDisplay`).
     case consumeOrExpelLeft
-    /// Niri `consume-or-expel-window-right` (Alt+BracketRight).
+    /// Niri `consume-or-expel-window-right` (Alt+Shift+L and Alt+BracketRight).
     case consumeOrExpelRight
     /// Niri `toggle-overview` (Alt+O): open or close the workspace overview.
     /// The app handles it (a panel); the session state is left unchanged.
@@ -174,7 +181,9 @@ public struct HotkeyDispatcher: Equatable, Sendable {
     }
 }
 
-/// Plan defaults: Alt+HJKL focus, Alt+Shift+H/L move the column, Alt+Shift+J/K move the window down / up in its column, Alt+N workspace,
+/// Plan defaults: Alt+HJKL focus, Alt+Shift+H/L move the window (NC-14: consume-or-expel, the OmniWM move;
+/// the column move went to Alt+Shift+Comma/Period, `<` / `>`: Option+Shift+arrows select words in text
+/// fields), Alt+Shift+J/K move the window down / up in its column, Alt+N workspace,
 /// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
 /// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
@@ -202,8 +211,10 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt], "L"), .focusRight),
         (combo([.alt], "K"), .focusUp),
         (combo([.alt], "J"), .focusDown),
-        (combo([.alt, .shift], "H"), .moveColumnLeft),
-        (combo([.alt, .shift], "L"), .moveColumnRight),
+        (combo([.alt, .shift], "H"), .consumeOrExpelLeft),
+        (combo([.alt, .shift], "L"), .consumeOrExpelRight),
+        (combo([.alt, .shift], "Comma"), .moveColumnLeft),
+        (combo([.alt, .shift], "Period"), .moveColumnRight),
         (combo([.alt, .shift], "K"), .moveUp),
         (combo([.alt, .shift], "J"), .moveDown),
         (combo([.alt], "R"), .switchPresetColumnWidth),

@@ -48,8 +48,10 @@ public func defaultConfigTemplate() -> String {
     focus-follows-mouse = false
     # Warp the cursor to the focused window after a keyboard focus change.
     mouse-follows-focus = true
-    # With two or more displays: move-column-left / -right (Alt+Shift+H / L)
-    # at the first / last column send it to the display on that side.
+    # With two or more displays: the window move (Alt+Shift+H / J / K / L) from
+    # the workspace's edge sends the window to the display on that side,
+    # stacked into the column nearest that edge; the column move
+    # (Alt+Shift+< / >) at the first / last column sends the column there.
     move-crosses-monitor-at-edge = false
     # Move hidden and revealed windows through macOS's private WindowServer
     # interface (SkyLight) first: instant and in one step. Accessibility still
@@ -176,14 +178,17 @@ public func defaultConfigTemplate() -> String {
     # "set-column-width-minus" (Alt+Minus), "set-column-width-plus" (Alt+Equal),
     # "maximize-column" (Alt+F, toggles back to the previous width),
     # "center-column" (Alt+C, scrolls the focused column to the middle),
-    # "consume-or-expel-window-left" (Alt+[) and "...-right" (Alt+]): pull the
-    # window into the neighbouring column, or push it out of a stacked one.
+    # "consume-or-expel-window-left" / "-right" (Alt+Shift+H / L, also Alt+[
+    # and Alt+]) move the window: a stacked one gets its own column on that
+    # side, a lone one joins the bottom of the neighbouring column.
+    # "move-up" / "move-down" (Alt+Shift+K / J) move it within its column.
     # "fullscreen" (Alt+Shift+F; alias "fullscreen-window"; fills the display
     # under the menu bar, focusing another window restores the layout),
     # "toggle-floating" (Alt+Shift+Space; alias "toggle-window-floating").
-    # "move-column-left" / "move-column-right" (Alt+Shift+H / L) swap whole
-    # columns; "move-window-left" / "move-window-right" (unbound) append the
-    # window to the neighbouring column instead.
+    # "move-column-left" / "move-column-right" (Alt+Shift+Comma / Period, the
+    # < and > keys) swap whole columns; "move-window-left" /
+    # "move-window-right" (unbound) append the window to the neighbouring
+    # column instead.
     # "toggle-overview" (Alt+O) shows every workspace of the display as a row
     # of window thumbnails (thumbnails need Screen Recording).
     # Multiple displays: "focus-monitor-left|right|up|down" (Ctrl+Alt+H / L /

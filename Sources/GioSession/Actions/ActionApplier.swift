@@ -101,10 +101,8 @@ public enum ActionApplier {
             } else {
                 commit(moveColumn(in: workspace, direction: direction), over: workspace, manager: &manager)
             }
-        case .moveUp:
-            narrowMove(in: &workspace, .up, manager: &manager)
-        case .moveDown:
-            narrowMove(in: &workspace, .down, manager: &manager)
+        case .moveUp, .moveDown, .consumeOrExpelLeft, .consumeOrExpelRight:
+            effect.syncsShownWorkspace = moveWindowOrToDisplay(action, manager: &manager, context: context, geometry: nil)
         case .workspace(let number):
             manager.switchTo(number)
             effect.syncsShownWorkspace = true
@@ -153,10 +151,6 @@ public enum ActionApplier {
         case .maximizeColumn:
             effect.zoomRequest = workspace
             commit(toggleMaximizeFocusedColumn(in: workspace), over: workspace, manager: &manager)
-        case .consumeOrExpelLeft:
-            commit(consumeOrExpelWindow(in: workspace, direction: .left), over: workspace, manager: &manager)
-        case .consumeOrExpelRight:
-            commit(consumeOrExpelWindow(in: workspace, direction: .right), over: workspace, manager: &manager)
         case .centerColumn:
             let viewport = focusedViewport(manager: manager, context: context)
             commit(
@@ -328,10 +322,12 @@ public enum ActionApplier {
             move(.left)
         case .moveRight, .swapWindowRight:
             move(.right)
-        case .moveUp:
-            move(.up)
-        case .moveDown:
-            move(.down)
+        case .moveUp, .moveDown, .consumeOrExpelLeft, .consumeOrExpelRight:
+            // NC-14: a swap with the geometric neighbour, and Move Edge from the tree's edge.
+            let measured = geometry()
+            effect.syncsShownWorkspace = moveWindowOrToDisplay(
+                action, manager: &manager, context: context, geometry: measured
+            )
         case .moveColumnLeft, .moveColumnRight:
             let direction: FocusDirection = action == .moveColumnLeft ? .left : .right
             if context.behavior.moveCrossesMonitorAtEdge {
@@ -397,7 +393,7 @@ public enum ActionApplier {
             commit(dwindlePreselect(in: workspace, direction: direction), over: workspace, manager: &manager)
         case .dwindlePreselectClear:
             commit(dwindlePreselect(in: workspace, direction: nil), over: workspace, manager: &manager)
-        case .consumeOrExpelLeft, .consumeOrExpelRight, .centerColumn, .centerVisibleColumns,
+        case .centerColumn, .centerVisibleColumns,
              .expandColumnToAvailableWidth, .moveColumnToFirst, .moveColumnToLast:
             // Column-only: every tile is on screen and there are no stacks.
             break
@@ -463,6 +459,25 @@ public enum ActionApplier {
             return false
         }
         return change(&manager, target)
+    }
+
+    /// NC-14: `consume-or-expel-window-left/right` and `move-up/down` are the
+    /// OmniWM window move (`WorkspaceManager.moveWindowOrToDisplay`): inside
+    /// the workspace as before, across to the neighbouring display from the
+    /// edge with `move-crosses-monitor-at-edge`. True when it crossed.
+    private static func moveWindowOrToDisplay(
+        _ action: HotkeyAction, manager: inout WorkspaceManager, context: Context, geometry: DwindleGeometry?
+    ) -> Bool {
+        let direction: FocusDirection = switch action {
+        case .consumeOrExpelLeft: .left
+        case .consumeOrExpelRight: .right
+        case .moveUp: .up
+        default: .down
+        }
+        return manager.moveWindowOrToDisplay(
+            direction, frames: displayFrames(context), crossesAtEdge: context.behavior.moveCrossesMonitorAtEdge,
+            geometry: geometry
+        ) == .crossedDisplay
     }
 
     /// Full display frames, the geometry `displayNeighbour` works on (MM-01).

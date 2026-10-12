@@ -36,7 +36,7 @@ final class KeybindingEditingTests: XCTestCase {
         let dispatcher = config.makeDispatcher()
         XCTAssertNil(dispatcher.action(for: combo("Alt+H")))
         XCTAssertEqual(dispatcher.action(for: combo("Alt+L")), .focusRight)
-        XCTAssertEqual(dispatcher.action(for: combo("Alt+Shift+H")), .moveColumnLeft)
+        XCTAssertEqual(dispatcher.action(for: combo("Alt+Shift+H")), .consumeOrExpelLeft)
         XCTAssertEqual(dispatcher.bindingCount, defaultHotkeyBindings().count - 1)
     }
 

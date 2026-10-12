@@ -147,11 +147,11 @@ struct FocusSettingsView: View {
     }
 
     private var displaysCard: some View {
-        SectionCard("Displays", footer: "Needs a display on that side; otherwise the column stays at the edge.") {
+        SectionCard("Displays", footer: "Needs a display on that side; otherwise the window or column stays at the edge.") {
             CardRow(divider: false) {
                 ToggleRow(
-                    "Move columns across displays at the edge",
-                    caption: "Move column left / right (Alt+Shift+H / L) from the first or last column sends it to the next display, entering by the edge it crossed.",
+                    "Move windows and columns across displays at the edge",
+                    caption: "Move window (Alt+Shift+H / J / K / L) from the workspace's edge sends the window to the next display, stacked into the column nearest that edge; move column (Alt+Shift+< / >) from the first or last column sends the column, entering by the edge it crossed.",
                     isOn: current.moveCrossesMonitorAtEdge
                 )
             }

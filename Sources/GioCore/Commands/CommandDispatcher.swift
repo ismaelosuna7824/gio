@@ -132,35 +132,26 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
     case .move(let direction):
         let before = session.manager.currentWorkspace()
         let geometry = before.layout == .dwindle ? session.dwindleGeometry : nil
-        // Same mapping as the hotkeys: left/right move the column (FI-06),
-        // across the strip's edge with the MM-06 toggle. DW-02: in dwindle
-        // every direction swaps with the geometric neighbour.
-        if direction == .left || direction == .right, session.config.behavior.moveCrossesMonitorAtEdge {
-            switch session.manager.moveColumnOrToDisplay(direction, frames: session.displayFrames, geometry: geometry) {
-            case .unchanged:
-                return "move unchanged (no target)"
-            case .withinWorkspace:
-                return "moved column=\(session.manager.currentWorkspace().focusedColumn)"
-            case .crossedDisplay:
-                return "moved column to the display on the \(direction == .left ? "left" : "right")"
-            }
-        }
-        let after: Workspace
-        if let geometry {
-            guard case .moved(let moved) = dwindleMove(in: before, direction: direction, geometry: geometry) else {
-                return "move unchanged (no target)"
-            }
-            after = moved
-        } else {
-            after = direction == .left || direction == .right
-                ? moveColumn(in: before, direction: direction)
-                : moveWindow(in: before, direction: direction)
-        }
-        guard after != before else {
+        // Same mapping as the hotkeys (NC-14: Alt+Shift+H/J/K/L): the OmniWM
+        // window move, across the workspace's edge with the MM-06 toggle.
+        // DW-02: in dwindle every direction swaps with the geometric neighbour.
+        switch session.manager.moveWindowOrToDisplay(
+            direction, frames: session.displayFrames,
+            crossesAtEdge: session.config.behavior.moveCrossesMonitorAtEdge, geometry: geometry
+        ) {
+        case .unchanged:
             return "move unchanged (no target)"
+        case .withinWorkspace:
+            return "moved column=\(session.manager.currentWorkspace().focusedColumn)"
+        case .crossedDisplay:
+            let side = switch direction {
+            case .left: "on the left"
+            case .right: "on the right"
+            case .up: "above"
+            case .down: "below"
+            }
+            return "moved window to the display \(side)"
         }
-        session.manager.update(after)
-        return "moved column=\(after.focusedColumn)"
     case .workspace(let number):
         guard WorkspaceManager.range.contains(number), session.manager.switchTo(number) else {
             return "invalid workspace (1...9)"

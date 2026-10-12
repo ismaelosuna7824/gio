@@ -85,8 +85,9 @@ final class CommandDispatcherTests: XCTestCase {
         var two = session.manager.currentWorkspace()
         two.columns.append(Column(id: ColumnID(2), width: 300, windows: [other]))
         session.manager.update(two)
-        XCTAssertTrue(dispatch(.move(.right), session: &session).contains("moved column=1"))
-        XCTAssertEqual(session.manager.currentWorkspace().columns.map(\.id), [ColumnID(2), ColumnID(1)])
+        // NC-14: the window move, so a lone window joins its neighbour's column.
+        XCTAssertTrue(dispatch(.move(.right), session: &session).contains("moved column=0"))
+        XCTAssertEqual(session.manager.currentWorkspace().columns.map(\.windows), [[other, window.id]])
         XCTAssertTrue(dispatch(.help, session: &session).contains("gio focus"))
         XCTAssertTrue(dispatch(.restart, session: &session).contains("daemon"))
     }

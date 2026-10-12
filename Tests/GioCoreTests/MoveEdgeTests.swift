@@ -256,25 +256,6 @@ final class MoveEdgeTests: XCTestCase {
         XCTAssertEqual(motionCause(for: .moveColumnRightOrToMonitorRight), .windowMovement)
         XCTAssertEqual(motionCause(for: .focusColumnOrMonitorLeft), .viewScroll)
         XCTAssertEqual(motionCause(for: .focusColumnOrMonitorRight), .viewScroll)
-        XCTAssertEqual(HotkeyDispatcher().bindingCount, 77, "DW-02 added two")
-    }
-
-    // MARK: - CLI
-
-    func testGioMoveCrossesTheEdgeOnlyWithTheToggle() {
-        var session = CommandSession(manager: twoDisplays(focused: 2))
-        session.displayFrames = frames
-        let before = session.manager
-        XCTAssertEqual(dispatch(.move(.right), session: &session), "move unchanged (no target)")
-        XCTAssertEqual(session.manager, before, "off: the edge stops the column")
-
-        var config = GioConfig()
-        config.behavior.moveCrossesMonitorAtEdge = true
-        session.config = config
-        XCTAssertEqual(dispatch(.move(.right), session: &session), "moved column to the display on the right")
-        XCTAssertEqual(session.manager.focusedDisplay, right)
-        XCTAssertEqual(session.manager.currentWorkspace().focusedColumn, 0)
-        XCTAssertEqual(dispatch(.move(.right), session: &session), "moved column=1", "inside the strip as before")
-        XCTAssertEqual(session.manager.focusedDisplay, right)
+        XCTAssertEqual(HotkeyDispatcher().bindingCount, 79, "NC-14 added two")
     }
 }

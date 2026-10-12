@@ -36,18 +36,26 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 77)
+        XCTAssertEqual(dispatcher.bindingCount, 79)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
         )
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "L")),
-            .moveColumnRight
+            .consumeOrExpelRight
         )
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "H")),
+            .consumeOrExpelLeft
+        )
+        XCTAssertEqual(
+            dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "Comma")),
             .moveColumnLeft
+        )
+        XCTAssertEqual(
+            dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "Period")),
+            .moveColumnRight
         )
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "J")),
@@ -140,7 +148,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultCombosAreUnique() {
         let combos = defaultHotkeyBindings().map(\.0)
-        XCTAssertEqual(combos.count, 77)
+        XCTAssertEqual(combos.count, 79)
         XCTAssertEqual(Set(combos).count, combos.count, "a default combo is bound twice")
         XCTAssertFalse(combos.contains(launcherHotkey), "Alt+Space stays the launcher")
     }

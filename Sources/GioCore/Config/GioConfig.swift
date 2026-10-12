@@ -88,9 +88,11 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
     /// Consumed by the session host (HD-04): hover focus and cursor warp.
     public var focusFollowsMouse: Bool
     public var mouseFollowsFocus: Bool
-    /// MM-06 `move-crosses-monitor-at-edge`: `move-column-left/right` (and
-    /// `gio move left/right`) at the strip's edge send the column to the
-    /// neighbouring display, like `move-column-*-or-to-monitor-*`.
+    /// MM-06 `move-crosses-monitor-at-edge`: `move-column-left/right` at the
+    /// strip's edge send the column to the neighbouring display, like
+    /// `move-column-*-or-to-monitor-*`; NC-14: the window move
+    /// (`consume-or-expel-window-*`, `move-up/down`, `gio move`) at the
+    /// workspace's edge sends the window (`moveWindowOrToDisplay`).
     public var moveCrossesMonitorAtEdge: Bool
     /// PF-L: `skylight`: hidden and revealed windows move through the private
     /// WindowServer transport first when it is available (default on);
