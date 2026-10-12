@@ -163,6 +163,11 @@ final class SessionHost: @unchecked Sendable {
         Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [SnapshotDisplayFlight], [CGRect], OverlayDecorations
     ) -> Void)?
     var overlayEnd: (() -> Void)?
+    /// SM-30: a resized layer's fresh image of its landing size (token,
+    /// faces), and the hand-off that fades the resized layers out (ids,
+    /// duration) instead of `overlayEnd`.
+    var overlayFreshen: ((Int, [WindowID: SnapshotFace<CGImage>]) -> Void)?
+    var overlayFade: ((Set<WindowID>, TimeInterval) -> Void)?
     /// Main thread: removes a running flight at once (mouse down); true when one ran.
     var overlayAbortForMouseDown: (() -> Bool)?
     /// NA-03 close ghost hooks, set once by the app before `start()`; invoked
@@ -391,6 +396,15 @@ final class SessionHost: @unchecked Sendable {
                     Task.detached {
                         answer(await snapshotCapturer.paintCheck(
                             windows: probes, displays: screens, primaryDisplayHeight: primary
+                        ))
+                    }
+                },
+                // SM-30: a resized window captured again at its target size mid-flight.
+                captureFresh: { [unowned self, snapshotCapturer] id, probe, answer in
+                    let (screens, primary) = displayParameters.captureScreens
+                    Task.detached {
+                        answer(await snapshotCapturer.freshCapture(
+                            id, probe: probe, displays: screens, primaryDisplayHeight: primary
                         ))
                     }
                 },
@@ -2216,6 +2230,14 @@ private final class HostOverlayPort: OverlayPort {
 
     func endFlight() {
         host.overlayEnd?()
+    }
+
+    func freshenFlight(token: Int, faces: [WindowID: SnapshotFace<CGImage>]) {
+        host.overlayFreshen?(token, faces)
+    }
+
+    func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval) {
+        host.overlayFade?(windows, duration)
     }
 }
 

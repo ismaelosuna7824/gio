@@ -30,8 +30,8 @@ public struct CapturedSnapshot: @unchecked Sendable {
     public let image: CGImage
     public let frame: CGRect
     public let scale: CGFloat
-    /// SM-27: the flat fill a resize shows where the frame outgrows the
-    /// image (`snapshotEdgeFill` of its right edge); nil for a see-through edge.
+    /// SM-27/SM-30: the flat fill a resize shows where the frame outgrows the
+    /// image (`snapshotContentFill` of its right half); nil when see-through.
     public let fill: ThemeColor?
 }
 
@@ -205,6 +205,22 @@ public final class SnapshotCapturer: @unchecked Sendable {
         return await paintCheckSCK(windows: windows, primaryDisplayHeight: primaryDisplayHeight)
     }
 
+    /// SM-30: one capture of `id` at its probe's target frame, full
+    /// resolution, for its layer to fade to mid-flight: the SM-29 verdict
+    /// (size, blank, grown strips), its fill and sparse samples, and what
+    /// the stale test compares (the part both sizes share, in the start
+    /// image and in the capture, when it shrank; the cached target image).
+    /// Nil when the window cannot be matched or captured. Nothing is cached
+    /// here; one debug line per capture.
+    public func freshCapture(
+        _ id: WindowID, probe: SnapshotFreshProbe<CGImage>, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+    ) async -> SnapshotFreshRead<CGImage>? {
+        guard #available(macOS 14.0, *) else {
+            return nil
+        }
+        return await freshCaptureSCK(id, probe: probe, displays: displays, primaryDisplayHeight: primaryDisplayHeight)
+    }
+
     /// SM-13/SM-17/SM-20: matches `managed` (learned ids first, then
     /// frames), breaks the ties of same-size windows by title, then by
     /// stacking order, and teaches the book: the on-screen matches when
@@ -348,6 +364,59 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 + "ms=\(Int(millis.rounded()))"
         )
         return answer
+    }
+
+    @available(macOS 14.0, *)
+    private func freshCaptureSCK(
+        _ id: WindowID, probe: SnapshotFreshProbe<CGImage>, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+    ) async -> SnapshotFreshRead<CGImage>? {
+        let began = DispatchTime.now().uptimeNanoseconds
+        let frame = probe.paint.frame
+        let candidates = windowServerSnapshotCandidates(pids: [id.pid], displayHeight: primaryDisplayHeight)
+        guard case .matched(let windowID)? = match([id: frame], candidates: candidates, learningOn: nil)[id],
+              let window = await ensureCache(managed: [id], needed: [windowID], needsDisplays: false).cache?
+                  .windows[windowID]
+        else {
+            GioLog.record(.debug, "snapshot fresh capture id=\(id.pid):\(id.elementID) ms=0 ok=false")
+            return nil
+        }
+        let image = try? await Self.captureWindow(
+            window, size: frame.size, scale: backingScale(for: frame, displays: displays)
+        )
+        let millis = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
+        GioLog.record(
+            .debug, "snapshot fresh capture id=\(id.pid):\(id.elementID) ms=\(Int(millis.rounded())) ok=\(image != nil)"
+        )
+        guard let image else {
+            return nil
+        }
+        let windowSize = candidates.first { $0.windowID == windowID }?.frame.size
+        let samples = snapshotSamples(of: image)
+        let strips = probe.paint.resizedFrom.map {
+            snapshotGrownStrips(from: $0, to: frame.size, pixelWidth: image.width, pixelHeight: image.height)
+        } ?? []
+        let paint = snapshotPaintVerdict(
+            probe.paint, windowSize: windowSize, samples: samples, dense: { snapshotDenseSamples(of: image) },
+            strips: strips.map { snapshotStripSamples(of: image, in: $0) }
+        )
+        var startRegion: [UInt32]?
+        var freshRegion: [UInt32]?
+        if let start = probe.start, let region = snapshotFreshRegion(start: start.size, target: frame.size) {
+            startRegion = snapshotRegionSamples(
+                of: start.image,
+                in: snapshotRegionPixels(
+                    region, of: start.size, pixelWidth: start.image.width, pixelHeight: start.image.height
+                )
+            )
+            freshRegion = snapshotRegionSamples(
+                of: image, in: snapshotRegionPixels(region, of: frame.size, pixelWidth: image.width, pixelHeight: image.height)
+            )
+        }
+        return SnapshotFreshRead(
+            image: image, fill: snapshotContentFill(samples: snapshotContentSamples(of: image)), windowSize: windowSize,
+            paint: paint, samples: samples, startRegion: startRegion, freshRegion: freshRegion,
+            cached: probe.cached.map { snapshotSamples(of: $0.image) }
+        )
     }
 
     @available(macOS 14.0, *)
@@ -558,7 +627,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
             let scale = captureScale(request, id: id, frame: frame)
             snapshots[id] = CapturedSnapshot(
                 id: id, image: image, frame: frame, scale: scale,
-                fill: snapshotEdgeFill(samples: snapshotEdgeSamples(of: image, pixelsPerPoint: scale))
+                fill: snapshotContentFill(samples: snapshotContentSamples(of: image))
             )
         }
         var backdrops: [UInt32: CapturedBackdrop] = [:]
@@ -808,7 +877,7 @@ func snapshotDenseSamples(of image: CGImage, grid: Int = 64) -> [UInt32] {
 /// SM-29: the samples of one grown strip (`snapshotGrownStrips`, image
 /// pixels, top-left origin) for `snapshotStripUnpainted`: the crop drawn
 /// into at most 64x64 (nearest neighbour; every pixel of a small strip), in
-/// sRGB like the SM-27 edge fill it is compared with. Empty when the strip
+/// sRGB like the fill it is compared with. Empty when the strip
 /// is outside the image.
 func snapshotStripSamples(of image: CGImage, in strip: CGRect, grid: Int = 64) -> [UInt32] {
     guard let crop = image.cropping(to: strip), let space = CGColorSpace(name: CGColorSpace.sRGB) else {
@@ -817,17 +886,28 @@ func snapshotStripSamples(of image: CGImage, in strip: CGRect, grid: Int = 64) -
     return snapshotDrawSamples(crop, width: min(crop.width, grid), height: min(crop.height, grid), space: space)
 }
 
-/// SM-27: 64 samples along the capture's edge line (`snapshotEdgeLine`,
-/// pure) for `snapshotEdgeFill`: a one-pixel-wide crop drawn into a 1x64
-/// bitmap (nearest neighbour, cost independent of the image size), in sRGB
-/// like the overlay's colours. Empty when the image is too small.
-func snapshotEdgeSamples(of image: CGImage, pixelsPerPoint: CGFloat, count: Int = 64) -> [UInt32] {
-    guard let line = snapshotEdgeLine(
-        pixelWidth: image.width, pixelHeight: image.height, pixelsPerPoint: pixelsPerPoint
-    ), let edge = image.cropping(to: line), let space = CGColorSpace(name: CGColorSpace.sRGB) else {
+/// SM-30: the samples `snapshotContentFill` picks the fill from: the right
+/// half of the capture (left sidebars keep their width when a window grows)
+/// drawn into 32x64 (nearest neighbour, cost independent of the image
+/// size), in sRGB like the overlay's colours.
+func snapshotContentSamples(of image: CGImage) -> [UInt32] {
+    let left = image.width / 2
+    guard let half = image.cropping(to: CGRect(x: left, y: 0, width: image.width - left, height: image.height)),
+          let space = CGColorSpace(name: CGColorSpace.sRGB)
+    else {
         return []
     }
-    return snapshotDrawSamples(edge, width: 1, height: count, space: space)
+    return snapshotDrawSamples(half, width: 32, height: 64, space: space)
+}
+
+/// SM-30: `snapshotSamples` of `region` of the image (pixels, top-left
+/// origin, `snapshotRegionPixels`), for the stale-layout test. Empty when
+/// the region is outside the image.
+func snapshotRegionSamples(of image: CGImage, in region: CGRect) -> [UInt32] {
+    guard let crop = image.cropping(to: region) else {
+        return []
+    }
+    return snapshotSamples(of: crop)
 }
 
 private func snapshotDrawSamples(

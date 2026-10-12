@@ -65,6 +65,14 @@ public protocol OverlayPort: AnyObject {
     )
     /// Remove the overlay at once.
     func endFlight()
+    /// SM-30: fresh images of resized layers' landing sizes, captured
+    /// mid-flight: each layer fades to its image on top (timed).
+    func freshenFlight(token: Int, faces: [WindowID: SnapshotFace<CGImage>])
+    /// SM-30: the hand-off of a flight with resized windows: the backdrop and
+    /// every other layer go at once, the layers of `windows` fade out over
+    /// the real windows in `duration`. A mouse down or a new flight removes
+    /// them at once.
+    func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval)
 }
 
 /// What `drive` decided for this animated pass.
@@ -99,7 +107,12 @@ public enum SnapshotDrive: Equatable, Sendable {
 /// and apps that painted `PaintTrustBook.cleanChecksToTrust` times in a row
 /// are not checked. SM-29: a resized window is always checked, with the
 /// size it grew from and its background (`SnapshotPaintProbe`), so a partly
-/// painted or stale window holds the overlay too. Session queue only;
+/// painted or stale window holds the overlay too. SM-30: every resized
+/// layer's window is captured again at its target size `firstDelay` after
+/// its write (`SnapshotFreshTracker`, `captureFresh`); a fresh read goes to
+/// the overlay (the layer fades to it) and into the cache; at the hand-off
+/// the resized layers fade out over the real windows (`fadeOutFlight`)
+/// instead of a hard cut. Session queue only;
 /// `primed`/`deadlineArmed`/`layersFinished`/`aborted` are called from main
 /// and hop on.
 public final class SnapshotFlightController: @unchecked Sendable {
@@ -133,6 +146,12 @@ public final class SnapshotFlightController: @unchecked Sendable {
         public var checkPaint: (
             [WindowID: SnapshotPaintProbe], @escaping @Sendable (SnapshotPaintAnswer) -> Void
         ) -> Void
+        /// SM-30: one full-resolution capture of a resized window at its
+        /// target frame (`SnapshotFreshProbe`), off the session queue;
+        /// `answer` (nil: not matched or not captured) may run on any thread.
+        public var captureFresh: (
+            WindowID, SnapshotFreshProbe<CGImage>, @escaping @Sendable (SnapshotFreshRead<CGImage>?) -> Void
+        ) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
 
@@ -146,6 +165,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
             scheduleRenderCheck: @escaping () -> Void,
             checkPaint: @escaping (
                 [WindowID: SnapshotPaintProbe], @escaping @Sendable (SnapshotPaintAnswer) -> Void
+            ) -> Void,
+            captureFresh: @escaping (
+                WindowID, SnapshotFreshProbe<CGImage>, @escaping @Sendable (SnapshotFreshRead<CGImage>?) -> Void
             ) -> Void,
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -162,6 +184,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             self.collectWrites = collectWrites
             self.scheduleRenderCheck = scheduleRenderCheck
             self.checkPaint = checkPaint
+            self.captureFresh = captureFresh
             self.log = log
             self.now = now
         }
@@ -200,8 +223,15 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// face), for the resize mode a retarget logs.
     private var imageSizes: [WindowID: CGSize] = [:]
     /// SM-29: the content background of each layer's images (the target
-    /// size's edge fill, else the start's), for the grown-region test.
+    /// size's fill, else the start's; SM-30: the fresh image's once shown),
+    /// for the grown-region test.
     private var backgrounds: [WindowID: ThemeColor] = [:]
+    /// SM-30: the image each layer started with (the stale test of a
+    /// shrinking window), how each resized layer draws its resize (the
+    /// hand-off's resize line) and the fresh captures of the resized windows.
+    private var startFaces: [WindowID: SnapshotFace<CGImage>] = [:]
+    private var resizeModes: [WindowID: SnapshotResizeMode] = [:]
+    private var fresh = SnapshotFreshTracker()
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -264,6 +294,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
             cache.flies(item.id, use, at: now)
             imageSizes[item.id] = use.entry.frame.size
             backgrounds[item.id] = use.target?.fill ?? use.entry.fill
+            startFaces[item.id] = use.entry.face
+            resizeModes[item.id] = use.resize
             byDisplay[item.displayIndex, default: []].append(
                 OverlayFlightItem(
                     id: item.id, image: use.entry.face, target: use.target?.face, from: item.from, to: item.to
@@ -347,6 +379,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 faces[id] = cache.retargetFace(
                     id, image: imageSizes[id] ?? from.size, from: from, to: frame, at: now
                 )
+                if snapshotResized(from: from.size, to: frame.size, tolerance: 2) {
+                    resizeModes[id] = faces[id] != nil
+                        ? .crossfade
+                        : snapshotResizeMode(image: imageSizes[id] ?? from.size, target: nil, from: from.size, to: frame.size)
+                }
             }
             let token = gate.retarget()
             overlay.retargetFlight(
@@ -354,6 +391,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 adds: makeFlights(plan.adds, images: images, now: now),
                 holes: holes, decorations: context.decorations(targets)
             )
+            if primingToken == nil {
+                // SM-30: the instant pass writes these windows now.
+                followFresh(Set(plan.retargets.keys).union(plan.adds.map(\.id)), previousTargets: previousTargets)
+            }
             if !plan.uncovered.isEmpty {
                 // No image: written once under the overlay, shown through a
                 // hole when visible at its target (SM-16).
@@ -379,6 +420,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
         case .snapshot(let items, let holes):
             imageSizes = [:]
             backgrounds = [:]
+            startFaces = [:]
+            resizeModes = [:]
             let flights = makeFlights(items, holes: holes, images: images, now: now)
             guard !flights.isEmpty else {
                 return .ax
@@ -447,6 +490,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
             pass?.writes()
             if gate.isActive {
                 overlay.flyFlight(token: gate.currentToken)
+                if pass != nil {
+                    // SM-30: the resized windows were just written.
+                    followFresh(snapshotResizedWindows(starts: origins, targets: targets).intersection(ids))
+                }
             }
             if retarget {
                 context.requestReflow()
@@ -640,13 +687,113 @@ public final class SnapshotFlightController: @unchecked Sendable {
         }
     }
 
+    // MARK: SM-30 fresh images
+
+    /// The writes of `candidates` were just dispatched: a new series for each
+    /// whose size differs from its flight start, unless its size did not
+    /// change since `previousTargets` (a move keeps its series); a window
+    /// back at its start size needs none.
+    private func followFresh(_ candidates: Set<WindowID>, previousTargets: [WindowID: CGRect] = [:]) {
+        let now = context.now()
+        for id in candidates.intersection(ids).sorted() {
+            guard let target = targets[id], let origin = origins[id] else {
+                continue
+            }
+            guard snapshotResized(from: origin.size, to: target.size) else {
+                fresh.forget(id)
+                continue
+            }
+            if let previous = previousTargets[id], !snapshotResized(from: previous.size, to: target.size),
+               fresh.outcome(id) != nil {
+                continue
+            }
+            let token = fresh.start(id, now: now)
+            scheduler.asyncAfter(SnapshotFreshTracker.firstDelay) { [weak self] in
+                self?.captureFresh(id, token: token)
+            }
+        }
+    }
+
+    /// One capture of the series `token` of `id`, at its current target.
+    private func captureFresh(_ id: WindowID, token: Int) {
+        guard !context.isShuttingDown(), isActive, let target = targets[id], fresh.capture(id, token: token) else {
+            return
+        }
+        let resizedFrom = origins[id].map(\.size).flatMap { snapshotResized(from: $0, to: target.size) ? $0 : nil }
+        let start = startFaces[id].flatMap { snapshotFreshRegion(start: $0.size, target: target.size) != nil ? $0 : nil }
+        let probe = SnapshotFreshProbe(
+            paint: SnapshotPaintProbe(frame: target, resizedFrom: resizedFrom, background: backgrounds[id]),
+            start: start, cached: cache.cache.entry(id, matching: target)?.face
+        )
+        context.captureFresh(id, probe) { [weak self] read in
+            self?.scheduler.async { [weak self] in
+                self?.freshAnswered(id, token: token, size: target.size, read: read)
+            }
+        }
+    }
+
+    /// A fresh read of `id` (captured for a target of `size`) came back.
+    private func freshAnswered(_ id: WindowID, token: Int, size: CGSize, read: SnapshotFreshRead<CGImage>?) {
+        guard !context.isShuttingDown(), isActive,
+              let step = fresh.record(
+                  id, token: token, verdict: snapshotFreshVerdict(read, target: size), samples: read?.samples ?? [],
+                  now: context.now()
+              )
+        else {
+            return
+        }
+        switch step {
+        case .apply:
+            guard let read, let target = targets[id] else {
+                return
+            }
+            cache.storeFresh(id, CapturedImage(image: read.image, frame: target, fill: read.fill))
+            if let fill = read.fill {
+                backgrounds[id] = fill
+            }
+            overlay.freshenFlight(
+                token: gate.currentToken, faces: [id: SnapshotFace(image: read.image, size: target.size, fill: read.fill)]
+            )
+        case .retry(let delay):
+            scheduler.asyncAfter(delay) { [weak self] in
+                self?.captureFresh(id, token: token)
+            }
+        case .stop:
+            break
+        }
+    }
+
     /// The live ring and dim go up (same geometry as the overlay's), then
     /// the overlay comes down, then the render check and the image refresh.
+    /// SM-30: the resized layers fade out over the real windows instead
+    /// (`snapshotHandoffFading`); each logs how it resized and when its
+    /// fresh image came.
     private func handOver(_ summary: SnapshotHandoffSummary) {
+        let resized = snapshotResizedWindows(starts: origins, targets: targets).intersection(ids)
+        for id in resized.sorted() {
+            guard let origin = origins[id], let target = targets[id],
+                  let mode = resizeModes[id] ?? snapshotResizeMode(
+                      image: imageSizes[id] ?? origin.size, target: nil, from: origin.size, to: target.size
+                  )
+            else {
+                continue
+            }
+            let outcome = fresh.outcome(id) ?? SnapshotFreshOutcome(milliseconds: nil, attempts: 0, last: nil)
+            context.log(.debug, snapshotResizeOutcomeLine(id, mode: mode, fresh: outcome))
+        }
+        let fading = snapshotHandoffFading(resized: resized, layered: ids)
+        var summary = summary
+        if !fading.isEmpty {
+            summary.fadeMilliseconds = Int((snapshotHandoffFadeDuration * 1000).rounded())
+        }
         context.log(summary.logLevel, summary.logLine)
         clear()
         context.publishIndicators()
-        overlay.endFlight()
+        if fading.isEmpty {
+            overlay.endFlight()
+        } else {
+            overlay.fadeOutFlight(windows: fading, duration: snapshotHandoffFadeDuration)
+        }
         context.scheduleRenderCheck()
         cache.schedule()
     }
@@ -666,6 +813,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
         targets = [:]
         holes = [:]
         backgrounds = [:]
+        startFaces = [:]
+        resizeModes = [:]
+        fresh.removeAll()
     }
 
     private func setHoles(_ next: [SnapshotHole]) {

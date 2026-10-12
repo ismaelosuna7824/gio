@@ -6,8 +6,8 @@ import XCTest
 /// images are drawn at their own size, anchored top-left and clipped to the
 /// animated frame; the start-size image crossfades into the target-size one
 /// along the resize; without a target-size image the start image stays
-/// unscaled over a fill sampled from its right edge (growing) or is cropped
-/// (shrinking).
+/// unscaled over a fill of its most common colour (growing; SM-30) or is
+/// cropped (shrinking).
 final class OverlayResizeTests: XCTestCase {
     private let column = CGSize(width: 800, height: 900)
     private let maximized = CGSize(width: 1600, height: 900)
@@ -255,36 +255,58 @@ final class OverlayResizeTests: XCTestCase {
 
     // MARK: fill
 
-    func testTheEdgeLineRunsDownTheRightEdgeInsideTheBorderAndCorners() throws {
-        let line = try XCTUnwrap(snapshotEdgeLine(pixelWidth: 1600, pixelHeight: 1800, pixelsPerPoint: 2))
-        // 2 pt in from the right edge (past the window's 1 px rim), the
-        // rounded corners (10 pt) skipped; image pixels, top-left origin.
-        XCTAssertEqual(line, CGRect(x: 1595, y: 20, width: 1, height: 1760))
-        XCTAssertEqual(
-            snapshotEdgeLine(pixelWidth: 400, pixelHeight: 300, pixelsPerPoint: 1),
-            CGRect(x: 397, y: 10, width: 1, height: 280)
-        )
-        XCTAssertNil(snapshotEdgeLine(pixelWidth: 2, pixelHeight: 300, pixelsPerPoint: 1), "too narrow")
-        XCTAssertNil(snapshotEdgeLine(pixelWidth: 400, pixelHeight: 20, pixelsPerPoint: 1), "nothing between the corners")
-    }
-
-    /// The median, not the mean: a title bar, a status bar or a line of text
-    /// crossing the edge is a minority and does not tint the fill.
-    func testTheFillIsTheMedianOfTheOpaqueEdgeSamples() throws {
-        let white: UInt32 = 0xF0F0_F0FF
-        let blue: UInt32 = 0x2060_C0FF
+    /// SM-30: the most common colour, not the median of the right edge: a
+    /// live Slack maximize showed a huge purple box (the frame along its right
+    /// edge). Title bars, borders, sidebars and text are minorities.
+    func testTheFillIsTheMostCommonColourOfTheOpaqueSamples() throws {
+        let content: UInt32 = 0x1A1D_21FF
+        let frame: UInt32 = 0x3F0E_40FF
+        let text: UInt32 = 0xD1D2_D3FF
         let clear: UInt32 = 0
-        let samples = Array(repeating: white, count: 40) + Array(repeating: blue, count: 20) + Array(repeating: clear, count: 30)
-        let fill = try XCTUnwrap(snapshotEdgeFill(samples: samples))
-        XCTAssertEqual(fill, ThemeColor(red: 0xF0 / 255.0, green: 0xF0 / 255.0, blue: 0xF0 / 255.0))
+        let samples = Array(repeating: frame, count: 30) + Array(repeating: content, count: 45)
+            + Array(repeating: text, count: 20) + Array(repeating: clear, count: 5)
+        let fill = try XCTUnwrap(snapshotContentFill(samples: samples))
+        XCTAssertEqual(fill.red, 0x1A / 255.0, accuracy: 1e-9)
+        XCTAssertEqual(fill.green, 0x1D / 255.0, accuracy: 1e-9)
+        XCTAssertEqual(fill.blue, 0x21 / 255.0, accuracy: 1e-9)
     }
 
-    func testPremultipliedSamplesAreUnpremultipliedAndTransparentOnesIgnored() throws {
+    /// Antialiased shades of one background fall in one bucket; the fill is
+    /// their mean, so noise does not split the content background.
+    func testNearlyEqualShadesCountAsOneColourAndAverage() throws {
+        let shades: [UInt32] = [0x2020_20FF, 0x2222_22FF, 0x2121_21FF]
+        let border: UInt32 = 0x8080_80FF
+        let samples = shades.flatMap { Array(repeating: $0, count: 10) } + Array(repeating: border, count: 20)
+        let fill = try XCTUnwrap(snapshotContentFill(samples: samples))
+        XCTAssertEqual(fill.red, 0x21 / 255.0, accuracy: 1e-9)
+    }
+
+    func testPremultipliedSamplesAreUnpremultipliedAndASeeThroughCaptureHasNoFill() throws {
         // 50 % alpha, premultiplied 0x40: the colour is half bright.
-        let fill = try XCTUnwrap(snapshotEdgeFill(samples: [0x4040_4080]))
+        let fill = try XCTUnwrap(snapshotContentFill(samples: [0x4040_4080]))
         XCTAssertEqual(fill.red, 0.5, accuracy: 1e-9)
-        XCTAssertNil(snapshotEdgeFill(samples: [0x1010_1020, 0]), "a see-through edge gets no fill")
-        XCTAssertNil(snapshotEdgeFill(samples: []))
+        XCTAssertNil(snapshotContentFill(samples: [0x1010_1020, 0]), "a see-through capture gets no fill")
+        XCTAssertNil(snapshotContentFill(samples: [0xFFFF_FFFF, 0, 0]), "mostly see-through: no fill")
+        XCTAssertNil(snapshotContentFill(samples: []))
+    }
+
+    // MARK: SM-30 fresh face
+
+    /// A fresh capture of the landing size arrives mid-flight: it goes on top
+    /// and its fade is timed, not tied to the resize (nearly done by then);
+    /// afterwards a retarget starts from it, continuous.
+    func testAFreshFaceGoesOnTopOpaqueAndARetargetContinuesFromIt() {
+        let fade = OverlayCrossfade().retargeted(at: 0, toward: 1, underlay: true)
+        let fresh = fade.freshened(at: 0.3)
+        XCTAssertEqual(fresh.count, 3)
+        XCTAssertEqual(fresh.order, [1, 0, 2], "on top of every face")
+        let held = fresh.opacities(at: 0)
+        XCTAssertEqual(held[0], 0.5, accuracy: 1e-12, "the faces under it keep where they were")
+        XCTAssertEqual(held[2], 1)
+        XCTAssertEqual(fresh.opacities(at: 0.9), held, "nothing else fades along the resize")
+        let back = fresh.retargeted(at: 0.95, toward: 0)
+        XCTAssertEqual(back.opacities(at: 0)[2], 1, "a retarget starts where the fresh face is")
+        XCTAssertEqual(back.opacities(at: 1)[2], 0, "and fades it out like any face above the target")
     }
 
     func testAFaceIsTheImageAtItsCapturedSizeWithItsFill() {

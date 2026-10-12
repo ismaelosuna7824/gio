@@ -7,17 +7,19 @@ import Foundation
 // window's top-left corner and clipped to the animated frame (corner radius
 // and shadow unchanged); the start-size image crossfades into the
 // target-size one along the resize. Without a target-size image the start
-// image stays unscaled: what it does not cover shows a flat fill sampled
-// from its right edge (growing), and what the frame no longer covers is cut
-// off (shrinking). A flat fill was chosen over stretching the last pixel
+// image stays unscaled: what it does not cover shows a flat fill (SM-30: the
+// most common colour of its right half, `snapshotContentFill`; SM-27 sampled
+// its right edge), and what the frame no longer covers is cut off
+// (shrinking). A flat fill was chosen over stretching the last pixel
 // column/row (a 9-slice): a line of text, a scrollbar or a sidebar crossing
 // the edge would be smeared into streaks, which reads as stretching again.
+// SM-30: a fresh capture of the landing size replaces it mid-flight.
 
 /// How a layer shows a window whose frame and image sizes differ.
 public enum SnapshotResizeMode: String, Equatable, Sendable {
     /// Start image fading into the image of the target size, both unscaled.
     case crossfade
-    /// One image, unscaled, over its edge fill where the frame outgrows it.
+    /// One image, unscaled, over its fill where the frame outgrows it.
     case fill
     /// One image, unscaled, cut off by a frame smaller than it.
     case crop
@@ -145,7 +147,24 @@ public struct OverlayCrossfade: Equatable, Sendable {
         crossfade.to = next
         return crossfade
     }
+
+    /// SM-30: a fresh image of the landing size arrived (`count`: a new
+    /// face) at `progress` of the current track. It goes on top and fades in
+    /// over `overlayFreshFadeDuration` (timed: the resize is nearly done by
+    /// then, a fade along it would pop); every other face holds the opacity
+    /// it has now. A later retarget starts from there, continuous.
+    public func freshened(at progress: Double) -> OverlayCrossfade {
+        var crossfade = self
+        let current = opacities(at: progress) + [1]
+        crossfade.order.append(current.count - 1)
+        crossfade.from = current
+        crossfade.to = current
+        return crossfade
+    }
 }
+
+/// SM-30: how long a fresh face fades in on top of a layer (eased).
+public let overlayFreshFadeDuration: TimeInterval = 0.1
 
 /// SM-28: an image as large as every frame of a flight from `start` to
 /// `end` (within the cache's 2 pt; a spring overshoot is not counted): drawn
@@ -218,55 +237,46 @@ public func overlayReach(_ sizes: some Sequence<CGSize>) -> CGSize {
     sizes.reduce(.zero) { CGSize(width: max($0.width, $1.width), height: max($0.height, $1.height)) }
 }
 
-// MARK: edge fill
+// MARK: fill
 
-/// The pixel column a capture's fill is sampled along (image pixels,
-/// top-left origin): 2 pt in from the right edge (past the window's 1 px
-/// rim) between the rounded corners. The right edge runs through every
-/// horizontal band of the window (title bar, toolbar, content, status bar)
-/// in proportion to its height, so its median is the content background;
-/// the bottom edge is often all status bar or input field. Nil when the
-/// image is too small.
-public func snapshotEdgeLine(pixelWidth: Int, pixelHeight: Int, pixelsPerPoint: CGFloat) -> CGRect? {
-    let inset = Int((2 * pixelsPerPoint).rounded())
-    let corner = Int((overlayWindowCornerRadius * pixelsPerPoint).rounded(.up))
-    let x = pixelWidth - 1 - inset
-    let height = pixelHeight - 2 * corner
-    guard x >= 0, height > 0 else {
-        return nil
-    }
-    return CGRect(x: x, y: corner, width: 1, height: height)
-}
-
-/// The fill of a capture from its edge samples (packed premultiplied RGBA,
-/// alpha in the low byte): the per-channel median of the samples at least
-/// half opaque, unpremultiplied. The median, not the mean: a title bar or a
-/// line of text crossing the edge is a minority and does not tint it. Nil
-/// for a see-through edge (the fill stays clear there, like the window).
-public func snapshotEdgeFill(samples: [UInt32]) -> ThemeColor? {
-    var channels: [[Double]] = [[], [], []]
+/// SM-30: the fill of a capture (where the frame outgrows the image) from
+/// samples of its right half (packed premultiplied RGBA, alpha in the low
+/// byte): the most common colour (channels in 16 levels; ties: the lower
+/// bucket), the mean of its samples, unpremultiplied; samples less than half
+/// opaque are ignored. Live, SM-27's median of the right edge was Slack's
+/// purple frame and filled a maximize with a huge purple box; the content
+/// pane (the editor, the message list, the page) has the largest area, and
+/// the right half leaves out left sidebars, which keep their width when a
+/// window grows. Nil when fewer than half of the samples are opaque (a
+/// see-through window: the fill stays clear, like the window).
+public func snapshotContentFill(samples: [UInt32]) -> ThemeColor? {
+    var buckets: [Int: (count: Int, sum: (Double, Double, Double))] = [:]
+    var opaque = 0
     for sample in samples {
         let alpha = Double(sample & 0xFF)
         guard alpha >= 0x80 else {
             continue
         }
-        for channel in 0..<3 {
-            let value = Double((sample >> (24 - 8 * UInt32(channel))) & 0xFF)
-            channels[channel].append(min(value / alpha, 1))
-        }
+        opaque += 1
+        let channels = [24, 16, 8].map { min(Double((sample >> UInt32($0)) & 0xFF) / alpha, 1) }
+        let key = channels.reduce(0) { $0 << 4 | min(Int($1 * 16), 15) }
+        let bucket = buckets[key] ?? (0, (0, 0, 0))
+        buckets[key] = (
+            bucket.count + 1, (bucket.sum.0 + channels[0], bucket.sum.1 + channels[1], bucket.sum.2 + channels[2])
+        )
     }
-    guard !channels[0].isEmpty else {
+    guard opaque > 0, opaque * 2 >= samples.count,
+          let winner = buckets.max(by: { $0.value.count < $1.value.count || ($0.value.count == $1.value.count && $0.key > $1.key) })
+    else {
         return nil
     }
-    let medians = channels.map { values in
-        values.sorted()[values.count / 2]
-    }
-    return ThemeColor(red: medians[0], green: medians[1], blue: medians[2])
+    let count = Double(winner.value.count)
+    return ThemeColor(red: winner.value.sum.0 / count, green: winner.value.sum.1 / count, blue: winner.value.sum.2 / count)
 }
 
 /// One image a window layer can show: the image, its own size in points
-/// (the frame it was captured at; SM-22 half-resolution images too) and the
-/// fill sampled from its edge.
+/// (the frame it was captured at; SM-22 half-resolution images too) and its
+/// fill (`snapshotContentFill`).
 public struct SnapshotFace<Image> {
     public let image: Image
     public let size: CGSize

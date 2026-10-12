@@ -3,8 +3,8 @@ import Foundation
 import GioCore
 import GioMacOS
 
-/// One captured window image, the frame it was captured at and (SM-27) the
-/// fill sampled from its right edge.
+/// One captured window image, the frame it was captured at and (SM-27,
+/// SM-30) its fill (`snapshotContentFill`).
 public struct CapturedImage: @unchecked Sendable {
     public let image: CGImage
     public let frame: CGRect
@@ -306,6 +306,18 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             logResize(id, mode)
         }
         return entry?.face
+    }
+
+    /// SM-30: a resized window captured again at its target size during
+    /// the flight (full resolution): kept as its image of that size, so the
+    /// next flight to it is not tens of seconds stale and the settle run
+    /// does not capture it again.
+    public func storeFresh(_ id: WindowID, _ captured: CapturedImage) {
+        cache.store(
+            id, image: captured.image, frame: captured.frame, pixels: captured.image.width * captured.image.height,
+            at: context.now(), resolution: .full, fill: captured.fill
+        )
+        dirty.removeValue(forKey: id)
     }
 
     private func logResize(_ id: WindowID, _ mode: SnapshotResizeMode) {

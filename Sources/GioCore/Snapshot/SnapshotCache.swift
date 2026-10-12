@@ -14,8 +14,8 @@ public struct SnapshotCacheEntry<Image> {
     public let pixels: Int
     /// SM-22: the resolution the image was captured at.
     public let resolution: SnapshotResolution
-    /// SM-27: the fill sampled from the image's right edge at capture
-    /// (`snapshotEdgeFill`); nil for a see-through edge.
+    /// SM-27/SM-30: the fill a resize shows where the frame outgrows the
+    /// image (`snapshotContentFill`); nil for a see-through capture.
     public let fill: ThemeColor?
 
     public init(

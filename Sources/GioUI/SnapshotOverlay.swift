@@ -31,6 +31,12 @@ import QuartzCore
 // `CAShapeLayer` (display minus the holes, `overlayBackdropMask`), set at
 // begin and on retarget only. The root layer is clear, so a hole is
 // transparent down to the real window under the panel.
+//
+// SM-30: a resized window's fresh image of its landing size, captured
+// mid-flight, fades in on top of its layer (`freshen`, 100 ms, timed). At
+// the hand-off of a flight with resized windows the backdrop and every other
+// layer go at once and the resized layers fade out over their real windows
+// (`fadeOut`, 120 ms); a mouse down, a new flight or a stop ends the fade.
 
 /// One window image to fly. Frames are Cocoa global coordinates. SM-27:
 /// `image` is drawn at its own size, never scaled; `target` is the image of
@@ -97,7 +103,7 @@ private func displayKey(_ frame: CGRect) -> String {
 ]
 
 /// SM-27: one image a window layer can show, inside its clip: a group
-/// (whose opacity the crossfade animates) holding the edge fill and, on top,
+/// (whose opacity the crossfade animates) holding the fill and, on top,
 /// the image at its own size, both hanging from the clip's top-left corner.
 @MainActor
 private final class FaceLayers {
@@ -220,6 +226,60 @@ private final class WindowLayers {
         ) {
             return
         }
+        buildFaces()
+        let opacities = crossfade.opacities(at: startedAt == nil ? 0 : 1)
+        for (face, opacity) in zip(faces, opacities) {
+            face.group.opacity = Float(opacity)
+        }
+        layoutFaces(reach: overlayReach([reach, track.start.bounds.size, track.end.bounds.size]))
+    }
+
+    /// SM-30: a fresh image of the landing size, captured mid-flight: a new
+    /// face on top fading in over `overlayFreshFadeDuration` from `now`
+    /// (eased, timed: the resize is nearly done); the faces under it hold
+    /// the opacity they have at `progress` of the track.
+    func freshen(_ source: SnapshotFace<CGImage>, progress: Double, now: CFTimeInterval) {
+        sources.append(source)
+        crossfade = crossfade.freshened(at: progress)
+        buildFaces()
+        let opacities = crossfade.opacities(at: progress)
+        for (index, face) in faces.enumerated().dropLast() {
+            face.group.removeAnimation(forKey: "gio.opacity")
+            face.group.opacity = Float(opacities[index])
+        }
+        layoutFaces(reach: overlayReach([reach, track.start.bounds.size, track.end.bounds.size]))
+        let top = faces[faces.count - 1].group
+        top.opacity = 1
+        let animation = CABasicAnimation(keyPath: "opacity")
+        animation.fromValue = 0
+        animation.toValue = 1
+        animation.duration = overlayFreshFadeDuration
+        animation.beginTime = top.convertTime(now, from: nil)
+        animation.fillMode = .backwards
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        top.add(animation, forKey: "gio.opacity")
+    }
+
+    /// SM-30: the soft hand-off: shadow, image and dim fade out over the
+    /// real window from `now` (eased); the live ring above replaces this one.
+    func fadeOut(duration: TimeInterval, now: CFTimeInterval) {
+        ring.isHidden = true
+        for layer in [shadow, clip, dim] {
+            let animation = CABasicAnimation(keyPath: "opacity")
+            animation.fromValue = layer.opacity
+            animation.toValue = 0
+            animation.duration = duration
+            animation.beginTime = layer.convertTime(now, from: nil)
+            animation.fillMode = .backwards
+            animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            layer.opacity = 0
+            layer.add(animation, forKey: "gio.fade")
+        }
+    }
+
+    /// The clip draws faces: its own contents go, a layer per source not yet
+    /// drawn joins, and every face takes its drawing order.
+    private func buildFaces() {
         clip.contents = nil
         for source in sources.dropFirst(faces.count) {
             let face = FaceLayers(source)
@@ -229,11 +289,6 @@ private final class WindowLayers {
         for (position, face) in crossfade.order.enumerated() {
             faces[face].group.zPosition = CGFloat(position)
         }
-        let opacities = crossfade.opacities(at: startedAt == nil ? 0 : 1)
-        for (face, opacity) in zip(faces, opacities) {
-            face.group.opacity = Float(opacity)
-        }
-        layoutFaces(reach: overlayReach([reach, track.start.bounds.size, track.end.bounds.size]))
     }
 
     private func layoutFaces(reach: CGSize) {
@@ -457,6 +512,7 @@ final class SnapshotOverlay {
         CATransaction.setDisableActions(true)
         backdrop.frame = root.bounds
         backdrop.contentsScale = scale
+        backdrop.isHidden = false
         backdrop.contents = image
         // The capture's own pixels per point (the backing scale when 1:1).
         backdrop.contentsRect = area.backdropContentsRect(
@@ -528,6 +584,43 @@ final class SnapshotOverlay {
         }
         CATransaction.commit()
         return settle
+    }
+
+    /// SM-30: fresh images of resized layers' landing sizes: each layer
+    /// fades to its image on top, from where its crossfade is now.
+    func freshen(_ faces: [WindowID: SnapshotFace<CGImage>], now: CFTimeInterval) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (id, face) in faces.sorted(by: { $0.key < $1.key }) {
+            guard let layers = windows[id] else {
+                continue
+            }
+            let progress = layers.startedAt.map { layers.progress(at: now - $0, spring: spring) } ?? 0
+            layers.freshen(face, progress: progress, now: now)
+        }
+        CATransaction.commit()
+    }
+
+    /// SM-30: the soft hand-off: the backdrop and every layer but those of
+    /// `ids` go at once (the real desktop is under them); those fade out
+    /// over their real windows in `duration`. False when none is left (the
+    /// caller ends the overlay).
+    func fadeOut(keeping ids: Set<WindowID>, duration: TimeInterval, now: CFTimeInterval) -> Bool {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        backdrop.isHidden = true
+        backdrop.contents = nil
+        backdrop.mask = nil
+        for (id, layers) in windows where !ids.contains(id) {
+            layers.removeAnimations()
+            layers.removeFromSuperlayer()
+            windows.removeValue(forKey: id)
+        }
+        for layers in windows.values {
+            layers.fadeOut(duration: duration, now: now)
+        }
+        CATransaction.commit()
+        return !windows.isEmpty
     }
 
     /// Remove the overlay at once: with the backdrop, shadows, ring and dim
@@ -617,6 +710,12 @@ public final class SnapshotOverlayController {
     /// starts without creating a window; `active` are the ones showing.
     private var overlays: [String: SnapshotOverlay] = [:]
     private var active: Set<String> = []
+    /// SM-30: overlays whose resized layers fade out after a hand-off (the
+    /// flight is over, `active` is empty); `fadeGeneration` tells their
+    /// removal timer from a newer fade's. A new flight, a mouse down or a
+    /// stop removes them at once.
+    private var fading: Set<String> = []
+    private var fadeGeneration = 0
     private var token = 0
     private var flying = false
     private var observers: [NSObjectProtocol] = []
@@ -668,6 +767,7 @@ public final class SnapshotOverlayController {
         }
         overlays = [:]
         active = []
+        fading = []
         flying = false
         deadline.abort()
         frameLink.cancel()
@@ -675,7 +775,7 @@ public final class SnapshotOverlayController {
 
     private func pruneOverlays() {
         let live = Set(NSScreen.screens.map { displayKey($0.frame) })
-        for (key, overlay) in overlays where !live.contains(key) && !active.contains(key) {
+        for (key, overlay) in overlays where !live.contains(key) && !active.contains(key) && !fading.contains(key) {
             overlay.close()
             overlays.removeValue(forKey: key)
         }
@@ -770,11 +870,72 @@ public final class SnapshotOverlayController {
         endAll()
     }
 
+    /// SM-30: fresh images of resized layers' landing sizes for flight
+    /// `token`: each layer fades to its image on top.
+    public func freshen(token: Int, faces: [WindowID: SnapshotFace<CGImage>]) {
+        guard token == self.token, !active.isEmpty else {
+            return
+        }
+        let now = CACurrentMediaTime()
+        for key in active.sorted() {
+            guard let overlay = overlays[key] else {
+                continue
+            }
+            let mine = faces.filter { overlay.ids.contains($0.key) }
+            if !mine.isEmpty {
+                overlay.freshen(mine, now: now)
+            }
+        }
+    }
+
+    /// SM-30: the soft hand-off. The flight is over (watchdog, deadline and
+    /// frame link stop); the backdrops and every layer but those of `ids` go
+    /// at once, those fade out over their real windows in `duration`, then
+    /// the overlays come down.
+    public func fadeOut(windows ids: Set<WindowID>, duration: TimeInterval) {
+        guard !active.isEmpty else {
+            return
+        }
+        let keys = active
+        watchdog.disarm()
+        deadline.abort()
+        frameLink.cancel()
+        active = []
+        flying = false
+        let now = CACurrentMediaTime()
+        for key in keys.sorted() {
+            guard let overlay = overlays[key] else {
+                continue
+            }
+            if overlay.fadeOut(keeping: ids, duration: duration, now: now) {
+                fading.insert(key)
+            } else {
+                overlay.end()
+            }
+        }
+        guard !fading.isEmpty else {
+            return
+        }
+        fadeGeneration += 1
+        let generation = fadeGeneration
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration + 0.02) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, generation == self.fadeGeneration else {
+                    return
+                }
+                self.endFading()
+            }
+        }
+    }
+
     /// A mouse button went down during a flight: remove the overlay at once
     /// so the click lands on the real window. True when a flight was running.
     @discardableResult
     public func abortForMouseDown() -> Bool {
         guard !active.isEmpty else {
+            // SM-30: a click during the soft hand-off lands on the real
+            // window it already is; the fading picture goes at once.
+            endFading()
             return false
         }
         let aborted = token
@@ -808,6 +969,14 @@ public final class SnapshotOverlayController {
         }
         active = []
         flying = false
+        endFading()
+    }
+
+    private func endFading() {
+        for key in fading {
+            overlays[key]?.end()
+        }
+        fading = []
     }
 
     /// One main-thread timer at the deadline; a retarget re-arms it and the

@@ -5,8 +5,9 @@ import GioMacOS
 import XCTest
 @testable import GioSession
 
-/// Records every call in order (`prime:N`, `fly:N`, `retarget:N`, `end`);
-/// the tests append `writes`, `fallback` and `publish` to the same list.
+/// Records every call in order (`prime:N`, `fly:N`, `retarget:N`, `end`,
+/// `fresh:N`, `fade`); the tests append `writes`, `fallback` and `publish`
+/// to the same list.
 final class FakeOverlay: OverlayPort, @unchecked Sendable {
     var events: [String] = []
     var begins: [(token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations)] = []
@@ -16,6 +17,8 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     )] = []
     var flies: [Int] = []
     var ends = 0
+    var freshens: [(token: Int, faces: [WindowID: SnapshotFace<CGImage>])] = []
+    var fades: [(windows: Set<WindowID>, duration: TimeInterval)] = []
 
     func beginFlight(
         token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
@@ -42,6 +45,16 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
         events.append("end")
         ends += 1
     }
+
+    func freshenFlight(token: Int, faces: [WindowID: SnapshotFace<CGImage>]) {
+        events.append("fresh:\(token)")
+        freshens.append((token, faces))
+    }
+
+    func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval) {
+        events.append("fade")
+        fades.append((windows, duration))
+    }
 }
 
 final class SnapshotFlightTests: XCTestCase {
@@ -65,6 +78,9 @@ final class SnapshotFlightTests: XCTestCase {
         var paintAnswers: [@Sendable (SnapshotPaintAnswer) -> Void] = []
         /// SM-18: usable frames per display (nil: the display frames).
         var usableFrames: [CGRect]?
+        /// SM-30: the fresh captures asked for and their pending answers.
+        var freshProbes: [(id: WindowID, probe: SnapshotFreshProbe<CGImage>)] = []
+        var freshAnswers: [@Sendable (SnapshotFreshRead<CGImage>?) -> Void] = []
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -137,6 +153,10 @@ final class SnapshotFlightTests: XCTestCase {
                     world.paintChecks.append(probes.mapValues(\.frame))
                     world.paintProbes.append(probes)
                     world.paintAnswers.append(answer)
+                },
+                captureFresh: { id, probe, answer in
+                    world.freshProbes.append((id, probe))
+                    world.freshAnswers.append(answer)
                 },
                 log: { world.logs.append(($0, $1)) },
                 now: { scheduler.now }
@@ -841,13 +861,14 @@ final class SnapshotFlightTests: XCTestCase {
         scheduler.advance(by: SnapshotHandoff.recheckInterval)
         let settled: [UInt32] = (0..<45).map { UInt32($0) << 24 | 0xFF }
         answerPaint([idA: .painted], samples: [idA: settled])
-        XCTAssertEqual(overlay.ends, PaintTrustBook.cleanChecksToTrust, "one painted read after a partial one is not enough")
+        XCTAssertTrue(overlay.fades.isEmpty, "one painted read after a partial one is not enough")
         scheduler.advance(by: SnapshotHandoff.recheckInterval)
         answerPaint([idA: .painted], samples: [idA: settled])
-        XCTAssertEqual(overlay.ends, PaintTrustBook.cleanChecksToTrust + 1)
+        XCTAssertEqual(overlay.ends, PaintTrustBook.cleanChecksToTrust, "the pure moves before left at once")
+        XCTAssertEqual(overlay.fades.map(\.windows), [[idA]], "SM-30: the resized layer fades out")
         XCTAssertFalse(flight.isActive)
         XCTAssertTrue(world.logs.contains {
-            $0 == (.info, "snapshot handoff waited ms=60 windows=1 painted=1 resized=1 held=partial")
+            $0 == (.info, "snapshot handoff waited ms=60 windows=1 painted=1 resized=1 held=partial fade=120")
         })
     }
 
@@ -915,5 +936,164 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(retarget.images[idB]?.size, b.size, "same size: the image it already shows")
         XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
+    }
+
+    // MARK: SM-30 fresh image during resize flights, soft hand-off
+
+    private let freshSamples: [UInt32] = (0..<45).map { UInt32($0) << 24 | 0xFF }
+
+    private func answerFresh(_ read: SnapshotFreshRead<CGImage>?) {
+        world.freshAnswers.removeFirst()(read)
+        scheduler.runPending()
+    }
+
+    private func freshRead(
+        _ image: CGImage, size: CGSize, fill: ThemeColor? = nil, samples: [UInt32]? = nil,
+        startRegion: [UInt32]? = nil, freshRegion: [UInt32]? = nil
+    ) -> SnapshotFreshRead<CGImage> {
+        SnapshotFreshRead(
+            image: image, fill: fill, windowSize: size, paint: .painted, samples: samples ?? freshSamples,
+            startRegion: startRegion, freshRegion: freshRegion, cached: nil
+        )
+    }
+
+    /// Drives a resize of A, defers the pass and reports the prime (the
+    /// writes run): the flight's token.
+    private func resizeAndPrime(from: CGRect, to: CGRect) -> Int {
+        let (animation, plan) = resize(idA, from: from, to: to)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let token = overlay.begins.last!.token
+        deferPass()
+        flight.primed(token, ok: true)
+        scheduler.runPending()
+        return token
+    }
+
+    /// Live (Slack, first maximize): the whole flight showed the start image
+    /// beside a flat box although Slack had repainted at its new size.
+    func testAGrowingWindowIsCapturedAgainAtItsNewSizeMidFlightAndTheLayerFadesToIt() throws {
+        let fill = ThemeColor(red: 0.1, green: 0.1, blue: 0.1)
+        refresh([idA: a, idB: b], fills: [idA: fill])
+        let token = resizeAndPrime(from: a, to: wide)
+        XCTAssertTrue(world.freshProbes.isEmpty, "not before the write had time to land")
+        scheduler.advance(by: SnapshotFreshTracker.firstDelay)
+        XCTAssertEqual(world.freshProbes.map(\.id), [idA], "only the resized window")
+        let probe = try XCTUnwrap(world.freshProbes.first?.probe)
+        XCTAssertEqual(probe.paint, SnapshotPaintProbe(frame: wide, resizedFrom: a.size, background: fill))
+        XCTAssertNil(probe.start, "a grow: its grown strips tell an old layout")
+        XCTAssertNil(probe.cached, "first maximize: no image of the new size")
+
+        let fresh = image()
+        let freshFill = ThemeColor(red: 0.2, green: 0.2, blue: 0.2)
+        answerFresh(freshRead(fresh, size: wide.size, fill: freshFill))
+        XCTAssertEqual(overlay.freshens.first?.token, token)
+        let face = try XCTUnwrap(overlay.freshens.first?.faces[idA])
+        XCTAssertTrue(face.image === fresh)
+        XCTAssertEqual(face.size, wide.size)
+        XCTAssertEqual(face.fill, freshFill)
+        let stored = try XCTUnwrap(cache.cache.entry(idA, matching: wide))
+        XCTAssertTrue(stored.image === fresh, "the cache keeps it as the new-size image")
+        XCTAssertEqual(stored.fill, freshFill)
+        scheduler.advance(by: SnapshotFreshTracker.limit)
+        XCTAssertEqual(world.freshProbes.count, 1, "done: no more captures")
+
+        flight.layersFinished(token)
+        scheduler.runPending()
+        XCTAssertEqual(world.paintProbes.last?[idA]?.background, freshFill, "the fresh image's background")
+        answerPaint([idA: .painted])
+        XCTAssertEqual(overlay.ends, 0, "no hard cut")
+        XCTAssertEqual(overlay.fades.first?.windows, [idA])
+        XCTAssertEqual(overlay.fades.first?.duration, snapshotHandoffFadeDuration)
+        XCTAssertEqual(overlay.events.suffix(2), ["publish", "fade"], "the live ring and dim first")
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=fill fresh=120 attempts=1") })
+        XCTAssertTrue(world.logs.contains { $0.1 == "snapshot handoff waited ms=0 windows=1 painted=1 resized=1 fade=120" })
+    }
+
+    /// Live (VS Code, max to half): ~370 ms after the resize the real window
+    /// still showed its maximized layout clipped to the half frame; an image
+    /// of that would show the wrong layout. Retried; once caught repainting,
+    /// two matching reads.
+    func testAShrinkingWindowStillShowingItsOldLayoutIsCapturedAgainUntilTwoReadsAgree() throws {
+        cacheBothSizesOfA()
+        let token = resizeAndPrime(from: wide, to: a)
+        scheduler.advance(by: SnapshotFreshTracker.firstDelay)
+        let probe = try XCTUnwrap(world.freshProbes.last?.probe)
+        XCTAssertEqual(probe.start?.size, wide.size, "the start image, to tell its clipped layout")
+        XCTAssertEqual(probe.cached?.size, a.size, "the cached image of the new size")
+        let old: [UInt32] = (0..<45).map { UInt32(200 - $0) << 16 | 0xFF }
+        answerFresh(freshRead(image(), size: a.size, samples: old, startRegion: old, freshRegion: old))
+        XCTAssertTrue(overlay.freshens.isEmpty, "stale: not shown")
+        scheduler.advance(by: SnapshotFreshTracker.retryInterval)
+        XCTAssertEqual(world.freshProbes.count, 2)
+        answerFresh(freshRead(image(), size: a.size))
+        XCTAssertTrue(overlay.freshens.isEmpty, "caught repainting: one read is not enough")
+        scheduler.advance(by: SnapshotFreshTracker.retryInterval)
+        let settled = image()
+        answerFresh(freshRead(settled, size: a.size))
+        XCTAssertTrue(overlay.freshens.first?.faces[idA]?.image === settled)
+        flight.layersFinished(token)
+        scheduler.runPending()
+        answerPaint([idA: .painted])
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade fresh=200 attempts=3") })
+    }
+
+    func testAPureMoveIsNotCapturedAgainAndLeavesAtOnce() {
+        beginAndPrime()
+        scheduler.advance(by: SnapshotFreshTracker.limit)
+        XCTAssertTrue(world.freshProbes.isEmpty)
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.ends, 1)
+        XCTAssertTrue(overlay.fades.isEmpty)
+        XCTAssertFalse(world.logs.contains { $0.1.contains("fresh=") || $0.1.contains("fade=") })
+    }
+
+    func testTheHandOffStopsTheFreshCapturesAndALateAnswerIsDropped() {
+        refresh([idA: a, idB: b])
+        let token = resizeAndPrime(from: a, to: wide)
+        scheduler.advance(by: SnapshotFreshTracker.firstDelay)
+        XCTAssertEqual(world.freshProbes.count, 1)
+        flight.layersFinished(token)
+        scheduler.runPending()
+        answerPaint([idA: .painted])
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=fill fresh=none attempts=1") })
+        answerFresh(freshRead(image(), size: wide.size))
+        XCTAssertTrue(overlay.freshens.isEmpty)
+        XCTAssertNil(cache.cache.entry(idA, matching: wide), "a late image is not stored")
+        scheduler.advance(by: SnapshotFreshTracker.limit)
+        XCTAssertEqual(world.freshProbes.count, 1)
+    }
+
+    func testARetargetBackToTheStartSizeDropsTheFreshCapture() {
+        refresh([idA: a, idB: b])
+        _ = resizeAndPrime(from: a, to: wide)
+        scheduler.advance(by: SnapshotFreshTracker.firstDelay)
+        let (back, plan) = resize(idA, from: wide, to: a)
+        XCTAssertEqual(flight.drive(animations: [back], plans: [plan], spring: .niri), .flying)
+        answerFresh(freshRead(image(), size: wide.size))
+        XCTAssertTrue(overlay.freshens.isEmpty, "the image of a size it no longer lands at")
+        scheduler.advance(by: SnapshotFreshTracker.limit)
+        XCTAssertEqual(world.freshProbes.count, 1, "back at its start size: nothing to capture")
+    }
+
+    /// Alt+F while a scroll flies: the retarget's write starts the series.
+    func testAResizeThatStartsAsARetargetIsCapturedAfterItsWrite() throws {
+        cacheBothSizesOfA()
+        let (first, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [first], plans: [plan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        scheduler.advance(by: 0.05)
+        XCTAssertTrue(world.freshProbes.isEmpty)
+        let (second, plan2) = resize(idA, from: first.to, to: wide)
+        XCTAssertEqual(flight.drive(animations: [second], plans: [plan2], spring: .niri), .flying)
+        scheduler.advance(by: SnapshotFreshTracker.firstDelay)
+        let probe = try XCTUnwrap(world.freshProbes.first?.probe)
+        XCTAssertEqual(world.freshProbes.count, 1)
+        XCTAssertEqual(probe.paint.frame, wide)
+        XCTAssertEqual(probe.paint.resizedFrom, a.size)
+        XCTAssertEqual(probe.cached?.size, wide.size)
     }
 }

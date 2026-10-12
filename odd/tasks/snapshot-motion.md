@@ -1123,6 +1123,94 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   Electron, ~0 for native apps) and any `ms=300` (an app that never repaints its grown strip, or refuses the
   size).
 
+- [x] SM-30 (commit pending) — Resized windows fly a fresh image of their new size and fade into the real window.
+  Report (2026-10-12, Spanish, after SM-29): on Alt+F "sigue parpadeando ... hay espacios en blanco": a big
+  coloured box beside the window and a flicker at the end. Evidence: 60 fps screen recording plus log (contact
+  sheets of VS Code and Slack). (a) VS Code (Electron) max to half: `snapshot resize id=13261:4 mode=crossfade` at
+  t=6.884, real write dispatched 6.889, `snapshot paint check windows=1 painted=1 blank=0 partial=0` at 7.218,
+  `snapshot handoff waited ms=0 windows=1 painted=1 resized=1` at 7.262. The flight ended on the half-size image
+  (`cacheAgeMs=25214`), then for 2 frames (~33 ms) the real window showed its maximized layout clipped to the
+  half frame (not re-laid out ~370 ms after the AX resize; the SM-29 check reads that as painted: not blank, no
+  grown strip), then the half layout. The grow direction (pre-SM-29 recording) showed a black right strip, then
+  the old layout, 2 frames each. (b) Slack (Electron) first maximize, `mode=fill`: the whole flight showed the
+  start image top-left and the rest of the growing frame as a huge flat purple box (the SM-27 edge fill sampled
+  Slack's purple frame along its right edge), then the real Slack (already laid out at the new size: it repainted
+  during the flight) popped in and shifted again a frame later. (c) Every hand-off was a hard cut, so any
+  difference was a pop.
+  Decisions (pure in `GioCore/Snapshot/SnapshotFresh.swift` and `OverlayResize.swift`; GioSession wires;
+  GioMacOS captures; GioUI applies):
+  1. Fresh image during the flight (A): every window with a layer whose size changes is captured again at its
+     target size, full resolution (`SnapshotCapturer.freshCapture`: one window, the cached shareable content and
+     learned window id like the paint check). `SnapshotFreshTracker` starts a series when the write is
+     dispatched (`primed` after the writes; a retarget that changes the size starts a new one, a retarget back
+     to the start size drops it); first capture `firstDelay` = 120 ms later (Slack had repainted during the
+     flight; a native app repaints within a frame or two; the ~60-150 ms capture then lands inside a ~350 ms
+     Alt+F). Verdict (`snapshotFreshVerdict`): the WindowServer reports another size (the capture would be scaled)
+     or the SM-29 verdict is partial (start size, unpainted grown strip) -> `partial`; blank -> `blank`; painted
+     and matching the cached target-size image (`snapshotPaintStable`) -> `fresh`; painted and matching the start
+     image cut to the part both sizes share (`snapshotFreshRegion`, only when the window shrank: the clipped old
+     layout of the VS Code recording) -> `stale`; else `fresh`. A fresh read applies; anything else retries every
+     40 ms, no capture starting past `limit` = 600 ms after the write (the overlay is gone by then); after a
+     partial, blank or stale read two matching fresh reads are needed (SM-29's rule: a window caught repainting
+     may show an intermediate layout). Applied: the overlay crossfades the layer to it on top
+     (`OverlayCrossfade.freshened(at:)`: other faces held where they are; timed fade `overlayFreshFadeDuration` =
+     100 ms eased, since the resize is nearly done when it arrives and a fade along it would pop; a later retarget
+     continues from it) and `SnapshotCacheRefresher.storeFresh` keeps it as the window's target-size image (not
+     25 s stale next time; the settle run does not capture it again); its fill becomes the paint check's
+     background. Grows rely on the grown strips for an old layout (the top-left part of a correctly re-laid-out
+     window often equals the old one); a terminal-like shrink whose top-left content does not change reads
+     `stale` unless it matches the cached target image: no fresh image, the pre-SM-30 picture (accepted).
+     Rejected: holding the hand-off until the fresh image or a stale read clears (a terminal would hold to the
+     cap on every shrink).
+  2. No flat coloured box (B): the fill is the most common colour of the capture's right half
+     (`snapshotContentFill`: channels in 16 levels, the largest bucket's mean, samples less than half opaque
+     ignored, nil when fewer than half are opaque; `snapshotContentSamples` draws the right half into 32x64 in
+     sRGB) instead of the median of the right edge (`snapshotEdgeLine`/`snapshotEdgeFill`/`snapshotEdgeSamples`
+     removed). The content pane (editor, message list, page) has the largest area; frames, bars, text and left
+     sidebars (which keep their width when a window grows) are minorities. With (1) the fill shows at most until
+     the fresh image fades in (~0.2-0.3 s into the flight). Chosen over the whole image (a wide left sidebar wins
+     in narrow columns) and over the bottom-right corner (a composer or status bar).
+  3. Soft hand-off (C): the layers of resized windows (`snapshotHandoffFading`) fade out over the real windows
+     in `snapshotHandoffFadeDuration` = 120 ms, eased in and out (~85 % opaque after two frames: the 1-3 frames an
+     Electron app needs to re-lay out are masked); the backdrop and every other layer go at once, so pure moves
+     keep the instant hand-off. The live ring and dim are published first as before; the fading layer's own ring
+     is hidden (the live one is above, `.floating`), its dim fades with its image. The overlay controller ends the
+     flight (watchdog, deadline, frame link stop; `active` empty) and removes the fading overlays after the
+     duration; a mouse down (`abortForMouseDown`), a new flight (`begin` -> `endAll`) or a stop removes them at
+     once. Limit: a non-animated pass in those 120 ms (an AX fallback motion) is not drawn over.
+  4. Log (D): debug `snapshot resize id=P:E mode=<mode> fresh=<ms|none> attempts=N [last=<verdict>]` per resized
+     layer at the hand-off; debug `snapshot fresh capture id=P:E ms=N ok=<bool>` per capture; the hand-off line
+     gains ` fade=120`.
+  RED (observed, compile: `swift build --build-tests` failed in GioCoreTests, cannot find `SnapshotFreshTracker`,
+  `SnapshotFreshRead`, `SnapshotFreshOutcome`, `snapshotFreshRegion`, `snapshotFreshVerdict`, `snapshotRegionPixels`,
+  `snapshotResizeOutcomeLine`, `snapshotHandoffFadeDuration`, `snapshotHandoffFading`; the GioSessionTests and
+  GioMacOSTests below were written in the same step against the missing API and compiled only after it existed):
+  `SnapshotFreshTests` (12: region, region pixels, verdicts, stale, cached match, tracker apply / confirmation /
+  unknown / limit / supersede, resize line, fading set), `OverlayResizeTests.testTheFillIsTheMostCommonColourOfTheOpaqueSamples`,
+  `testNearlyEqualShadesCountAsOneColourAndAverage`, `testPremultipliedSamplesAreUnpremultipliedAndASeeThroughCaptureHasNoFill`,
+  `testAFreshFaceGoesOnTopOpaqueAndARetargetContinuesFromIt`, `SnapshotHandoffTests.testTheLogLineSaysHowLongTheResizedLayersFadeOut`,
+  `SnapshotSamplingTests.testTheFillIsTheMostCommonColourOfTheRightHalfNotItsFrameOrSidebar`, `testATransparentCaptureHasNoFill`,
+  `testAClippedOldLayoutSamplesLikeTheStartImageCutToTheNewSize`, `SnapshotFlightTests.testAGrowingWindowIsCapturedAgainAtItsNewSizeMidFlightAndTheLayerFadesToIt`,
+  `testAShrinkingWindowStillShowingItsOldLayoutIsCapturedAgainUntilTwoReadsAgree`, `testAPureMoveIsNotCapturedAgainAndLeavesAtOnce`,
+  `testTheHandOffStopsTheFreshCapturesAndALateAnswerIsDropped`, `testARetargetBackToTheStartSizeDropsTheFreshCapture`,
+  `testAResizeThatStartsAsARetargetIsCapturedAfterItsWrite`. Removed with the edge fill: `testTheEdgeLineRunsDownTheRightEdgeInsideTheBorderAndCorners`,
+  `testTheFillIsTheMedianOfTheOpaqueEdgeSamples`, `testPremultipliedSamplesAreUnpremultipliedAndTransparentOnesIgnored`,
+  `testTheEdgeFillIsTheContentBackgroundBesideBarsAndRim`, `testATransparentOrTinyCaptureHasNoEdgeFill`. Re-pinned:
+  `testAResizedWindowOfATrustedAppIsCheckedAndHeldUntilItsRepaintSettles` (the resized hand-off is a fade:
+  `fades == [[idA]]`, log `... held=partial fade=120`). First GREEN run: the sampling test's expected colour
+  ignored the device-RGB to sRGB shift (0.13 vs 0.10); it now runs the expected colour through the same pipeline.
+  GREEN: full `swift test`: GioUITests 310 (53 skipped), GioSessionTests 438, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 95, GioCoreTests 1925, all 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check`
+  clean. Not unit-tested (compile-checked): `SnapshotCapturer.freshCapture` (ScreenCaptureKit), the Core
+  Animation fresh fade and fade-out in `SnapshotOverlay` (`WindowLayers.freshen`/`fadeOut`, the controller's
+  `freshen`/`fadeOut`/fading state) and the `SessionHost`/`main.swift` wiring.
+  LIVE PENDING (`docs/TESTING.md` 15j): Code, Slack and a native app; Alt+F (first maximize and again), Alt+F
+  back, Alt+F twice quickly, Alt+R presets, 60 fps recording: no big flat box (Slack never purple), the content
+  at the new size fades in mid-flight, the end fades over ~120 ms with no visible pop, pure scrolls unchanged,
+  a click at the end removes the fading picture at once; log `snapshot resize ... fresh=<ms>` (note the values
+  and every `fresh=none ... last=`), `snapshot fresh capture ... ok=true`, ` fade=120` only on resizes; no new
+  `anim done` hitches from the mid-flight captures.
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.
@@ -1171,3 +1259,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-08: SM-22 committed as `fdca808` and pushed. Live (22:33-22:35 UTC, 332 presses, 70 workspace switches): 93/94 flights as images (1 fallback: first motion after launch), fps median 117 (min 108), single flights with a hitch 15 %, 0 holes, no `coverage stopped`, cache 255-267 MB, cap `pixels=67334400 ramMB=24576`, Chrome matched `by=order`.
 - 2026-10-12: live report of a black box beside a growing window (SM-27 crossfade); SM-28 (the covering target image goes under the fading start image) committed. Next: the SM-28 LIVE PENDING check.
 - 2026-10-12: live recording of VS Code Alt+F showed a black box where the window grew and its old layout for ~67 ms after the hand-off (app trusted, blank test blind to partial paints); SM-29 (resized windows always checked, grown-strip and size test, two matching reads after a partial one) committed and pushed. Next: the SM-29 LIVE PENDING check.
+- 2026-10-12: live recording after SM-29 still showed a purple flat box on Slack's first maximize, a 25 s old target image and a 2-frame old layout on VS Code's shrink, and hard cuts; SM-30 (fresh mid-flight capture of resized windows, content-colour fill, 120 ms fade-out of resized layers at the hand-off) committed and pushed. Next: the SM-30 LIVE PENDING check.

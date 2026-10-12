@@ -46,7 +46,7 @@ public struct SnapshotPaintProbe: Equatable, Sendable {
     public let frame: CGRect
     /// The size it had at the flight start when it changed size, else nil.
     public let resizedFrom: CGSize?
-    /// The content background its image showed (SM-27 edge fill), if known.
+    /// The content background its image showed (its fill), if known.
     public let background: ThemeColor?
 
     public init(frame: CGRect, resizedFrom: CGSize? = nil, background: ThemeColor? = nil) {
@@ -165,7 +165,7 @@ public let snapshotStripBackgroundTolerance = 0.04
 
 /// SM-29: whether a grown strip (`samples`: packed premultiplied RGBA, alpha
 /// in the low byte) shows nothing drawn: fully transparent, or one uniform
-/// colour that is not the window's `background` (its SM-27 edge fill), or
+/// colour that is not the window's `background` (its image's fill), or
 /// black when the background is unknown. Content (any two opaque samples
 /// differ) or the background itself reads painted; no samples, no evidence.
 public func snapshotStripUnpainted(samples: [UInt32], background: ThemeColor?) -> Bool {
@@ -234,10 +234,10 @@ public enum SnapshotHandoffHoldReason: String, Equatable, Sendable {
 }
 
 /// `snapshot handoff waited ms=N windows=N painted=N [resized=N]
-/// [held=partial|stale]`: info when the overlay was held (a window read
-/// unpainted at a check, or the cap was reached), debug otherwise. SM-29:
-/// `resized` counts the checked windows that changed size, `held` names a
-/// partial or stale paint.
+/// [held=partial|stale] [fade=N]`: info when the overlay was held (a window
+/// read unpainted at a check, or the cap was reached), debug otherwise.
+/// SM-29: `resized` counts the checked windows that changed size, `held`
+/// names a partial or stale paint. SM-30: `fade` the resized layers' fade.
 public struct SnapshotHandoffSummary: Equatable, Sendable {
     public let waitedMilliseconds: Int
     public let windows: Int
@@ -245,6 +245,9 @@ public struct SnapshotHandoffSummary: Equatable, Sendable {
     public let held: Bool
     public let resized: Int
     public let reason: SnapshotHandoffHoldReason?
+    /// SM-30: how long the resized windows' layers fade out (0: none, the
+    /// overlay left at once); set by the session, which decides the fade.
+    public var fadeMilliseconds = 0
 
     public init(
         waitedMilliseconds: Int, windows: Int, painted: Int, held: Bool, resized: Int = 0,
@@ -267,6 +270,9 @@ public struct SnapshotHandoffSummary: Equatable, Sendable {
         }
         if let reason {
             line += " held=\(reason.rawValue)"
+        }
+        if fadeMilliseconds > 0 {
+            line += " fade=\(fadeMilliseconds)"
         }
         return line
     }

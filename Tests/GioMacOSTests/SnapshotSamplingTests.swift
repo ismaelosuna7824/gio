@@ -96,37 +96,71 @@ final class SnapshotSamplingTests: XCTestCase {
         XCTAssertEqual(snapshotSamples(of: dot).count, 45)
     }
 
-    // MARK: SM-27 edge fill
+    // MARK: SM-30 content fill
 
-    /// A window with a dark title bar, a blue status bar and a 1 px rim on
-    /// its right edge: the fill is the content background.
-    func testTheEdgeFillIsTheContentBackgroundBesideBarsAndRim() throws {
+    /// Slack-like: a purple frame along the top and the right edge and a
+    /// purple sidebar on the left around a dark content pane. SM-27 sampled
+    /// the right edge (a live maximize showed a huge purple box); the most
+    /// common colour of the right half is the content background.
+    func testTheFillIsTheMostCommonColourOfTheRightHalfNotItsFrameOrSidebar() throws {
         let window = image(width: 400, height: 300) { context in
-            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.setFillColor(CGColor(red: 0.1, green: 0.11, blue: 0.13, alpha: 1))
             context.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
-            context.setFillColor(CGColor(red: 0.15, green: 0.15, blue: 0.15, alpha: 1))
-            context.fill(CGRect(x: 0, y: 272, width: 400, height: 28))
-            context.setFillColor(CGColor(red: 0, green: 0.4, blue: 0.8, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: 400, height: 22))
-            context.setFillColor(CGColor(red: 0.5, green: 0.5, blue: 0.5, alpha: 1))
-            context.fill(CGRect(x: 399, y: 0, width: 1, height: 300))
+            context.setFillColor(CGColor(red: 0.25, green: 0.05, blue: 0.25, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 230, height: 300))
+            context.fill(CGRect(x: 0, y: 260, width: 400, height: 40))
+            context.fill(CGRect(x: 388, y: 0, width: 12, height: 300))
+            context.setFillColor(CGColor(red: 0.85, green: 0.85, blue: 0.85, alpha: 1))
+            for line in stride(from: 20, to: 240, by: 24) {
+                context.fill(CGRect(x: 250, y: CGFloat(line), width: 110, height: 8))
+            }
         }
-        let samples = snapshotEdgeSamples(of: window, pixelsPerPoint: 1)
-        XCTAssertEqual(samples.count, 64)
-        let fill = try XCTUnwrap(snapshotEdgeFill(samples: samples))
-        XCTAssertEqual(fill.red, 1, accuracy: 2 / 255)
-        XCTAssertEqual(fill.green, 1, accuracy: 2 / 255)
-        XCTAssertEqual(fill.blue, 1, accuracy: 2 / 255)
+        let samples = snapshotContentSamples(of: window)
+        XCTAssertEqual(samples.count, 32 * 64)
+        let fill = try XCTUnwrap(snapshotContentFill(samples: samples))
+        // The test image is device RGB, the samples sRGB: the expected colour
+        // goes through the same conversion.
+        let pane = image(width: 40, height: 40) { context in
+            context.setFillColor(CGColor(red: 0.1, green: 0.11, blue: 0.13, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 40, height: 40))
+        }
+        let content = try XCTUnwrap(snapshotContentFill(samples: snapshotContentSamples(of: pane)))
+        XCTAssertEqual(fill.red, content.red, accuracy: 2 / 255)
+        XCTAssertEqual(fill.green, content.green, accuracy: 2 / 255)
+        XCTAssertEqual(fill.blue, content.blue, accuracy: 2 / 255)
     }
 
-    func testATransparentOrTinyCaptureHasNoEdgeFill() {
+    func testATransparentCaptureHasNoFill() {
         let clear = image(width: 300, height: 200) { _ in }
-        XCTAssertNil(snapshotEdgeFill(samples: snapshotEdgeSamples(of: clear, pixelsPerPoint: 1)))
-        let dot = image(width: 1, height: 1) { context in
-            context.setFillColor(CGColor(red: 0, green: 0, blue: 1, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        XCTAssertNil(snapshotContentFill(samples: snapshotContentSamples(of: clear)))
+    }
+
+    // MARK: SM-30 stale layout
+
+    /// A window shrunk from 400 to 200 px that still shows its old layout
+    /// clipped to the new frame samples like the start image cut to 200 px;
+    /// re-laid out (its right border moved to the new edge) it does not.
+    func testAClippedOldLayoutSamplesLikeTheStartImageCutToTheNewSize() {
+        func layout(_ context: CGContext, width: CGFloat) {
+            context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: 300))
+            context.setFillColor(CGColor(red: 0.2, green: 0.3, blue: 0.8, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: 60, height: 300))
+            context.setFillColor(CGColor(red: 0.3, green: 0.3, blue: 0.3, alpha: 1))
+            context.fill(CGRect(x: width - 40, y: 0, width: 40, height: 300))
+            context.fill(CGRect(x: 0, y: 270, width: width, height: 30))
         }
-        XCTAssertEqual(snapshotEdgeSamples(of: dot, pixelsPerPoint: 1), [])
+        let start = image(width: 400, height: 300) { layout($0, width: 400) }
+        let clipped = image(width: 200, height: 300) { layout($0, width: 400) }
+        let relaid = image(width: 200, height: 300) { layout($0, width: 200) }
+        let region = snapshotRegionPixels(
+            CGSize(width: 200, height: 300), of: CGSize(width: 400, height: 300), pixelWidth: 400, pixelHeight: 300
+        )
+        let startRegion = snapshotRegionSamples(of: start, in: region)
+        XCTAssertEqual(startRegion.count, 45)
+        XCTAssertTrue(snapshotPaintStable(startRegion, snapshotSamples(of: clipped)))
+        XCTAssertFalse(snapshotPaintStable(startRegion, snapshotSamples(of: relaid)))
+        XCTAssertEqual(snapshotRegionSamples(of: start, in: CGRect(x: 500, y: 0, width: 10, height: 10)), [])
     }
 
     // MARK: SM-29 grown strips

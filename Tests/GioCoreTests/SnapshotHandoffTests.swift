@@ -526,4 +526,12 @@ final class SnapshotHandoffTests: XCTestCase {
         let stale = SnapshotHandoffSummary(waitedMilliseconds: 200, windows: 1, painted: 1, held: true, resized: 1, reason: .stale)
         XCTAssertEqual(stale.logLine, "snapshot handoff waited ms=200 windows=1 painted=1 resized=1 held=stale")
     }
+
+    /// SM-30: the resized windows' layers fade out over the real windows.
+    func testTheLogLineSaysHowLongTheResizedLayersFadeOut() {
+        var summary = SnapshotHandoffSummary(waitedMilliseconds: 0, windows: 1, painted: 1, held: false, resized: 1)
+        XCTAssertEqual(summary.fadeMilliseconds, 0)
+        summary.fadeMilliseconds = 120
+        XCTAssertEqual(summary.logLine, "snapshot handoff waited ms=0 windows=1 painted=1 resized=1 fade=120")
+    }
 }
