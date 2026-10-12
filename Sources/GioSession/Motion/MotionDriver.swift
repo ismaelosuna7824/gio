@@ -125,11 +125,12 @@ public final class MotionDriver: @unchecked Sendable {
 
     /// Begin, or retarget the running motion. The player is created once,
     /// with the first sink it is given. The first tick runs from the
-    /// scheduler, never inside this call, so the host's `focusNow` right
-    /// after it lands before any motion frame. PF-O: `renderer` is the
+    /// scheduler, never inside this call (PF-Q: the host's motion-start
+    /// focus no longer runs on this queue at all). PF-O: `renderer` is the
     /// effective one (`.live` or `.ax`; the snapshot overlay never runs
-    /// here) and names the run in `anim done`; a live run also counts the
-    /// ticks that came late against the timer's interval (hitches).
+    /// here) and names the run in `anim done`; PF-R: every run counts the
+    /// ticks that came late against the timer's interval (hitches) and the
+    /// frame intervals no tick covered (missed).
     public func start(_ animations: [WindowAnimation], sink: MotionFrameSink, renderer: RendererKind = .ax) {
         let player = self.player ?? MotionPlayer(
             sink: sink, clock: context.playerClock, appName: context.playerAppName
@@ -144,8 +145,7 @@ public final class MotionDriver: @unchecked Sendable {
         let interval = timerInterval ?? frameInterval(
             for: motionRefreshRate(animations: animations, displays: context.displayRefreshes())
         )
-        let live = renderer == .live
-        player.start(animations, renderer: live ? .live : .ax, frameInterval: live ? interval : nil)
+        player.start(animations, renderer: renderer == .live ? .live : .ax, frameInterval: interval)
         lastAnimations = animations
         resizeProbes.probe(of: animations.filter { $0.sizeSchedule == .atStart }, frames: { $0.from })
         // Motion frames are unverified: the final pass must read these windows,

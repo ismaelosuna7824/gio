@@ -55,17 +55,24 @@ public struct MotionSummary: Equatable, Sendable {
     /// overlay) or PF-O `live` (same-size windows through SkyLight per tick).
     public let renderer: String
     /// SM-12: snapshot flights, display-link intervals over 1.5 refresh
-    /// intervals; PF-O: live runs, timer ticks over 1.5 frame intervals
-    /// after the previous one. Nil (and absent from the line) for AX motion.
+    /// intervals; PF-O: player runs, timer ticks over 1.5 frame intervals
+    /// after the previous one (PF-R: AX runs too). Nil (and absent from the
+    /// line) without a measurement.
     public let hitches: Int?
+    /// PF-R: player runs, the frame intervals no tick covered (a tick 3.2
+    /// intervals after the previous one missed 2), comparable with the
+    /// snapshot line's expected-minus-presented `dropped`. Nil (and absent)
+    /// for snapshot flights and without a timer interval.
+    public let missed: Int?
 
     public init(
         windows: Int, frames: Int, dropped: Int, duration: TimeInterval,
         slowest: (app: String, milliseconds: Double)?, curve: String = "ease-out",
         sizeAnimated: Int = 0, appStats: [pid_t: MotionWriteStats] = [:], renderer: String = "ax",
-        grewAtStart: Int = 0, hitches: Int? = nil
+        grewAtStart: Int = 0, hitches: Int? = nil, missed: Int? = nil
     ) {
         self.hitches = hitches
+        self.missed = missed
         self.grewAtStart = grewAtStart
         self.renderer = renderer
         self.curve = curve
@@ -82,6 +89,7 @@ public struct MotionSummary: Equatable, Sendable {
         lhs.windows == rhs.windows && lhs.curve == rhs.curve && lhs.frames == rhs.frames && lhs.dropped == rhs.dropped
             && lhs.duration == rhs.duration && lhs.slowest?.app == rhs.slowest?.app
             && lhs.slowest?.milliseconds == rhs.slowest?.milliseconds && lhs.hitches == rhs.hitches
+            && lhs.missed == rhs.missed
     }
 
     /// SM-12: a finished overlay flight. `frames` are the frames the display
@@ -94,16 +102,18 @@ public struct MotionSummary: Equatable, Sendable {
         )
     }
 
-    /// `anim done windows=N frames=F dropped=D [hitches=H] duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|live|snapshot grewAtStart=G`
+    /// `anim done windows=N frames=F dropped=D [missed=M] [hitches=H] duration=Xms slowest=<app> Yms curve=<curve> sizeAnimated=S renderer=ax|live|snapshot grewAtStart=G`
     /// AX and live: `frames` counts sampled display ticks, `dropped` counts
     /// per-app frames skipped because that app was still writing (live: only
-    /// the resizing windows have app lanes), live adds `hitches` (late
-    /// ticks). Snapshot (SM-12): presented frames, expected minus presented,
-    /// and hitches. IDs and app names only.
+    /// the resizing windows have app lanes), `missed` the frame intervals no
+    /// tick covered and `hitches` the late ticks (PF-R: both renderers).
+    /// Snapshot (SM-12): presented frames, expected minus presented, and
+    /// hitches. IDs and app names only.
     public var logLine: String {
         let slowestText = slowest.map { "\($0.app) \(Int($0.milliseconds.rounded()))ms" } ?? "none"
+        let missedText = missed.map { "missed=\($0) " } ?? ""
         let hitchText = hitches.map { "hitches=\($0) " } ?? ""
-        return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) \(hitchText)"
+        return "anim done windows=\(windows) frames=\(frames) dropped=\(dropped) \(missedText)\(hitchText)"
             + "duration=\(Int((duration * 1000).rounded()))ms slowest=\(slowestText) curve=\(curve) sizeAnimated=\(sizeAnimated) renderer=\(renderer) grewAtStart=\(grewAtStart)"
     }
 }
@@ -145,6 +155,8 @@ public final class MotionPlayer {
     private var renderer: RendererKind = .ax
     private var frameInterval: TimeInterval?
     private var hitches = 0
+    /// PF-R: frame intervals no tick covered this run.
+    private var missed = 0
     private var lastTickAt: TimeInterval?
 
     public private(set) var sampledFrames: [WindowID: CGRect] = [:]
@@ -186,6 +198,7 @@ public final class MotionPlayer {
             runSizeAnimated = []
             runGrewAtStart = []
             hitches = 0
+            missed = 0
             lastTickAt = nil
         }
         self.renderer = renderer
@@ -230,8 +243,12 @@ public final class MotionPlayer {
         let now = clock()
         let elapsed = now - segmentStart
         lastElapsed = elapsed
-        if let frameInterval, let lastTickAt, now - lastTickAt > frameInterval * 1.5 {
-            hitches += 1
+        if let frameInterval, let lastTickAt {
+            let gap = now - lastTickAt
+            if gap > frameInterval * 1.5 {
+                hitches += 1
+            }
+            missed += max(0, Int((gap / frameInterval).rounded()) - 1)
         }
         lastTickAt = now
         frames += 1
@@ -304,7 +321,8 @@ public final class MotionPlayer {
             duration: clock() - runStart, slowest: slowest,
             curve: runUsedSpring ? "spring" : "ease-out",
             sizeAnimated: runSizeAnimated.count, appStats: stats, renderer: renderer.rawValue,
-            grewAtStart: runGrewAtStart.count, hitches: frameInterval == nil ? nil : hitches
+            grewAtStart: runGrewAtStart.count, hitches: frameInterval == nil ? nil : hitches,
+            missed: frameInterval == nil ? nil : missed
         )
         animations = []
         submitted = [:]

@@ -231,6 +231,13 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   ticks (a `CADisplayLink` needs a run loop thread and a hop to the session queue per frame;
   the measured stalls are session-queue work, which a display link would wait behind just the
   same; the strict `DispatchSourceTimer` already keeps absolute deadlines, no drift).
+- PF-R (metrics to compare the renderers): live lines already had `hitches`, but `dropped` there
+  counts only the resizing windows' lane drops (nearly always 0), not frames the timer missed,
+  so a live line could not be held against a snapshot line (`dropped` = expected minus
+  presented) or an AX line (no `hitches`). Every player run (live and AX) now reports
+  `missed=M` (sum over ticks of round(gap / interval) - 1) and `hitches=H` against the timer's
+  interval; `dropped` keeps its meaning so older AX lines stay comparable. Snapshot lines are
+  unchanged.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -448,7 +455,7 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   `renderer = "snapshot"`, so switch it in Settings > Animations > Renderer first).
 - [x] PF-P — The SkyLight probe judges by evidence that survives latency, small moves,
   coordinate spaces and other moments, and a failure retries instead of ending the session's
-  live renderer. Commit `<pending>`. Changes: `WindowServerProbe` rewritten (timed
+  live renderer. Commit `ab3b0fe`. Changes: `WindowServerProbe` rewritten (timed
   `moved(...at:)`/`observe(_:at:)`, `forget(_:)`, `refresh(at:)`, `trial`, `isTrialRunning`,
   `readbackAllowance`, `retryDelays`), `WindowServerProbeVerdict` (log line with evidence),
   `WindowServerProbeState.retrying`, status reason `probe-retrying`; `WindowReconciler`
@@ -461,7 +468,8 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   back-off, `probe-retrying` status; `WindowServerMotionTests`: failure after the allowance
   then retry through the reconciler, an Accessibility write makes the probe forget). GREEN:
   `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7, Mac 19, MacOS
-  95, Core 1916 (+13). LIVE PENDING: checklist 15h/15j (`skylight probe` lines).
+  95, Core 1916 (+13); signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING: checklist 15h/15j
+  (`skylight probe` lines).
 - [x] PF-Q — The motion-start focus runs off the session queue, so it no longer holds the first
   tick of a flight or a retarget. Changes: `WindowReconciler.focusSoon`/`waitForFocusIdle`
   (replace `focusNow`/`FocusNowResult`), focus queue, locked PF-I gate, `reconcile` waits for
@@ -474,6 +482,16 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   line). GREEN: `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7,
   Mac 19, MacOS 95, Core 1919 (+3); signed `xcodebuild` BUILD SUCCEEDED. LIVE PENDING:
   checklist 15j (f), compare the gap from `hotkey` to the next tick.
+- [x] PF-R — `anim done` of live and AX runs reports `missed=M hitches=H`. Changes:
+  `MotionSummary.missed` (line, equality), `MotionPlayer` counts missed intervals,
+  `MotionDriver.start` passes the timer interval for AX runs too. RED (compile): `swift build
+  --build-tests` failed `value of type 'MotionSummary' has no member 'missed'`
+  (`WindowServerMotionTests.testAPlayerRunNamesItsRendererAndCountsLateTicksAndMissedFrames`,
+  replacing `testALiveRunNamesItsRendererAndCountsLateTicks`; `MotionDriverTests
+  .testAPlayerFlightLogsItsRendererHitchesAndMissedFrames`, replacing
+  `testALiveFlightLogsItsRendererAndHitches`). GREEN: `swift test` all bundles 0 failures: UI
+  312 (53 skipped), Session 436, POC 7, Mac 19, MacOS 95, Core 1919; signed `xcodebuild` BUILD
+  SUCCEEDED. LIVE PENDING: checklist 15j (compare `missed`/`hitches` across renderers).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

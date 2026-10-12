@@ -149,9 +149,11 @@ final class WindowServerMotionTests: XCTestCase {
 
     /// PF-O: a live run names its renderer in `anim done` and counts the
     /// ticks that came more than 1.5 frame intervals after the previous one
-    /// (hitches), as the snapshot flight's line does; an AX run's line keeps
-    /// its old shape (no hitches).
-    func testALiveRunNamesItsRendererAndCountsLateTicks() throws {
+    /// (hitches), as the snapshot flight's line does. PF-R: it also counts
+    /// the display intervals no tick covered (`missed`, comparable with the
+    /// snapshot line's expected-minus-presented `dropped`), and an AX run
+    /// reports both too, so the renderers compare line by line.
+    func testAPlayerRunNamesItsRendererAndCountsLateTicksAndMissedFrames() throws {
         let clock = Clock(), sink = Sink()
         let player = MotionPlayer(sink: sink, clock: { clock.now })
         var scroll = flight(id(1), from: visible, to: visible.offsetBy(dx: 400, dy: 0))
@@ -165,18 +167,22 @@ final class WindowServerMotionTests: XCTestCase {
         let summary = try XCTUnwrap(player.tick().summary)
         XCTAssertEqual(summary.renderer, "live")
         XCTAssertEqual(summary.hitches, 2, "0.1 -> 0.4 and 0.5 -> 1.0 came late")
+        XCTAssertEqual(summary.missed, 6, "two intervals skipped after 0.1, four after 0.5")
         XCTAssertEqual(summary.frames, 5)
-        XCTAssertTrue(summary.logLine.contains(" hitches=2 "), summary.logLine)
+        XCTAssertTrue(summary.logLine.contains(" dropped=0 missed=6 hitches=2 "), summary.logLine)
         XCTAssertTrue(summary.logLine.hasSuffix("renderer=live grewAtStart=0"), summary.logLine)
         XCTAssertEqual(sink.serverBatches.count, 4, "the first tick at t=0 moves nothing")
         XCTAssertTrue(sink.accepted.isEmpty, "no Accessibility write during a live flight")
 
-        player.start([flight(id(2), from: visible, to: visible.offsetBy(dx: 400, dy: 0))])
-        clock.now = 2.5
+        player.start([flight(id(2), from: visible, to: visible.offsetBy(dx: 400, dy: 0))], frameInterval: 0.5)
+        clock.now = 1.2
+        XCTAssertNil(player.tick().summary)
+        clock.now = 2.2
         let ax = try XCTUnwrap(player.tick().summary)
         XCTAssertEqual(ax.renderer, "ax")
-        XCTAssertNil(ax.hitches)
-        XCTAssertFalse(ax.logLine.contains("hitches="))
+        XCTAssertEqual(ax.hitches, 1)
+        XCTAssertEqual(ax.missed, 1)
+        XCTAssertTrue(ax.logLine.contains(" missed=1 hitches=1 "), ax.logLine)
     }
 
     /// PF-O: a key pressed mid-flight retargets a live flight like any
