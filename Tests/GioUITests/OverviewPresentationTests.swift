@@ -19,17 +19,25 @@ final class OverviewPresentationTests: XCTestCase {
         var config = AnimationsSectionConfig()
         config.renderer = .snapshot
         config.curve = .spring
-        XCTAssertEqual(motionSummary(config, screenRecording: true).value, "Snapshot")
-        XCTAssertEqual(motionSummary(config, screenRecording: true).detail, "Spring motion")
-        XCTAssertEqual(motionSummary(config, screenRecording: false).value, "Accessibility")
-        XCTAssertEqual(motionSummary(config, screenRecording: false).detail, "Snapshot needs Screen Recording")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: true).value, "Snapshot")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: true).detail, "Spring motion")
+        XCTAssertEqual(motionSummary(config, screenRecording: false, windowServer: true).value, "Accessibility")
+        XCTAssertEqual(
+            motionSummary(config, screenRecording: false, windowServer: true).detail, "Snapshot needs Screen Recording"
+        )
         config.renderer = .ax
         config.curve = .easeOut
         config.durationMilliseconds = 250
-        XCTAssertEqual(motionSummary(config, screenRecording: true).detail, "Ease-out · 250 ms")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: true).detail, "Ease-out · 250 ms")
+        // PF-O: live needs SkyLight, not Screen Recording.
+        config.renderer = .live
+        XCTAssertEqual(motionSummary(config, screenRecording: false, windowServer: true).value, "Live")
+        XCTAssertEqual(motionSummary(config, screenRecording: false, windowServer: true).detail, "Ease-out · 250 ms")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: false).value, "Accessibility")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: false).detail, "Live needs SkyLight")
         config.enabled = false
-        XCTAssertEqual(motionSummary(config, screenRecording: true).value, "Off")
-        XCTAssertEqual(motionSummary(config, screenRecording: true).detail, "Windows move instantly")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: true).value, "Off")
+        XCTAssertEqual(motionSummary(config, screenRecording: true, windowServer: true).detail, "Windows move instantly")
     }
 
     func testSessionStatus() {

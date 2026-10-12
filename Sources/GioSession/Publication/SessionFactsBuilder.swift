@@ -100,13 +100,19 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         }
         let path = session.configPath ?? (context.homeDirectory() + "/.config/gio/config.toml")
         let screenRecording = context.screenRecordingGranted()
-        if let line = rendererLog.line(config: session.config.animations, permission: screenRecording) {
+        let windowServer = context.windowServerStatus()
+        // PF-O: the live renderer stands on the SkyLight transport; a failed
+        // probe republishes the facts, so the fallback is logged then.
+        if let line = rendererLog.line(
+            config: session.config.animations, permission: screenRecording, windowServer: windowServer.available
+        ) {
             context.log(.info, line)
         }
         context.prefetchSnapshotContent(
-            effectiveRenderer(config: session.config.animations, permission: screenRecording) == .snapshot
+            effectiveRenderer(
+                config: session.config.animations, permission: screenRecording, windowServer: windowServer.available
+            ) == .snapshot
         )
-        let windowServer = context.windowServerStatus()
         if let line = windowServerLog.line(for: windowServer) {
             context.log(.info, line)
         }

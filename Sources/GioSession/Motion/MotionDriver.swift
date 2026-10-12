@@ -90,6 +90,8 @@ public final class MotionDriver: @unchecked Sendable {
     private let resizeProbes: ResizeProbeRunner
     private var player: MotionPlayer?
     private var timer: SessionTimer?
+    /// The running timer's interval (fixed for the motion, PA-03).
+    private var timerInterval: TimeInterval?
     /// Diagnostics: the latest flight's animations (to find the FI-03 grows
     /// at the final pass).
     private var lastAnimations: [WindowAnimation] = []
@@ -124,13 +126,26 @@ public final class MotionDriver: @unchecked Sendable {
     /// Begin, or retarget the running motion. The player is created once,
     /// with the first sink it is given. The first tick runs from the
     /// scheduler, never inside this call, so the host's `focusNow` right
-    /// after it lands before any motion frame.
-    public func start(_ animations: [WindowAnimation], sink: MotionFrameSink) {
+    /// after it lands before any motion frame. PF-O: `renderer` is the
+    /// effective one (`.live` or `.ax`; the snapshot overlay never runs
+    /// here) and names the run in `anim done`; a live run also counts the
+    /// ticks that came late against the timer's interval (hitches).
+    public func start(_ animations: [WindowAnimation], sink: MotionFrameSink, renderer: RendererKind = .ax) {
         let player = self.player ?? MotionPlayer(
             sink: sink, clock: context.playerClock, appName: context.playerAppName
         )
         self.player = player
-        player.start(animations)
+        // A display-rate timer on the session queue: a tick only samples and
+        // hands frames to per-app lanes or one SkyLight transaction (never an
+        // AX call here), so it costs microseconds, and sampling by elapsed
+        // time keeps late ticks honest. PA-03: paced to the display holding
+        // the moving windows (60 Hz -> 16.7 ms, 120 Hz -> 8.3 ms), fixed for
+        // this motion.
+        let interval = timerInterval ?? frameInterval(
+            for: motionRefreshRate(animations: animations, displays: context.displayRefreshes())
+        )
+        let live = renderer == .live
+        player.start(animations, renderer: live ? .live : .ax, frameInterval: live ? interval : nil)
         lastAnimations = animations
         resizeProbes.probe(of: animations.filter { $0.sizeSchedule == .atStart }, frames: { $0.from })
         // Motion frames are unverified: the final pass must read these windows,
@@ -142,13 +157,8 @@ public final class MotionDriver: @unchecked Sendable {
         guard timer == nil else {
             return
         }
-        // A display-rate timer on the session queue: a tick only samples and
-        // hands frames to per-app lanes (never an AX call here), so it costs
-        // microseconds, and sampling by elapsed time keeps late ticks honest.
-        // PA-03: paced to the display holding the moving windows (60 Hz ->
-        // 16.7 ms, 120 Hz -> 8.3 ms), fixed for this motion.
-        let fps = motionRefreshRate(animations: animations, displays: context.displayRefreshes())
-        timer = scheduler.makeStrictTimer(start: 0, interval: frameInterval(for: fps)) { [weak self] in
+        timerInterval = interval
+        timer = scheduler.makeStrictTimer(start: 0, interval: interval) { [weak self] in
             self?.tick()
         }
     }
@@ -158,6 +168,7 @@ public final class MotionDriver: @unchecked Sendable {
         context.resetCoalescer()
         timer?.cancel()
         timer = nil
+        timerInterval = nil
         player?.cancel()
     }
 

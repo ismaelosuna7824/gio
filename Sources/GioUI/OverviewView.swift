@@ -143,7 +143,9 @@ struct OverviewDashboard: View {
     private func heroRow(_ facts: SessionFacts, _ overview: Overview) -> some View {
         let counts = windowCounts(overview.windows)
         let focused = focusedWindow(facts)
-        let motion = motionSummary(config.animations, screenRecording: facts.screenRecordingGranted)
+        let motion = motionSummary(
+            config.animations, screenRecording: facts.screenRecordingGranted, windowServer: facts.windowServer.available
+        )
         return HStack(alignment: .top, spacing: GioSpacing.s) {
             MetricTile(
                 "Workspaces", value: workspaceTotals(facts),
@@ -219,8 +221,8 @@ struct OverviewDashboard: View {
                 statusRow(
                     symbol: "record.circle", tint: .pink, title: "Screen Recording",
                     why: facts.screenRecordingGranted
-                        ? "Powers smooth snapshot animations."
-                        : "Optional. Enables smooth snapshot animations; relaunch Gio after granting.",
+                        ? "Powers the overview thumbnails and the snapshot renderer."
+                        : "Optional. Enables the overview thumbnails and the snapshot renderer; relaunch Gio after granting.",
                     granted: facts.screenRecordingGranted, action: ("Request Access…", requestScreenRecording),
                     missingKind: .warning, missingLabel: "Off"
                 )

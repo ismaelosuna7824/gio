@@ -132,7 +132,8 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var springStiffness: Double
     /// PA-06: whether growing windows interpolate their size during flight.
     public var resize: ResizeMode
-    /// SM-01: `snapshot` (default) needs Screen Recording; falls back to `ax`.
+    /// PF-O: `live` (default) needs the SkyLight transport, SM-01 `snapshot`
+    /// needs Screen Recording; both fall back to `ax`.
     public var renderer: RendererKind
     /// When the focused window that grows gets its final size: `start`
     /// (default, first frame) or `end` (FI-03, final pass).
@@ -156,7 +157,7 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .snapshot,
+        renderer: RendererKind = .live,
         focusedGrow: FocusedGrowMode = .start,
         nativeZoom: Bool = true,
         closeGhost: Bool = false,

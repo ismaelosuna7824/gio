@@ -324,7 +324,8 @@ final class SessionHost: @unchecked Sendable {
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
-                            config: session.config.animations, permission: hasScreenRecordingPermission()
+                            config: session.config.animations, permission: hasScreenRecordingPermission(),
+                            windowServer: windowServerStatus().available
                         ) == .snapshot
                 },
                 ghostCacheWanted: { [unowned self] in
@@ -1626,11 +1627,17 @@ final class SessionHost: @unchecked Sendable {
         // PF-M: hide and reveal flights move through SkyLight per tick (one
         // transaction for all of them) with no Accessibility write until the
         // final pass; flights between two visible frames stay on their lanes.
-        // TG-03: a gesture's settle moves visible ones through it too.
+        // PF-O: the live renderer moves every same-size flight that way,
+        // visible ones included; resizing ones stay on their lanes. Without
+        // SkyLight the effective renderer is ax. TG-03: a gesture's settle
+        // moves visible ones through it too.
+        let renderer = effectiveRenderer(
+            config: settings, permission: hasScreenRecordingPermission(), windowServer: windowServer.available
+        )
         animations = planMotionTransports(
             animations, viewports: displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame },
             enabled: windowServer.available, ownPID: ProcessInfo.processInfo.processIdentifier,
-            moveVisible: gestureRelease != nil
+            renderer: renderer, gestureSettle: gestureRelease != nil
         )
         // SM-04/SM-08: with the snapshot renderer the real windows get one
         // write to their final frames (the instant pass) under an overlay
@@ -1663,9 +1670,9 @@ final class SessionHost: @unchecked Sendable {
                         instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: true, placement: placement, reconciler: reconciler)
                     },
                     fallback: { [unowned self] in
-                        axMotionPass(
+                        motionPass(
                             animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
-                            zoomJob: zoomJob, reconciler: reconciler
+                            zoomJob: zoomJob, renderer: .ax, reconciler: reconciler
                         )
                     }
                 )
@@ -1676,20 +1683,21 @@ final class SessionHost: @unchecked Sendable {
             overlayFlight.end()
         }
         if !animations.isEmpty && !snapshotFlight {
-            axMotionPass(
+            motionPass(
                 animations: animations, plans: plans, prepositions: prepositions, entries: pass.entries,
-                zoomJob: zoomJob, reconciler: reconciler
+                zoomJob: zoomJob, renderer: renderer, reconciler: reconciler
             )
             return
         }
         instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: snapshotFlight, placement: placement, reconciler: reconciler)
     }
 
-    /// The AX renderer: pre-positions, then the motion driver writes every
-    /// frame of the animation through the reconciler.
-    private func axMotionPass(
+    /// The motion player (the live and AX renderers): pre-positions, then
+    /// the motion driver moves every frame of the animation through the
+    /// reconciler (SkyLight per tick or the apps' lanes, per flight).
+    private func motionPass(
         animations: [WindowAnimation], plans: [ParkingPlan], prepositions: [WindowID: CGRect], entries: Set<WindowID>,
-        zoomJob: NativeZoomController.Job?, reconciler: WindowReconciler<AXWindowActuator>
+        zoomJob: NativeZoomController.Job?, renderer: RendererKind, reconciler: WindowReconciler<AXWindowActuator>
     ) {
         // PF-02: entries (new windows) are written at once and merge into
         // a running motion; only switch pre-positions wait for its lanes.
@@ -1708,7 +1716,7 @@ final class SessionHost: @unchecked Sendable {
                 reconciler.preposition(frames: $0, from: physicalFrames, waitForMotion: false)
             }
         }
-        motion.start(animations, sink: reconciler)
+        motion.start(animations, sink: reconciler, renderer: renderer)
         openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
         // FI-06: the keyboard follows the logical focus right away instead
         // of after the animation; the final pass only re-asserts a drift.

@@ -36,14 +36,14 @@ final class WindowServerMotionTests: XCTestCase {
                 flight(id(8), from: parkedEdge, to: CGRect(x: 100, y: 8, width: 900, height: 984)), // FI-03 grow
                 flight(id(9, pid: 7), from: parkedEdge, to: visible), // Gio's own
             ],
-            viewports: [display], enabled: true, ownPID: 7
+            viewports: [display], enabled: true, ownPID: 7, renderer: .ax
         )
         XCTAssertEqual(planned.filter { $0.transport == .windowServer }.map(\.id), [id(1), id(2), id(3), id(4), id(8)])
     }
 
     func testWithoutTheTransportEveryFlightStaysOnAX() {
         let planned = planMotionTransports(
-            [flight(id(1), from: parkedEdge, to: visible)], viewports: [display], enabled: false, ownPID: 7
+            [flight(id(1), from: parkedEdge, to: visible)], viewports: [display], enabled: false, ownPID: 7, renderer: .ax
         )
         XCTAssertEqual(planned.map(\.transport), [.accessibility])
     }
@@ -52,6 +52,41 @@ final class WindowServerMotionTests: XCTestCase {
         var animation = flight(id(1), from: parkedEdge, to: visible)
         animation.transport = .windowServer
         XCTAssertEqual(animation.springing(.niri).transport, .windowServer)
+    }
+
+    /// PF-O: with the live renderer every flight that keeps its size moves
+    /// through the WindowServer, visible ones included (scrolls in view);
+    /// a flight that resizes (first-frame shrink, focused grow at start,
+    /// interpolated size) stays on its app's Accessibility lane, and so does
+    /// Gio's own window. The other renderers keep PF-M's hide/reveal split.
+    func testTheLiveRendererMovesEverySameSizeFlightThroughTheWindowServer() {
+        let below = slideDownFrame(visible, display: display)
+        let wider = CGRect(x: 100, y: 8, width: 900, height: 984)
+        var interpolates = flight(id(6), from: visible, to: wider)
+        interpolates.sizeSchedule = .fromStart
+        var growsAtStart = flight(id(7), from: visible, to: wider)
+        growsAtStart.sizeSchedule = .atStart
+        let flights = [
+            flight(id(1), from: visible, to: visible.offsetBy(dx: 400, dy: 0)), // scroll in view
+            flight(id(2), from: parkedEdge, to: visible), // reveal
+            flight(id(3), from: visible, to: below), // workspace drop
+            flight(id(4), from: below, to: visible), // workspace rise
+            flight(id(5), from: wider, to: visible), // shrinks on the first frame
+            interpolates, // maximize whose size follows the flight
+            growsAtStart, // focused maximize: final size on the first frame
+            flight(id(8), from: visible, to: wider), // FI-03 grow: old size until the final pass
+            flight(id(9, pid: 7), from: visible, to: visible.offsetBy(dx: 400, dy: 0)), // Gio's own
+        ]
+        let live = planMotionTransports(flights, viewports: [display], enabled: true, ownPID: 7, renderer: .live)
+        XCTAssertEqual(live.filter { $0.transport == .windowServer }.map(\.id), [id(1), id(2), id(3), id(4), id(8)])
+        XCTAssertEqual(live.filter { $0.transport == .accessibility }.map(\.id), [id(5), id(6), id(7), id(9, pid: 7)])
+        for renderer in [RendererKind.ax, .snapshot] {
+            let other = planMotionTransports(flights, viewports: [display], enabled: true, ownPID: 7, renderer: renderer)
+            XCTAssertEqual(other.filter { $0.transport == .windowServer }.map(\.id), [id(2), id(3), id(4)], "\(renderer)")
+        }
+        // No transport (fallback): every flight on Accessibility.
+        let off = planMotionTransports(flights, viewports: [display], enabled: false, ownPID: 7, renderer: .live)
+        XCTAssertTrue(off.allSatisfy { $0.transport == .accessibility })
     }
 
     // MARK: Player
@@ -110,6 +145,62 @@ final class WindowServerMotionTests: XCTestCase {
         _ = player.tick()
         // The next tick continues from the frame the AX write carried.
         XCTAssertEqual(sink.accepted.last?.writes.first?.from, sink.accepted.first?.writes.first?.to)
+    }
+
+    /// PF-O: a live run names its renderer in `anim done` and counts the
+    /// ticks that came more than 1.5 frame intervals after the previous one
+    /// (hitches), as the snapshot flight's line does; an AX run's line keeps
+    /// its old shape (no hitches).
+    func testALiveRunNamesItsRendererAndCountsLateTicks() throws {
+        let clock = Clock(), sink = Sink()
+        let player = MotionPlayer(sink: sink, clock: { clock.now })
+        var scroll = flight(id(1), from: visible, to: visible.offsetBy(dx: 400, dy: 0))
+        scroll.transport = .windowServer
+        player.start([scroll], renderer: .live, frameInterval: 0.1)
+        for now in [0.0, 0.1, 0.4, 0.5] {
+            clock.now = now
+            XCTAssertNil(player.tick().summary)
+        }
+        clock.now = 1.0
+        let summary = try XCTUnwrap(player.tick().summary)
+        XCTAssertEqual(summary.renderer, "live")
+        XCTAssertEqual(summary.hitches, 2, "0.1 -> 0.4 and 0.5 -> 1.0 came late")
+        XCTAssertEqual(summary.frames, 5)
+        XCTAssertTrue(summary.logLine.contains(" hitches=2 "), summary.logLine)
+        XCTAssertTrue(summary.logLine.hasSuffix("renderer=live grewAtStart=0"), summary.logLine)
+        XCTAssertEqual(sink.serverBatches.count, 4, "the first tick at t=0 moves nothing")
+        XCTAssertTrue(sink.accepted.isEmpty, "no Accessibility write during a live flight")
+
+        player.start([flight(id(2), from: visible, to: visible.offsetBy(dx: 400, dy: 0))])
+        clock.now = 2.5
+        let ax = try XCTUnwrap(player.tick().summary)
+        XCTAssertEqual(ax.renderer, "ax")
+        XCTAssertNil(ax.hitches)
+        XCTAssertFalse(ax.logLine.contains("hitches="))
+    }
+
+    /// PF-O: a key pressed mid-flight retargets a live flight like any
+    /// other: the spring keeps the velocity it had and the window stays on
+    /// the WindowServer.
+    func testALiveRetargetKeepsTheSpringVelocityAndTheTransport() {
+        let clock = Clock(), sink = Sink()
+        let player = MotionPlayer(sink: sink, clock: { clock.now })
+        var first = WindowAnimation(id: id(1), from: visible, to: visible.offsetBy(dx: 800, dy: 0), spring: .niri)
+        first.transport = .windowServer
+        player.start([first], renderer: .live, frameInterval: 1.0 / 60)
+        clock.now = 0.05
+        _ = player.tick()
+        let sampled = player.sampledFrames[id(1)]!
+        var next = WindowAnimation(id: id(1), from: sampled, to: sampled.offsetBy(dx: 900, dy: 0), spring: .niri)
+        next.transport = .windowServer
+        player.start([next], renderer: .live, frameInterval: 1.0 / 60)
+        let retargeted = player.currentAnimations[0]
+        XCTAssertGreaterThan(retargeted.velocity.x, 0, "the spring keeps its momentum")
+        XCTAssertEqual(retargeted.transport, .windowServer)
+        clock.now = 0.07
+        _ = player.tick()
+        XCTAssertEqual(sink.serverBatches.last?.first?.from, sampled, "it continues from the last committed frame")
+        XCTAssertTrue(sink.accepted.isEmpty)
     }
 
     // MARK: Reconciler

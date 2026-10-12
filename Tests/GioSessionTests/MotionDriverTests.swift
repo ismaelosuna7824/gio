@@ -211,6 +211,24 @@ final class MotionDriverTests: XCTestCase {
         XCTAssertEqual(world.physical[a], CGRect(x: 400, y: 0, width: 800, height: 600))
     }
 
+    /// PF-O: the driver hands the run's renderer and its timer interval to
+    /// the player, so a live flight logs `renderer=live` with its hitches;
+    /// an AX flight's line is unchanged.
+    func testALiveFlightLogsItsRendererAndHitches() {
+        driver.start([flight(a, duration: 0.05)], sink: sink, renderer: .live)
+        advance(by: 0.1)
+        let live = world.logs.map(\.1).filter { $0.hasPrefix("anim done") }
+        XCTAssertEqual(live.count, 1)
+        XCTAssertTrue(live[0].contains(" hitches="), live[0])
+        XCTAssertTrue(live[0].contains("renderer=live"), live[0])
+
+        driver.start([flight(b, duration: 0.05)], sink: sink)
+        advance(by: 0.1)
+        let ax = world.logs.map(\.1).filter { $0.hasPrefix("anim done") }.last!
+        XCTAssertFalse(ax.contains("hitches="), ax)
+        XCTAssertTrue(ax.contains("renderer=ax"), ax)
+    }
+
     func testStopClearsAnimatingPidsAndResetsTheCoalescer() {
         driver.start([flight(a)], sink: sink)
         driver.stop()

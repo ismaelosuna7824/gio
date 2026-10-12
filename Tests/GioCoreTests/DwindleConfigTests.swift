@@ -172,7 +172,7 @@ final class DwindleConfigTests: XCTestCase {
             id: id, from: CGRect(x: 10, y: 10, width: 485, height: 580),
             to: CGRect(x: 10, y: -579, width: 485, height: 580), duration: 0.2
         )
-        let planned = planMotionTransports([resized, hidden], viewports: [viewport], enabled: true, ownPID: 1)
+        let planned = planMotionTransports([resized, hidden], viewports: [viewport], enabled: true, ownPID: 1, renderer: .ax)
         XCTAssertEqual(planned.map(\.transport), [.accessibility, .windowServer])
     }
 }

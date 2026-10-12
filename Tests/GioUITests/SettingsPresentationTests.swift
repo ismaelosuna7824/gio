@@ -175,7 +175,7 @@ final class SettingsPresentationTests: XCTestCase {
         form.durationMilliseconds = 250
         let expected = animationEdits(
             enabled: true, durationMilliseconds: 250, curve: .easeOut, springDampingRatio: 0.7,
-            springStiffness: 900, resize: .never, renderer: .snapshot, focusedGrow: .start, nativeZoom: true
+            springStiffness: 900, resize: .never, renderer: .live, focusedGrow: .start, nativeZoom: true
         )
         XCTAssertEqual(Array(form.edits.prefix(expected.count)), expected)
     }

@@ -84,12 +84,16 @@ public func defaultConfigTemplate() -> String {
     # corrects or falls back to a normal write otherwise. Stacked columns and
     # apps without a zoom button use the normal write. Set false to disable.
     native-zoom = true
-    # How motion is drawn: "snapshot" (default) slides images of the windows at
-    # the display's refresh rate, the same speed with every app, and moves the
-    # real windows once; it needs the Screen Recording permission (Gio uses "ax"
-    # while it is missing). "ax" moves the real windows every frame, so content
-    # stays live, but slow apps move at their own pace.
-    renderer = "snapshot"
+    # How motion is drawn. "live" (default) moves the real windows, so content
+    # stays live: a window that keeps its size moves through the WindowServer
+    # (SkyLight) at the display's refresh rate, one step for all of them, and
+    # its app learns the final frame at the end; a window that changes size
+    # goes through Accessibility at its app's pace. It needs [behavior]
+    # skylight (Gio uses "ax" without it). "snapshot" slides images of the
+    # windows and moves the real ones once; it needs the Screen Recording
+    # permission (Gio uses "ax" while it is missing). "ax" moves every window
+    # through Accessibility, so slow apps move at their own pace.
+    renderer = "live"
 
     # Per-animation tuning, with Niri's names. Each table inherits every key
     # of [animations] and may set its own: enabled, curve, duration-ms,

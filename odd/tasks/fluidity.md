@@ -34,6 +34,13 @@ OmniWM evaluation (`HidingEval`): OmniWM turns `AXEnhancedUserInterface` off aro
 batches, moves hidden windows with SkyLight transactions and follows with an AX write once
 settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
 
+## Scope (user choice 2026-10-11, live renderer)
+With the snapshot renderer the motion slides images of the windows: the user's log showed
+`snapshot flight ... cacheAgeMs=3467..7108`, so the content was seconds old and the swap to the
+real windows at the end showed ("se ve como que es una imagen"). OmniWM moves the real windows
+(AX per tick for visible ones, SkyLight for hidden ones; `HidingEval`). The user chose a new
+renderer `"live"` that moves the real windows, as the default (PF-O).
+
 ## Decisions
 - PF-A: no lane wait in `MotionPlayer.finish`; the final pass waits only for the apps it
   writes, for `finalPassMotionGrace` (100 ms). Apps still writing are deferred
@@ -135,6 +142,32 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   the window). The render check moves a drawn mismatch through SkyLight to the app's frame
   before any nudge (`render repair id= app= via=skylight fixed=`). Cost: one extra transaction
   per pass that followed SkyLight moves (`skylight aligned windows=N`, debug).
+- PF-O: renderer `"live"` (default; `"snapshot"` and `"ax"` stay). It is the motion player
+  with `planMotionTransports(..., renderer: .live)`: every flight that keeps its size moves
+  through SkyLight, visible-to-visible included, one transaction per tick for all of them,
+  through the existing `submitWindowServerMotion` path (the one PF-M and the gesture pump use;
+  nothing new talks to SkyLight). Split chosen: flights that change size (first-frame shrink,
+  focused grow at start, interpolated sizes) stay on the AX motion lanes with
+  `AXEnhancedUserInterface` off (PF-K). Rejected: an AX size write followed by SkyLight
+  position moves for the same window, because the app answers an AX write with its own
+  position-and-size commit from its belief, which would race the WindowServer moves (and
+  SkyLight never resizes). Also rejected: OmniWM's per-tick AX for visible windows (that is
+  the `ax` renderer, slow apps lag). Settle: PF-M/PF-N unchanged (final pass writes the ledger's
+  pending windows through AX, then `alignWindowServer`); the driver cancels its timer before
+  the final pass, so no tick commits after it. Mouse down: the flight stops (no final pass)
+  with the windows pending where SkyLight left them; the instant pass after the release writes
+  and aligns them. Not added: an AX write of the pending windows at the mouse-down itself
+  (it would block the session queue up to the stall timeout on the click, and the release pass
+  fixes the app's belief anyway). [INFERENCE] During the press an app whose belief is stale
+  could misplace something it positions from its own frame (a tab drag); LIVE PENDING (15j e).
+  Fallback: `effectiveRenderer(config:permission:windowServer:)` gives `.ax` when the transport
+  is not available (config off, missing symbols, probe failed), logged as
+  `renderer effective=ax reason=skylight-unavailable`; Diagnostics shows Live or Fallback with
+  the skylight reason, the Overview's Motion tile Live or "Live needs SkyLight". Logs: `anim
+  done ... renderer=live` with `hitches` = timer ticks more than 1.5 intervals after the
+  previous one (same threshold as the snapshot display-link hitches); AX lines are unchanged.
+  Screen Recording is now only for the overview thumbnails, the snapshot renderer and the close
+  ghost (README, onboarding, Overview copy).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -320,6 +353,36 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
 - [x] PF-N — WindowServer aligned with the app after every followed-up SkyLight move, SkyLight
   render repair before the nudges. Commit `b2ed03e`. Recorded and evidenced as TG-05 in
   `trackpad-gestures.md`. LIVE PENDING: checklists 15h and 15i (l).
+- [x] PF-O — Live renderer (real windows through SkyLight per tick, resizing windows on AX), the
+  default. Changes: `RendererKind.live` (default in `AnimationsSectionConfig`, template, parser
+  messages), `effectiveRenderer`/`rendererReason`/`RendererLogGate` take `windowServer:`,
+  `planMotionTransports(..., renderer:gestureSettle:)` (replaces `moveVisible:`),
+  `MotionPlayer.start(_:renderer:frameInterval:)` (summary renderer and hitches),
+  `MotionDriver.start(_:sink:renderer:)`, `SessionFactsBuilder` (renderer line after the
+  transport status), `SessionHost` (effective renderer per pass, `motionPass` renamed from
+  `axMotionPass`), Diagnostics Renderer card, Overview Motion tile, Settings > Animations >
+  Renderer ("Live (real windows)", Default), onboarding/Overview Screen Recording copy; docs:
+  README (Animation, Why Screen Recording, Private APIs), USER_GUIDE (`renderer`, `skylight`,
+  example, Animations row), ARCHITECTURE (PF-O bullet, renderer choice, display link, logs),
+  TESTING (15j, 15b/15h/15i, `renderer effective` and `anim done` rows). RED (compile, observed
+  in `GioCoreTests/RendererSettingTests`: `RendererKind` had no `live`, `effectiveRenderer`/
+  `rendererReason`/`RendererLogGate.line` no `windowServer:`; the same batch held
+  `WindowServerMotionTests.testTheLiveRendererMovesEverySameSizeFlightThroughTheWindowServer`,
+  `testALiveRunNamesItsRendererAndCountsLateTicks`, `testALiveRetargetKeepsTheSpringVelocityAndTheTransport`
+  (no `renderer:` on `planMotionTransports`/`MotionPlayer.start`),
+  `LiveRendererSettleTests` (settle ordering; click mid-flight), `MotionDriverTests
+  .testALiveFlightLogsItsRendererAndHitches`, `SessionFactsBuilderTests
+  .testLiveFallsBackToAXWithoutSkyLightAndSaysWhy`, `AdvancedPresentationTests
+  .testRendererCardShowsLiveOrItsFallback`, `OverviewPresentationTests.testMotionSummary`; the
+  build stopped at the Core errors, so the Session and UI compile errors were not printed
+  separately). One existing expectation moved with the default:
+  `SettingsPresentationTests.testAnimationsFormRoundTripsConfigAndBuildsEdits` (`.snapshot` to
+  `.live`, failed once after GREEN). GREEN: `swift test` all bundles 0 failures: UI 312 (+1,
+  53 skipped), Session 432 (+4), POC 7, Mac 19, MacOS 95, Core 1886 (+4);
+  `GioUITests.LauncherPanelAnimationTests.testTheSlideInLandsOnTheRequestedFrame` passed in
+  both runs this time. Signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  LIVE PENDING: checklist 15j in `docs/TESTING.md` (the user's config says
+  `renderer = "snapshot"`, so switch it in Settings > Animations > Renderer first).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -347,3 +410,5 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   (checklists 15g and 15h). Branch rebased by the coordinator onto MM-06 (hashes above are the
   rebased ones). PF-M (per-tick SkyLight motion and the runtime probe) implemented; display
   link for the AX motion not adopted (Decisions, PF-M).
+- 2026-10-11: PF-O (live renderer, default) implemented on `feat/live-renderer`; all bundles
+  green, signed build succeeded; LIVE PENDING (checklist 15j).

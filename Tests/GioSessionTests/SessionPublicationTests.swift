@@ -144,8 +144,33 @@ final class SessionFactsBuilderTests: XCTestCase {
         _ = builder.facts()
         _ = builder.facts()
         XCTAssertEqual(logs.values.filter { $0.hasPrefix("renderer ") }.count, 1)
-        let snapshot = effectiveRenderer(config: fixture.session.config.animations, permission: true) == .snapshot
+        let snapshot = effectiveRenderer(
+            config: fixture.session.config.animations, permission: true, windowServer: true
+        ) == .snapshot
         XCTAssertEqual(prefetches.values, [snapshot, snapshot])
+    }
+
+    /// PF-O: the default live renderer needs SkyLight. Without it (config
+    /// off, missing symbols, a failed probe) the log says the motion falls
+    /// back to the AX renderer, once per change, and the snapshot content is
+    /// not prefetched; with it the line names `live`.
+    func testLiveFallsBackToAXWithoutSkyLightAndSaysWhy() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        XCTAssertEqual(fixture.session.config.animations.renderer, .live)
+        let failed = windowServerTransportStatus(enabled: true, missingSymbols: [], probe: .failed)
+        let logs = Recorder<String>()
+        let prefetches = Recorder<Bool>()
+        let builder = make(fixture, logs: logs, prefetches: prefetches, windowServer: failed)
+        _ = builder.facts()
+        _ = builder.facts()
+        XCTAssertEqual(
+            logs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=ax reason=skylight-unavailable"]
+        )
+        XCTAssertEqual(prefetches.values, [false, false])
+
+        let liveLogs = Recorder<String>()
+        _ = make(fixture, logs: liveLogs, prefetches: Recorder()).facts()
+        XCTAssertEqual(liveLogs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=live reason=configured"])
     }
 
     /// PF-L: the WindowServer transport state is logged once (again only

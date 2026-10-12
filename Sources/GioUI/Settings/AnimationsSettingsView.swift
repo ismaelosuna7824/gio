@@ -136,14 +136,20 @@ struct AnimationsSettingsView: View {
     private var rendererCard: some View {
         SectionCard("Renderer") {
             RendererOption(
-                title: "Snapshot", badge: StatusBadge(.ok, "Default"),
+                title: "Live (real windows)", badge: StatusBadge(.ok, "Default"),
+                detail: "Moves the real windows at the display's refresh rate, one step for all of them, so content stays live. Windows that change size (maximize, width presets) move through Accessibility at their app's pace. Needs SkyLight ([behavior] skylight); without it Gio uses Accessibility.",
+                isSelected: draft.current.renderer == .live
+            ) { draft.current.renderer = .live }
+            Divider().padding(.leading, 44)
+            RendererOption(
+                title: "Snapshot", badge: nil,
                 detail: "Slides images of the windows at the display's refresh rate, the same speed with every app; the real windows move once. Content is frozen during the slide. Needs Screen Recording; without it Gio uses Accessibility.",
                 isSelected: draft.current.renderer == .snapshot
             ) { draft.current.renderer = .snapshot }
             Divider().padding(.leading, 44)
             RendererOption(
                 title: "Accessibility", badge: nil,
-                detail: "Moves the real windows every frame, so content stays live. Slow apps (WhatsApp, Music, Xcode) move at their own pace.",
+                detail: "Moves the real windows every frame through Accessibility, so content stays live. Slow apps (WhatsApp, Music, Xcode) move at their own pace.",
                 isSelected: draft.current.renderer == .ax
             ) { draft.current.renderer = .ax }
         }
