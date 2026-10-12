@@ -168,6 +168,51 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   previous one (same threshold as the snapshot display-link hitches); AX lines are unchanged.
   Screen Recording is now only for the overview thumbnails, the snapshot renderer and the close
   ghost (README, onboarding, Overview copy).
+- PF-P (2026-10-12, the live renderer never ran): every session since `b2ed03e` logged
+  `skylight probe result=failed` within ~120 ms of its first flight, then `renderer
+  effective=ax reason=skylight-unavailable` for the rest of the session (02:23:53.772Z, 27 ms
+  into the second three-finger scroll, i.e. three drains; 02:49:57.175Z, the first `focusLeft`,
+  22 ms after Safari's activation event). The three suspects, checked:
+  (1) readback latency: refuted by measurement. A throwaway helper in `/tmp` (not committed)
+  opened its own 160x90 non-activating floating `NSPanel` in an accessory process (Gio manages
+  `.regular` apps only) in the display's corner for 2 s and moved it through
+  `SLSTransactionCreate`/`SLSTransactionMoveWindowWithGroup`/`SLSTransactionCommit` every
+  8.3 ms, 40 commits, while a thread sampled `CGWindowListCopyWindowInfo` and
+  `SLSGetWindowBounds` every ~1 ms: commit to readback median 1.2 ms, max 1.4 ms from the
+  main thread; median 1.0 ms, max 2.2 ms from a background queue (Gio's session-queue case);
+  a Gio-style look just before each commit always showed the previous commit. Three ticks
+  (25 ms) were already >10x that. (2) wrong id or coordinates: refuted by the failure itself,
+  which requires the readback, converted to Cocoa, to match Gio's own pre-flight frame within
+  2 pt (ids and the flip agree). (3) the moves did not take effect for those ticks: the
+  remaining explanation. The same helper moving the panel from a second process (no
+  Accessibility trust, `.prohibited` and `.accessory` policies, main thread and background
+  queue) found foreign moves silently dropped (40 transactions, the panel never moved) and
+  `SLSMoveWindow` returning 1000 (`kCGErrorFailure`). Whether Gio's connection (Accessibility
+  trusted) may move other apps' windows could not be measured without running Gio or
+  borrowing its TCC grant; [INFERENCE] two mechanisms fit the log: the WindowServer refusing
+  the moves outright, or an app re-asserting its own frame (Safari was activated 22 ms before
+  the 02:49 verdict; PF-O already notes apps commit their belief). Not b2ed03e itself: it
+  changes no probe or commit path, only adds alignment transactions after Accessibility writes.
+  The 22:53Z `result=verified` (the only one, during a gesture) is not proof either: the old
+  probe verified on a drawn origin within 2 pt of any committed frame, and a scroll's first
+  drain can commit 2 pt from the start (write tolerance 1 pt), so a window that never moved
+  verified it. Probe defects fixed: false verification by a move within the slack; one 25 ms
+  trial decided the whole session; stuck looks were counted against the frame the window had
+  before its first move ever (not per flight), so an Accessibility write landing at a
+  committed frame verified it and stale looks across flights added up; no evidence in the
+  log. New rules (pure, `WindowServerProbe`): verified = drawn at a commit more than 2 pt from
+  the flight's start, or drawn moved since the first look by the offset between two commits
+  (coordinate-space independent); stuck = drawn unchanged since the first look while a commit
+  at least 50 ms old lies away from every frame it could have shown then; three consecutive
+  stuck looks fail the trial (a look elsewhere resets); evidence per flight (250 ms pause
+  starts over; the reconciler forgets windows it moves any other way: `reconcile`,
+  `dispatch`, `preposition`, `syncWindowServerMoves`, `alignWindowServer`, `nudge`). A failed
+  trial turns SkyLight off until a retry 2 s later (600 s after later failures), state
+  `retrying` (`skylight available=true reason=probe-retrying`); verdicts log their numbers.
+  Cost of a refused transport: one flight frozen ~75 ms at 120 Hz per trial (it was ~25 ms,
+  once). Rejected: OmniWM's explicit probe move of a foreign window (Gio's probe never moves a
+  window by itself, PF-M); re-verifying after `verified` (a mid-session refusal would freeze
+  flights until the final pass; not observed, left out).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -383,6 +428,22 @@ renderer `"live"` that moves the real windows, as the default (PF-O).
   both runs this time. Signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
   LIVE PENDING: checklist 15j in `docs/TESTING.md` (the user's config says
   `renderer = "snapshot"`, so switch it in Settings > Animations > Renderer first).
+- [x] PF-P — The SkyLight probe judges by evidence that survives latency, small moves,
+  coordinate spaces and other moments, and a failure retries instead of ending the session's
+  live renderer. Commit `<pending>`. Changes: `WindowServerProbe` rewritten (timed
+  `moved(...at:)`/`observe(_:at:)`, `forget(_:)`, `refresh(at:)`, `trial`, `isTrialRunning`,
+  `readbackAllowance`, `retryDelays`), `WindowServerProbeVerdict` (log line with evidence),
+  `WindowServerProbeState.retrying`, status reason `probe-retrying`; `WindowReconciler`
+  (probe on its clock, verdict logged, `probeForget` on every non-flight move). RED (compile):
+  `swift build --build-tests` failed `cannot find type 'WindowServerProbeVerdict' in scope`
+  (`WindowServerProbeTests`: three-ticks-late readback verified, late-within-allowance
+  verified, ignored moves fail only after the allowance with evidence, 2 pt move does not
+  verify, offset readback verifies by translation and fails when stuck, direct match line,
+  moved readback resets the count, forgotten window, stale flight starts over, retry and
+  back-off, `probe-retrying` status; `WindowServerMotionTests`: failure after the allowance
+  then retry through the reconciler, an Accessibility write makes the probe forget). GREEN:
+  `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 436, POC 7, Mac 19, MacOS
+  95, Core 1916 (+13). LIVE PENDING: checklist 15h/15j (`skylight probe` lines).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

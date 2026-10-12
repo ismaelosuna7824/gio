@@ -340,6 +340,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         if !aligned.isEmpty {
             GioLog.record(.debug, "skylight aligned windows=\(aligned.count)")
         }
+        probeForget(Set(toWrite.keys).union(toPark.keys).union(windowServerFirst))
         var focusMilliseconds = 0.0
         var focusCalls = 0
         if let focused, focused != currentlyFocused, parked[focused] == nil {
@@ -399,6 +400,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         var lanes = planWriteLanes(frames: toWrite, parked: toPark)
         let written = Set(toWrite.keys).union(toPark.keys)
         let followUps = ledger.snapshot(written)
+        probeForget(written.union(windowServerFirst))
         var step: DispatchFocusStep?
         if let focused, focused != currentlyFocused, parked[focused] == nil {
             step = DispatchFocusStep(target: focused, generation: focusBook.issue())
@@ -741,29 +743,30 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         motionLanes.submit(pid: pid, writes: writes)
     }
 
-    /// PF-M: the runtime probe's verdict so far.
+    /// PF-M: the runtime probe's verdict so far. PF-P: a failed probe turns
+    /// into a new trial (`retrying`) once its retry is due.
     public var windowServerProbe: WindowServerProbeState {
-        probe.state
+        probe.refresh(at: clock())
+        return probe.state
     }
 
-    /// PF-M: one tick of hide and reveal flights, all in one WindowServer
-    /// transaction, no Accessibility write (the final pass follows through
-    /// the ledger). Never blocks. While the probe is unverified, it first
-    /// looks where the WindowServer draws a window moved on an earlier tick;
-    /// once the probe fails, nothing is moved any more (here or in instant
-    /// passes) and the player writes these frames through Accessibility.
-    /// Returns the windows moved.
+    /// PF-M: one tick of hide and reveal flights (PF-O: every same-size
+    /// flight of the live renderer), all in one WindowServer transaction, no
+    /// Accessibility write (the final pass follows through the ledger).
+    /// Never blocks. While a probe trial runs, it first looks where the
+    /// WindowServer draws up to two windows moved on earlier ticks of the
+    /// flight and logs the verdict with its evidence; while the probe is
+    /// failed, nothing is moved (here or in instant passes) and the player
+    /// writes these frames through Accessibility. Returns the windows moved.
     public func submitWindowServerMotion(_ writes: [MotionWrite]) -> Set<WindowID> {
         guard !writes.isEmpty, windowServerUsable, let windowServer else {
             return []
         }
+        let now = clock()
         let targets = probe.observationTargets()
-        if !targets.isEmpty {
-            probe.observe(windowServer.frames(of: targets))
-            if probe.state != .unverified {
-                GioLog.record(.info, "skylight probe result=\(probe.state.rawValue)")
-            }
-            if probe.state == .failed {
+        if !targets.isEmpty, let verdict = probe.observe(windowServer.frames(of: targets), at: now) {
+            GioLog.record(.info, verdict.logLine)
+            if verdict.result == .failed {
                 return []
             }
         }
@@ -772,19 +775,34 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             frames[write.id] = write.to
         }
         let moved = moveThroughWindowServer(frames)
-        if probe.state == .unverified {
+        if probe.isTrialRunning {
             for write in writes where moved.contains(write.id) {
                 if let windowID = windowServer.windowServerID(of: write.id) {
-                    probe.moved(windowID: windowID, from: write.from, to: write.to)
+                    probe.moved(windowID: windowID, from: write.from, to: write.to, at: now)
                 }
             }
         }
         return moved
     }
 
-    /// PF-L/PF-M: switched on by the session, present, not refuted by the probe.
+    /// PF-L/PF-M: switched on by the session, present, not refuted by the
+    /// probe (PF-P: or refuted, but its retry is due).
     private var windowServerUsable: Bool {
-        windowServerEnabled && windowServer != nil && probe.state != .failed
+        guard windowServerEnabled, windowServer != nil else {
+            return false
+        }
+        probe.refresh(at: clock())
+        return probe.state != .failed
+    }
+
+    /// PF-P: these windows are moved outside a flight's ticks (an
+    /// Accessibility write, an alignment, a park or pre-position): what the
+    /// probe saw of them proves nothing about the flight's commits any more.
+    private func probeForget(_ ids: some Sequence<WindowID>) {
+        guard probe.isTrialRunning, let windowServer else {
+            return
+        }
+        probe.forget(ids.compactMap { windowServer.windowServerID(of: $0) })
     }
 
     /// NC-07 / HD-02: put hidden incoming windows just below their target
@@ -807,6 +825,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         guard !known.isEmpty else {
             return []
         }
+        probeForget(known.keys)
         if waitForMotion {
             // A queued motion frame landing after the move would undo it.
             waitForMotionIdle(timeout: 0.3)
@@ -847,6 +866,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         guard !pending.isEmpty else {
             return
         }
+        probeForget(pending.keys)
         let snapshot = ledger.snapshot(pending.keys)
         let lanes = planWriteLanes(frames: pending, parked: [:])
         let writer = PrepositionWriter(actuator: actuator, enhancedUI: enhancedUI)
@@ -901,7 +921,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// refuted by the probe or refused the transaction. Never Gio's own.
     @discardableResult
     public func alignWindowServer(to frames: [WindowID: CGRect]) -> Set<WindowID> {
-        commitThroughWindowServer(frames)
+        probeForget(frames.keys)
+        return commitThroughWindowServer(frames)
     }
 
     private func commitThroughWindowServer(_ targets: [WindowID: CGRect]) -> Set<WindowID> {
@@ -956,6 +977,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         guard !known.isEmpty else {
             return []
         }
+        probeForget(known.keys)
         waitForMotionIdle(timeout: 0.3)
         let lanes = planWriteLanes(frames: known.mapValues { $0.last! }, parked: [:])
         let writer = NudgeWriter(actuator: actuator, enhancedUI: enhancedUI)

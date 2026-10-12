@@ -265,8 +265,14 @@ final class WindowServerMotionTests: XCTestCase {
         func focus(id: WindowID) throws {}
     }
 
-    private func make(_ actuator: Actuator, _ mover: Mover) -> WindowReconciler<Actuator> {
-        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial, windowServer: mover, ownPID: 1)
+    private func make(_ actuator: Actuator, _ mover: Mover, clock: Clock? = nil) -> WindowReconciler<Actuator> {
+        var reflowClock = systemReflowClock
+        if let clock {
+            reflowClock = { clock.now }
+        }
+        let reconciler = WindowReconciler(
+            actuator: actuator, concurrency: .serial, clock: reflowClock, windowServer: mover, ownPID: 1
+        )
         reconciler.windowServerEnabled = true
         return reconciler
     }
@@ -317,36 +323,70 @@ final class WindowServerMotionTests: XCTestCase {
         let journal = Journal()
         let mover = Mover([id(1): 101], journal: journal)
         mover.drawn = [101: step(50).from]
-        let reconciler = make(Actuator([:], journal: journal), mover)
+        let clock = Clock()
+        let reconciler = make(Actuator([:], journal: journal), mover, clock: clock)
         var moved: Set<WindowID> = []
-        for tick in 1...6 {
+        var ticks = 0
+        for tick in 1...30 {
+            clock.now = Double(tick) / 120
             moved = reconciler.submitWindowServerMotion([step(CGFloat(tick) * 50)])
             if moved.isEmpty {
+                ticks = tick
                 break
             }
         }
         XCTAssertEqual(reconciler.windowServerProbe, .failed)
         XCTAssertEqual(moved, [])
-        XCTAssertEqual(journal.lines.filter { $0.hasPrefix("commit") }.count, WindowServerProbe.failureObservations)
+        // PF-P: the verdict waits out the readback allowance (~75 ms at 120 Hz).
+        XCTAssertGreaterThan(ticks, WindowServerProbe.failureObservations + 1)
+        XCTAssertLessThan(ticks, 15)
+        XCTAssertEqual(journal.lines.filter { $0.hasPrefix("commit") }.count, ticks - 1)
         // Instant passes stop using it too.
         mover.ids[id(2)] = 102
         reconciler.reconcile(
             frames: [id(2): visible], focused: nil, currentlyFocused: nil, windowServerFirst: [id(2)]
         )
         XCTAssertFalse(journal.lines.contains("commit 102"))
+        // PF-P: not for the whole session: a later trial uses it again.
+        clock.now += 2.01
+        XCTAssertEqual(reconciler.windowServerProbe, .retrying)
+        XCTAssertEqual(reconciler.submitWindowServerMotion([step(50)]), [id(1)])
+    }
+
+    func testAnAccessibilityWriteMakesTheProbeForgetWhatItSawOfTheWindow() {
+        let journal = Journal()
+        let actuator = Actuator([id(1): step(50).from], journal: journal)
+        let mover = Mover([id(1): 101], journal: journal)
+        let clock = Clock()
+        // The WindowServer ignores the moves: the window stays at its start.
+        mover.drawn = [101: step(50).from]
+        let reconciler = make(actuator, mover, clock: clock)
+        clock.now = 0
+        _ = reconciler.submitWindowServerMotion([step(50)])
+        // The final pass writes the window where the flight left it, through
+        // Accessibility: the app moves it there.
+        reconciler.reconcile(frames: [id(1): step(50).to], focused: nil, currentlyFocused: nil)
+        XCTAssertTrue(journal.lines.contains("write 10:1"))
+        mover.drawn = [101: step(50).to]
+        // The next flight starts there; finding it there proves nothing about SkyLight.
+        clock.now = 0.1
+        _ = reconciler.submitWindowServerMotion([step(100)])
+        clock.now = 0.1 + 1.0 / 120
+        _ = reconciler.submitWindowServerMotion([step(150)])
+        XCTAssertEqual(reconciler.windowServerProbe, .unverified)
     }
 
     // MARK: Probe (pure)
 
     func testAnObservationAwayFromBothTheStartAndTheMovesIsInconclusive() {
         var probe = WindowServerProbe()
-        probe.moved(windowID: 9, from: CGRect(x: 0, y: 0, width: 10, height: 10), to: CGRect(x: 100, y: 0, width: 10, height: 10))
+        probe.moved(windowID: 9, from: CGRect(x: 0, y: 0, width: 10, height: 10), to: CGRect(x: 100, y: 0, width: 10, height: 10), at: 0)
         XCTAssertEqual(probe.observationTargets(), [9])
-        probe.observe([9: CGRect(x: 500, y: 500, width: 10, height: 10)])
+        probe.observe([9: CGRect(x: 500, y: 500, width: 10, height: 10)], at: 0.01)
         XCTAssertEqual(probe.state, .unverified)
-        probe.observe([:])
+        probe.observe([:], at: 0.02)
         XCTAssertEqual(probe.state, .unverified)
-        probe.observe([9: CGRect(x: 101, y: 1, width: 10, height: 10)])
+        probe.observe([9: CGRect(x: 101, y: 1, width: 10, height: 10)], at: 0.03)
         XCTAssertEqual(probe.state, .verified)
         XCTAssertTrue(probe.observationTargets().isEmpty)
     }
