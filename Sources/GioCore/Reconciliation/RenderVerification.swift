@@ -253,9 +253,43 @@ public func planNudge(target: CGRect, viewport: CGRect, tier: NudgeTier = .posit
     }
 }
 
+/// TG-05: how a settle's render mismatches are repaired first. A window the
+/// WindowServer draws away from the frame its app reports (`ws` present)
+/// moves through SkyLight to that frame: SkyLight moves are absolute (PF-M
+/// probe), while Accessibility writes did not move such windows (live
+/// 2026-10-11: after a swipe both nudge tiers left windows their apps
+/// reported at the target 33 and 1832 pt off). A window with no on-screen
+/// entry needs its app to paint, so it is nudged (FI-05, PF-C), as is
+/// everything when SkyLight is not usable.
+public struct RenderRepairPlan: Equatable, Sendable {
+    /// Moved through SkyLight to the frame the app reports (`ax`).
+    public var windowServer: [WindowID: CGRect]
+    /// Nudged through Accessibility, sorted.
+    public var nudge: [WindowID]
+
+    public init(windowServer: [WindowID: CGRect], nudge: [WindowID]) {
+        self.windowServer = windowServer
+        self.nudge = nudge
+    }
+}
+
+public func planRenderRepairs(_ mismatches: [RenderMismatch], windowServer available: Bool) -> RenderRepairPlan {
+    var plan = RenderRepairPlan(windowServer: [:], nudge: [])
+    for mismatch in mismatches {
+        if available, mismatch.ws != nil {
+            plan.windowServer[mismatch.id] = mismatch.ax
+        } else {
+            plan.nudge.append(mismatch.id)
+        }
+    }
+    plan.nudge.sort()
+    return plan
+}
+
 /// Bounds of the check: one live token (a newer settle or a cancel
-/// invalidates older checks), one nudge per window per settle, and warn
-/// once per window for mismatches.
+/// invalidates older checks), one repair chain per window per settle
+/// (`claimNudges`: TG-05 SkyLight repair, then the nudges), and warn once
+/// per window for mismatches.
 public struct RenderCheckBook: Sendable {
     private var generation = 0
     private var nudged: Set<WindowID> = []
@@ -320,6 +354,11 @@ public func renderMismatchLine(id: WindowID, app: String, ax: CGRect, ws: CGRect
 
 public func renderNudgeLine(id: WindowID, app: String, tier: NudgeTier, fixed: Bool) -> String {
     "render nudge id=\(id.pid):\(id.elementID) app=\(app) tier=\(tier.rawValue) fixed=\(fixed)"
+}
+
+/// TG-05: the result of a SkyLight repair, re-checked 100 ms later.
+public func renderRepairLine(id: WindowID, app: String, fixed: Bool) -> String {
+    "render repair id=\(id.pid):\(id.elementID) app=\(app) via=skylight fixed=\(fixed)"
 }
 
 public func renderUnmatchedLine(id: WindowID, app: String, reason: UnmatchedReason, candidates: Int) -> String {

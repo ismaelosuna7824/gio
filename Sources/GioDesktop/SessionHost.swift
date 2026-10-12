@@ -303,6 +303,10 @@ final class SessionHost: @unchecked Sendable {
                 viewports: { [unowned self] in displays.allDisplays().map { visibleFrames[$0.id] ?? $0.frame } },
                 serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 nudge: { [unowned self] in reconciler?.nudge(steps: $0) ?? [] },
+                // TG-05: a window drawn away from its app's frame moves
+                // there through SkyLight (the reconciler) before any nudge.
+                windowServerAvailable: { [unowned self] in windowServerStatus().available },
+                alignWindowServer: { [unowned self] in reconciler?.alignWindowServer(to: $0) ?? [] },
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 appName: { [unowned self] in appName($0) },
                 log: { GioLog.record($0, $1) }

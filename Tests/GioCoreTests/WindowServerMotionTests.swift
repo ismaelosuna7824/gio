@@ -194,9 +194,11 @@ final class WindowServerMotionTests: XCTestCase {
         XCTAssertEqual(reconciler.submitWindowServerMotion([MotionWrite(id: id(1), from: step(50).to, to: visible)]), [id(1)])
         XCTAssertEqual(journal.lines, ["commit 101", "commit 101"])
         XCTAssertEqual(reconciler.windowServerPending, [id(1): visible])
-        // The app still believes the parked frame; the final pass tells it.
+        // The app still believes the parked frame; the final pass tells it,
+        // then (TG-05) aligns the WindowServer with what the app took.
         reconciler.reconcile(frames: [id(1): visible], focused: nil, currentlyFocused: nil)
-        XCTAssertEqual(journal.lines.last, "write 10:1")
+        XCTAssertEqual(journal.lines, ["commit 101", "commit 101", "write 10:1", "commit 101"])
+        XCTAssertEqual(mover.placed[101], visible)
         XCTAssertTrue(reconciler.windowServerPending.isEmpty)
     }
 

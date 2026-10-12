@@ -125,6 +125,16 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   from the next tick; at 120 Hz a broken transport freezes at most ~25 ms of one flight).
   Display link for the AX motion: not adopted (main-thread hop per tick, coupling to main
   stalls); the SkyLight per-tick path removes the app latency for hide and reveal flights.
+- PF-N (with TG-05, `trackpad-gestures.md`): the transport's final word. Live 2026-10-11 after
+  trackpad swipes (per-tick SkyLight on the settle), apps reported windows at their targets
+  while the WindowServer drew them 33 and 1832 pt to the left, and no Accessibility write or
+  nudge moved them. `reconcile` now ends every followed-up SkyLight move with one more
+  transaction to the frame the app took (`WindowReconciler.alignWindowServer`, not recorded in
+  the ledger: the app holds that frame), limited to windows the pass folded (a newer move is
+  never undone); `collect` does not align (a newer dispatched pass may already have written
+  the window). The render check moves a drawn mismatch through SkyLight to the app's frame
+  before any nudge (`render repair id= app= via=skylight fixed=`). Cost: one extra transaction
+  per pass that followed SkyLight moves (`skylight aligned windows=N`, debug).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -307,6 +317,9 @@ settled. OmniWM is GPL-2.0: read for behavior only, no code copied.
   89, Mac 19, POC 7, 0 failures; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
   LIVE PENDING: checklist 15h (glide of leaving/entering columns and switch
   drop/rise with Chrome and Electron, `skylight probe result=verified`, fallback).
+- [x] PF-N — WindowServer aligned with the app after every followed-up SkyLight move, SkyLight
+  render repair before the nudges. Recorded and evidenced as TG-05 in `trackpad-gestures.md`
+  (same commit). LIVE PENDING: checklists 15h and 15i (l).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`

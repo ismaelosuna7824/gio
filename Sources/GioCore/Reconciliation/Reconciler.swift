@@ -61,9 +61,10 @@ public struct ReconcileReport: Equatable, Sendable {
     public var focusChanged: Bool
     public var focusFailed: Bool
     /// PA-04 diagnostics, not part of equality: windows whose AX read was
-    /// skipped because their frame was trusted, and the frame each visible
-    /// or read window is known to sit at after the pass (read, verified by
-    /// the write, or trusted). Failed and vanished windows have none.
+    /// skipped because their frame was trusted, and the frame each window is
+    /// known to sit at after the pass (read, verified by the write, trusted,
+    /// or for a parked write its target or macOS's clamped landing). Failed
+    /// and vanished windows have none.
     public var skippedReads: Int = 0
     public var settledFrames: [WindowID: CGRect] = [:]
     /// PF-A: windows left out of this pass because their app was still busy
@@ -189,7 +190,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         case vanished
         case failed(String, ReconcileFailure)
         case applied
-        case parkedApplied(clamped: Bool)
+        /// `landed`: where macOS clamped the parked position; nil at the target.
+        case parkedApplied(landed: CGRect?)
     }
 
     fileprivate struct ItemResult: Sendable {
@@ -250,14 +252,14 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             do {
                 enhancedUI.willWrite(pid: id.pid)
                 try actuator.setFrame(item.desired, from: current, for: id, verify: item.parked == nil)
-                return item.parked == nil ? .applied : .parkedApplied(clamped: false)
+                return item.parked == nil ? .applied : .parkedApplied(landed: nil)
             } catch {
                 // macOS may clamp a parked position; accept a landing that is
                 // still parked (size kept, small strip on the intended side).
                 if let parked = item.parked, let landed = try? actuator.frame(of: id),
                    isParked(landed, parked, tolerance)
                 {
-                    return .parkedApplied(clamped: true)
+                    return .parkedApplied(landed: landed)
                 }
                 return failed(error, requested: item.desired, actual: actual)
             }
@@ -294,7 +296,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// may clamp the position. Focus is applied last, after every lane.
     /// PF-L: `windowServerFirst` (`planWindowServerFirst`) are moved by the
     /// WindowServer in one transaction before any lane starts; their
-    /// Accessibility write follows in the lanes as usual.
+    /// Accessibility write follows in the lanes as usual. TG-05: once those
+    /// writes returned, every window whose WindowServer position Gio moved
+    /// (this pass or an earlier flight) and whose app took the frame gets one
+    /// more transaction to exactly that frame, so the WindowServer draws what
+    /// the app reports (`alignWindowServer`).
     @discardableResult
     public func reconcile(
         frames: [WindowID: CGRect],
@@ -329,7 +335,11 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         )
         let results = executor.run(lanes: lanes, mode: concurrency, epilogue: batchEnded) { worker.process($0) }
         let windowTimings = fold(lanes: lanes, results: results, frames: frames, parked: parked, into: &report)
-        ledger.followed(report, snapshot: followUps)
+        let followed = ledger.followed(report, snapshot: followUps)
+        let aligned = alignWindowServer(to: report.settledFrames.filter { followed.contains($0.key) })
+        if !aligned.isEmpty {
+            GioLog.record(.debug, "skylight aligned windows=\(aligned.count)")
+        }
         var focusMilliseconds = 0.0
         var focusCalls = 0
         if let focused, focused != currentlyFocused, parked[focused] == nil {
@@ -460,7 +470,10 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// fail with "timeout"; waiting for the app claim is not a stall) and
     /// fold its report. A focus step its lane never reached runs here. Same logs as `reconcile`;
     /// the timing spans dispatch to the last lane's end. Superseded writes
-    /// appear nowhere in the report: the newer pass reports them.
+    /// appear nowhere in the report: the newer pass reports them. TG-05: no
+    /// WindowServer alignment here, unlike `reconcile`: by the time a pass is
+    /// collected a newer one may already have written the window elsewhere
+    /// on its lane, so the render check's SkyLight repair covers this path.
     public func collect(_ pass: DispatchedPass) -> ReconcileReport {
         let stall: TimeInterval
         if case .concurrent(let timeout) = concurrency {
@@ -629,11 +642,13 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                 case .applied:
                     report.applied.append(id)
                     report.settledFrames[id] = item.desired
-                case .parkedApplied(let clamped):
-                    if clamped {
+                case .parkedApplied(let landed):
+                    if landed != nil {
                         GioLog.record(.debug, "parked clamped id=\(id.pid):\(id.elementID)")
                     }
                     report.parked.append(id)
+                    // Where the app has it: the target, or macOS's clamp.
+                    report.settledFrames[id] = landed ?? item.desired
                 }
             case .superseded:
                 break
@@ -868,6 +883,28 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// pending until an Accessibility write follows; none when the transport
     /// is off, missing or refused the transaction.
     private func moveThroughWindowServer(_ targets: [WindowID: CGRect]) -> Set<WindowID> {
+        let moved = commitThroughWindowServer(targets)
+        for id in moved.sorted() {
+            ledger.record(id, frame: targets[id]!)
+        }
+        return moved
+    }
+
+    /// TG-05: move each window's WindowServer copy to the frame its app
+    /// already holds (`frames`: what the app took or reports), in one
+    /// transaction. Nothing becomes pending: the app knows these frames, so
+    /// no Accessibility write needs to follow. The final pass aligns every
+    /// window it followed up (`reconcile`), and the render check repairs a
+    /// window the WindowServer draws away from its app's frame (live, after a
+    /// swipe, Accessibility writes and nudges did not move such windows).
+    /// Returns the windows moved; none when the transport is off, missing,
+    /// refuted by the probe or refused the transaction. Never Gio's own.
+    @discardableResult
+    public func alignWindowServer(to frames: [WindowID: CGRect]) -> Set<WindowID> {
+        commitThroughWindowServer(frames)
+    }
+
+    private func commitThroughWindowServer(_ targets: [WindowID: CGRect]) -> Set<WindowID> {
         guard windowServerUsable, let windowServer, !targets.isEmpty else {
             return []
         }
@@ -882,9 +919,6 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         }
         guard !moves.isEmpty, windowServer.commit(moves) else {
             return []
-        }
-        for id in ids {
-            ledger.record(id, frame: targets[id]!)
         }
         return Set(ids)
     }

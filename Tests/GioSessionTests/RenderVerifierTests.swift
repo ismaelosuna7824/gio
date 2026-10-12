@@ -17,6 +17,10 @@ final class RenderVerifierTests: XCTestCase {
         var nudges: [[WindowID: [CGRect]]] = []
         var nudgeWrites = true
         var echoes: [(WindowID, CGRect)] = []
+        /// TG-05: SkyLight usable, the repairs asked for and whether it moves.
+        var windowServer = false
+        var alignments: [[WindowID: CGRect]] = []
+        var alignMoves = true
         var logs: [(LogLevel, String)] = []
     }
 
@@ -49,6 +53,11 @@ final class RenderVerifierTests: XCTestCase {
                 nudge: { steps in
                     world.nudges.append(steps)
                     return world.nudgeWrites ? Array(steps.keys) : []
+                },
+                windowServerAvailable: { world.windowServer },
+                alignWindowServer: { frames in
+                    world.alignments.append(frames)
+                    return world.alignMoves ? Set(frames.keys) : []
                 },
                 recordEcho: { id, frame, _ in world.echoes.append((id, frame)) },
                 appName: { probe.applicationLabel($0) },
@@ -211,5 +220,76 @@ final class RenderVerifierTests: XCTestCase {
         verifier.schedule()
         scheduler.advance(by: 0.15)
         XCTAssertEqual(probe.serverQueries, 0, "a frame settled before the window was a candidate is not checked")
+    }
+
+    // MARK: TG-05 SkyLight repair
+
+    /// The log after a swipe: Code reported at its target, drawn 1832 pt to
+    /// the left. SkyLight moves it to the frame the app reports before any
+    /// Accessibility nudge.
+    func testADrawnMismatchIsMovedThroughSkyLightToTheAppsFrameBeforeAnyNudge() {
+        world.windowServer = true
+        probe.serverWindows = [ServerWindow(pid: 7, bounds: target.offsetBy(dx: -1832, dy: 0))]
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.15)
+        XCTAssertEqual(world.alignments, [[id: target]])
+        XCTAssertTrue(world.nudges.isEmpty, "no Accessibility nudge yet")
+        XCTAssertEqual(world.echoes.map(\.0), [id])
+        probe.serverWindows = [ServerWindow(pid: 7, bounds: target)]
+        scheduler.advance(by: 0.1)
+        XCTAssertEqual(probe.serverQueries, 2)
+        XCTAssertEqual(world.logs.last?.0, .info)
+        XCTAssertEqual(world.logs.last?.1, "render repair id=7:1 app=Editor via=skylight fixed=true")
+        scheduler.advance(by: 1)
+        XCTAssertTrue(world.nudges.isEmpty)
+    }
+
+    /// A SkyLight repair that did not take falls back to the position nudge,
+    /// then (PF-C) the size nudge, as before.
+    func testAFailedSkyLightRepairFallsBackToTheNudges() {
+        world.windowServer = true
+        probe.serverWindows = [ServerWindow(pid: 7, bounds: target.offsetBy(dx: -33, dy: 0))]
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.25)
+        let repair = world.logs.last { $0.1.hasPrefix("render repair") }
+        XCTAssertEqual(repair?.0, .warn)
+        XCTAssertEqual(repair?.1, "render repair id=7:1 app=Editor via=skylight fixed=false")
+        XCTAssertEqual(world.nudges.count, 1)
+        XCTAssertEqual(world.nudges.first?[id], planNudge(target: target, viewport: screen))
+        scheduler.advance(by: 0.1)
+        XCTAssertEqual(world.nudges.last?[id], planNudge(target: target, viewport: screen, tier: .size))
+        scheduler.advance(by: 0.1)
+        XCTAssertEqual(world.logs.map(\.1).filter { $0.hasPrefix("render unverifiable") }.count, 1)
+        XCTAssertEqual(world.alignments.count, 1, "one SkyLight repair per window per settle")
+    }
+
+    /// Without SkyLight, or when it refuses the move, the mismatch is
+    /// nudged at once, exactly as before TG-05.
+    func testWithoutOrRefusedSkyLightTheMismatchIsNudgedAtOnce() {
+        for refused in [false, true] {
+            setUp()
+            world.windowServer = refused
+            world.alignMoves = false
+            probe.serverWindows = [ServerWindow(pid: 7, bounds: target.offsetBy(dx: -33, dy: 0))]
+            let verifier = makeVerifier()
+            settle(verifier)
+            scheduler.advance(by: 0.15)
+            XCTAssertEqual(world.alignments.count, refused ? 1 : 0)
+            XCTAssertEqual(world.nudges.first?[id], planNudge(target: target, viewport: screen))
+            XCTAssertTrue(world.logs.map(\.1).filter { $0.hasPrefix("render repair") }.isEmpty)
+        }
+    }
+
+    /// A window the WindowServer does not draw at all needs its app to
+    /// paint: it goes straight to the nudge even with SkyLight.
+    func testAMissingWindowIsNudgedEvenWithSkyLight() {
+        world.windowServer = true
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.15)
+        XCTAssertTrue(world.alignments.isEmpty)
+        XCTAssertEqual(world.nudges.count, 1)
     }
 }

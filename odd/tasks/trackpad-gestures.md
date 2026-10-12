@@ -172,6 +172,48 @@ read for the snap and focus rules.
   `gestureStrip` returns nil (`layout == .dwindle`) and a horizontal scroll does nothing
   (debug `gesture scroll ignored ... reason=no-strip`); the workspace swipe and the overview
   swipe go through `apply` / the overview hook and work there unchanged.
+- TG-05 WindowServer drift after a swipe (live 2026-10-11T22:53Z, `~/.config/gio/gio.log`,
+  display 1800x1169, four 888 pt columns, snapshot renderer, SkyLight verified). Every
+  `render mismatch` of the session followed a gesture settle, none a keyboard flight. Gesture
+  A (`begin offset=919`, `end offset=1117 snap=1815`): final pass `applied=2 parked=1
+  already=1`, then `render mismatch id=4295:8 app=Code ax=(904,8,888,1114) ws=(-928,8,..)`
+  and `id=57880:6 app=Tern ax=(8,8,..) ws=(-1824,8,..)`; gestures C and E left Safari and
+  Xcode at `ws=(-25,8,..)` for `ax=(8,8,..)`; every position and size nudge `fixed=false`, so
+  four windows ended render-unverifiable and stayed drawn off screen. Candidates from the
+  assignment, checked against the code and `WindowServerAlignmentTests`: (a) a stale
+  transaction after the final pass: none exists (the pump commits only while tracking, the
+  player only on ticks, the final pass runs synchronously in the last tick; the test's
+  journal shows nothing committed after the final writes); (b) a coordinate error: every
+  frame SkyLight was given lies between the window's start and its target in screen space
+  (the gesture frames and the settle use the same engine layout; the critically damped spring
+  with the release velocity pointing at the target does not overshoot), so -33 and -1832 are
+  no frame Gio computed; (c) confirmed: the final pass took the app's word for the
+  WindowServer. Before the fix (`72e97e9`) `LaneWorker.reconcileOne`
+  (`Reconciler.swift:242-253`) wrote the follow-up and read the position back from the app,
+  `ledger.followed` (`:332`) folded the window and the pass ended there with no WindowServer
+  step, `TrustedFrames.recordSettle` trusted it, and nothing compared the WindowServer with
+  the target again except the render check, whose only tool was an Accessibility nudge
+  (`RenderVerifier.swift:157-206`). The log shows that an app reporting the target does not
+  move the WindowServer when written again (two nudge tiers, four windows). [INFERENCE] How
+  the WindowServer and the apps drifted apart (Gio's rapid transactions racing the app's own
+  reaction to the follow-up write) is not observable from Gio, and the test's fake app (moves
+  its window by the change it sees, unaware of SkyLight) reproduces the signature, not the
+  exact offsets. Fix (decision): after
+  the follow-up writes returned, `reconcile` commits one more transaction moving every window
+  whose ledger entry it folded and whose write landed to exactly the frame the app took
+  (`alignWindowServer`; the clamped landing for a clamped park); nothing becomes pending
+  because the app already holds that frame, so invariant 11 keeps its meaning (the app's
+  frame is the final word, now applied to the WindowServer too). Only folded windows are
+  aligned (`WindowServerLedger.followed` returns them), so a newer move is never undone.
+  `collect` (passes under a snapshot overlay) does not align: a newer pass may already have
+  written the window on its lane; the gesture settle never uses the overlay. Repair: the
+  render check moves a window with a WindowServer entry away from its app's frame through
+  SkyLight to that frame first (`planRenderRepairs`, pure), re-checks after 100 ms and logs
+  `render repair id= app= via=skylight fixed=`; a failed or refused repair, a `ws=missing`
+  window and every mismatch without SkyLight go to the position then size nudge as before
+  (one chain per window per settle). The fix lives in the SkyLight transport, so it applies to
+  every `reconcile` pass that followed SkyLight moves (PF-L parks and reveals, PF-M flights),
+  recorded as PF-N in `fluidity.md`.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -185,6 +227,10 @@ read for the snap and focus rules.
 - [x] TG-04 — macOS swipe conflicts from the trackpad and Dock preferences (pure Core, read-only
   adapter), warnings in Diagnostics, Overview and Settings, `gestures conflict=` log; no
   scroll on dwindle workspaces. Commit `ae25e26`. LIVE PENDING (TESTING.md 15i (j), (k)).
+- [x] TG-05 — After a swipe the WindowServer drew windows 33-1832 pt from the frames their apps
+  reported; the final pass now aligns the WindowServer with every followed-up window, and
+  the render check repairs drawn mismatches through SkyLight before nudging (PF-N). Commit
+  recorded in Progress. LIVE PENDING (TESTING.md 15i (l), 15h).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -216,6 +262,26 @@ read for the snap and focus rules.
   0 failures. Signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
 - Input Monitoring is still unverified: TESTING.md 15i starts by recording whether
   `gestures first contact frame` appears with Gio off, then on, in Input Monitoring.
+- TG-05: RED (behavior, against the unchanged reconciler, the new tests that compile there):
+  `WindowServerAlignmentTests.testAGestureSettleEndsWithTheWindowServerDrawingEveryWindowAtItsTarget`
+  (Tern drawn at `(-888,8,888,1114)` while the app reported 8, Code at 9 for 904; nothing
+  committed after the final writes; every committed frame on its path) and
+  `testOnlyLandedFollowUpsAreAlignedAndAFailedOneStaysPending` (last line `write 57880:6@8`,
+  Tern drawn at -1783), 5 failures; RED (compile) for the rest: `alignWindowServer`,
+  `planRenderRepairs`, `renderRepairLine` not found, `RenderVerifier.Context` extra arguments
+  `windowServerAvailable`/`alignWindowServer`. GREEN: `WindowServerAlignmentTests` 7,
+  `RenderVerifierTests` 16 (+4); updated to the aligned contract:
+  `WindowServerTransportTests.testParksAndRevealsCommitOneTransactionBeforeTheirAXWrites`,
+  `testTheAXFollowUpIsWrittenEvenWhenTheAppAlreadyReportsTheTarget`,
+  `WindowServerMotionTests.testMotionFramesAreOneTransactionAndTheFinalPassFollowsWithAX`
+  (each now ends with the alignment commit). Full `swift test`: GioUITests 311 (53 skipped),
+  GioSessionTests 428, GioPOCTests 7, GioMacTests 19, GioMacOSTests 95, GioCoreTests 1882,
+  0 failures. A rerun after comment-only edits failed only
+  `GioUITests.LauncherPanelAnimationTests` (an AppKit slide-in, untouched code) while the
+  display was asleep (`pmset -g log`: display off 16:24:46 local); with the display awake
+  GioUITests 311 (53 skipped), 0 failures, the other bundles as above. Signed `xcodebuild`
+  (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED; `git diff --check` clean. Not run live (the
+  user's Gio is running; nothing that moves windows may run here).
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,

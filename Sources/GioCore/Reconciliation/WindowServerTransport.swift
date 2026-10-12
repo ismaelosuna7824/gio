@@ -252,14 +252,21 @@ struct WindowServerLedger {
     }
 
     /// Windows a pass wrote (or found gone) no longer wait for Accessibility.
-    mutating func followed(_ report: ReconcileReport, snapshot: [WindowID: Int]) {
+    /// Returns the ones folded away (TG-05: the ones whose write followed the
+    /// newest move, so aligning them cannot undo a newer move).
+    @discardableResult
+    mutating func followed(_ report: ReconcileReport, snapshot: [WindowID: Int]) -> Set<WindowID> {
         followed(report.applied + report.parked + report.vanished, snapshot: snapshot)
     }
 
-    mutating func followed(_ ids: some Sequence<WindowID>, snapshot: [WindowID: Int]) {
+    @discardableResult
+    mutating func followed(_ ids: some Sequence<WindowID>, snapshot: [WindowID: Int]) -> Set<WindowID> {
+        var folded: Set<WindowID> = []
         for id in ids where snapshot[id] != nil && entries[id]?.move == snapshot[id] {
             entries.removeValue(forKey: id)
+            folded.insert(id)
         }
+        return folded
     }
 
     mutating func forget(pid: pid_t) {

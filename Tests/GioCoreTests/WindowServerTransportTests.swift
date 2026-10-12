@@ -160,10 +160,14 @@ final class WindowServerTransportTests: XCTestCase {
             frames: [id(1): visibleFrame], parked: [id(2): parked], focused: nil, currentlyFocused: nil,
             windowServerFirst: [id(1), id(2)]
         )
-        XCTAssertEqual(journal.lines, ["commit 101,102", "write 10:2", "write 10:1"])
+        // TG-05: once the apps took the frames, the WindowServer is aligned
+        // to them in one more transaction.
+        XCTAssertEqual(journal.lines, ["commit 101,102", "write 10:2", "write 10:1", "commit 101,102"])
         XCTAssertEqual(mover.transactions.first, [
             WindowServerMove(windowID: 101, frame: visibleFrame), WindowServerMove(windowID: 102, frame: parkedFrame),
         ])
+        XCTAssertEqual(mover.transactions.last, mover.transactions.first)
+        XCTAssertTrue(reconciler.windowServerPending.isEmpty)
         XCTAssertEqual(report.applied, [id(1)])
         XCTAssertEqual(report.parked, [id(2)])
     }
@@ -176,7 +180,7 @@ final class WindowServerTransportTests: XCTestCase {
         let report = reconciler.reconcile(
             frames: [:], parked: [id(2): parked], focused: nil, currentlyFocused: nil, windowServerFirst: [id(2)]
         )
-        XCTAssertEqual(journal.lines, ["commit 102", "write 10:2"])
+        XCTAssertEqual(journal.lines, ["commit 102", "write 10:2", "commit 102"])
         XCTAssertEqual(actuator.writes.first?.1, parkedFrame)
         XCTAssertEqual(report.parked, [id(2)])
         XCTAssertTrue(reconciler.windowServerPending.isEmpty)
