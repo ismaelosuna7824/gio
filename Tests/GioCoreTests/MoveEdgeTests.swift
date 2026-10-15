@@ -170,6 +170,16 @@ final class MoveEdgeTests: XCTestCase {
         XCTAssertEqual(manager, before)
     }
 
+    func testAFloatingColumnAtTheEdgeDoesNotBlockCrossingDisplays() {
+        var manager = twoDisplays(focused: 2)
+        put(&manager, 7)
+        focusColumn(&manager, 2)
+        let floating = DwindleGeometry(viewport: frames[left]!, modes: [id(7): .floating])
+        XCTAssertEqual(manager.focusColumnOrDisplay(.right, frames: frames, geometry: floating), .crossedDisplay)
+        XCTAssertEqual(manager.focusedDisplay, right)
+        XCTAssertEqual(manager.currentWorkspace().focusedWindow, id(5))
+    }
+
     // MARK: - Reveal
 
     func testTheTargetViewportRevealsTheLandedColumn() throws {

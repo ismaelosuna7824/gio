@@ -81,13 +81,13 @@ public enum ActionApplier {
         }
         switch action {
         case .focusLeft:
-            focus(in: &workspace, .left, manager: &manager)
+            focus(in: &workspace, .left, modes: context.modes(), manager: &manager)
         case .focusRight:
-            focus(in: &workspace, .right, manager: &manager)
+            focus(in: &workspace, .right, modes: context.modes(), manager: &manager)
         case .focusUp:
-            focus(in: &workspace, .up, manager: &manager)
+            focus(in: &workspace, .up, modes: context.modes(), manager: &manager)
         case .focusDown:
-            focus(in: &workspace, .down, manager: &manager)
+            focus(in: &workspace, .down, modes: context.modes(), manager: &manager)
         case .moveLeft:
             narrowMove(in: &workspace, .left, manager: &manager)
         case .moveRight:
@@ -198,9 +198,9 @@ public enum ActionApplier {
         case .resetWindowHeight:
             commit(resetWindowHeights(in: workspace), over: workspace, manager: &manager)
         case .focusColumnFirst:
-            commit(focusColumnFirst(in: workspace), over: workspace, manager: &manager)
+            commit(focusColumnFirst(in: workspace, modes: context.modes()), over: workspace, manager: &manager)
         case .focusColumnLast:
-            commit(focusColumnLast(in: workspace), over: workspace, manager: &manager)
+            commit(focusColumnLast(in: workspace, modes: context.modes()), over: workspace, manager: &manager)
         case .moveColumnToFirst:
             commit(moveColumnToFirst(in: workspace), over: workspace, manager: &manager)
         case .moveColumnToLast:
@@ -261,8 +261,11 @@ public enum ActionApplier {
             ) == .crossedDisplay
         case .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
             let direction: FocusDirection = action == .focusColumnOrMonitorLeft ? .left : .right
+            let geometry = DwindleGeometry(
+                viewport: focusedViewport(manager: manager, context: context), modes: context.modes()
+            )
             effect.syncsShownWorkspace = manager.focusColumnOrDisplay(
-                direction, frames: displayFrames(context)
+                direction, frames: displayFrames(context), geometry: geometry
             ) == .crossedDisplay
         case .toggleWorkspaceLayout:
             manager.toggleLayout()
@@ -503,9 +506,10 @@ public enum ActionApplier {
     }
 
     private static func focus(
-        in workspace: inout Workspace, _ direction: FocusDirection, manager: inout WorkspaceManager
+        in workspace: inout Workspace, _ direction: FocusDirection, modes: [WindowID: WindowMode],
+        manager: inout WorkspaceManager
     ) {
-        let next = moveFocus(in: workspace, direction: direction)
+        let next = moveFocus(in: workspace, direction: direction, modes: modes)
         if next != workspace {
             workspace = next
             manager.update(workspace)
