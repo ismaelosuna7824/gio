@@ -635,7 +635,9 @@ final class SessionHost: @unchecked Sendable {
                 console: { print($0) },
                 log: { GioLog.record($0, $1) },
                 lastWrite: { [unowned self] in echoGate.lastWrite(of: $0) },
-                isMouseDown: { [unowned self] in probe.isMouseDown }
+                isMouseDown: { [unowned self] in probe.isMouseDown },
+                writtenFrame: { [unowned self] in echoGate.writtenFrame(of: $0) },
+                learnLateClamp: { [unowned self] in learnLateClamp($0, written: $1, observed: $2) }
             ),
             discovery: discovery, scheduler: scheduler
         )
@@ -1352,16 +1354,33 @@ final class SessionHost: @unchecked Sendable {
             return
         }
         for id in changed.keys.sorted() {
-            noteResizeClamp(pid: id.pid)
-            let size = changed[id]!
-            GioLog.record(
-                .info,
-                "min size learned id=\(id.pid):\(id.elementID) "
-                    + "app=\(session.registry.find(id)?.application ?? "pid\(id.pid)") "
-                    + "w=\(Int(size.width.rounded())) h=\(Int(size.height.rounded()))"
-            )
+            logLearnedMinimum(id, size: changed[id]!, late: false)
         }
         scheduleReflow(full: false)
+    }
+
+    /// FI-11: a clamp the app applied after the write's read-back, found by
+    /// the router's late re-check (`observed`) against Gio's last write.
+    private func learnLateClamp(_ id: WindowID, written: CGRect, observed: CGRect) -> Bool {
+        guard let size = minimumSizes.learnLate(id, requested: written, actual: observed) else {
+            return false
+        }
+        physicalFrames[id] = observed
+        trustedFrames.invalidate(id)
+        logLearnedMinimum(id, size: size, late: true)
+        scheduleReflow(full: false)
+        return true
+    }
+
+    private func logLearnedMinimum(_ id: WindowID, size: CGSize, late: Bool) {
+        noteResizeClamp(pid: id.pid)
+        GioLog.record(
+            .info,
+            "min size learned id=\(id.pid):\(id.elementID) "
+                + "app=\(session.registry.find(id)?.application ?? "pid\(id.pid)") "
+                + "w=\(Int(size.width.rounded())) h=\(Int(size.height.rounded()))"
+                + (late ? " late=true" : "")
+        )
     }
 
     private func resizeKey(_ pid: pid_t) -> String {
@@ -1835,6 +1854,8 @@ final class SessionHost: @unchecked Sendable {
             GioLog.record(.debug, "focus intent id=\(focusTarget.pid):\(focusTarget.elementID) changed=true")
         }
         learnMinimumSizes(from: report, placement: placement)
+        // FI-11: a display-change pass's writes teach the late re-check nothing.
+        minimumSizes.notePlaced(visible.keys, placement: placement)
         GioLog.record(
             .debug,
             "reflow applied=\(report.applied.count) parked=\(report.parked.count) already=\(report.alreadyCorrect.count) failed=\(report.failed.count)"

@@ -135,6 +135,28 @@ final class MinimumSizeTests: XCTestCase {
         }
     }
 
+    /// FI-11: a clamp the app applies after Gio's read-back is seen by the
+    /// late re-check (requested = Gio's last write, actual = the frame read
+    /// once its echo window ended). A write of a display-change pass still
+    /// teaches nothing; a later write of any other pass does again.
+    func testALateClampIsLearnedUnlessADisplayPassWroteTheWindow() {
+        let requested = CGRect(x: 8, y: 8, width: 888, height: 1114)
+        let actual = CGRect(x: 8, y: 8, width: 1068, height: 1114)
+        var book = MinimumSizeBook()
+        book.notePlaced([id(1)], placement: .instant(.displays))
+        XCTAssertNil(book.learnLate(id(1), requested: requested, actual: actual))
+        book.notePlaced([id(1)], placement: .animate)
+        XCTAssertEqual(book.learnLate(id(1), requested: requested, actual: actual), CGSize(width: 1068, height: 0))
+        XCTAssertNil(book.learnLate(id(1), requested: requested, actual: actual), "nothing new")
+        XCTAssertNil(
+            book.learnLate(id(2), requested: requested, actual: actual.offsetBy(dx: 40, dy: 0).insetBy(dx: -20, dy: 0)),
+            "pushed, not clamped"
+        )
+        book.notePlaced([id(3)], placement: .instant(.displays))
+        book.forget(id(3))
+        XCTAssertNotNil(book.learnLate(id(3), requested: requested, actual: actual), "forgotten with the window")
+    }
+
     // MARK: Layout
 
     private let viewport = CGRect(x: 0, y: 0, width: 1000, height: 800)

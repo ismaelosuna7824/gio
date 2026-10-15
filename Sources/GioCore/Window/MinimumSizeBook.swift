@@ -40,6 +40,8 @@ private extension CGRect {
 /// re-registered) starts over. Pure value type; the host owns one.
 public struct MinimumSizeBook: Equatable, Sendable {
     public private(set) var sizes: [WindowID: CGSize] = [:]
+    /// FI-11: windows a display-change pass placed last.
+    private var displayPlaced: Set<WindowID> = []
 
     public init() {}
 
@@ -93,8 +95,30 @@ public struct MinimumSizeBook: Equatable, Sendable {
         return changed
     }
 
+    /// FI-11: the windows a settled pass placed, so a late clamp of a
+    /// display-change pass teaches nothing either (see `learn(from:)`).
+    public mutating func notePlaced(_ ids: some Sequence<WindowID>, placement: InstantPlacementDecision) {
+        if placement == .instant(.displays) {
+            displayPlaced.formUnion(ids)
+        } else {
+            displayPlaced.subtract(ids)
+        }
+    }
+
+    /// FI-11: learn from a clamp the app applied after Gio's read-back
+    /// (`requested`: Gio's last write; `actual`: the frame read once its
+    /// echo window ended). Nil when nothing new was learned, or when a
+    /// display-change pass placed the window last.
+    public mutating func learnLate(_ id: WindowID, requested: CGRect, actual: CGRect) -> CGSize? {
+        guard !displayPlaced.contains(id) else {
+            return nil
+        }
+        return learn(id, requested: requested, actual: actual)
+    }
+
     public mutating func forget(_ id: WindowID) {
         sizes.removeValue(forKey: id)
+        displayPlaced.remove(id)
     }
 }
 

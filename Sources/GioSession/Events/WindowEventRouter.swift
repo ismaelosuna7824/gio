@@ -64,6 +64,12 @@ public final class WindowEventRouter: @unchecked Sendable {
         public var lastWrite: (WindowID) -> TimeInterval?
         /// FI-10: a user drag never counts as the app snapping back.
         public var isMouseDown: () -> Bool
+        /// FI-11: the frame Gio last wrote (`WriteEchoGate.writtenFrame`).
+        public var writtenFrame: (WindowID) -> CGRect?
+        /// FI-11: learn a minimum from a size the late re-check found
+        /// (written, observed); true when one was learned (the host then
+        /// relayouts).
+        public var learnLateClamp: (WindowID, CGRect, CGRect) -> Bool
 
         public init(
             makePort: @escaping (@escaping @Sendable (SystemWindowEvent) -> Void) -> EventPort,
@@ -83,7 +89,9 @@ public final class WindowEventRouter: @unchecked Sendable {
             console: @escaping (String) -> Void, log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             lastWrite: @escaping (WindowID) -> TimeInterval?,
-            isMouseDown: @escaping () -> Bool
+            isMouseDown: @escaping () -> Bool,
+            writtenFrame: @escaping (WindowID) -> CGRect?,
+            learnLateClamp: @escaping (WindowID, CGRect, CGRect) -> Bool
         ) {
             self.makePort = makePort
             self.runningRegularPIDs = runningRegularPIDs
@@ -110,6 +118,8 @@ public final class WindowEventRouter: @unchecked Sendable {
             self.now = now
             self.lastWrite = lastWrite
             self.isMouseDown = isMouseDown
+            self.writtenFrame = writtenFrame
+            self.learnLateClamp = learnLateClamp
         }
     }
 
@@ -120,6 +130,10 @@ public final class WindowEventRouter: @unchecked Sendable {
     private var book = ObservationBook()
     /// FI-10: apps restoring their own frame right after Gio wrote it.
     private var snapBacks = SnapBackBook()
+    /// FI-11: windows with a re-check pending for when their echo window ends.
+    private var lateChecks: Set<WindowID> = []
+    /// FI-11: the re-check runs this long after the echo window ended.
+    static let lateCheckMargin: TimeInterval = 0.05
 
     public init(context: Context, discovery: DiscoveryService, scheduler: SessionScheduler) {
         self.context = context
@@ -253,6 +267,13 @@ public final class WindowEventRouter: @unchecked Sendable {
             // Animation frames raise a burst of events: skip the AX read.
             let now = context.now()
             if context.isEchoSuppressed(known, now) {
+                // FI-11: an app that applies its own size after Gio's
+                // read-back raises its resize in here; look once more when
+                // the echo window ends. Moves (every scroll raises them) are
+                // not re-checked: a late clamp only follows a size write.
+                if kind == .resized {
+                    scheduleLateCheck(known)
+                }
                 return
             }
             if let observed = context.frame(known),
@@ -310,6 +331,56 @@ public final class WindowEventRouter: @unchecked Sendable {
         case .ignore:
             break
         }
+    }
+
+    /// FI-11: one re-check per window, `lateCheckMargin` after its echo
+    /// window ends (`WriteEchoGate`: the last write plus `suppression`).
+    private func scheduleLateCheck(_ id: WindowID) {
+        guard !lateChecks.contains(id), let written = context.lastWrite(id) else {
+            return
+        }
+        lateChecks.insert(id)
+        let delay = max(0, written + WriteEchoGate.suppression - context.now()) + Self.lateCheckMargin
+        scheduler.asyncAfter(delay) { [weak self] in
+            self?.runLateCheck(id)
+        }
+    }
+
+    /// FI-11: a window still at the size Gio wrote is left alone (a position
+    /// alone is a parking or menu-bar clamp). Otherwise a clamp the app
+    /// applied late is learned (the host relayouts with it); any other size
+    /// is the app's own change, laid out again like any non-echo event and
+    /// counted as a snap-back (FI-10), so an unlearnable one cannot loop.
+    /// A purged or yielded window is dropped; a window Gio wrote again
+    /// meanwhile waits for that write's echo window.
+    private func runLateCheck(_ id: WindowID) {
+        lateChecks.remove(id)
+        guard let record = context.registry().find(id), record.floatReason != .appControlled else {
+            return
+        }
+        let now = context.now()
+        if context.isEchoSuppressed(id, now) {
+            scheduleLateCheck(id)
+            return
+        }
+        guard let written = context.writtenFrame(id), let observed = context.frame(id),
+              lateFrameResized(written: written, observed: observed)
+        else {
+            return
+        }
+        let dragging = context.isMouseDown()
+        if !dragging, context.learnLateClamp(id, written, observed) {
+            return
+        }
+        context.log(.debug, "late frame change id=\(id.pid):\(id.elementID) app=\(record.application)")
+        let verdict = snapBacks.note(id, at: now, lastWrite: context.lastWrite(id), dragging: dragging)
+        if case .yield(let count) = verdict {
+            yieldToApp(record, snapBacks: count)
+            return
+        }
+        context.invalidateTrust(id)
+        context.forgetZoom(id)
+        context.scheduleReflow(false)
     }
 
     /// FI-10: the app restored its own frame `snapBacks` times right after

@@ -124,6 +124,34 @@ Review: UNAVAILABLE.
   `Executed 11 tests, with 0 failures`, GioSessionTests `Executed 93 tests, with 0 failures`,
   GioCoreTests `Executed 58 tests, with 0 failures`.
   LIVE PENDING.
+- [x] FI-11 (commit pending) — Re-check a late size clamp hidden by echo suppression (user 2026-10-14:
+  tiled windows overlap; no logs). An app applying its minimum after Gio's immediate read-back passed
+  the write check, was trusted at the requested frame, and its resize event landed inside the
+  `WriteEchoGate` window and was dropped: no `frameMismatch`, no FI-02 learning, overlap until an
+  unrelated event. Decision: a resized event of a known window dropped by suppression schedules ONE
+  re-check per window (router, session scheduler) 50 ms after the echo window ends (moved events are
+  not: every scroll raises them and a late clamp only follows a size write); a purged or
+  yielded window is dropped, one Gio wrote again waits for the new echo window. It reads the frame and
+  acts only on a size differing from Gio's last write (`lateFrameResized`, 2 pt; a position-only
+  difference is a parking/menu-bar clamp). Deviation from the brief: a relayout alone would not learn
+  (the next write passes its read-back again), so the re-check itself is the evidence:
+  `MinimumSizeBook.learnLate` (FI-02 rule, requested = `WriteEchoGate.writtenFrame`) learns it, logs
+  `min size learned ... late=true` and relayouts; a window a display-change pass placed last
+  (`notePlaced` from `foldSettle`) teaches nothing. Any other size invalidates trust, schedules a light
+  reflow and counts as an FI-10 snap-back (not during a drag, never learned then), so an unlearnable
+  clamp yields after three instead of looping. Limits: one AX read ~0.4 s after the write per window
+  whose size Gio wrote (pure moves cost nothing); a late same-size move is not re-checked.
+  RED: `swift build --build-tests` -> `value of type 'WriteEchoGate' has no member 'writtenFrame'`
+  (plus the missing `notePlaced`/`learnLate`/`learnLateClamp`); with the router's
+  `scheduleLateCheck` call disabled `swift test --filter WindowEventRouterTests` -> `Executed 29
+  tests, with 13 failures`. Integrator review (narrowed to `.resized`): the new
+  `testAMoveHiddenByTheEchoWindowIsNotCheckedAgain` first failed 2 assertions
+  (`Executed 30 tests, with 2 failures`).
+  GREEN: `swift test --filter "MinimumSizeTests|WindowEventPolicyTests|SnapBackBookTests|
+  WindowEventRouterTests|DiscoveryServiceTests|RichRuleArrivalTests|DeferredFollowTests|
+  WindowOpenArrivalTests|ReflowPlannerTests"` -> GioSessionTests `Executed 100 tests, with 0
+  failures`, GioCoreTests `Executed 52 tests, with 0 failures`.
+  LIVE PENDING.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.

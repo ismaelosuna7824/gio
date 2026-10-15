@@ -96,6 +96,11 @@ final class EventWorld: @unchecked Sendable {
     /// FI-10: when Gio last wrote each window (`WriteEchoGate.lastWrite`).
     var lastWrites: [WindowID: TimeInterval] = [:]
     var mouseDown = false
+    /// FI-11: the frame Gio last wrote (`WriteEchoGate.writtenFrame`), whether
+    /// the host learns a late clamp, and the (window, written, observed) asked.
+    var writtenFrames: [WindowID: CGRect] = [:]
+    var learnsLateClamp = false
+    var lateClampAsks: [(WindowID, CGRect, CGRect)] = []
 
     func known(_ element: AXUIElement) -> WindowID? {
         handles.first { CFEqual($0.0, element) }?.1
@@ -196,7 +201,12 @@ final class EventWorld: @unchecked Sendable {
             log: { self.logs.append(($0, $1)) },
             now: now,
             lastWrite: { self.lastWrites[$0] },
-            isMouseDown: { self.mouseDown }
+            isMouseDown: { self.mouseDown },
+            writtenFrame: { self.writtenFrames[$0] },
+            learnLateClamp: { id, written, observed in
+                self.lateClampAsks.append((id, written, observed))
+                return self.learnsLateClamp
+            }
         )
     }
 }
@@ -837,5 +847,125 @@ final class WindowEventRouterTests: XCTestCase {
         router.forgetSnapBacks(id)
         snapBack()
         XCTAssertEqual(world.registered.first?.mode, .tiled)
+    }
+
+    // MARK: Late frame re-check (FI-11)
+
+    /// What the fake reads for every window.
+    private let observed = CGRect(x: 0, y: 0, width: 100, height: 100)
+    /// Narrower than what the app keeps: a late minimum width.
+    private let narrow = CGRect(x: 0, y: 0, width: 80, height: 100)
+
+    /// Gio writes the window (`written`); 0.2 s later, inside the echo
+    /// window, the app applies its own size; the echo window ends.
+    private func lateResize(written: CGRect? = nil) {
+        world.lastWrites[id] = scheduler.now
+        world.writtenFrames[id] = written ?? narrow
+        world.suppressed = [id]
+        scheduler.advance(by: 0.2)
+        send(.window(.resized), element: element)
+        world.suppressed = []
+        scheduler.advance(by: 0.5)
+    }
+
+    func testAResizeHiddenByTheEchoWindowIsCheckedOnceWhenItEnds() {
+        world.lastWrites[id] = 0
+        world.writtenFrames[id] = narrow
+        world.suppressed = [id]
+        scheduler.advance(by: 0.2)
+        send(.window(.resized), element: element)
+        send(.window(.moved), element: element)
+        XCTAssertTrue(world.frameReads.isEmpty, "still no read inside the echo window")
+        XCTAssertTrue(world.scheduledReflows.isEmpty)
+        world.suppressed = []
+        scheduler.advance(by: 0.5)
+        XCTAssertEqual(world.frameReads, [id], "one re-check per window")
+        XCTAssertEqual(world.lateClampAsks.map(\.0), [id])
+        XCTAssertEqual(world.lateClampAsks.first?.1, narrow)
+        XCTAssertEqual(world.lateClampAsks.first?.2, observed)
+        XCTAssertEqual(world.trustInvalidated.last, id, "not where Gio put it: read again")
+        XCTAssertEqual(world.scheduledReflows, [false])
+    }
+
+    /// A late clamp can only follow a size write, which raises `.resized`;
+    /// the moves of every scroll are not worth an extra read each.
+    func testAMoveHiddenByTheEchoWindowIsNotCheckedAgain() {
+        world.lastWrites[id] = 0
+        world.writtenFrames[id] = narrow
+        world.suppressed = [id]
+        scheduler.advance(by: 0.2)
+        send(.window(.moved), element: element)
+        world.suppressed = []
+        scheduler.advance(by: 1)
+        XCTAssertTrue(world.frameReads.isEmpty)
+        XCTAssertTrue(world.scheduledReflows.isEmpty)
+        XCTAssertEqual(scheduler.pendingCount, 0, "nothing scheduled")
+    }
+
+    func testALateCheckFindingGiosSizeOrAPurgedWindowDoesNothing() {
+        lateResize(written: observed)
+        lateResize(written: observed.offsetBy(dx: 39, dy: -30))
+        XCTAssertEqual(world.frameReads, [id, id])
+        XCTAssertTrue(world.lateClampAsks.isEmpty, "the size landed (a parking or menu-bar clamp moves only)")
+        XCTAssertTrue(world.scheduledReflows.isEmpty)
+
+        world.lastWrites[id] = scheduler.now
+        world.writtenFrames[id] = narrow
+        world.suppressed = [id]
+        send(.window(.resized), element: element)
+        send(.window(.destroyed), element: element)
+        world.suppressed = []
+        scheduler.advance(by: 1)
+        XCTAssertEqual(world.frameReads, [id, id], "purged: no read")
+    }
+
+    func testALateCheckWaitsForGiosNextWriteToEnd() {
+        world.lastWrites[id] = 0
+        world.writtenFrames[id] = narrow
+        world.suppressed = [id]
+        send(.window(.resized), element: element)
+        scheduler.advance(by: 0.3)
+        world.lastWrites[id] = 0.3
+        scheduler.advance(by: 0.2)
+        XCTAssertTrue(world.frameReads.isEmpty, "Gio wrote it again: its echo window runs")
+        world.suppressed = []
+        scheduler.advance(by: 0.5)
+        XCTAssertEqual(world.frameReads, [id])
+    }
+
+    func testALearnableLateClampIsLearnedOnceAndStops() {
+        world.learnsLateClamp = true
+        lateResize()
+        XCTAssertEqual(world.lateClampAsks.map(\.0), [id])
+        XCTAssertTrue(world.scheduledReflows.isEmpty, "the host relayouts with the learned minimum")
+        // The relayout writes the learned size, which lands.
+        for _ in 0..<4 {
+            lateResize(written: observed)
+        }
+        XCTAssertEqual(world.lateClampAsks.count, 1)
+        XCTAssertEqual(world.registered.first?.mode, .tiled)
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("window yields to app") })
+    }
+
+    func testAnUnlearnableLateClampIsAFightTheSnapBackCapEnds() {
+        for _ in 0..<3 {
+            lateResize()
+        }
+        XCTAssertEqual(world.registered.first?.floatReason, .appControlled)
+        XCTAssertEqual(world.scheduledReflows.count, 3, "two write-backs, then the gap closes")
+        let reads = world.frameReads.count
+        lateResize()
+        XCTAssertEqual(world.frameReads.count, reads, "a yielded window is not re-checked")
+        XCTAssertEqual(world.scheduledReflows.count, 3)
+    }
+
+    func testALateChangeDuringAUserDragIsNeitherLearnedNorCounted() {
+        world.mouseDown = true
+        for _ in 0..<4 {
+            lateResize()
+        }
+        XCTAssertTrue(world.lateClampAsks.isEmpty)
+        XCTAssertEqual(world.registered.first?.mode, .tiled)
+        XCTAssertEqual(world.scheduledReflows.count, 4)
     }
 }

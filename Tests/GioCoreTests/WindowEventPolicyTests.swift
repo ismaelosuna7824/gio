@@ -161,6 +161,28 @@ final class WindowEventPolicyTests: XCTestCase {
         XCTAssertNil(gate.lastWrite(of: id))
     }
 
+    /// FI-11: the frame Gio last wrote, the late re-check's requested frame.
+    func testTheWrittenFrameIsTheLastRecordedOne() {
+        var gate = WriteEchoGate()
+        XCTAssertNil(gate.writtenFrame(of: id))
+        gate.recordDispatched(id, frame: frame, at: 10, landingWithin: 0.2)
+        XCTAssertEqual(gate.writtenFrame(of: id), frame)
+        let next = frame.offsetBy(dx: 300, dy: 0)
+        gate.recordApplied(id, frame: next, at: 11)
+        XCTAssertEqual(gate.writtenFrame(of: id), next)
+    }
+
+    /// FI-11: the late re-check acts on a size the app changed, never on a
+    /// position alone (macOS clamps a parked window up to 40 pt, and one
+    /// under the menu bar, without resizing it).
+    func testOnlyALateSizeChangeIsActedOn() {
+        let written = CGRect(x: 100, y: 100, width: 440, height: 700)
+        XCTAssertTrue(lateFrameResized(written: written, observed: CGRect(x: 100, y: 100, width: 500, height: 700)))
+        XCTAssertTrue(lateFrameResized(written: written, observed: CGRect(x: 90, y: 100, width: 440, height: 760)))
+        XCTAssertFalse(lateFrameResized(written: written, observed: written.offsetBy(dx: 39, dy: -31)))
+        XCTAssertFalse(lateFrameResized(written: written, observed: written.insetBy(dx: -1, dy: -1)), "within tolerance")
+    }
+
     // MARK: Registration retry
 
     func testRegistrationRetryDelaysGrowThenStop() {

@@ -139,6 +139,11 @@ public struct WriteEchoGate: Sendable {
         entries[id]?.writtenAt
     }
 
+    /// FI-11: the frame Gio last wrote to `id` (nil: never, or forgotten).
+    public func writtenFrame(of id: WindowID) -> CGRect? {
+        entries[id]?.frame
+    }
+
     /// Inside the suppression window after our own write to `id`: the event
     /// is an echo whatever the window reports, so callers can skip the
     /// Accessibility read that `isEcho` needs (animation frames raise many).
@@ -162,6 +167,16 @@ public struct WriteEchoGate: Sendable {
             && abs(observed.width - entry.frame.width) <= tolerance
             && abs(observed.height - entry.frame.height) <= tolerance
     }
+}
+
+/// FI-11: whether the late re-check (a frame read once the echo window of
+/// Gio's write ended) found a size the app changed. A position alone never
+/// counts: macOS clamps a parked window (up to `parkedStripLimit`) and one
+/// under the menu bar without resizing it, and those landings are fine.
+public func lateFrameResized(
+    written: CGRect, observed: CGRect, tolerance: CGFloat = WriteEchoGate.tolerance
+) -> Bool {
+    abs(observed.width - written.width) > tolerance || abs(observed.height - written.height) > tolerance
 }
 
 /// PF-02: why a new window could not be classified yet.
