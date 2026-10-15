@@ -55,13 +55,17 @@ public func windowServerWindowStates(pid: pid_t, displayHeight: CGFloat) -> [Ser
 }
 
 /// SM-02: every layer-0 window of `pids` with its `CGWindowID` (the same id
-/// as `SCWindow.windowID`) and Cocoa bounds. Off-screen and other-Space
-/// windows are included so parked windows can be matched too. Public API,
-/// no Screen Recording needed. SM-17: the window name (`kCGWindowName`,
-/// listed only with Screen Recording) rides on the candidate for the title
-/// tie-break and is never logged or stored.
+/// as `SCWindow.windowID`) and Cocoa bounds. Parked and hidden-workspace
+/// windows keep a sliver on screen (macOS refuses fully off-screen frames),
+/// so the on-screen list holds every window a capture can ask for. PF-AD:
+/// it used to list every window of every Space (`optionAll`, 157 entries
+/// in the live session: 5 ms and 1.2 ms of Gio CPU per call, on every
+/// capture run and every 30 ms paint check); on screen it is 16 entries,
+/// 0.5 ms. Public API, no Screen Recording needed. SM-17: the window name
+/// (`kCGWindowName`, listed only with Screen Recording) rides on the
+/// candidate for the title tie-break and is never logged or stored.
 public func windowServerSnapshotCandidates(pids: Set<pid_t>, displayHeight: CGFloat) -> [SnapshotCandidate] {
-    let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
         return []
     }
