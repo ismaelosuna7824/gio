@@ -194,15 +194,7 @@ private func classifyElement(
     let minimized = axBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false
     let fullscreen = axBool(of: element, attribute: "AXFullScreen")
         ?? axBool(of: element, attribute: "AXFullscreen")
-    let admission = classifyWindowAdmission(WindowAdmissionFacts(
-        role: axString(of: element, attribute: kAXRoleAttribute as String),
-        subrole: axString(of: element, attribute: kAXSubroleAttribute as String),
-        isPositionSettable: axIsSettable(element, attribute: kAXPositionAttribute as String),
-        isSizeSettable: axIsSettable(element, attribute: kAXSizeAttribute as String),
-        isFullscreen: fullscreen ?? false,
-        isMinimized: minimized,
-        hasValidFrame: frame != nil
-    ))
+    let admission = windowAdmission(of: element, frame: frame, minimized: minimized, fullscreen: fullscreen)
     if case .ignore = admission {
         return .ignored(ExcludedSystemWindow(pid: pid, appName: appName, admission: admission))
     }
@@ -226,13 +218,40 @@ private func classifyElement(
         window: window, element: element, appElement: appElement
     )
     if case .float(let reason) = admission {
+        // MM-12: logged with its id once registered (`window float`).
         discovered.floatReason = reason
-        GioLog.record(
-            .info, "discovery exclude pid=\(pid) app=\(appName) \(admission.label)"
-        )
         return .float(discovered)
     }
     return .tile(discovered)
+}
+
+private func windowAdmission(
+    of element: AXUIElement, frame: CGRect?, minimized: Bool, fullscreen: Bool?
+) -> WindowAdmission {
+    classifyWindowAdmission(WindowAdmissionFacts(
+        role: axString(of: element, attribute: kAXRoleAttribute as String),
+        subrole: axString(of: element, attribute: kAXSubroleAttribute as String),
+        isPositionSettable: axIsSettable(element, attribute: kAXPositionAttribute as String),
+        isSizeSettable: axIsSettable(element, attribute: kAXSizeAttribute as String),
+        isFullscreen: fullscreen ?? false,
+        isMinimized: minimized,
+        hasValidFrame: frame != nil
+    ))
+}
+
+/// MM-12: the admission a registered window would get now (a fresh read of
+/// role, subrole, settability and state). Never for Gio's own pid.
+public func currentWindowAdmission(of element: AXUIElement, pid: pid_t) -> WindowAdmission? {
+    guard pid != ProcessInfo.processInfo.processIdentifier else {
+        return nil
+    }
+    let fullscreen = axBool(of: element, attribute: "AXFullScreen")
+        ?? axBool(of: element, attribute: "AXFullscreen")
+    return windowAdmission(
+        of: element, frame: axFrame(of: element),
+        minimized: axBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false,
+        fullscreen: fullscreen
+    )
 }
 
 /// PF-02: one appeared element's classification, with why it failed: a

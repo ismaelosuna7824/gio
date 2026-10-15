@@ -133,3 +133,13 @@ public func classifyWindowAdmission(_ facts: WindowAdmissionFacts) -> WindowAdmi
     }
     return facts.isPositionSettable && facts.isSizeSettable ? .tile : .float(.notResizable)
 }
+
+/// MM-12: admission is decided once, when the window is registered, from
+/// what the app reports then. Live, Music's main window reported a dialog
+/// at one startup and floated for the whole session, over and under the
+/// tiles at its own frame. An admission float whose window now classifies
+/// as a tile (`admission`, read again when it is activated) rejoins the
+/// grid; floats a rule, the user or a snap-back chose never do.
+public func promotesAdmissionFloat(_ window: ManagedWindow, to admission: WindowAdmission) -> Bool {
+    window.mode == .floating && window.floatReason?.isAdmission == true && admission == .tile
+}

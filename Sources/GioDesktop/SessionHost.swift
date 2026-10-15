@@ -688,7 +688,8 @@ final class SessionHost: @unchecked Sendable {
                 },
                 log: { GioLog.record($0, $1) },
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
-                bringTabToFront: { [unowned self] in discovery.bringTabToFront($0) }
+                bringTabToFront: { [unowned self] in discovery.bringTabToFront($0) },
+                promoteAdmissionFloat: { [unowned self] in promoteAdmissionFloat($0, element: $1) }
             ),
             scheduler: scheduler
         )
@@ -1349,6 +1350,23 @@ final class SessionHost: @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// MM-12: an activated admission float (dialog, panel, fixed size) that
+    /// now reads as a normal window rejoins the grid. The AX read happens
+    /// only for admission floats, never for tiles or chosen floats.
+    private func promoteAdmissionFloat(_ id: WindowID, element: AXUIElement) -> Bool {
+        guard let record = session.registry.find(id), record.mode == .floating,
+              let reason = record.floatReason, reason.isAdmission,
+              let admission = currentWindowAdmission(of: element, pid: id.pid),
+              promotesAdmissionFloat(record, to: admission)
+        else {
+            return false
+        }
+        try? session.registry.setMode(.tiled, for: id)
+        tileability.invalidate(id)
+        GioLog.record(.info, "window promoted id=\(id.pid):\(id.elementID) app=\(record.application) from=\(reason.rawValue)")
+        return true
     }
 
     // MARK: - Reflow

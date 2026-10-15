@@ -92,3 +92,32 @@ final class WindowAdmissionTests: XCTestCase {
         XCTAssertEqual(WindowAdmission.suspend(.minimized).label, "suspend(minimized)")
     }
 }
+
+/// MM-12: an admission float (dialog, floating subrole, fixed size) whose
+/// window now reads as a normal resizable window goes back to the grid; a
+/// float the user, a rule or a snap-back chose never does.
+final class AdmissionFloatPromotionTests: XCTestCase {
+    private func window(_ mode: WindowMode, _ reason: FloatReason?) -> ManagedWindow {
+        var window = ManagedWindow(
+            id: WindowID(pid: 1, elementID: 1), pid: 1, application: "Music", title: "",
+            frame: CGRect(x: 16, y: 0, width: 1784, height: 1114), mode: mode
+        )
+        window.floatReason = reason
+        return window
+    }
+
+    func testAnAdmissionFloatThatNowTilesIsPromoted() {
+        for reason in [FloatReason.dialog, .floatingSubrole, .notResizable] {
+            XCTAssertTrue(promotesAdmissionFloat(window(.floating, reason), to: .tile), "\(reason)")
+        }
+    }
+
+    func testAChosenFloatOrAStillFloatingWindowIsNotPromoted() {
+        for reason in [FloatReason.manual, .rule, .appControlled] {
+            XCTAssertFalse(promotesAdmissionFloat(window(.floating, reason), to: .tile), "\(reason)")
+        }
+        XCTAssertFalse(promotesAdmissionFloat(window(.floating, .dialog), to: .float(.dialog)))
+        XCTAssertFalse(promotesAdmissionFloat(window(.floating, .dialog), to: .suspend(.minimized)))
+        XCTAssertFalse(promotesAdmissionFloat(window(.tiled, nil), to: .tile))
+    }
+}
