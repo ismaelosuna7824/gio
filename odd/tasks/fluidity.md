@@ -357,6 +357,28 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   then one more main pass so the first frame is committed before real windows move,
   SM-08); keeping the panels ordered in between flights or committing with a CA
   transaction completion would change a live-verified ordering guarantee.
+- PF-AH..PF-AJ (2026-10-15, user: "otro flujo de prueba pero ahora con dos monitores, ahí es
+  donde se degrada más", then "también moverte entre monitores y mover ventanas entre
+  monitores"). Setup: built-in 1800x1169 @2x 120 Hz ("Color LCD" profile) plus an external
+  2160x1440 @1x 60 Hz on the left ("Display" profile). Three workloads, same harness:
+  W1 the single-display workload unchanged, W2 `move-window-to-display 2/1` six times,
+  W3 monitor navigation (`gio action focus-monitor-*`, `move-column-to-monitor-*`,
+  `move-window-to-monitor-*`, focus inside the external display, workspace switches; needed
+  PF-AI). Findings: W1 costs the same CPU with two displays (1.44-1.45 s vs 1.50 s on one)
+  but latency tails grow (overlay prime p95 30 -> 61 ms, reflow p95 13 -> 28 ms: the commit
+  waits for the 60 Hz display, the final pass waits for apps). W2 found the real
+  degradation: `SnapshotOverlay.begin` 294 ms, 197 ms of it `CGColorTransformConvertUsingCMSConverter`
+  under `CA::Layer::prepare_contents` (Core Animation converting images captured on the
+  built-in display to the external display's profile, main thread, at every commit), overlay
+  prime p50 42.6 ms (PF-AH). W3: backdrops recaptured on 17 of 19 capture runs because
+  parked windows with a clamped or app-kept frame entered the unmanaged fingerprint and
+  churned it on every re-park (temporary diagnostic log, pids and sizes only: Code,
+  WhatsApp 970x1114, Tern, Zed, OrbStack, Xcode at x=1799) (PF-AJ). Not changed, measured:
+  W3 final passes wait 50-170 ms on apps redrawing at the other display's scale and on the
+  focus call (`reflow timing ... slowest=Code 60ms`, `focus=165ms`), a synchronous settle
+  on the session queue (dispatching the settle would be an architecture change); the first
+  flight on each display creates its overlay panel (`SnapshotOverlay.init`, once per display
+  after launch).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -719,6 +741,24 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   12.8 ms, overlay prime p50 17.2 -> 13.3 ms and p95 47.3 -> 30.2 ms, 0 potential hangs.
   NOT verified live by the user: PF-AF only matters with a hung app (covered by the
   experiment above).
+- [x] PF-AI (`0e93c84`) — `gio action NAME`: any keybinding action over IPC, run on the
+  host's hotkey path (`IPCRouter.Context.applyAction`). RED (compile):
+  `MultiDisplayRepairTests.testActionVerbParsesEveryConfigActionName`,
+  `IPCRouterTests.testActionsRunThroughTheHotkeyPath`. Docs: USER_GUIDE CLI table.
+- [x] PF-AJ (`0cc10ce`) — `unmanagedWindowFingerprint(..., displays:)` ignores windows showing
+  no more than a parking sliver on every display. RED (compile):
+  `SnapshotCacheTests.testWindowsOffEveryDisplayDoNotEnterTheFingerprint`. W3: backdrop runs
+  17 -> 6 (`reason=backdrop` 9 -> 2), `captureBackdrop` CPU 133 / 103 -> 38 ms.
+- [x] PF-AH (`205adcb`) — Captures (`SCStreamConfiguration.colorSpaceName`) and flight panels
+  (`NSWindow.colorSpace`) share `snapshotColorSpaceName` (Display P3). No unit test possible
+  (Core Animation and ScreenCaptureKit); measured. W2: `SnapshotOverlay.begin` 294 -> 44 ms,
+  CMS conversion 197 -> 2 ms, primeBegin p50 35.5 -> 15.8 ms, overlay prime p50 42.6 -> 24.8
+  and p95 59 -> 33 ms. W1 repeat (two runs): workload CPU 1.44 s vs 1.45 s before, CA commit
+  265 vs 262 ms (a first run read 1.95 s: run-to-run noise, not the change).
+  GREEN (PF-AH..PF-AJ): `swift test` all bundles 0 failures (UI 313/53 skipped, Session 513,
+  POC 7, Mac 19, MacOS 98, Core 1994); signed Debug and Release builds succeeded; `git diff
+  --check` clean. LIVE PENDING (user eyes): flight colours on both displays look like the
+  real windows (the WindowServer now matches P3 to each profile).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -766,3 +806,5 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
 - 2026-10-15: PF-AC..PF-AG (signposts, on-screen candidates, batched frame reads, global AX
   timeout, occlusion gate) committed on `perf/measured-pass`; all bundles green, signed
   builds succeeded, measured before/after (Tasks).
+- 2026-10-15: PF-AH..PF-AJ (two displays: one colour space for flights, `gio action`,
+  backdrop fingerprint) committed on `perf/measured-pass`; measured before/after (Tasks).
