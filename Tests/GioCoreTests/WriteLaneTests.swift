@@ -128,7 +128,7 @@ final class WriteLaneTests: XCTestCase {
     func testLanesOverlapSoTotalTimeIsTheSlowestLaneNotTheSum() {
         let ids = [10, 20, 30, 40].flatMap { pid in [id(1, pid: pid_t(pid)), id(2, pid: pid_t(pid))] }
         let actuator = seeded(ids, delays: [10: 0.08, 20: 0.08, 30: 0.08, 40: 0.08])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let started = Date()
         let report = reconciler.reconcile(
             frames: Dictionary(uniqueKeysWithValues: ids.map { ($0, target) }),
@@ -145,7 +145,7 @@ final class WriteLaneTests: XCTestCase {
         // pid 10 finishes last, pid 30 first; the report still lists sorted IDs.
         let ids = [id(1, pid: 10), id(1, pid: 20), id(1, pid: 30)]
         let actuator = seeded(ids, delays: [10: 0.12, 20: 0.06, 30: 0])
-        let report = WindowReconciler(actuator: actuator).reconcile(
+        let report = patientReconciler(actuator).reconcile(
             frames: Dictionary(uniqueKeysWithValues: ids.map { ($0, target) }),
             focused: nil, currentlyFocused: nil
         )
@@ -159,7 +159,7 @@ final class WriteLaneTests: XCTestCase {
         )
         let ids = [id(1, pid: 10), id(2, pid: 10), id(3, pid: 10)]
         let actuator = seeded(ids)
-        let report = WindowReconciler(actuator: actuator).reconcile(
+        let report = patientReconciler(actuator).reconcile(
             frames: [ids[0]: target, ids[1]: target], parked: [ids[2]: park],
             focused: nil, currentlyFocused: nil
         )
@@ -171,7 +171,7 @@ final class WriteLaneTests: XCTestCase {
     func testFocusIsWrittenAfterEveryLaneFinished() {
         let ids = [id(1, pid: 10), id(1, pid: 20), id(1, pid: 30)]
         let actuator = seeded(ids, delays: [10: 0.05, 20: 0.05, 30: 0.05])
-        let report = WindowReconciler(actuator: actuator).reconcile(
+        let report = patientReconciler(actuator).reconcile(
             frames: Dictionary(uniqueKeysWithValues: ids.map { ($0, target) }),
             focused: ids[0], currentlyFocused: nil
         )
