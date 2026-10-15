@@ -71,7 +71,7 @@ final class UpdateStateTests: XCTestCase {
 
     func testEveryFailureHasAMessage() {
         let failures: [UpdateFailure] = [
-            .network("offline"), .repositoryUnavailable, .repositoryNotFound, .tokenRejected, .rateLimited,
+            .network("offline"), .repositoryUnavailable, .rateLimited,
             .httpStatus(500), .malformedResponse, .downloadFailed("x"), .checksumUnreadable, .checksumMismatch,
             .mountFailed("x"), .appMissing, .bundleMismatch("x"), .signatureRejected("x"),
             .notEligible(.buildFolder), .stagingFailed("x"), .installerFailed("x"),

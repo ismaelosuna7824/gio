@@ -1,15 +1,11 @@
 import Foundation
 
 /// UP-04: why an update step stopped. Messages are for people and logs:
-/// they never carry the token, response bodies or window titles.
+/// they never carry response bodies or window titles.
 public enum UpdateFailure: Error, Equatable, Sendable {
     case network(String)
-    /// 404 without a token: GitHub answers 404 for private repositories too.
+    /// 404: GitHub answers 404 for private repositories too.
     case repositoryUnavailable
-    /// 404 with a token: the token cannot see the repository.
-    case repositoryNotFound
-    /// 401: the saved token was rejected.
-    case tokenRejected
     case rateLimited
     case httpStatus(Int)
     case malformedResponse
@@ -27,10 +23,7 @@ public enum UpdateFailure: Error, Equatable, Sendable {
     public var message: String {
         switch self {
         case .network(let detail): return "GitHub is unreachable (\(detail))."
-        case .repositoryUnavailable:
-            return "The release repository is private or not found. Add a GitHub token in Diagnostics if it is private."
-        case .repositoryNotFound: return "The release repository was not found with the saved GitHub token."
-        case .tokenRejected: return "GitHub rejected the saved token. Replace or clear it in Diagnostics."
+        case .repositoryUnavailable: return "The release repository is private or not found."
         case .rateLimited: return "GitHub's rate limit was reached. Gio tries again later."
         case .httpStatus(let code): return "GitHub answered HTTP \(code)."
         case .malformedResponse: return "GitHub's answer could not be read."

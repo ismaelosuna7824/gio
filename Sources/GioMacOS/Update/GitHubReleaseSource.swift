@@ -23,36 +23,33 @@ public struct URLSessionUpdateTransport: UpdateHTTPTransport {
 }
 
 extension URLSession {
-    /// Ephemeral (no cookies or disk cache of Gio's own), short timeouts,
-    /// and the updater's redirect policy (the token stays on api.github.com).
+    /// Ephemeral (no cookies or disk cache of Gio's own) and short timeouts.
     public static let updateSession: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 60
         configuration.waitsForConnectivity = false
-        return URLSession(configuration: configuration, delegate: UpdateTokenRedirectPolicy(), delegateQueue: nil)
+        return URLSession(configuration: configuration)
     }()
 }
 
-/// `GET https://api.github.com/repos/<repo>/releases`, with an optional
-/// bearer token (private repositories) and `If-None-Match`, so an unchanged
+/// `GET https://api.github.com/repos/<repo>/releases`, anonymous, with
+/// `If-None-Match`, so an unchanged
 /// list costs no rate limit (GitHub does not count 304 answers).
 public final class GitHubReleaseSource: UpdateReleaseSource, @unchecked Sendable {
     public let releasesURL: URL
     private let userAgent: String
-    private let token: @Sendable () -> String?
     private let transport: UpdateHTTPTransport
     /// The last 200 answer and its ETag; guarded by `lock`.
     private var cached: (etag: String, releases: [GitHubRelease])?
     private let lock = NSLock()
 
     public init(
-        repository: String, userAgent: String, token: @escaping @Sendable () -> String?,
+        repository: String, userAgent: String,
         transport: UpdateHTTPTransport = URLSessionUpdateTransport()
     ) {
         releasesURL = URL(string: "https://api.github.com/repos/\(repository)/releases?per_page=30")!
         self.userAgent = userAgent
-        self.token = token
         self.transport = transport
     }
 
@@ -61,10 +58,6 @@ public final class GitHubReleaseSource: UpdateReleaseSource, @unchecked Sendable
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
         request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-        let token = token().flatMap { $0.isEmpty ? nil : $0 }
-        if let token, updateTokenAllowed(for: releasesURL) {
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        }
         let previous = lock.withLock { cached }
         if let previous {
             request.setValue(previous.etag, forHTTPHeaderField: "If-None-Match")
@@ -93,14 +86,12 @@ public final class GitHubReleaseSource: UpdateReleaseSource, @unchecked Sendable
             }
             return .success(previous.releases)
         case 404:
-            return .failure(token == nil ? .repositoryUnavailable : .repositoryNotFound)
-        case 401:
-            return .failure(.tokenRejected)
+            return .failure(.repositoryUnavailable)
         case 403, 429:
             if response.statusCode == 429 || response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0" {
                 return .failure(.rateLimited)
             }
-            return .failure(token == nil ? .httpStatus(403) : .tokenRejected)
+            return .failure(.httpStatus(403))
         default:
             return .failure(.httpStatus(response.statusCode))
         }

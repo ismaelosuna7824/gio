@@ -158,7 +158,7 @@ Renewal steps (before the expiry date):
 
 ## Public repository
 
-The repository is public (since RL-10): the app finds releases through `GioUpdateRepository` and the public GitHub API without a token, the workflow publishes with the job's own `GITHUB_TOKEN`, and anyone can download the DMG without signing in. The updater's token field only matters for a private fork.
+The repository is public (since RL-10): the app finds releases through `GioUpdateRepository` and the public GitHub API anonymously (UP-18 removed the updater's token support), the workflow publishes with the job's own `GITHUB_TOKEN`, and anyone can download the DMG without signing in.
 
 ## Troubleshooting
 

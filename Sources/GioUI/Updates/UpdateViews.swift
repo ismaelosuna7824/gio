@@ -87,13 +87,9 @@ func openReleasePage(_ page: String) {
     }
 }
 
-/// UP-11 Diagnostics card: the automatic check and beta toggles and the
-/// optional GitHub token. The token is write-only: the field starts empty
-/// and Gio only says whether one is saved.
+/// UP-11 Diagnostics card: the automatic check and beta toggles.
 struct UpdateSettingsCard: View {
     @ObservedObject var controller: UpdateController
-    @State private var tokenDraft = ""
-    @State private var tokenMessage: String?
 
     var body: some View {
         SectionCard(
@@ -109,44 +105,12 @@ struct UpdateSettingsCard: View {
                     isOn: $controller.automaticChecks
                 )
             }
-            CardRow {
+            CardRow(divider: false) {
                 toggleRow(
                     title: "Include beta versions",
                     caption: "Offer prereleases too. A beta build always follows betas.",
                     isOn: $controller.includeBetas
                 )
-            }
-            CardRow(divider: false) {
-                VStack(alignment: .leading, spacing: GioSpacing.xs) {
-                    Text("GitHub token (only for private repositories)").font(GioFont.body)
-                    Text(controller.hasToken
-                        ? "A token is saved in your Keychain."
-                        : "No token saved. Public releases need none.")
-                        .font(GioFont.caption)
-                        .foregroundStyle(GioColor.secondaryText)
-                    HStack(spacing: GioSpacing.xs) {
-                        SecureField(controller.hasToken ? "Replace token" : "Paste a token with read access", text: $tokenDraft)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 320)
-                        Button("Save") {
-                            tokenMessage = controller.saveToken(tokenDraft) ? "Saved in the Keychain." : "Could not save the token."
-                            tokenDraft = ""
-                        }
-                        .disabled(tokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        Button("Clear") {
-                            controller.clearToken()
-                            tokenDraft = ""
-                            tokenMessage = "Token removed."
-                        }
-                        .disabled(!controller.hasToken)
-                    }
-                    .controlSize(.small)
-                    if let tokenMessage {
-                        Text(tokenMessage)
-                            .font(GioFont.caption)
-                            .foregroundStyle(GioColor.secondaryText)
-                    }
-                }
             }
         }
     }
