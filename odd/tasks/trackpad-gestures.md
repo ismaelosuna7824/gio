@@ -317,7 +317,7 @@ read for the snap and focus rules.
   the scroll's start holding every strip window of the display, each drain sets the layers'
   frames, the real windows are written once at the release; the AX pump stays the fallback
   (renderer `ax`, no Screen Recording, a missing image or backdrop, a failed prime). Route:
-  delegated, same branch. Commit recorded under Progress. LIVE PENDING (TESTING.md 15i (n)).
+  delegated, same branch. Commit `0699e0f`. LIVE PENDING (TESTING.md 15i (n)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -400,5 +400,5 @@ read for the snap and focus rules.
 - 2026-10-12: PF-S (`3511e90`) removed SkyLight: TG-03's frames go through the Accessibility
   lanes only and TG-05's alignment and SkyLight repair are gone (Decisions).
 - 2026-10-15: TG-06 committed `974ece7` on `fix/gesture-scroll-overlay` (settle on the overlay
-  with the release velocity); TG-07 committed next on the same branch (tracking on the
+  with the release velocity); TG-07 committed `0699e0f` on the same branch (tracking on the
   overlay). Not pushed; LIVE PENDING (TESTING.md 15i (c), (l), (m), (n)).
