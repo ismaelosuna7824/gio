@@ -141,6 +141,32 @@ final class OverlayGeometryTests: XCTestCase {
         XCTAssertLessThanOrEqual(track.settleTime(spring: soft), SpringParameters.maxDuration)
     }
 
+    func testAReleaseVelocityBecomesTheLayersStartingVelocity() {
+        let release = CGPoint(x: -2400, y: 150)
+        let unflipped = overlayLayerVelocity(origin: release, flipped: false)
+        XCTAssertEqual(unflipped.position, CGVector(dx: -2400, dy: 150))
+        XCTAssertEqual(unflipped.size, .zero)
+        let flipped = overlayLayerVelocity(origin: release, flipped: true)
+        XCTAssertEqual(flipped.position, CGVector(dx: -2400, dy: -150), "y measured from the top runs the other way")
+        XCTAssertEqual(overlayLayerVelocity(origin: .zero, flipped: false), .zero)
+    }
+
+    func testAShortFlightWithAReleaseVelocityRunsPastItsTargetAndSettlesLater() {
+        let end = LayerGeometry(position: CGPoint(x: 500, y: 200), bounds: CGRect(x: 0, y: 0, width: 200, height: 300))
+        let start = LayerGeometry(position: CGPoint(x: 530, y: 200), bounds: end.bounds)
+        let fling = FlightTrack(
+            start: start, end: end, velocity: overlayLayerVelocity(origin: CGPoint(x: -3000, y: 0), flipped: false)
+        )
+        let rest = FlightTrack(start: start, end: end)
+        XCTAssertGreaterThan(fling.settleTime(spring: spring), rest.settleTime(spring: spring))
+        XCTAssertGreaterThan(fling.settleTime(spring: spring), flightSettleTime(spring: spring, travel: 30))
+        let frames = flightKeyframes(track: fling, spring: spring, rate: 120)
+        let leftmost = frames.geometries.map(\.position.x).min() ?? end.position.x
+        XCTAssertLessThan(leftmost, end.position.x - 10, "the strip keeps going the way the fingers threw it")
+        XCTAssertEqual(frames.geometries.last, end)
+        XCTAssertFalse(flightTooShort(duration: frames.duration, travel: fling.travel))
+    }
+
     func testKeyframesSampleTheTrackAtTheRateAndLandExactlyOnTheEnd() {
         let frames = flightKeyframes(track: track, spring: spring, rate: 120)
         XCTAssertEqual(frames.duration, track.settleTime(spring: spring), accuracy: 1e-9)

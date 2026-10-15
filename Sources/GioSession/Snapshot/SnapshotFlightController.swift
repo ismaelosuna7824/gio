@@ -12,15 +12,18 @@ public struct OverlayFlightItem: @unchecked Sendable {
     public let target: SnapshotFace<CGImage>?
     public let from: CGRect
     public let to: CGRect
+    public let velocity: CGPoint
 
     public init(
-        id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect
+        id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect,
+        velocity: CGPoint = .zero
     ) {
         self.id = id
         self.image = image
         self.target = target
         self.from = from
         self.to = to
+        self.velocity = velocity
     }
 }
 
@@ -279,7 +282,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// may show only holes).
     private func makeFlights(
         _ items: [SnapshotFlightItem], holes: [SnapshotHole] = [], images: [WindowID: SnapshotCacheUse<CGImage>],
-        now: TimeInterval
+        velocities: [WindowID: CGPoint] = [:], now: TimeInterval
     ) -> [OverlayFlight] {
         let frames = context.displayFrames()
         let usable = context.usableFrames()
@@ -298,7 +301,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
             resizeModes[item.id] = use.resize
             byDisplay[item.displayIndex, default: []].append(
                 OverlayFlightItem(
-                    id: item.id, image: use.entry.face, target: use.target?.face, from: item.from, to: item.to
+                    id: item.id, image: use.entry.face, target: use.target?.face, from: item.from, to: item.to,
+                    velocity: velocities[item.id] ?? .zero
                 )
             )
         }
@@ -331,8 +335,12 @@ public final class SnapshotFlightController: @unchecked Sendable {
             }
         }
         var starts = context.physicalFrames().filter { targets[$0.key] != nil }
+        var velocities: [WindowID: CGPoint] = [:]
         for animation in animations {
             starts[animation.id] = animation.from
+            if animation.velocity != .zero {
+                velocities[animation.id] = animation.velocity
+            }
         }
         // MM-04 / MM-10: a far-side park (or a return from one) never flies
         // across the display: its layer slides out by (or in from) the shared
@@ -343,6 +351,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             starts[id] = path.from
             targets[id] = path.to
             pinned[id] = screens.firstIndex(of: path.display)
+            velocities[id] = nil
         }
         let now = context.now()
         // SM-31: windows macOS does not draw have nothing to fly: no layer,
@@ -398,7 +407,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let token = gate.retarget()
             overlay.retargetFlight(
                 token: token, targets: plan.retargets, images: faces,
-                adds: makeFlights(plan.adds, images: images, now: now),
+                adds: makeFlights(plan.adds, images: images, velocities: velocities, now: now),
                 holes: holes, decorations: context.decorations(targets)
             )
             if primingToken == nil {
@@ -432,7 +441,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             backgrounds = [:]
             startFaces = [:]
             resizeModes = [:]
-            let flights = makeFlights(items, holes: holes, images: images, now: now)
+            let flights = makeFlights(items, holes: holes, images: images, velocities: velocities, now: now)
             guard !flights.isEmpty else {
                 return .ax
             }

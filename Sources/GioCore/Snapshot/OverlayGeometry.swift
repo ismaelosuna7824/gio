@@ -89,6 +89,11 @@ public struct LayerVelocity: Equatable, Sendable {
     }
 }
 
+public func overlayLayerVelocity(origin velocity: CGPoint, flipped: Bool) -> LayerVelocity {
+    let vertical = flipped ? -velocity.y : velocity.y
+    return LayerVelocity(position: CGVector(dx: velocity.x, dy: vertical), size: .zero)
+}
+
 /// One layer's flight: where it started, where it lands and how fast it was
 /// going when this flight (re)started. Each axis (x, y, width, height) is
 /// Gio's own spring (`SpringParameters.state`), the model the AX renderer

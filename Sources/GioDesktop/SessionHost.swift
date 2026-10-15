@@ -1654,10 +1654,11 @@ final class SessionHost: @unchecked Sendable {
         // screen before that write: `.priming` hands the pass to the flight
         // controller, which runs it once main reports the prime (or the AX
         // motion instead when the overlay never made it). The AX motion is
-        // the fallback. TG-03: a gesture's settle stays on the motion player,
-        // which carries the release velocity (the overlay starts from rest).
+        // the fallback. TG-06: a gesture's settle flies there too, its layers
+        // starting from where the fingers left the windows with the release
+        // velocity (the AX fallback keeps that velocity as well).
         var snapshotFlight = false
-        if animating, gestureRelease == nil, snapshotRefresher.rendererUsable(),
+        if animating, snapshotRefresher.rendererUsable(),
            !animations.isEmpty || overlayFlight.isActive
         {
             switch overlayFlight.drive(
@@ -2295,7 +2296,9 @@ private extension SnapshotDisplayFlight {
         self.init(
             displayFrame: flight.displayFrame, usableFrame: flight.usableFrame, backdrop: flight.backdrop,
             items: flight.items.map {
-                SnapshotOverlayItem(id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to)
+                SnapshotOverlayItem(
+                    id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to, velocity: $0.velocity
+                )
             }
         )
     }

@@ -226,6 +226,28 @@ read for the snap and focus rules.
   `WindowServerAlignmentTests`; the render check is back to the position and size nudges.
   [INFERENCE] The drift TG-05 measured needs SkyLight transactions to exist, so without them
   it should not occur (LIVE PENDING, TESTING.md 15i).
+- TG-06 settle on the overlay (2026-10-15, user report "when I swipe my fingers to move across
+  the workspace it feels laggy, while the shortcut looks really smooth"): the live log showed
+  keyboard column moves flying on the overlay (`anim done ... renderer=snapshot`, `snapshot
+  flight ... fps=106-118`) while every three-finger scroll tracked for 45-100 ms and then ran
+  its ~340 ms release settle on the AX motion player (`anim done windows=3 frames=22 dropped=8
+  missed=23 hitches=4 duration=345ms slowest=Xcode 178ms ... renderer=ax`): the settle, most of
+  what the eye follows after a flick, was paced by the slowest app. TG-03 kept it off the
+  overlay because a new overlay flight started from rest and would have stopped the strip at
+  the release. Decision: the velocity travels with the flight. `drive` takes each animation's
+  `velocity` (set by `handingOffGestureVelocity`) into `OverlayFlightItem.velocity`, the overlay
+  starts that layer's `FlightTrack` with it (`overlayLayerVelocity`: the origin velocity as the
+  layer's position velocity, y flipped with the root, size velocity 0), and `performReflow` no
+  longer excludes the gesture release from the snapshot path. The landing deadline was already
+  the longest `FlightTrack.settleTime`, which counts the carried velocity; `flightSettleTime`
+  (from rest) is only a test reference and `flightTooShort` only a diagnostic. A window within
+  1 pt of its target is not animated on either renderer (`planMotion` and `planSnapshotFlight`
+  share the tolerance), so nothing is skipped that the AX player would have moved. A jumped
+  far-side park (MM-10) drops the velocity: its layer follows the jump path, not the
+  animation's. The starts are the physical frames the pump recorded (`recordSampled`), the real
+  windows get the one instant pass under the overlay (invariant 3, as for a keyboard flight),
+  and the AX motion with the same velocity stays the fallback (`.ax`, a failed prime). This
+  supersedes the TG-03 release and PF-S sentences that kept the settle on the motion player.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -243,6 +265,17 @@ read for the snap and focus rules.
   reported; the final pass now aligns the WindowServer with every followed-up window, and
   the render check repairs drawn mismatches through SkyLight before nudging (PF-N). Commit
   `b2ed03e`. Removed with SkyLight by PF-S (Decisions). LIVE PENDING (TESTING.md 15i (l)).
+- [x] TG-06 — The release settle flies on the snapshot overlay with the release velocity (it ran
+  on the AX motion player: live 2026-10-15 `anim done ... renderer=ax slowest=Xcode 94-178ms
+  missed=17` after every swipe, against `snapshot flight ... fps=106-118` for the same strip
+  moved by hotkeys). AX motion stays the fallback. Route: delegated (5+ files across GioCore,
+  GioSession, GioUI, GioDesktop). Branch `fix/gesture-scroll-overlay`. Commit recorded under
+  Progress. LIVE PENDING (TESTING.md 15i (c), (l), (m)).
+- [ ] TG-07 — The fingers move the overlay's images, not the real windows: the overlay primes at
+  the scroll's start holding every strip window of the display, each drain sets the layers'
+  frames, the real windows are written once at the release; the AX pump stays the fallback
+  (renderer `ax`, no Screen Recording, a missing image or backdrop, a failed prime). Route:
+  delegated, same branch.
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -294,6 +327,15 @@ read for the snap and focus rules.
   GioUITests 311 (53 skipped), 0 failures, the other bundles as above. Signed `xcodebuild`
   (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED; `git diff --check` clean. Not run live (the
   user's Gio is running; nothing that moves windows may run here).
+- TG-06: RED `swift build --build-tests` failed (`cannot find 'overlayLayerVelocity' in
+  scope`, `value of type 'OverlayFlightItem' has no member 'velocity'`). GREEN
+  `swift test --filter "GioCoreTests.OverlayGeometryTests|GioSessionTests.SnapshotFlightTests|GioCoreTests.FlightDeadlineTests"`:
+  OverlayGeometryTests 24 (+2), SnapshotFlightTests 49 (+1), FlightDeadlineTests 11, 0
+  failures. Full `swift test` (SwiftPM now builds one bundle): GioPackageTests.xctest 2895
+  tests, 53 skipped, 0 failures. Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD
+  SUCCEEDED; `git diff --check` clean. LIVE PENDING (not run: the user's Gio is running on
+  this desktop; nothing that captures input or moves windows may run here): TESTING.md 15i
+  (c), (l), (m).
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,

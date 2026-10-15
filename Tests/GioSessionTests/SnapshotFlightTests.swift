@@ -1166,4 +1166,21 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(probe.paint.resizedFrom, a.size)
         XCTAssertEqual(probe.cached?.size, wide.size)
     }
+
+    // MARK: TG-06 gesture release
+
+    func testAReleaseVelocityStartsTheLayersOfTheSettleFlight() {
+        refresh([idA: a, idB: b])
+        let (slid, plan) = slide(idA, from: a, by: 100)
+        let release = slid.springing(.niri, velocity: CGPoint(x: 2400, y: 0))
+        XCTAssertEqual(flight.drive(animations: [release], plans: [plan], spring: .niri), .priming)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(items.first { $0.id == idA }?.velocity, CGPoint(x: 2400, y: 0))
+        XCTAssertEqual(items.first { $0.id == idA }?.from, a, "from where the fingers left the window")
+        XCTAssertEqual(items.first { $0.id == idB }?.velocity, .zero, "a window without a spring keeps still")
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1", "writes", "fly:1"], "the one instant pass under the overlay, then the fly")
+    }
 }
