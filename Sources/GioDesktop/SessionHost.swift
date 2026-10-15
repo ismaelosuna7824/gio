@@ -1551,6 +1551,8 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator, space.allowsWindowWork else {
             return
         }
+        let signpost = GioSignpost.begin("reflow")
+        defer { GioSignpost.end("reflow", signpost) }
         // TG-03: while the fingers move a strip, every pass waits; the
         // release (or the abandon) runs one that covers them all.
         guard !gestures.isTracking else {
@@ -2216,8 +2218,13 @@ final class SessionHost: @unchecked Sendable {
                 self?.onToggleOverview?()
             }
         case .action(let action):
+            // PF-AC: tap to session queue, then the action and its reflow.
+            let hop = GioSignpost.begin("hotkeyHop")
             queue.async { [weak self] in
-                self?.apply(action)
+                GioSignpost.end("hotkeyHop", hop)
+                GioSignpost.interval("action") {
+                    self?.apply(action)
+                }
             }
         }
         return true

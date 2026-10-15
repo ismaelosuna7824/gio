@@ -142,14 +142,25 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
             Thread.isMainThread ? MainActor.assumeIsolated { overlay.abortForMouseDown() } : false
         }
         host.overlayBegin = { [host] token, spring, flights, holes, decorations in
+            // PF-AC: session hand-off to the primed first frame on screen.
+            let prime = GioSignpost.begin("overlayPrime")
+            let wait = GioSignpost.begin("primeMainWait")
             DispatchQueue.main.async {
-                let ok = MainActor.assumeIsolated {
-                    overlay.begin(token: token, spring: spring, flights: flights, holes: holes, decorations: decorations)
+                GioSignpost.end("primeMainWait", wait)
+                let ok = GioSignpost.interval("primeBegin") {
+                    MainActor.assumeIsolated {
+                        overlay.begin(token: token, spring: spring, flights: flights, holes: holes, decorations: decorations)
+                    }
                 }
                 // One more main pass after the flush, so the panel's first
                 // frame is committed before the real windows move. On
                 // failure nothing is on screen and the pass runs through AX.
-                DispatchQueue.main.async { host.snapshotPrimed(token, ok: ok) }
+                let pass = GioSignpost.begin("primeSecondPass")
+                DispatchQueue.main.async {
+                    GioSignpost.end("primeSecondPass", pass)
+                    GioSignpost.end("overlayPrime", prime)
+                    host.snapshotPrimed(token, ok: ok)
+                }
             }
         }
         host.overlayFly = { token in
