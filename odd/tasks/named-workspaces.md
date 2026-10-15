@@ -69,7 +69,7 @@ LIVE PENDING (persistence across restart, routing + follow, picker scan, real NS
   explains). Registration drops non-running pids. `window open` adds queueWait/classify. Deferred
   follow: launched <3s or activated <1.5s after placement (cancelled if user moved). Bundles
   232(53)/247/7/19/40/1241 all 0 failures (parent re-ran; log line count unchanged). LIVE PENDING.
-- [x] NW-07 (commit pending) — Live (2026-10-15, two displays, rule Chrome → "Browsers", typing in a Chrome
+- [x] NW-07 (`e36ced2`) — Live (2026-10-15, two displays, rule Chrome → "Browsers", typing in a Chrome
   window on the external display): the workspace changed by itself and typing jumped to the other display.
   Log: all 16 Chrome arrivals in `gio.log`/`gio.log.1` were popups (`discovery exclude ... float(notResizable)`
   < 0.3 s before `window open`; the address-bar suggestions, re-created per key); 8 had `follow=true`, each

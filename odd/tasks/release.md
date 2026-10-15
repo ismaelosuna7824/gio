@@ -146,6 +146,18 @@ critical or high issue; every finding below was checked against the code before 
   --parallel` 2878 tests exit 0; local release dry run (Release, Hardened Runtime, Apple Development, team
   `2CAK428VHF`, `MARKETING_VERSION=0.1.0-rc.1`) BUILD SUCCEEDED and `make-dmg.sh` wrote and verified
   `Gio-0.1.0-rc.1.dmg`. Not run: release.yml on GitHub (needs the `release` environment and secrets).
+- [x] RL-10 (tag `v0.1.0` on `40fc581`) — First release, done from the agent session at the user's request
+  (2026-10-15): repo made public (`gh repo edit --visibility public`); `release` environment created by API
+  (required reviewer: the maintainer, deployment policies tag `v*` and branch `main`); the three secrets set
+  in the environment from the login keychain's identities exported once (the user approved the keychain
+  prompt) and repacked with only the `Apple Development: ismaelosuna.ca@gmail.com (DPYR37JY5V)` cert + key
+  (a `CN=localhost` identity was left out), checked by importing into a throwaway keychain (1 valid
+  identity); the temp files were removed and no repository secret exists. Run 38687876209: test, build
+  (approved by API), publish all green. Verified anonymously: the API lists v0.1.0 (not prerelease) with
+  `Gio-0.1.0.dmg`, `.sha256`, `Gio.dmg`; `releases/latest/download/Gio.dmg` downloads and matches the
+  checksum; the DMG's signature verifies; the app inside verifies (`--deep --strict`), `flags=0x10000(runtime)`,
+  team `2CAK428VHF`, version 0.1.0, `GioUpdateRepository` `ismaelosuna7824/gio`, `Gio_GioUI.bundle` present.
+  LIVE PENDING: Gatekeeper's Open Anyway, permissions and the first in-app update (needs a later release).
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or
