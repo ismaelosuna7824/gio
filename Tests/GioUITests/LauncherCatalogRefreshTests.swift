@@ -42,4 +42,15 @@ final class LauncherCatalogRefreshTests: XCTestCase {
         XCTAssertLessThanOrEqual(LauncherCatalogRefresh.debounce, 1)
         XCTAssertGreaterThan(LauncherCatalogRefresh.debounce, 0)
     }
+
+    /// PF-T (2026-10-15 profile): every app launch redrew the icon of every
+    /// installed app (8 % of Gio's CPU while in use). A refresh draws only
+    /// the bundles that are new or changed since their icon was drawn.
+    func testARefreshDrawsOnlyNewOrChangedIcons() {
+        let known = ["/A.app": 10.0, "/B.app": 20.0, "/Gone.app": 5.0]
+        let found = ["/A.app": 10.0, "/B.app": 25.0, "/New.app": 30.0]
+        XCTAssertEqual(launcherIconsToDraw(found: found, drawn: known), ["/B.app", "/New.app"])
+        XCTAssertEqual(launcherIconsToDraw(found: found, drawn: found), [])
+        XCTAssertEqual(launcherIconsToDraw(found: found, drawn: [:]), ["/A.app", "/B.app", "/New.app"])
+    }
 }

@@ -910,11 +910,20 @@ func snapshotRegionSamples(of image: CGImage, in region: CGRect) -> [UInt32] {
     return snapshotSamples(of: crop)
 }
 
+/// The image drawn into a `width` x `height` bitmap (nearest neighbour) as
+/// packed RGBA in `space`. PF-T (2026-10-15 profile: 13 % of Gio's CPU while
+/// in use): drawing a capture into another colour space converts the whole
+/// image first (12-25 ms for a 3600x2300 capture, once per space and per
+/// crop, and CoreGraphics keeps the converted copy). So the samples are taken
+/// in the image's own colour space and layout (no conversion, ~0.1 ms), and
+/// only those few pixels are converted to `space`: the same pixels, the same
+/// colours, as drawing the whole image there.
 private func snapshotDrawSamples(
     _ image: CGImage, width: Int, height: Int, space: CGColorSpace = CGColorSpaceCreateDeviceRGB()
 ) -> [UInt32] {
     let count = width * height
     var pixels = [UInt8](repeating: 0, count: count * 4)
+    let source = snapshotNativeSamples(image, width: width, height: height) ?? image
     let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
         guard let context = CGContext(
             data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
@@ -923,7 +932,7 @@ private func snapshotDrawSamples(
             return false
         }
         context.interpolationQuality = .none
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
         return true
     }
     guard drawn else {
@@ -934,6 +943,24 @@ private func snapshotDrawSamples(
         return UInt32(pixels[base]) << 24 | UInt32(pixels[base + 1]) << 16
             | UInt32(pixels[base + 2]) << 8 | UInt32(pixels[base + 3])
     }
+}
+
+/// The `width` x `height` nearest-neighbour samples of an 8-bit, 32-bit
+/// pixel image as a small image in its own colour space and layout, nil when
+/// the image is in another format (the caller then draws it as before).
+private func snapshotNativeSamples(_ image: CGImage, width: Int, height: Int) -> CGImage? {
+    guard image.bitsPerComponent == 8, image.bitsPerPixel == 32, let space = image.colorSpace,
+          space.model == .rgb,
+          let context = CGContext(
+              data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+              space: space, bitmapInfo: image.bitmapInfo.rawValue
+          )
+    else {
+        return nil
+    }
+    context.interpolationQuality = .none
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()
 }
 
 /// SM-20: the app's windows in its `kAXWindowsAttribute` order, mapped to

@@ -262,6 +262,27 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   drain, latest frame wins); the release settle stays on the motion player with the release
   velocity whatever the renderer. PF-R stays for AX runs (`missed=`/`hitches=`); PF-Q is
   unchanged.
+- PF-T (2026-10-15, user: "a WM running all day must not slow the Mac down or use many
+  resources"): measured first, fixed only the two biggest in-process costs. Baseline (Debug
+  build, ~100 s of normal use): 7.6 % of a core; at rest ~0.1-1.5 %, ~0.1 wakeups/s, 67 MB
+  footprint plus ~140 MB reclaimable "Malloc Large". `sample` (90 s, running self-time only):
+  13 % in `snapshotDrawSamples`, 8.5 % in `LauncherAppCatalog.scan` (5 % drawing icons), the
+  rest SwiftUI/Core Animation of the open Settings window, captures and AX.
+  1. Snapshot sampling drew each capture into another colour space (deviceRGB for the blank
+     grid, sRGB for the fill and strips). CoreGraphics converts the WHOLE image first (12-25 ms
+     for a 3600x2300 capture, once per space and per crop) and keeps the converted copy (~33 MB
+     per capture in the footprint: throwaway benchmark, 8 captures 3 MB -> 269 MB). Now the
+     samples are drawn in the image's own colour space and layout (no conversion) and only the
+     few sampled pixels are converted. Same pixels and colours (benchmark: 32x64 sRGB samples
+     identical; one of 25 grid samples picked a neighbouring pixel at a rectangle edge, which
+     the blank test does not care about); 31.7 ms -> 0.23 ms per capture, 269 MB -> 19 MB.
+  2. Every app launch redrew the icon of every installed app. A refresh now draws only bundles
+     that are new or whose Info.plist changed (`launcherIconsToDraw`); the others keep their
+     icon. Log: `launcher appsReady ... drawn=N`.
+  Not changed (measured small or inherent): typing captures (SCK, 159 samples/90 s after the
+  fix; a per-window floor would trade freshness of the flight image), the multitouch callback
+  (frames are already gated by finger count in the mailbox), SwiftUI work (only while Gio's
+  window is open; `pollWhileVisible` stops with it).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -546,6 +567,20 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   LIVE PENDING: checklist 15b (snapshot default), 15i (gestures
   through Accessibility: the strip follows the fingers, no `render mismatch` after a settle) and
   row 5 (PF-Q/PF-R on `renderer = "ax"`).
+- [x] PF-T (commit pending) — Resource use: snapshot sampling without whole-image colour
+  conversion (`snapshotDrawSamples` + `snapshotNativeSamples`, GioMacOS) and launcher icons
+  drawn only for new or changed bundles (`launcherIconsToDraw`, `LauncherScanResult.stamps`,
+  GioUI; `drawn=` in `launcher appsReady`, docs/TESTING.md). RED (compile):
+  `LauncherCatalogRefreshTests.testARefreshDrawsOnlyNewOrChangedIcons` ("cannot find
+  'launcherIconsToDraw' in scope"). The sampling change keeps its results (existing
+  `GioMacOSTests` green; equality and timing proved by a throwaway benchmark, Decisions PF-T).
+  GREEN: `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 481, POC 7, Mac 19,
+  MacOS 95, Core 1963; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  Live (Debug build, Gio window closed, ~90 s of normal use, same `sample` method): Gio CPU
+  7.6 % -> 2.7 % of a core (2.54 s in ~93 s); `snapshotDrawSamples` 669 -> 31 samples,
+  colour conversion (`vImageConvert_AnyToAny`) 580 -> 2, launcher scan 442 -> 0; footprint
+  67 MB with no reclaimable "Malloc Large" left (was ~140 MB). The baseline had Settings open,
+  so the overall CPU figure is not like for like; the per-function samples are.
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -583,3 +618,6 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
 - 2026-10-12: PF-S (`3511e90`, SkyLight and the live renderer removed, snapshot default again)
   committed on `main`, not pushed; all bundles green, signed build succeeded; LIVE PENDING
   (checklists 15b, 15i, row 5).
+- 2026-10-15: PF-T (resource use: sampling without colour conversion, launcher icons drawn only
+  when new or changed) committed on `fix/johan-spaces-safari`; all bundles green, signed build
+  succeeded, measured live (Decisions and Tasks, PF-T).
