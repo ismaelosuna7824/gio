@@ -697,7 +697,7 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   instead of 8, no Postman at 904` (2 failures), with MM-08 `Executed 19 tests, with 0
   failures`. Limit: when the focused column is the strip's last one there is nothing to show on
   the free side, the offset is clamped and the parked neighbour still leaves its side empty.
-- [x] MM-09 (commit pending) — The strip's end fills the display. Report (2026-10-14 20:23 and
+- [x] MM-09 (`78869ec`) — The strip's end fills the display. Report (2026-10-14 20:23 and
   20:30 local, MM-08 build PID 72468, screenshots): Xcode, the last column, flush right at 904
   after Zed maximized (1784 pt); Zed parked, the left half empty: MM-08's limit. Log 20:23:55Z:
   columns Tern, Postman, WhatsApp, Slack, OrbStack, Zed, Xcode. User decision (chat): "¿y si
