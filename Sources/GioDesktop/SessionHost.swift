@@ -146,6 +146,9 @@ final class SessionHost: @unchecked Sendable {
     private var trackpadPreferencesRead: TimeInterval?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
+    /// PF-X: the Screen Recording check is an IPC to tccd (~8 ms); hot
+    /// paths answer from this cache, the polled facts refresh it.
+    private let screenRecording = ScreenRecordingPermissionCache()
     /// SM-04: pre-captured window images (refreshed once after each settle,
     /// no periodic timer) and the running overlay flight.
     private var snapshotRefresher: SnapshotCacheRefresher!
@@ -225,6 +228,10 @@ final class SessionHost: @unchecked Sendable {
         space = SpaceCoordinator(context: .init(
             reflowAll: { [unowned self] in reflowAll() },
             discardPendingAdoptions: { [unowned self] in focus.discardPendingAdoptions() },
+            rescan: { [unowned self] in
+                discovery.enumerateAndPlace()
+                events.syncObservers()
+            },
             adoptFrontmostFocus: { [unowned self] in
                 guard let pid = probe.frontmostPID else {
                     return
@@ -277,7 +284,7 @@ final class SessionHost: @unchecked Sendable {
             configMessages: { [unowned self] in configCoordinator.messages },
             engine: { [unowned self] in engine() },
             tileableModes: { [unowned self] in tileableModes() },
-            screenRecordingGranted: { hasScreenRecordingPermission() },
+            screenRecordingGranted: { [unowned self] in screenRecording.refresh() },
             accessibilityGranted: { hasAXPermission() },
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
@@ -320,11 +327,11 @@ final class SessionHost: @unchecked Sendable {
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
-                            config: session.config.animations, permission: hasScreenRecordingPermission()
+                            config: session.config.animations, permission: screenRecording.granted()
                         ) == .snapshot
                 },
                 ghostCacheWanted: { [unowned self] in
-                    SnapshotCapturer.isSupported && closeGhostEnabled() && hasScreenRecordingPermission()
+                    SnapshotCapturer.isSupported && closeGhostEnabled() && screenRecording.granted()
                 },
                 captureScreens: { [unowned self] in displayParameters.captureScreens },
                 capture: { [snapshotCapturer] request, done in
@@ -929,7 +936,7 @@ final class SessionHost: @unchecked Sendable {
             guard let self else {
                 return
             }
-            guard hasScreenRecordingPermission() else {
+            guard screenRecording.refresh() else {
                 DispatchQueue.main.async { completion("Screen Recording is missing: grant it first.") }
                 return
             }
@@ -1043,7 +1050,7 @@ final class SessionHost: @unchecked Sendable {
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
         queue.async { [weak self] in
-            guard let self, SnapshotCapturer.isSupported, hasScreenRecordingPermission() else {
+            guard let self, SnapshotCapturer.isSupported, screenRecording.granted() else {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
@@ -2099,9 +2106,13 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// Tap thread (PF-AB).
     private func recordClick(at location: CGPoint) {
-        // Clicks must hit real windows: an overlay in the air comes down now.
-        _ = overlayAbortForMouseDown?()
+        // Clicks must hit real windows: an overlay in the air comes down
+        // (on main; its panels ignore the mouse, so the click is not held).
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.overlayAbortForMouseDown?()
+        }
         // A click is the user choosing the focus: drop any pending keyboard intent.
         focus.recordClick(at: location)
     }
@@ -2109,7 +2120,7 @@ final class SessionHost: @unchecked Sendable {
     private func startTap() {
         let observeMouseMoved = focus.focusFollowsMouse
         // Only subscribed while focus-follows-mouse is on: otherwise every
-        // mouse move would cost a main-thread callback.
+        // mouse move would cost a tap callback.
         var moveHandler: (@Sendable (CGPoint) -> Void)?
         if observeMouseMoved {
             moveHandler = { [weak self] location in
@@ -2137,8 +2148,9 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// SM-09: typing changes the focused window's image. Runs in the tap
-    /// callback on main for every key; only the first key per half second
-    /// hops to the session queue (`typingLock` guards the timestamp).
+    /// callback (tap thread, PF-AB) for every key; only the first key per
+    /// half second hops to the session queue (`typingLock` guards the
+    /// timestamp).
     private func noteTyping() {
         let now = ProcessInfo.processInfo.systemUptime
         typingLock.lock()

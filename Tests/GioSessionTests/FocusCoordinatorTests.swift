@@ -21,6 +21,7 @@ final class FocusCoordinatorTests: XCTestCase {
         var registered: [pid_t] = []
         var scroll: (from: CGFloat, to: CGFloat)?
         var topPID: pid_t?
+        var topLookups = 0
         var warps: [CGPoint] = []
         var mouseFollowsFocus = true
         var centerMode = CenterFocusedColumnMode.never
@@ -87,7 +88,10 @@ final class FocusCoordinatorTests: XCTestCase {
                 registerAppeared: { _, pid in world.registered.append(pid) },
                 pendingScroll: { world.scroll },
                 isVisibleInViewport: { _ in true },
-                topWindowOwnerPID: { _ in world.topPID },
+                topWindowOwnerPID: { _ in
+                    world.topLookups += 1
+                    return world.topPID
+                },
                 warpCursor: { world.warps.append($0) },
                 mouseFollowsFocus: { world.mouseFollowsFocus },
                 centerMode: { world.centerMode },
@@ -604,5 +608,30 @@ final class FocusCoordinatorTests: XCTestCase {
         focus.pointerMoved(center(1))
         scheduler.advance(by: 0.3)
         XCTAssertEqual(focused, ids[1])
+    }
+
+    /// PF-AA: every pointer move over a managed window copied the whole
+    /// on-screen window list (~33 a second), and resting in the focused
+    /// window re-armed a no-op hover check every ~110 ms. Over the focused
+    /// window alone there is nothing to focus: no lookup, nothing armed.
+    func testMovingInsideTheFocusedWindowAsksTheWindowServerNothing() {
+        focus.focusFollowsMouse = true
+        focus.setHoverFrames([ids[0]: frames[0], ids[1]: frames[1], ids[2]: frames[2]])
+        world.frontmost = 1
+        world.topPID = 1
+        for step in 0..<20 {
+            world.mouseLocation = CGPoint(x: frames[0].minX + 10 + CGFloat(step), y: frames[0].midY)
+            focus.pointerMoved(world.mouseLocation)
+            scheduler.advance(by: 0.05)
+        }
+        XCTAssertEqual(world.topLookups, 0)
+        XCTAssertEqual(scheduler.pendingCount, 0)
+
+        world.topPID = 2
+        world.mouseLocation = center(1)
+        focus.pointerMoved(center(1))
+        scheduler.advance(by: 0.2)
+        XCTAssertEqual(focused, ids[1], "another window still takes the focus")
+        XCTAssertGreaterThan(world.topLookups, 0)
     }
 }

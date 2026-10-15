@@ -1270,6 +1270,42 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   followed by scrolls: no picture that flies and vanishes; note `snapshot evict` and `window vanished scan` lines,
   and which miss (if any) Cmd+H windows log: the capture matches against every WindowServer window of the app
   (`.optionAll`), so a hidden app's windows may still match and not read `unmatched` [INFERENCE, unverified].
+- [x] SM-32 (`a96a8be`, branch `fix/johan-spaces-safari`) — `Alt+F` blinks (live 2026-10-15, a 120 fps
+  screen recording of repeated `Alt+F` on Postman, the log shows `snapshot resize ... mode=crossfade`,
+  `handoff ... painted=1 resized=1 fade=120`). Frames sampled at 50 fps through one maximize: two frames
+  (~40 ms) at the start of the resize show the narrow and the maximized layouts on top of each other (SM-27's
+  dissolve, smoothstep over 60 % of the resize), then the maximized image alone; that double exposure is the
+  blink. (A first reading of the file by frame index looked like a 0.5 s jump back; the recording is
+  variable frame rate, 592 frames in 15 s, and the indices spanned several toggles: no such jump.) User
+  decision: switch directly, no blend. `OverlayCrossfade` (from/to opacities along the resize, keyframed) became
+  `OverlayFaces` (one-hot opacities, `showing(_:)`, `freshened()`); gone: `overlayCrossfadeSpan`,
+  `overlayCrossfadeWeight`, `overlayResizeProgress`, `overlayCrossfadeKeyframes`, `overlayFaceCovers` (SM-28's
+  underlay: the shown face's fill reaches the largest frame, so drawing order no longer matters) and the
+  overlay's opacity keyframes and progress plumbing; `SnapshotResizeMode.crossfade` → `.swap` (log
+  `mode=swap`). SM-30's fresh face still fades in (same size, 100 ms). RED: `OverlayResizeTests` compile
+  failure (`cannot find 'OverlayFaces'`, `no member 'swap'`); GREEN snapshot suites (OverlayResize, cache,
+  fresh, refresher, flight). Live (second recording, 2026-10-15 07:54, build with `mode=swap` in the log): no
+  frame mixes two layouts any more; the blink left is SM-33.
+- [x] SM-33 (`0e868b9`, branch `fix/johan-spaces-safari`) — Blink still seen after SM-32. The second
+  recording (variable frame rate, 676 frames in 15.9 s) scanned frame by frame for outliers (a frame that
+  differs from both neighbours while they match each other): the two strong ones (t=3.433 s, t=12.983 s) are
+  the same thing: at the hand-off of an `Alt+F` back the focus ring around Postman is gone for one frame
+  (present the frame before and after). `WindowLayers.fadeOut` hid the overlay's ring copy at once ("the live
+  ring above replaces this one"), but the live ring panel is shown by a later main-queue hop
+  (`focus ring shown` at the hand-off). Now the ring copy fades out with shadow, image and dim over the 120 ms
+  hand-off, at the frame the live ring takes. Not unit-tested (the overlay's CALayers are private, main-thread
+  only; no overlay test harness). Live (third recording, 07:59, build with it): no frame without the ring.
+- [x] SM-34 (`0a66ec6`, branch `fix/johan-spaces-safari`) — "Aún pasa" (third recording, 07:59:40, 747
+  frames VFR, the running Gio's GioUI.o built 07:59:15). The single-frame scan found no outlier any more;
+  every frame of one maximize and one un-maximize viewed: the maximize swaps cleanly; the un-maximize's first
+  frame shows the narrow image at the left and a flat dark fill across the rest of the still-wide frame, which
+  then shrinks within a few frames: a dark block flashing in, the blink left. Fix: `overlayUnderlay` (the
+  largest other image covering every frame of the flight, when the shown one does not: a shrink's start image)
+  stays under the shown face (`OverlayFaces.showing(_:over:)`, `order`, `underlay`), and only the underlay
+  draws its fill: the part being cut off shows the old content side by side, never blended. RED:
+  `OverlayResizeTests.testShrinkingKeepsTheLargerImageUnderTheNewOne` compile failure (`overlayUnderlay`,
+  `over:`, `underlay` missing); GREEN; bundles UI 310 (53 skipped) / Session 481 / POC 7 / Mac 19 / MacOS 95
+  / Core 1962, 0 failures. LIVE PENDING: `Alt+F` back on Postman, no dark block.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.

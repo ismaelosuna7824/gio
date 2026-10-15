@@ -30,6 +30,9 @@ public final class WindowEventRouter: @unchecked Sendable {
     public struct Context {
         /// A fresh port delivering events (on any thread) to the callback.
         public var makePort: (@escaping @Sendable (SystemWindowEvent) -> Void) -> EventPort
+        /// PF-U: Gio's own pid, never observed (rule 4; Gio is `.regular`
+        /// while its main window is open).
+        public var ownPID: pid_t
         public var runningRegularPIDs: () -> Set<pid_t>
         public var isRegularApplication: (pid_t) -> Bool
         /// The hotkey tap never started (permission may have arrived late).
@@ -73,6 +76,7 @@ public final class WindowEventRouter: @unchecked Sendable {
 
         public init(
             makePort: @escaping (@escaping @Sendable (SystemWindowEvent) -> Void) -> EventPort,
+            ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
             runningRegularPIDs: @escaping () -> Set<pid_t>, isRegularApplication: @escaping (pid_t) -> Bool,
             isTapMissing: @escaping () -> Bool, scheduleReflow: @escaping (Bool) -> Void,
             reflowAll: @escaping () -> Void,
@@ -94,6 +98,7 @@ public final class WindowEventRouter: @unchecked Sendable {
             learnLateClamp: @escaping (WindowID, CGRect, CGRect) -> Bool
         ) {
             self.makePort = makePort
+            self.ownPID = ownPID
             self.runningRegularPIDs = runningRegularPIDs
             self.isRegularApplication = isRegularApplication
             self.isTapMissing = isTapMissing
@@ -134,6 +139,10 @@ public final class WindowEventRouter: @unchecked Sendable {
     private var lateChecks: Set<WindowID> = []
     /// FI-11: the re-check runs this long after the echo window ended.
     static let lateCheckMargin: TimeInterval = 0.05
+    /// PF-W: windows with a title read pending, and the element to read.
+    private var pendingTitles: [WindowID: AXUIElement] = [:]
+    /// PF-W: a window's title is read at most this often.
+    public static let titleCoalesce: TimeInterval = 1
 
     public init(context: Context, discovery: DiscoveryService, scheduler: SessionScheduler) {
         self.context = context
@@ -170,7 +179,9 @@ public final class WindowEventRouter: @unchecked Sendable {
         guard let port else {
             return
         }
-        let plan = book.reconcile(running: context.runningRegularPIDs())
+        var running = context.runningRegularPIDs()
+        running.remove(context.ownPID)
+        let plan = book.reconcile(running: running)
         for pid in plan.detach {
             port.detach(pid: pid)
             book.didDetach(pid)
@@ -215,7 +226,7 @@ public final class WindowEventRouter: @unchecked Sendable {
             discovery.appTerminated(event.pid)
         case .appActivated:
             // A previously refused (or missed) app gets another chance now.
-            if book.needsAttach(event.pid), let port,
+            if event.pid != context.ownPID, book.needsAttach(event.pid), let port,
                port.attach(pid: event.pid)
             {
                 book.didAttach(event.pid)
@@ -320,20 +331,49 @@ public final class WindowEventRouter: @unchecked Sendable {
                 context.reflowAll()
             }
         case .updateTitle:
-            let registry = context.registry()
-            if let known, let element, let title = context.title(element), !title.isEmpty,
-               var record = registry.find(known)
-            {
-                record.title = title
-                try? registry.update(record)
-                discovery.titleChanged(known)
+            guard let known, let element else {
+                return
             }
+            noteTitleChanged(known, element: element)
         case .adoptFocus:
             context.requestFocusAdoption(.focusChanged, pid, element)
         case .resync:
             context.scheduleReflow(true)
         case .ignore:
             break
+        }
+    }
+
+    /// PF-W: at most one title read per window per `titleCoalesce`, with
+    /// the latest element, so an app retitling itself several times a
+    /// second (spinners, counters) costs one AX read a second, not one per
+    /// change. A window whose rule re-check waits for its title is read at
+    /// once.
+    private func noteTitleChanged(_ id: WindowID, element: AXUIElement) {
+        if discovery.awaitsTitle(id) {
+            pendingTitles.removeValue(forKey: id)
+            readTitle(id, element: element)
+            return
+        }
+        let scheduled = pendingTitles[id] != nil
+        pendingTitles[id] = element
+        guard !scheduled else {
+            return
+        }
+        scheduler.asyncAfter(Self.titleCoalesce) { [weak self] in
+            guard let self, let element = pendingTitles.removeValue(forKey: id) else {
+                return
+            }
+            readTitle(id, element: element)
+        }
+    }
+
+    private func readTitle(_ id: WindowID, element: AXUIElement) {
+        let registry = context.registry()
+        if let title = context.title(element), !title.isEmpty, var record = registry.find(id) {
+            record.title = title
+            try? registry.update(record)
+            discovery.titleChanged(id)
         }
     }
 
@@ -409,6 +449,7 @@ public final class WindowEventRouter: @unchecked Sendable {
     /// appear later arrive through the app-level window-created event.
     private func attachLaunchedApp(_ pid: pid_t, attempt: Int) {
         guard let port,
+              pid != context.ownPID,
               context.isRegularApplication(pid),
               book.needsAttach(pid)
         else {

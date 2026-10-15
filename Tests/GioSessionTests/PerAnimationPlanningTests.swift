@@ -125,7 +125,7 @@ final class PerAnimationPlanningTests: XCTestCase {
             settings.curve = curve
             XCTAssertEqual(
                 ReflowPlanner.applyingAnimationSettings(
-                    flights(), settings: settings, kinds: [a: .windowOpen, b: .windowClose], fallback: .windowResize
+                    flights(), settings: settings, kinds: [a: .windowOpen, b: .windowClose], fallback: .windowMovement
                 ),
                 ReflowPlanner.applyingCurve(flights(), settings: settings)
             )

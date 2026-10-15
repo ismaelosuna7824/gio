@@ -116,12 +116,14 @@ public func defaultConfigTemplate() -> String {
 
     [animations.window-resize]
     # Maximize, fullscreen and width changes (native zoom neighbours too).
+    # Off by default: the window takes its new size at once. true animates it.
+    # enabled = false
 
     [focus]
-    # How the focused window stands out: "dim" (default) darkens the other
-    # visible tiled windows while nothing moves; "ring" draws the outline set
-    # up in [focus-ring]; "none" shows nothing.
-    indicator = "dim"
+    # How the focused window stands out: "ring" (default) draws the outline
+    # set up in [focus-ring]; "dim" darkens the other visible tiled windows
+    # while nothing moves; "none" shows nothing.
+    indicator = "ring"
     # Opacity of the dim over unfocused windows (0.0-0.5).
     dim-strength = 0.15
 

@@ -187,7 +187,7 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertEqual(form.kinds.count, AnimationKind.allCases.count)
         for kind in AnimationKind.allCases {
             let row = form.kinds[kind]!
-            XCTAssertTrue(row.enabled)
+            XCTAssertEqual(row.enabled, kind.enabledByDefault, "\(kind)")
             XCTAssertFalse(row.custom, "\(kind) inherits global")
         }
         XCTAssertEqual(form.openOffset, 24)
@@ -210,6 +210,24 @@ final class SettingsPresentationTests: XCTestCase {
 
         XCTAssertEqual(patched.config.animations, config)
         XCTAssertEqual(patched.warnings, [])
+    }
+
+    func testTheResizeRowIsOffByDefaultAndTurningItOnWritesTheTable() throws {
+        var form = AnimationsForm(config: AnimationsSectionConfig())
+        XCTAssertFalse(form.kinds[.windowResize]!.enabled)
+        XCTAssertTrue(form.kinds[.windowMovement]!.enabled)
+        XCTAssertFalse(form.preview(for: .windowResize).enabled)
+        let untouched = try patchGioConfig("", edits: form.edits).get()
+        XCTAssertFalse(untouched.text.contains("[animations.window-resize]"), "the default writes nothing")
+
+        form.kinds[.windowResize]!.enabled = true
+        let on = try patchGioConfig(untouched.text, edits: form.edits).get()
+        XCTAssertTrue(on.config.animations.resolved(.windowResize).isActive)
+
+        form.kinds[.windowResize]!.enabled = false
+        let back = try patchGioConfig(on.text, edits: form.edits).get()
+        XCTAssertFalse(back.config.animations.resolved(.windowResize).isActive)
+        XCTAssertFalse(back.text.contains("[animations.window-resize]"), "off again is the default: the key goes")
     }
 
     func testTurningCustomOnStartsFromTheGlobalValuesAndOffRemovesTheKeys() throws {

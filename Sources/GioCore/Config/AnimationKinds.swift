@@ -18,6 +18,12 @@ public enum AnimationKind: String, CaseIterable, Equatable, Hashable, Sendable {
     case windowResize = "window-resize"
 
     public var tableName: String { "animations.\(rawValue)" }
+
+    /// On unless its table says otherwise, except `window-resize`: animating
+    /// a resize with window images always shows the content jump from one
+    /// layout to the other (live 2026-10-15, Alt+F on Postman), so resizes are
+    /// instant unless `[animations.window-resize] enabled = true`.
+    public var enabledByDefault: Bool { self != .windowResize }
 }
 
 /// NA-04: what one `[animations.<name>]` table sets; nil inherits.
@@ -61,12 +67,12 @@ public struct ResolvedAnimation: Equatable, Sendable {
 
 extension AnimationsSectionConfig {
     /// NA-04: the global values with the kind's overrides on top. The global
-    /// `enabled = false` turns every animation off; a kind's own
-    /// `enabled = false` turns only that one off.
+    /// `enabled = false` turns every animation off; a kind's own `enabled`
+    /// turns only that one off (or on: `enabledByDefault`).
     public func resolved(_ kind: AnimationKind) -> ResolvedAnimation {
         let custom = overrides[kind] ?? AnimationOverride()
         return ResolvedAnimation(
-            enabled: enabled && (custom.enabled ?? true),
+            enabled: enabled && (custom.enabled ?? kind.enabledByDefault),
             curve: custom.curve ?? curve,
             spring: SpringParameters(
                 dampingRatio: custom.springDampingRatio ?? springDampingRatio,

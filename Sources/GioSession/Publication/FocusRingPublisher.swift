@@ -81,7 +81,8 @@ public final class FocusRingPublisher: @unchecked Sendable {
             focused: FocusRingWindow(
                 frame: context.physicalFrame(id), isMinimized: window.isMinimized,
                 isFullscreen: window.mode == .fullscreen || context.isFullscreen(id),
-                isMaximized: session.manager.currentWorkspace().focusedColumnRef?.savedWidthSpec != nil
+                isMaximized: session.manager.currentWorkspace().focusedColumnRef?.savedWidthSpec != nil,
+                isFloating: window.mode == .floating
             ),
             displays: context.displayFrames(),
             fullscreenGap: session.config.layout.resolvedFullscreenGap
@@ -106,7 +107,8 @@ public final class FocusRingPublisher: @unchecked Sendable {
             focused: FocusRingWindow(
                 frame: targets[id] ?? context.physicalFrame(id), isMinimized: window.isMinimized,
                 isFullscreen: window.mode == .fullscreen || context.isFullscreen(id),
-                isMaximized: workspace.focusedColumnRef?.savedWidthSpec != nil
+                isMaximized: workspace.focusedColumnRef?.savedWidthSpec != nil,
+                isFloating: window.mode == .floating
             ),
             tiled: tiled, displays: context.displayFrames(),
             fullscreenGap: session.config.layout.resolvedFullscreenGap

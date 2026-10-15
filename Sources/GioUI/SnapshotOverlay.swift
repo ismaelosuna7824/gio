@@ -40,8 +40,8 @@ import QuartzCore
 
 /// One window image to fly. Frames are Cocoa global coordinates. SM-27:
 /// `image` is drawn at its own size, never scaled; `target` is the image of
-/// the `to` size it crossfades to (the same image on a move, nil when none
-/// is cached).
+/// the `to` size it shows instead from the first frame (SM-32; the same image
+/// on a move, nil when none is cached).
 public struct SnapshotOverlayItem: @unchecked Sendable {
     public let id: WindowID
     public let image: SnapshotFace<CGImage>
@@ -103,7 +103,7 @@ private func displayKey(_ frame: CGRect) -> String {
 ]
 
 /// SM-27: one image a window layer can show, inside its clip: a group
-/// (whose opacity the crossfade animates) holding the fill and, on top,
+/// (whose opacity says whether it shows) holding the fill and, on top,
 /// the image at its own size, both hanging from the clip's top-left corner.
 @MainActor
 private final class FaceLayers {
@@ -143,7 +143,7 @@ private final class FaceLayers {
 /// the dim fill and the ring. All four follow the same track, so they move
 /// as one. SM-27: the clip has the window's frame and corner radius; a pure
 /// move draws its image as the clip's own contents (as before), anything
-/// else draws faces inside it (`OverlayCrossfade`): never a stretched image.
+/// else draws faces inside it (`OverlayFaces`): never a stretched image.
 @MainActor
 private final class WindowLayers {
     let shadow = CALayer()
@@ -155,11 +155,11 @@ private final class WindowLayers {
     var track: FlightTrack
     var startedAt: CFTimeInterval?
     private var ringWidth: CGFloat = 0
-    /// SM-27: the images the layer can show, bottom to top, the fade between
-    /// them, and their layers once the clip draws faces (empty while it draws
-    /// the first image directly).
+    /// SM-27: the images the layer can show, bottom to top, which one shows
+    /// (SM-32: one at a time), and their layers once the clip draws faces
+    /// (empty while it draws the first image directly).
     private var sources: [SnapshotFace<CGImage>]
-    private var crossfade = OverlayCrossfade()
+    private var shown = OverlayFaces()
     private var faces: [FaceLayers] = []
     /// The largest frame of the current track (keyframes included): how far
     /// the fills reach.
@@ -196,39 +196,33 @@ private final class WindowLayers {
         apply(track.start)
     }
 
-    /// SM-27: progress of the resize `elapsed` seconds into the track.
-    func progress(at elapsed: TimeInterval, spring: SpringParameters) -> Double {
-        overlayResizeProgress(track: track, geometry: track.state(at: elapsed, spring: spring).geometry)
-    }
-
-    /// SM-27: the current track (already set) fades, from `progress` of the
-    /// previous one, to `target` (the image of the end size: a face it has,
-    /// or a new one on top), or without one to its face closest in size.
-    func fade(to target: SnapshotFace<CGImage>?, progress: Double) {
+    /// SM-32: from now on the layer shows `target` (the image of the end
+    /// size: a face it has, or a new one on top), or without one its face
+    /// closest in size. No dissolve: two layouts never blend. SM-34: a
+    /// larger image covering the whole flight stays under it (a shrink keeps
+    /// real content where the shown image ends, not a flat fill).
+    func show(_ target: SnapshotFace<CGImage>?) {
         let index: Int
-        var underlay = false
         if let target {
             index = sources.firstIndex { $0.image === target.image } ?? sources.count
             if index == sources.count {
                 sources.append(target)
-                // SM-28: a growing window's new-size image goes under the
-                // start image, so the growing frame is covered from the start.
-                underlay = overlayFaceCovers(
-                    image: target.size, start: track.start.bounds.size, end: track.end.bounds.size
-                )
             }
         } else {
             index = overlayClosestFace(sources.map(\.size), to: track.end.bounds.size)
         }
-        crossfade = crossfade.retargeted(at: progress, toward: index, underlay: underlay)
+        let underlay = overlayUnderlay(
+            sizes: sources.map(\.size), shown: index, start: track.start.bounds.size, end: track.end.bounds.size
+        )
+        shown = shown.showing(index, over: underlay)
         if faces.isEmpty, overlayDrawsDirect(
             image: sources[0].size, faces: sources.count, start: track.start.bounds.size, end: track.end.bounds.size
         ) {
             return
         }
         buildFaces()
-        let opacities = crossfade.opacities(at: startedAt == nil ? 0 : 1)
-        for (face, opacity) in zip(faces, opacities) {
+        for (face, opacity) in zip(faces, shown.opacities) {
+            face.group.removeAnimation(forKey: "gio.opacity")
             face.group.opacity = Float(opacity)
         }
         layoutFaces(reach: overlayReach([reach, track.start.bounds.size, track.end.bounds.size]))
@@ -236,13 +230,13 @@ private final class WindowLayers {
 
     /// SM-30: a fresh image of the landing size, captured mid-flight: a new
     /// face on top fading in over `overlayFreshFadeDuration` from `now`
-    /// (eased, timed: the resize is nearly done); the faces under it hold
-    /// the opacity they have at `progress` of the track.
-    func freshen(_ source: SnapshotFace<CGImage>, progress: Double, now: CFTimeInterval) {
+    /// (eased, timed: the resize is nearly done); the faces under it keep
+    /// their opacity.
+    func freshen(_ source: SnapshotFace<CGImage>, now: CFTimeInterval) {
         sources.append(source)
-        crossfade = crossfade.freshened(at: progress)
+        shown = shown.freshened()
         buildFaces()
-        let opacities = crossfade.opacities(at: progress)
+        let opacities = shown.opacities
         for (index, face) in faces.enumerated().dropLast() {
             face.group.removeAnimation(forKey: "gio.opacity")
             face.group.opacity = Float(opacities[index])
@@ -260,11 +254,13 @@ private final class WindowLayers {
         top.add(animation, forKey: "gio.opacity")
     }
 
-    /// SM-30: the soft hand-off: shadow, image and dim fade out over the
-    /// real window from `now` (eased); the live ring above replaces this one.
+    /// SM-30: the soft hand-off: shadow, image, dim and ring fade out over
+    /// the real window from `now` (eased). SM-33: the ring fades too instead
+    /// of hiding at once: the live ring is shown by a later main-queue hop,
+    /// and hiding this one first left the window without a ring for a frame
+    /// (a blink at every Alt+F back). Both rings sit on the same frame.
     func fadeOut(duration: TimeInterval, now: CFTimeInterval) {
-        ring.isHidden = true
-        for layer in [shadow, clip, dim] {
+        for layer in [shadow, clip, dim, ring] {
             let animation = CABasicAnimation(keyPath: "opacity")
             animation.fromValue = layer.opacity
             animation.toValue = 0
@@ -278,7 +274,9 @@ private final class WindowLayers {
     }
 
     /// The clip draws faces: its own contents go, a layer per source not yet
-    /// drawn joins, and every face takes its drawing order.
+    /// drawn joins, every face takes its drawing order, and only the
+    /// underlay (SM-34), when there is one, draws its fill: the faces above
+    /// it end where their image ends.
     private func buildFaces() {
         clip.contents = nil
         for source in sources.dropFirst(faces.count) {
@@ -286,8 +284,11 @@ private final class WindowLayers {
             faces.append(face)
             clip.addSublayer(face.group)
         }
-        for (position, face) in crossfade.order.enumerated() {
-            faces[face].group.zPosition = CGFloat(position)
+        for (position, index) in shown.order.enumerated() {
+            faces[index].group.zPosition = CGFloat(position)
+        }
+        for (index, face) in faces.enumerated() {
+            face.fill.isHidden = shown.underlay.map { $0 != index } ?? false
         }
     }
 
@@ -371,17 +372,8 @@ private final class WindowLayers {
             return
         }
         // SM-27: the fills reach the largest frame of this track (a spring
-        // overshoot included); each face's opacity follows the resize.
+        // overshoot included). SM-32: the shown face does not change along it.
         layoutFaces(reach: overlayReach(keyframes.geometries.map(\.bounds.size)))
-        let opacities = overlayCrossfadeKeyframes(crossfade, track: track, keyframes: keyframes)
-        for (face, values) in zip(faces, opacities) {
-            face.group.opacity = Float(values.last ?? 1)
-            let fades = values.contains { $0 != values.first }
-            Self.setTrack(
-                face.group, "opacity", values: fades ? values.map { NSNumber(value: Float($0)) } : nil,
-                times: times, keyframes: keyframes, beginTime: beginTime
-            )
-        }
     }
 
     func removeAnimations() {
@@ -546,10 +538,9 @@ final class SnapshotOverlay {
 
     /// Retarget flying layers (from where they are now, carrying their
     /// velocity) and add layers for windows that joined. Layers still primed
-    /// only change their target. SM-27: each fades on from where its
-    /// crossfade is to the image of its new size (`images`; without one, its
-    /// closest image). Returns the longest settle time of the tracks started
-    /// here (0 while primed).
+    /// only change their target. SM-32: each shows the image of its new size
+    /// at once (`images`; without one, its closest image). Returns the longest
+    /// settle time of the tracks started here (0 while primed).
     func retarget(
         targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adding items: [SnapshotOverlayItem],
         holes: [CGRect], decorations: OverlayDecorations, now: CFTimeInterval
@@ -568,13 +559,12 @@ final class SnapshotOverlay {
             }
             let end = overlayLayerGeometry(frame: frame, in: area.panelFrame, flipped: root.isFlipped)
             if let startedAt = layers.startedAt {
-                let progress = layers.progress(at: now - startedAt, spring: spring)
                 layers.track = layers.track.retargeted(to: end, at: now - startedAt, spring: spring)
-                layers.fade(to: images[id], progress: progress)
+                layers.show(images[id])
                 settle = max(settle, start(layers, at: now))
             } else {
                 layers.track.end = end
-                layers.fade(to: images[id], progress: 0)
+                layers.show(images[id])
             }
         }
         if windows.values.contains(where: { $0.startedAt != nil }) {
@@ -587,16 +577,12 @@ final class SnapshotOverlay {
     }
 
     /// SM-30: fresh images of resized layers' landing sizes: each layer
-    /// fades to its image on top, from where its crossfade is now.
+    /// fades its image in on top.
     func freshen(_ faces: [WindowID: SnapshotFace<CGImage>], now: CFTimeInterval) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         for (id, face) in faces.sorted(by: { $0.key < $1.key }) {
-            guard let layers = windows[id] else {
-                continue
-            }
-            let progress = layers.startedAt.map { layers.progress(at: now - $0, spring: spring) } ?? 0
-            layers.freshen(face, progress: progress, now: now)
+            windows[id]?.freshen(face, now: now)
         }
         CATransaction.commit()
     }
@@ -661,7 +647,7 @@ final class SnapshotOverlay {
                 end: overlayLayerGeometry(frame: item.to, in: area.panelFrame, flipped: root.isFlipped)
             )
         )
-        layers.fade(to: item.target, progress: 0)
+        layers.show(item.target)
         layers.all.forEach { root.layer?.addSublayer($0) }
         windows[item.id] = layers
         return layers

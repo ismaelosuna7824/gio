@@ -44,12 +44,19 @@ public struct FocusRingWindow: Equatable, Sendable {
     public var isFullscreen: Bool
     /// The focused column is maximized (NC-02 maximize-column).
     public var isMaximized: Bool
+    /// Floating: the window moves on its own (the user drags it) and Gio does
+    /// not follow those moves, so no ring is drawn around it.
+    public var isFloating: Bool
 
-    public init(frame: CGRect?, isMinimized: Bool = false, isFullscreen: Bool = false, isMaximized: Bool = false) {
+    public init(
+        frame: CGRect?, isMinimized: Bool = false, isFullscreen: Bool = false, isMaximized: Bool = false,
+        isFloating: Bool = false
+    ) {
         self.frame = frame
         self.isMinimized = isMinimized
         self.isFullscreen = isFullscreen
         self.isMaximized = isMaximized
+        self.isFloating = isFloating
     }
 }
 
@@ -104,7 +111,8 @@ public func focusIndicatorVisible(_ frame: CGRect, on displays: [CGRect]) -> Boo
 }
 
 /// Pure decision: the ring for the focused window, or hidden when the feature
-/// is off, nothing is focused, the window is minimized, maximized or
+/// is off, nothing is focused, the window is minimized or floating (it moves
+/// on its own; the ring would stay behind), maximized or
 /// fullscreen while `hideWhenMaximized` is on, fullscreen without
 /// room for it (the ring would be clipped by the display edge and menu bar
 /// unless `fullscreenGap` is at least the ring width) or off-viewport
@@ -114,7 +122,7 @@ public func focusRingState(
     focused: FocusRingWindow?, displays: [CGRect], fullscreenGap: CGFloat = 0
 ) -> FocusRingState {
     guard config.enabled, config.width > 0, let focused, let frame = focused.frame,
-          !focused.isMinimized,
+          !focused.isMinimized, !focused.isFloating,
           !(config.hideWhenMaximized && (focused.isMaximized || focused.isFullscreen)),
           !focused.isFullscreen || fullscreenGap >= CGFloat(config.width)
     else {

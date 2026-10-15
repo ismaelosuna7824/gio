@@ -89,6 +89,7 @@ final class EventWorld: @unchecked Sendable {
     var frameReads: [WindowID] = []
     var tileabilityInvalidated: [WindowID] = []
     var titles: [pid_t: String] = [:]
+    var titleReads = 0
     var console: [String] = []
     var logs: [(LogLevel, String)] = []
     var port: FakeEventPort?
@@ -172,6 +173,7 @@ final class EventWorld: @unchecked Sendable {
                 self.port = port
                 return port
             },
+            ownPID: Self.ownPID,
             runningRegularPIDs: { self.regular },
             isRegularApplication: { self.regular.contains($0) },
             isTapMissing: { self.tapMissing },
@@ -195,7 +197,10 @@ final class EventWorld: @unchecked Sendable {
             isEcho: { id, _, _ in self.echoes.contains(id) },
             invalidateTrust: { self.trustInvalidated.append($0) },
             invalidateTileability: { self.tileabilityInvalidated.append($0) },
-            title: { _ in self.titles.values.first },
+            title: { _ in
+                self.titleReads += 1
+                return self.titles.values.first
+            },
             registry: { self.session.registry },
             console: { self.console.append($0) },
             log: { self.logs.append(($0, $1)) },
@@ -382,6 +387,9 @@ final class DiscoveryServiceTests: XCTestCase {
         world.running = []
         discovery.enumerateAndPlace()
         XCTAssertTrue(world.registered.isEmpty)
+        // PF-Z: a missed terminate must not leave the app's write lane,
+        // name and EnhancedUI state behind for the rest of the session.
+        XCTAssertEqual(world.forgottenApps, [7])
     }
 
     func testRulesAndAdmissionDecideTheMode() {
@@ -676,6 +684,21 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.scheduledReflows, [true])
     }
 
+    /// PF-U: Gio turns `.regular` while its main window is open, so the
+    /// running set, launch and activation all name its own pid. Observing
+    /// it is AX on in-process elements (rule 4: AppKit runs on the calling
+    /// thread and crashes) and subscribes Gio to its own overlay panels.
+    func testOwnPidIsNeverObserved() {
+        world.regular = [7, EventWorld.ownPID]
+        router.syncObservers()
+        send(.appActivated, pid: EventWorld.ownPID)
+        send(.appLaunched, pid: EventWorld.ownPID)
+        scheduler.advance(by: 10)
+
+        XCTAssertFalse(world.port!.attachCalls.contains(EventWorld.ownPID))
+        XCTAssertTrue(world.console.isEmpty, "not a refusal either")
+    }
+
     // MARK: Window events
 
     func testOwnPidWindowsAreNeverRegisteredFromEvents() {
@@ -762,10 +785,27 @@ final class WindowEventRouterTests: XCTestCase {
     func testTitleUpdatesTheRecordWithoutLoggingIt() {
         world.titles[7] = "new secret"
         send(.window(.titleChanged), element: element)
+        scheduler.advance(by: WindowEventRouter.titleCoalesce)
 
         XCTAssertEqual(world.registered.first?.title, "new secret")
         XCTAssertFalse(world.logs.contains { $0.1.contains("secret") })
         XCTAssertFalse(world.console.contains { $0.contains("secret") })
+    }
+
+    /// PF-W: terminals and pages retitle themselves several times a second
+    /// (spinners, counters), all day. Each change was one AX read into the
+    /// app; now a window's title is read at most once per `titleCoalesce`,
+    /// with the value it has then.
+    func testTitleChangesAreReadOncePerCoalesceWindowWithTheLatestValue() {
+        for step in 0..<10 {
+            world.titles[7] = "secret \(step)"
+            send(.window(.titleChanged), element: element)
+            scheduler.advance(by: 0.1)
+        }
+        XCTAssertEqual(world.titleReads, 1)
+        XCTAssertEqual(world.registered.first?.title, "secret 9")
+        scheduler.advance(by: 10)
+        XCTAssertEqual(world.titleReads, 1, "nothing pending once read")
     }
 
     func testFocusedWindowChangeRequestsAdoption() {

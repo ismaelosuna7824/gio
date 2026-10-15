@@ -810,6 +810,12 @@ public final class DiscoveryService: @unchecked Sendable {
         context.windowRegistered(timing)
     }
 
+    /// PF-W: a re-check is armed for this window, so a title change is
+    /// read at once (otherwise the router coalesces title reads).
+    public func awaitsTitle(_ id: WindowID) -> Bool {
+        titleRechecks.isArmed(id, now: context.now())
+    }
+
     /// WR-01: a registered window's title changed (the record already holds
     /// it). An arrival registered untitled is re-checked once, when its
     /// title first becomes non-empty within `TitleRecheckBook.window`: a
@@ -842,6 +848,11 @@ public final class DiscoveryService: @unchecked Sendable {
             .filter { !livePIDs.contains($0.pid) && !context.isRunning($0.pid) }
         guard !dead.isEmpty else {
             return
+        }
+        // PF-Z: a missed terminate leaves the app's write lane, name and
+        // EnhancedUI state with the reconciler otherwise.
+        for pid in Set(dead.map(\.pid)) {
+            context.forgetApp(pid)
         }
         purge(dead)
     }

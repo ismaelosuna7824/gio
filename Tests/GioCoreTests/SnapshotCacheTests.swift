@@ -285,6 +285,19 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertTrue(snapshotTypingHopDue(now: 10.5, lastHop: 10, interval: 0.5))
     }
 
+    /// PF-V: a typing capture waits for a pause longer than the hop
+    /// interval (steady typing never fires it) and for the floor since the
+    /// window's last image.
+    func testTypingCaptureWaitsForAPauseAndTheFloor() {
+        XCTAssertGreaterThan(snapshotTypingQuiet, snapshotTypingHopInterval * 2)
+        XCTAssertEqual(snapshotTypingCaptureDelay(capturedAt: nil, now: 10), snapshotTypingQuiet, "no image")
+        XCTAssertEqual(snapshotTypingCaptureDelay(capturedAt: 0, now: 10), snapshotTypingQuiet, "old image")
+        XCTAssertEqual(
+            snapshotTypingCaptureDelay(capturedAt: 9, now: 10), snapshotTypingFloor - 1, accuracy: 1e-9,
+            "an image 1 s old waits for the floor"
+        )
+    }
+
     // MARK: SM-11 two sizes per window, other-size fallback, off-screen, miss log
 
     private let maximized = CGRect(x: 0, y: 0, width: 1600, height: 600)
@@ -339,19 +352,19 @@ final class SnapshotCacheTests: XCTestCase {
     // MARK: SM-27 resize without stretching
 
     /// Alt+F with both sizes cached: the layer starts on the column image and
-    /// crossfades into the maximized one; back again the other way round.
-    func testAResizeFlightGetsTheImageOfItsTargetSizeToCrossfadeTo() {
+    /// swaps to the maximized one; back again the other way round.
+    func testAResizeFlightGetsTheImageOfItsTargetSizeToSwapTo() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1)
         cache.store(id(1), image: "maximized", frame: maximized, pixels: 1, at: 2)
         let grow = cache.usableEntry(id(1), startFrame: frame, targetFrame: maximized, now: 10)
         XCTAssertEqual(grow?.entry.image, "column")
         XCTAssertEqual(grow?.target?.image, "maximized")
-        XCTAssertEqual(grow?.resize, .crossfade)
+        XCTAssertEqual(grow?.resize, .swap)
         let shrink = cache.usableEntry(id(1), startFrame: maximized, targetFrame: frame.offsetBy(dx: 40, dy: 0), now: 10)
         XCTAssertEqual(shrink?.entry.image, "maximized")
         XCTAssertEqual(shrink?.target?.image, "column")
-        XCTAssertEqual(shrink?.resize, .crossfade)
+        XCTAssertEqual(shrink?.resize, .swap)
     }
 
     /// The first maximize of a window (never captured at that size): no

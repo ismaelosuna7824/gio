@@ -107,6 +107,17 @@ native review (which reviews commits) is not run.
   failures; signed build OK; diff --check clean. LIVE PENDING. Open: whether Spotlight/
   Raycast also toggle the Space or fail elsewhere (needs `[logging] level = "debug"`);
   returning from a real other Desktop adopts whatever app macOS puts in front.
+- [ ] SR-06 (`f765ffd`, branch `fix/johan-spaces-safari`) — Report (johan, 2026-10-14): two apps sent to
+  Desktop 2, then brought back to Desktop 1 (Gio's Space), stayed behind the tiled windows and could not be
+  reached; opening them from Raycast moved them to a workspace 2. Code reading (no log yet): discovery
+  lists AX windows of the active Space only and nothing announces a window that changed Space, so windows
+  moved into the managed Space are never registered until something focuses them. Fix: on the return to the
+  managed Space `SpaceCoordinator` runs `rescan` (host: `discovery.enumerateAndPlace()` +
+  `events.syncObservers()`, a full add-only scan: new windows land on the display they sit on, never follow)
+  before `adoptFrontmostFocus` and the reflow. RED: `SpaceCoordinatorTests` compile failure (`extra argument
+  'rescan'`); GREEN: events `rescan, adopt, reflow`; bundles UI 310 (53 skipped) / Session 481 / POC 7 /
+  Mac 19 / MacOS 95 / Core 1971, 0 failures; signed build OK. Open: why Raycast put them on "workspace 2"
+  (needs johan's `gio.log` around 23:24). LIVE PENDING: move a window from Desktop 2 into Gio's Desktop.
 
 ## Acceptance criteria
 - Visiting another Space and returning leaves every managed window where it was.

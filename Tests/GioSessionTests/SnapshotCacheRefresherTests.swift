@@ -313,18 +313,30 @@ final class SnapshotCacheRefresherTests: XCTestCase {
 
     // MARK: Dirty signals (SM-09)
 
-    func testTypingCapturesOnlyTheFocusedWindowAfterTheDebounce() {
+    /// PF-V: the typing hop resets the wait at most every 0.5 s, so with the
+    /// old 0.6 s debounce steady typing still captured every second or two.
+    /// Now a typing capture waits for a real pause (`snapshotTypingQuiet`)
+    /// and never comes sooner than `snapshotTypingFloor` after the window's
+    /// last image: one capture per pause, at most one per floor.
+    func testTypingCapturesTheFocusedWindowOnlyAfterAPauseAndAtMostOncePerFloor() {
         refresh([idA: a, idB: b])
-        cache.noteTyping()
-        scheduler.advance(by: 0.5)
-        cache.noteTyping()
-        scheduler.advance(by: 0.5)
-        XCTAssertEqual(world.captures.count, 1, "still typing")
-        scheduler.advance(by: 0.1)
-        XCTAssertEqual(world.captures.count, 2)
+        for _ in 0..<20 {
+            cache.noteTyping()
+            scheduler.advance(by: 0.5)
+        }
+        XCTAssertEqual(world.captures.count, 1, "steady typing: no capture")
+        scheduler.advance(by: snapshotTypingQuiet - 0.5)
+        XCTAssertEqual(world.captures.count, 2, "the pause")
         XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA])
         XCTAssertEqual(lastRequest?.reason, .typing)
         XCTAssertEqual(lastRequest?.backdropDisplayIDs, [])
+        complete([idA: a])
+
+        cache.noteTyping()
+        scheduler.advance(by: snapshotTypingQuiet)
+        XCTAssertEqual(world.captures.count, 2, "a pause right after a capture waits for the floor")
+        scheduler.advance(by: snapshotTypingFloor - snapshotTypingQuiet)
+        XCTAssertEqual(world.captures.count, 3)
         complete([idA: a])
         XCTAssertEqual(scheduler.pendingCount, 0)
     }
@@ -397,7 +409,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a, idB: b])
         cache.noteTyping()
         world.motion = true
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         XCTAssertEqual(world.captures.count, 1, "motion: not now")
         world.motion = false
         cache.schedule()
@@ -409,7 +421,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a, idB: b])
         cache.noteTyping()
         cache.evict([idA])
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         XCTAssertEqual(world.captures.count, 1, "a purged window is not captured")
     }
 
@@ -950,7 +962,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         let line = (LogLevel.debug, "snapshot cache cap exceeded by strip images=10")
         XCTAssertEqual(world.logs.filter { $0 == line }.count, 1)
         cache.noteTyping()
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         complete([idA: a])
         XCTAssertEqual(cache.cache.ids, Set([idA, idB] + strip))
         XCTAssertEqual(world.logs.filter { $0 == line }.count, 1, "logged once")
@@ -1102,9 +1114,9 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     }
 
     /// A capture's edge fill is kept with its image; with both sizes the
-    /// layer crossfades, and a retarget to a new size is told the face of
+    /// layer swaps images, and a retarget to a new size is told the face of
     /// that size (or none) and logged once.
-    func testCapturedFillsAreKeptAndBothSizesCrossfade() throws {
+    func testCapturedFillsAreKeptAndBothSizesSwap() throws {
         let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
         let white = ThemeColor(red: 1, green: 1, blue: 1)
         cache.schedule()
@@ -1122,13 +1134,13 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a])
         let grow = try XCTUnwrap(cache.flightImage(idA, startFrame: a, targetFrame: wide, at: scheduler.now))
         XCTAssertEqual(grow.target?.fill, white)
-        XCTAssertEqual(grow.resize, .crossfade)
+        XCTAssertEqual(grow.resize, .swap)
         cache.flies(idA, grow, at: scheduler.now)
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
 
         let back = cache.retargetFace(idA, image: a.size, from: wide, to: a.offsetBy(dx: 20, dy: 0), at: scheduler.now)
         XCTAssertEqual(back?.size, a.size)
-        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") }.count, 2)
+        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=swap") }.count, 2)
         let onward = cache.retargetFace(idB, image: b.size, from: b, to: b.offsetBy(dx: 20, dy: 0), at: scheduler.now)
         XCTAssertEqual(onward?.size, b.size, "same size: the face it is fading to, no log")
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
@@ -1174,7 +1186,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     func testNoTimersAtRest() {
         refresh([idA: a, idB: b])
         cache.noteTyping()
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         complete([idA: a])
         XCTAssertEqual(scheduler.pendingCount, 0)
         scheduler.advance(by: 600)

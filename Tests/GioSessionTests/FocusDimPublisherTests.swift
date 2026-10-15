@@ -14,6 +14,8 @@ final class FocusDimPublisherTests: XCTestCase {
 
     override func setUp() {
         fixture = SessionFixture(frames: [left, right], focus: 0)
+        // The ring is the default indicator (NF-08); these tests are about the dim.
+        fixture.session.config.focus.indicator = .dim
         probe = StubSystemProbe()
         probe.serverWindows = [ServerWindow(pid: 1, bounds: left), ServerWindow(pid: 2, bounds: right)]
         scheduler = ManualScheduler()

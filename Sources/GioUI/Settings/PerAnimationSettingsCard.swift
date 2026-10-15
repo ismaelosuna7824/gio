@@ -21,7 +21,7 @@ extension AnimationKind {
         case .workspaceSwitch: return "Windows leaving and entering through the bottom edge."
         case .windowOpen: return "A new window rises into its column."
         case .windowClose: return "The neighbours close the gap."
-        case .windowResize: return "Maximize, fullscreen and width changes."
+        case .windowResize: return "Maximize, fullscreen and width changes. Off by default: the window takes its new size at once."
         }
     }
 }

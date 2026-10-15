@@ -137,7 +137,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         overlay.onFlightFinished = { [host] token, frames in host.snapshotLayersFinished(token, frames: frames) }
         overlay.onFlightAborted = { [host] _, reason in host.snapshotFlightAborted(reason) }
         overlay.onDeadlineArmed = { [host] token, deadline in host.snapshotDeadlineArmed(token, at: deadline) }
-        // The tap callback runs on the main run loop; never assume it blindly.
+        // The host calls this on main (the tap runs on its own thread, PF-AB).
         host.overlayAbortForMouseDown = {
             Thread.isMainThread ? MainActor.assumeIsolated { overlay.abortForMouseDown() } : false
         }
