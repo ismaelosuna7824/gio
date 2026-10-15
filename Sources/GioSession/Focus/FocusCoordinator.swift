@@ -565,8 +565,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     }
 
     private func hoveredWindow(at location: CGPoint) -> WindowID? {
-        // Cheap geometry first; the window-server lookup only near a managed window.
-        guard hoverFrames.values.contains(where: { $0.contains(location) }) else {
+        // PF-AA: cheap geometry first; the WindowServer lookup only when a
+        // managed window other than the focused one is under the pointer.
+        guard hoverNeedsLookup(at: location, frames: hoverFrames, focused: hoverFocused()) else {
             return nil
         }
         return hoverTarget(
@@ -575,13 +576,18 @@ public final class FocusCoordinator: @unchecked Sendable {
         )
     }
 
+    /// The focused window as hover sees it: the logical focus, when its app
+    /// is frontmost.
+    private func hoverFocused() -> WindowID? {
+        let frontPID = context.frontmostPID()
+        return context.currentWorkspace().focusedWindow.flatMap { $0.pid == frontPID ? $0 : nil }
+    }
+
     private func fireHoverFocus() {
         guard !context.isShuttingDown() else {
             return
         }
-        let frontPID = context.frontmostPID()
-        let logical = context.currentWorkspace().focusedWindow
-        let focused = logical.flatMap { $0.pid == frontPID ? $0 : nil }
+        let focused = hoverFocused()
         guard let id = hoverFocus.due(
             now: context.now(),
             buttonDown: context.isMouseDown(), focused: focused

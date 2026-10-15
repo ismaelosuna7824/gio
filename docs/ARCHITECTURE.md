@@ -68,12 +68,13 @@ Invariant 3 has no exceptions. Every write, including the off-screen preposition
 
 ### Why Gio never touches its own windows (commit `bac43c6`)
 
-Once the main window made Gio a regular app, clicking it made Gio the frontmost application. Focus adoption then registered Gio's own window, and the motion lanes wrote its position through Accessibility from a background thread. AX calls on in-process elements execute AppKit code on the calling thread, which crashed inside `NSWMWindowCoordinator`. The fix refuses Gio's own pid in three places:
+Once the main window made Gio a regular app, clicking it made Gio the frontmost application. Focus adoption then registered Gio's own window, and the motion lanes wrote its position through Accessibility from a background thread. AX calls on in-process elements execute AppKit code on the calling thread, which crashed inside `NSWMWindowCoordinator`. The fix refuses Gio's own pid in these places:
 
-- `FocusCoordinator.requestAdoption` (`GioSession`) returns early for its `ownPID` (`ProcessInfo.processInfo.processIdentifier`); the FI-06 reassert never reads the own pid's focused window and focus-follows-mouse never targets a point Gio's own window covers (tested with fakes in `FocusCoordinatorTests`).
+- `FocusCoordinator.requestAdoption` (`GioSession`) returns early for its `ownPID` (`ProcessInfo.processInfo.processIdentifier`); the FI-06 reassert never reads the own pid's focused window and focus-follows-mouse never targets a point Gio's own window covers (tested with fakes in `FocusCoordinatorTests`). PF-AA: focus-follows-mouse asks the WindowServer for the top window only when a managed window other than the focused one is under the pointer (`hoverNeedsLookup`), so moving inside the focused window costs no window-list copy.
 - `isManageableProcess(pid:ownPID:onlyPID:)` in `GioMacOS` filters discovery (`discoverSystemWindows`, `discoverSystemWindow`).
 - `DiscoveryService.registerNew` (`GioSession`), the single registration funnel of the full scan, launch scans and appeared windows, refuses the own pid even if a discovery hands one over (tested per entry point with fake discovery and events).
 - `AXWindowActuator.register` ignores handles for the own pid, so no lane can ever write them.
+- `WindowEventRouter` (`GioSession`, PF-U) never attaches an AX observer to its `ownPID`: not from the running set of `syncObservers`, nor on launch or activation (Gio is `.regular` while its main window is open; observing itself subscribed it to its own overlay panels).
 
 Any new code path that enumerates windows or adopts focus must go through these guards.
 
