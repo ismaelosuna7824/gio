@@ -1855,6 +1855,8 @@ final class SessionHost: @unchecked Sendable {
         snapshotRefresher.noteVanished(report.vanished)
         discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
+        // FI-09: a floating restore this settle attempted is not repeated.
+        reflowPlanner.restoreSettled(visible: visible, deferred: report.deferred)
         // Only visible windows written here are worth a render check;
         // a settle that wrote parked/hidden windows alone checks nothing.
         for id in report.applied where visible[id] != nil && parked[id] == nil {

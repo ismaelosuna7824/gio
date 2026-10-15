@@ -423,6 +423,38 @@ final class ReflowPlannerTests: XCTestCase {
         XCTAssertEqual(new.plans.last?.visible[floating], original)
     }
 
+    /// FI-09: a restore that did not land (a dialog that re-centres itself;
+    /// the failed write drops its physical frame) is attempted by one
+    /// settled pass, not by every later reflow. Until a pass settles (a
+    /// retarget mid-flight, an abandoned animation) or while the window was
+    /// deferred, the memory stays.
+    func testAFloatingRestoreIsReleasedOnceASettledPassAttemptedIt() {
+        let world = ReflowWorld()
+        world.addColumns(1)
+        let floating = world.addColumns(1, pidBase: 300, mode: .floating)[0]
+        let original = world.physicalFrames[floating]!
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        world.addColumns(1, pidBase: 200)
+        let harness = PlannerHarness(world: world)
+        harness.run(animating: false, settings: .init(), centering: .none, zoomTargets: identity)
+        world.session.manager.switchTo(1)
+        world.syncShown()
+        // The restore write failed: no physical frame is known.
+        world.physicalFrames[floating] = nil
+        let run = { harness.run(animating: false, settings: .init(), centering: .none, zoomTargets: self.identity).1 }
+        let first = run().plans.last!.visible
+        XCTAssertEqual(first[floating], original)
+        XCTAssertEqual(run().plans.last?.visible[floating], original, "no settle yet: a retarget finds it")
+        harness.planner.restoreSettled(visible: first, deferred: [floating])
+        XCTAssertEqual(run().plans.last?.visible[floating], original, "a deferred window was not attempted")
+        harness.planner.restoreSettled(visible: [floating: CGRect(x: 1, y: 2, width: 3, height: 4)], deferred: [])
+        XCTAssertEqual(run().plans.last?.visible[floating], original, "another frame is not this restore")
+        harness.planner.restoreSettled(visible: first, deferred: [])
+        XCTAssertNil(run().plans.last?.visible[floating], "attempted once, landed or not")
+        XCTAssertNil(run().plans.last?.visible[floating])
+    }
+
     func testFullscreenCoversDisplayAndMatchesLegacy() {
         let world = ReflowWorld()
         let ids = world.addColumns(3)

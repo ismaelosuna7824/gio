@@ -86,6 +86,18 @@ Review: UNAVAILABLE.
   39/1134 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
   Same live round PASSED: startup instant (3x), config edit+reload from app, native zoom 14/14
   `corrected verified=true`, quit restore 3x + guardian clean exit.
+- [x] FI-09 (commit pending) — Floating restore memory released after one settled attempt (user
+  2026-10-14: a window kept appearing and disappearing after an installer prompt was dismissed; no
+  logs). `planInactiveWorkspaces` returned a floating window's `HiddenWindowBook` frame in
+  `plan.visible` until its physical frame matched within 1 pt; a restore that did not land (a dialog
+  that re-centres itself; `foldSettle` drops the failed window's physical frame) never cleared, so
+  every later reflow rewrote the dialog. Fix: `ReflowPlanner.restoreSettled(visible:deferred:)`,
+  called from `foldSettle`, releases a remembered frame once a settled pass wrote exactly that frame
+  and did not defer the window, landed or not; until then (a retarget mid-flight, an abandoned
+  motion, a deferred window) the memory stays as before.
+  RED: `swift build --build-tests` -> `value of type 'ReflowPlanner' has no member 'restoreSettled'`.
+  GREEN: `swift test --filter ReflowPlannerTests` -> `Executed 25 tests, with 0 failures`.
+  LIVE PENDING.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.

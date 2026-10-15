@@ -189,8 +189,9 @@ public final class ReflowPlanner: @unchecked Sendable {
         let active = shown.flatMap { id in
             (manager.workspace(id: id)?.columns ?? []).flatMap(\.windows)
         }
-        // Keep the memory until the window really sits at its frame: a
-        // retarget mid-flight (or an abandoned animation) must find it again.
+        // Keep the memory until the window really sits at its frame, or a
+        // settled pass attempted it (`restoreSettled`): a retarget mid-flight
+        // (or an abandoned animation) must find it again.
         let floating = active.filter { windows[$0]?.mode == .floating }
         plan.visible = hiddenBook.frames(of: floating)
         for (id, frame) in plan.visible {
@@ -201,6 +202,19 @@ public final class ReflowPlanner: @unchecked Sendable {
             }
         }
         return plan
+    }
+
+    /// FI-09: a settled pass wrote these frames (`visible`), minus the
+    /// windows it deferred. A floating window written at its remembered
+    /// frame was restored, whether the write landed or not: an app that
+    /// re-centres its dialog would otherwise be rewritten by every later
+    /// reflow, since a failed write leaves no physical frame to match.
+    public func restoreSettled(visible: [WindowID: CGRect], deferred: some Sequence<WindowID>) {
+        let deferred = Set(deferred)
+        let attempted = hiddenBook.frames(of: visible.keys).filter { id, frame in
+            visible[id] == frame && !deferred.contains(id)
+        }
+        _ = hiddenBook.reveal(attempted.keys)
     }
 
     /// MM-03: a floating window follows its workspace to another display:
