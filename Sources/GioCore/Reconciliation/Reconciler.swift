@@ -233,17 +233,52 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             do {
                 enhancedUI.willWrite(pid: id.pid)
                 try actuator.setFrame(item.desired, from: actual, for: id, verify: item.parked == nil)
-                return item.parked == nil ? .applied : .parkedApplied(clamped: false)
+                guard let parked = item.parked else {
+                    return .applied
+                }
+                // WC-14: a size change may land clamped (an app's minimum):
+                // check where it landed (parked writes are not verified).
+                guard !sameSize(actual, item.desired), let landed = try? actuator.frame(of: id),
+                      !isParked(landed, parked, tolerance)
+                else {
+                    return .parkedApplied(clamped: false)
+                }
+                return refitParked(id, parked, landed: landed) ?? .parkedApplied(clamped: false)
             } catch {
                 // macOS may clamp a parked position; accept a landing that is
                 // still parked (size kept, small strip on the intended side).
-                if let parked = item.parked, let landed = try? actuator.frame(of: id),
-                   isParked(landed, parked, tolerance)
-                {
-                    return .parkedApplied(clamped: true)
+                if let parked = item.parked, let landed = try? actuator.frame(of: id) {
+                    if isParked(landed, parked, tolerance) {
+                        return .parkedApplied(clamped: true)
+                    }
+                    if let outcome = refitParked(id, parked, landed: landed) {
+                        return outcome
+                    }
                 }
                 return failed(error, requested: item.desired, actual: actual)
             }
+        }
+
+        /// WC-14: an app kept another size than the parked frame asked for
+        /// (WhatsApp: 970 pt for an 888 pt column), so a left park left the
+        /// difference on screen. Place it by the size it kept; nil when even
+        /// that frame does not park it.
+        private func refitParked(_ id: WindowID, _ parked: ParkedTarget, landed: CGRect) -> WindowOutcome? {
+            let refit = parkedFrame(parked, size: landed.size)
+            let target = ParkedTarget(frame: refit, edge: parked.edge, display: parked.display, farSide: parked.farSide)
+            if isParked(landed, target, tolerance) {
+                return .parkedApplied(clamped: true)
+            }
+            guard (try? actuator.setFrame(refit, from: landed, for: id, verify: false)) != nil,
+                  let settled = try? actuator.frame(of: id), isParked(settled, target, tolerance)
+            else {
+                return nil
+            }
+            return .parkedApplied(clamped: true)
+        }
+
+        private func sameSize(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
+            abs(lhs.width - rhs.width) <= tolerance && abs(lhs.height - rhs.height) <= tolerance
         }
 
         /// The note stays the error's own text; the structured failure adds
@@ -274,7 +309,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// own lane (parked before visible, never focused) and lanes run
     /// concurrently. A parked write counts as done when the window keeps its
     /// size and only a small strip stays on the intended side, because macOS
-    /// may clamp the position. Focus is applied last, after every lane.
+    /// may clamp the position; WC-14: an app that keeps another size is
+    /// parked again by that size. Focus is applied last, after every lane.
     @discardableResult
     public func reconcile(
         frames: [WindowID: CGRect],
