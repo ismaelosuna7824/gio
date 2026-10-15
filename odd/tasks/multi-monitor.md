@@ -747,13 +747,30 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   0.5 s (`reconcile retry windows=N ids=... reason=busy`). RED: compile (no `isTransient`, no
   `TransientWriteRetry`). GREEN: `TransientWriteRetryTests` 2/2; full `swift test` UI 313 (53
   skipped) / Session 513 / POC 7 / Mac 19 / MacOS 98 / Core 1996, 0 failures; Release build OK.
-  The second recorded run (22:27Z) had no transient failure, so the retry did not fire live.
-  Not changed, seen in the same runs: Code, Figma and Postman clamp their height on the external
-  display (`frameMismatch requested=(-1076,-216,1068,1394) actual=(-1076,0,1100,1130)` or
-  `(...,-224,1100,1354)`: top kept at y=1130, the built-in display's visible top), Code/Figma
-  `(8,8)` -> `(8,16)` on the built-in one, and `handoff waited ms=305-320 held=partial` when such
-  a resized window never paints its target size. LIVE PENDING: a busy app sent across displays
-  lands on the right display ~0.5 s later.
+  The second recorded run (22:27Z) had no transient failure, so the retry did not fire there.
+  Live check (2026-10-15 22:34Z, TextEdit frozen with `SIGSTOP` across `gio
+  move-window-to-display 2`, resumed with `SIGCONT`): frozen 0.4 s, `reconcile retry` then the
+  window on the external display (`x=-1108`); frozen 1.3 s, the single retry timed out too and
+  TextEdit stayed on the built-in display (`x=8`) while Gio placed it on the external one; the
+  queued write is not applied on resume, so without a write the window stays.
+- [x] MM-11b (commit below) — Retries back off (`TransientWriteRetry.delays` 0.5, 1, 2 s, then
+  stop; a successful write restarts them) and no minimum is learned from a screen-constrained
+  landing. The same live trials showed the column width growing 32 pt per crossing (1068, 1100,
+  1132, 1164, 1196): each landing kept its top at y=1130 (the built-in display's visible top;
+  height 1394 -> 1130) and came back 32 pt wider, and `learnedMinimum` took that width as a
+  minimum. `learnedMinimum` now returns nil when either dimension landed smaller. RED:
+  `TransientWriteRetryTests` compile (`settle` returned ids); `MinimumSizeTests`
+  `testGrowthWhileTheOtherDimensionShrankIsAScreenConstraintNotLearned` 2 failures (`(1100.0,
+  0.0)`, `(0.0, 900.0)`). GREEN: full `swift test` UI 313 (53 skipped) / Session 513 / POC 7 /
+  Mac 19 / MacOS 98 / Core 1999, 0 failures; Release build OK. Live (Release, 22:38Z and 22:42Z):
+  frozen 0.4 / 1.3 / 3.0 s, TextEdit lands on the external display after 1, 2 and 3 retries
+  (500, 1000, 2000 ms); frozen 5.0 s, the three retries time out and the log stops there.
+  Four crossings with a 0.4 s freeze each end at exactly `x=-1076 w=1068 h=1394`, nothing
+  learned. The column-move workload (3 rounds) on the real apps, against the 22:27Z run:
+  frameMismatch 19 -> 9, `held=partial` 4 -> 0, `render mismatch` 2 -> 0, min sizes learned
+  0. Not changed: Figma and Code still clamp on the external display (`(-1076,-216,1068,1394)`
+  -> `(-1076,-224,1068,1354)`, 40 pt short at the top) and move from `(8,8)` to `(8,16)` on the
+  built-in one.
 
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
