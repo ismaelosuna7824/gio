@@ -181,6 +181,28 @@ Window admission, observation and registration only. Out of scope: animation/per
   LIVE PENDING: not verified on the live desktop; with the Safari dialog floats present,
   one Alt+H/L per tiled column and `focus-column-or-monitor-*` crossing past a float at
   the strip edge are still to confirm.
+- [x] WC-13 (`f43daad`) — A Dock click reveals the app's window on its workspace (2026-10-15,
+  user request "si le damos click a las apps de abajo nos lleve al workspace en el que está y
+  haga el focus"). The reveal already existed for activations (`revealOnOtherWorkspace`), but
+  the live log showed `focus dropped source=activation id=1528:3 frame=1799,-1073 ...
+  click=912,44 reason=focused window not under click`: the user's Dock auto-hides
+  (`com.apple.dock autohide = 1`), so a Dock click lands inside the display's usable area,
+  counted as a window click, and the parked window on another workspace was not under it.
+  Decision: the session classifies every click with one WindowServer query before the
+  activation it causes arrives (`FocusCoordinator.recordClick` hop; `clickIsOnSystemUI`,
+  pure: the frontmost window under the point, Gio's own click-through panels aside, at the
+  Dock's layer 20 or above); a click on the Dock or the menu bar is no window click
+  (`MouseClick.onSystemUI`, `windowAreaClick`), so the activation adopts at once and reveals.
+  The desktop (negative layers) and app panels below the Dock stay window clicks, so a
+  desktop click activating Finder still reveals nothing. Debug `focus click on system UI`.
+  RED (compile): `FocusSettleTests.testAClickOnSystemUIInsideTheVisibleAreaIsNotAWindowClick`,
+  `testSystemUIIsTheDockLayerAndAboveSkippingGiosOwnPanels` and
+  `FocusCoordinatorTests.testADockClickRevealsTheActivatedAppsWindowOnItsWorkspace`. GREEN:
+  all bundles 0 failures (UI 312/53 skipped, Session 487, POC 7, Mac 19, MacOS 98, Core
+  1974); signed build OK; `git diff --check` clean. LIVE PASS (2026-10-15, user + log): six
+  Dock clicks each logged `focus click on system UI`, then `focus adopt source=activation ...
+  changed=true scroll=...` (same workspace, strip scrolled) or `focus reveal id=1528:1
+  workspace=2 source=activation` / `id=17415:4 workspace=1` (other workspace).
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -220,3 +242,5 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: LIVE PASS (user + log since last start: 53 focus adoptions, all `scroll=no scroll`, 0 `focus dropped`). PHASE 1 CLOSED. Next: phase 2 perf + animation in odd/tasks/motion.md.
 - 2026-10-14: WC-11 native tabs done (`8effe33`, on `main` after SM-31 and FI-09..FI-11). LIVE PENDING: TESTING.md row 1b.
 - 2026-10-14: WC-12 keyboard focus skips floating/minimized columns done (`19bddce`, route: delegated writer). LIVE PENDING.
+- 2026-10-15: WC-13 Dock click reveals the app's workspace done (`f43daad`, branch
+  `fix/dock-click-reveal`). LIVE PASS.
