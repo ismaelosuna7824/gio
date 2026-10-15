@@ -160,6 +160,16 @@ Gio at rest should cost ~0%. With the main window closed to the menu bar and no 
 3. Open the main window: the visible section refreshes every 1-3 s; close it again and confirm the wakeups stop.
 4. Click the menu bar item: workspace rows are current without any background polling.
 
+## Measuring performance (PF-AC)
+
+Measure the signed **Release** build (`-configuration Release`), never Debug under the Xcode debugger. Latency-critical paths carry `os_signpost` intervals (subsystem `com.gio.wm`, Points of Interest): `hotkeyHop` (tap to session queue), `action`, `reflow`, `reconcile`, `dispatch`, `overlayPrime` (split into `primeMainWait`, `primeBegin`, `primeSecondPass`) and `capture`. A repeatable run:
+
+1. Idle: `top -l 7 -s 10 -pid <pid> -stats pid,cpu,time,idlew,mem` (CPU-time and idle-wakeup deltas over 60 s) and `footprint <pid>`.
+2. Workload: `xcrun xctrace record --template 'Time Profiler' --attach <pid> --time-limit 60s --output work.trace` while a script drives the session over IPC (`GioCLI focus right|left`, `GioCLI workspace N`), so every run does the same actions.
+3. `xcrun xctrace export --input work.trace --xpath '/trace-toc/run[@number="1"]/data/table[@schema="os-signpost"]'` gives the intervals (pair Begin/End by name and identifier), `...[@schema="time-profile"]` the samples (weight, core, backtrace), `...[@schema="potential-hangs"]` main-thread hangs. `leaks <pid>` after the workload.
+
+Keep the launch method equal between runs: a launch by `open` shows the main window, and an open main window adds SwiftUI work to every comparison.
+
 ## Log recipes
 
 Logs are written to `~/.config/gio/gio.log` (minimum level from `[logging] level`, default `info`; batched writes, rotated at about 1 MB to `gio.log.1`) and shown in the **Logs** section and by `GioCLI logs [--level ...]`. Set `level = "debug"` and `gio reload` to see per-event `reflow timing`, `focus adopt`, `hotkey` and `reconcile` lines. Lines look like `[timestamp] [LEVEL] message`. Messages contain IDs, counts, timings and app names, never window titles.

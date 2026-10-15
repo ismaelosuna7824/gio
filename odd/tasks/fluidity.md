@@ -333,6 +333,30 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   AX messaging timeout, the multitouch callback allocation (36-169 samples per 90-150 s).
   Daily-use note: `[logging] level = "debug"` costs CPU itself (`LogFileSink.drain` 171
   samples in the 150 s live run); the default is `info`.
+- PF-AC..PF-AG (2026-10-15, user brief: a measured performance pass, "medir antes de tocar
+  nada", every change re-measured, reverted when it does not help). Method: signed Release
+  build, a fixed IPC workload (8 focus right, 8 left, 4 workspace switches, twice: 40 actions
+  in ~25 s), 60 s idle with `top` (CPU-time and idle-wakeup deltas), `xctrace` Time Profiler
+  attached for the workload, `os_signpost` intervals (PF-AC) exported from the trace,
+  `footprint`, `leaks`. Baseline (window closed, launched by the user): idle 0.01 s CPU in
+  60 s, 0.0 wakeups/s, 8 threads, 62 MB; workload 1.5 s CPU; reflow p50 2.4 / p95 9.1 ms;
+  overlay prime p50 10.8 / p95 40 ms; no potential hangs. Ranked findings (time profile):
+  1. With Gio's main window open, SwiftUI re-rendered the whole window twice per action
+     (AttributeGraph 600-728 ms and view layout 234-547 ms of a ~2 s workload): every
+     flight's overlay covers the window and flipped its occlusion state (PF-AG).
+  2. `windowServerSnapshotCandidates`: `optionAll` listed every window of every Space (157
+     entries, 5 ms wall / 1.2 ms CPU per call) on every capture and 30 ms paint check (PF-AD).
+  3. Frame reads were two Accessibility messages (PF-AE).
+  4. Elements without their own messaging timeout used the system default (PF-AF).
+  Measured and left alone: QoS (72 % of Gio's samples already on efficiency cores, captures
+  79 %), the multitouch and tap callbacks (a few ms per run), idle (no timers firing,
+  0 wakeups/s), memory (56-63 MB across runs, `leaks`: 0 leaks after the workload),
+  discovery classification (`classify ms=1` per window in the logs). Not done, needs a
+  design decision: the overlay prime (p50 13 ms, p95 ~30 ms after PF-AG) is two
+  synchronous main-thread steps with the WindowServer (order the panels in and flush,
+  then one more main pass so the first frame is committed before real windows move,
+  SM-08); keeping the panels ordered in between flights or committing with a CA
+  transaction completion would change a live-verified ordering guarantee.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -664,6 +688,37 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   overlay retargets, focus); footprint 66 MB. NOT verified live: PF-Z panel pruning (needs a
   display change), PF-AA (focus-follows-mouse is off in the user's config), PF-U (open
   Gio's window, then check no AX observer for Gio's pid; no log line exists for it).
+- [x] PF-AC (`b3db88d`) — `os_signpost` intervals (`GioSignpost`, Points of Interest):
+  hotkeyHop, action, reflow, reconcile, dispatch, overlayPrime (primeMainWait, primeBegin,
+  primeSecondPass), capture. Instrumentation only (no behaviour; static names, no titles).
+  Procedure in docs/TESTING.md "Measuring performance".
+- [x] PF-AD (`6f2b795`) — Snapshot candidates from the on-screen window list. Benchmark
+  (throwaway, 200 calls): `optionAll` 157 entries 4.99 ms wall / 1.18 ms CPU,
+  `optionOnScreenOnly` 16 entries 0.48 / 0.07 ms. Workload (same launch):
+  `windowServerSnapshotCandidates` 99 -> 22 ms, `paintCheck` 133 -> 61 ms (window closed
+  pair) and 73 -> 17 / 89 -> 52 ms (window open pair). Adapter change, no unit test
+  possible (WindowServer); parse tests unchanged and green.
+- [x] PF-AE (`30d1a6d`) — One `AXUIElementCopyMultipleAttributeValues` per frame read
+  (actuator and discovery `axFrame`). Paired A/B in one live workload (alternating reads,
+  scaffold removed after): median 0.71 -> 0.50 ms, p25 0.39 -> 0.26, p75 3.10 -> 1.45,
+  10 % trimmed mean 1.58 -> 0.85 ms (n = 88 / 87). Startup reflow `axCalls` 40 -> 28 for
+  the same 10 windows.
+- [x] PF-AF (`48a5769`) — Global 1 s Accessibility messaging timeout. Experiment: a
+  throwaway app frozen with SIGSTOP during a Gio restart: session start to first layout
+  1.71 -> 1.13 s, observer refusal at +3.31 -> +2.24 s.
+- [x] PF-AG (`7f2afc8`) — `OcclusionGate`: the main window counts as covered only after 1 s.
+  RED (compile): `IdlePolicyTests.testBriefOcclusionKeepsTheWindowVisibleAndALongOneHidesIt`.
+  Workload with the main window open (same launch): Gio CPU 2.40 -> 1.50 s, main thread
+  1547 -> 825 ms, AttributeGraph 728 -> 182 ms, view layout 547 -> 189 ms, overlay prime
+  p50 16.3 -> 13.3 ms, max 75.7 -> 49.6 ms, reflow max 45.5 -> 18.8 ms.
+  GREEN (all of PF-AC..PF-AG): `swift test` all bundles 0 failures (UI 313/53 skipped,
+  Session 512, POC 7, Mac 19, MacOS 98, Core 1992); signed Debug and Release `xcodebuild`
+  BUILD SUCCEEDED; `git diff --check` clean. Final vs baseline (both launched by `open`, main
+  window open): workload CPU 2.22 -> 1.50 s (-32 %), main thread 1335 -> 825 ms, idle 0.20 ->
+  0.19 s per 60 s, wakeups 0.0 -> 0.0/s, footprint 56-57 -> 57-58 MB, reflow p95 17.4 ->
+  12.8 ms, overlay prime p50 17.2 -> 13.3 ms and p95 47.3 -> 30.2 ms, 0 potential hangs.
+  NOT verified live by the user: PF-AF only matters with a hung app (covered by the
+  experiment above).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -708,3 +763,6 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   coalescing, permission cache, IPC backoff, reaped-app and dim-panel release, hover lookups,
   tap thread) committed on `fix/johan-spaces-safari`; all bundles green, signed build
   succeeded, live run normal (Tasks, PF-AB).
+- 2026-10-15: PF-AC..PF-AG (signposts, on-screen candidates, batched frame reads, global AX
+  timeout, occlusion gate) committed on `perf/measured-pass`; all bundles green, signed
+  builds succeeded, measured before/after (Tasks).
