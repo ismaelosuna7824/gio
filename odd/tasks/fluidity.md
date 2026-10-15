@@ -567,7 +567,7 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   LIVE PENDING: checklist 15b (snapshot default), 15i (gestures
   through Accessibility: the strip follows the fingers, no `render mismatch` after a settle) and
   row 5 (PF-Q/PF-R on `renderer = "ax"`).
-- [x] PF-T (commit pending) — Resource use: snapshot sampling without whole-image colour
+- [x] PF-T (`ca602f8`) — Resource use: snapshot sampling without whole-image colour
   conversion (`snapshotDrawSamples` + `snapshotNativeSamples`, GioMacOS) and launcher icons
   drawn only for new or changed bundles (`launcherIconsToDraw`, `LauncherScanResult.stamps`,
   GioUI; `drawn=` in `launcher appsReady`, docs/TESTING.md). RED (compile):
