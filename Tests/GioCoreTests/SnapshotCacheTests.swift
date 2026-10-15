@@ -285,6 +285,19 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertTrue(snapshotTypingHopDue(now: 10.5, lastHop: 10, interval: 0.5))
     }
 
+    /// PF-V: a typing capture waits for a pause longer than the hop
+    /// interval (steady typing never fires it) and for the floor since the
+    /// window's last image.
+    func testTypingCaptureWaitsForAPauseAndTheFloor() {
+        XCTAssertGreaterThan(snapshotTypingQuiet, snapshotTypingHopInterval * 2)
+        XCTAssertEqual(snapshotTypingCaptureDelay(capturedAt: nil, now: 10), snapshotTypingQuiet, "no image")
+        XCTAssertEqual(snapshotTypingCaptureDelay(capturedAt: 0, now: 10), snapshotTypingQuiet, "old image")
+        XCTAssertEqual(
+            snapshotTypingCaptureDelay(capturedAt: 9, now: 10), snapshotTypingFloor - 1, accuracy: 1e-9,
+            "an image 1 s old waits for the floor"
+        )
+    }
+
     // MARK: SM-11 two sizes per window, other-size fallback, off-screen, miss log
 
     private let maximized = CGRect(x: 0, y: 0, width: 1600, height: 600)

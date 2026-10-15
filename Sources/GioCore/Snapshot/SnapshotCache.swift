@@ -707,6 +707,26 @@ public func snapshotTypingHopDue(now: TimeInterval, lastHop: TimeInterval?, inte
     lastHop.map { now - $0 >= interval } ?? true
 }
 
+/// PF-V: quiet time after the last typing hop before the typed-in window is
+/// captured. Longer than two hops, so steady typing (a hop every ~0.5 s)
+/// keeps pushing it back and only a real pause captures (the old 0.6 s was
+/// shorter than the gap between hops: a capture every second or two).
+public let snapshotTypingQuiet: TimeInterval = 1.5
+/// PF-V: a typing capture never comes sooner than this after the window's
+/// last image (typing all day captured several times a minute). Only the
+/// outgoing window of a flight right after typing can show content up to
+/// this old, for the length of the slide.
+public let snapshotTypingFloor: TimeInterval = 5
+
+/// PF-V: how long a typing capture waits from now: the pause, or longer
+/// while the window's newest image (`capturedAt`) is younger than the floor.
+public func snapshotTypingCaptureDelay(capturedAt: TimeInterval?, now: TimeInterval) -> TimeInterval {
+    guard let capturedAt else {
+        return snapshotTypingQuiet
+    }
+    return max(snapshotTypingQuiet, capturedAt + snapshotTypingFloor - now)
+}
+
 // MARK: - SM-09 backdrop staleness
 
 /// An on-screen window the backdrop shows, rounded to whole points so a

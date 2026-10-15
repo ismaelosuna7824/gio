@@ -380,12 +380,15 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     // MARK: Dirty signals (SM-09)
 
     /// The user typed into the focused window (coalesced by the caller to a
-    /// few hops per second): its image changes while nothing moves.
+    /// few hops per second): its image changes while nothing moves. PF-V:
+    /// captured after a pause, never sooner than the floor after its last
+    /// image (`snapshotTypingCaptureDelay`).
     public func noteTyping() {
         guard let focused = context.session().manager.currentWorkspace().focusedWindow else {
             return
         }
-        markDirty([focused], reason: .typing)
+        let delay = snapshotTypingCaptureDelay(capturedAt: cache.entry(focused)?.capturedAt, now: context.now())
+        markDirty([focused], reason: .typing, delay: delay)
     }
 
     /// The focus is published. SM-11: a focus change alone changes no
@@ -422,7 +425,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// Dirty signals serve the overlay only; the close ghost (NA-03) lives
     /// with the settle refresh.
     /// SM-11: a window deferred as a parked miss is not marked again.
-    private func markDirty(_ ids: [WindowID], reason: SnapshotCaptureReason) {
+    private func markDirty(_ ids: [WindowID], reason: SnapshotCaptureReason, delay: TimeInterval = dirtyDelay) {
         let ids = ids.filter { !parkedMisses.contains($0) }
         guard !ids.isEmpty, !context.isShuttingDown(), context.rendererAvailable() else {
             return
@@ -430,7 +433,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         for id in ids where dirty[id].map({ Self.rank($0) < Self.rank(reason) }) ?? true {
             dirty[id] = reason
         }
-        scheduleRun(delay: Self.dirtyDelay, full: false)
+        scheduleRun(delay: delay, full: false)
     }
 
     /// More specific reasons replace less specific ones on the same window.
