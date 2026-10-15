@@ -36,7 +36,11 @@ public func writeIssueReportBundle(_ plan: IssueReportPlan, in directory: URL) t
     }
     let zip = directory.appendingPathComponent(plan.zipName)
     try? fm.removeItem(at: zip)
-    let status = runUpdateTool("/usr/bin/ditto", ["-c", "-k", "--keepParent", folder.path, zip.path])
+    // No AppleDouble `._` entries: extended attributes (quarantine, Finder
+    // info) are not part of the report.
+    let status = runUpdateTool(
+        "/usr/bin/ditto", ["-c", "-k", "--norsrc", "--noextattr", "--noacl", "--keepParent", folder.path, zip.path]
+    )
     guard status == 0 else {
         try? fm.removeItem(at: zip)
         throw IssueReportBundleError.zipFailed(status)

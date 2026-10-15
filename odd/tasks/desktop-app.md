@@ -157,9 +157,13 @@ necesidad de modificar el config.toml").
   0 failures; `git diff --check` clean. Example link: 3018 characters for a two-line
   description with 20 warnings. Visual check: opt-in Diagnostics snapshot inspected (card
   matches the other sections), then deleted. Signed Release build (`xcodebuild ... -configuration
-  Release`) BUILD SUCCEEDED. Not pushed. LIVE PENDING
-  (TESTING.md 10c): Finder reveal, the browser issue page with the prefilled fields, and
-  GitHub accepting the dragged zip.
+  Release`) BUILD SUCCEEDED. Not pushed. Follow-up (commit below): a throwaway smoke with the
+  real log (read-only, zip in a temp folder) gave a 5075-character link and a zip with an
+  AppleDouble `._` entry beside every file (`ditto -c -k` stores extended attributes);
+  `writeIssueReportBundle` now passes `--norsrc --noextattr --noacl`. RED
+  `testTheZipHoldsOnlyThePlannedFilesWithoutMetadataEntries` (`._description.txt`, `._gio.log`,
+  `._system.txt` listed by `zipinfo -1`), GREEN 3/3. LIVE PENDING (TESTING.md 10c): Finder
+  reveal, the browser issue page with the prefilled fields, and GitHub accepting the dragged zip.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
