@@ -1,12 +1,18 @@
 name: CI
 
-# Every branch and pull request: the SwiftPM test bundles, then an unsigned
-# build of the Xcode app target. Nothing here needs Accessibility, Screen
-# Recording, a signing identity or the user's config: tests use temp paths
-# and fakes, and snapshot tests skip without GIO_SNAPSHOT_DIR.
+# Every push (except to main) and pull requests from forks: the SwiftPM test
+# bundles, then an unsigned build of the Xcode app target. Nothing here needs
+# Accessibility, Screen Recording, a signing identity or the user's config:
+# tests use temp paths and fakes, and snapshot tests skip without
+# GIO_SNAPSHOT_DIR.
+#
+# One run per commit: a pull request from a branch of this repository (the
+# release PR from dev) is already tested by that branch's push, so its
+# pull_request run is skipped (a skipped job counts as passing for the
+# required check); a merge to main is tested by release.yml before it builds.
 on:
   push:
-    branches: ["**"]
+    branches-ignore: [main]
   pull_request:
 
 concurrency:
@@ -18,6 +24,7 @@ permissions:
 
 jobs:
   test-and-build:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
     # The xcode-27 image (arm64, macOS 27): the app is developed with Xcode 27,
     # its icon is an Icon Composer document (Xcode 26+), and older toolchains
     # do not compile the sources (macos-15's Xcode 16.4 failed on main-actor

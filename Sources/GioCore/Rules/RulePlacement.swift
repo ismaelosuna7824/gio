@@ -13,12 +13,16 @@ public func arrivalTakesFocus(_ outcome: RuleOutcome, mode: WindowMode, minimize
 
 /// Where a rule may send an arriving window. A window discovery floated (a
 /// dialog, a panel, a fixed-size popup such as Chrome's address-bar
-/// suggestions, re-created on every key) belongs with the window it came
-/// from: it opens where the user is, never on the rule's workspace or
-/// display, so it never takes the user there either. A rule that floats the
+/// suggestions, re-created on every key) of an app that already has a window
+/// belongs with the window it came from: it opens where the user is, never
+/// on the rule's workspace or display, so it never takes the user there
+/// either. An app's only window is the app, whatever it reports (Music's
+/// main window is a dialog): the rule places it. A rule that floats the
 /// window itself (`mode = "floating"`) keeps its placement.
-public func arrivalPlacement(_ outcome: RuleOutcome, admissionFloat: FloatReason?) -> RuleOutcome {
-    guard let reason = admissionFloat, reason.isAdmission, outcome.mode != .floating else {
+public func arrivalPlacement(
+    _ outcome: RuleOutcome, admissionFloat: FloatReason?, appHasOtherWindows: Bool
+) -> RuleOutcome {
+    guard appHasOtherWindows, let reason = admissionFloat, reason.isAdmission, outcome.mode != .floating else {
         return outcome
     }
     var placement = outcome
@@ -142,7 +146,10 @@ public func applyTitleRecheck(
     else {
         return
     }
-    let placement = arrivalPlacement(outcome, admissionFloat: registry.find(id)?.floatReason)
+    let placement = arrivalPlacement(
+        outcome, admissionFloat: registry.find(id)?.floatReason,
+        appHasOtherWindows: registry.managedWindows().contains { $0.pid == id.pid && $0.id != id }
+    )
     let destID = manager.ruleDestination(placement) ?? source.id
     if destID == source.id {
         guard let index = source.columns.firstIndex(where: { $0.windows == [id] }) else {

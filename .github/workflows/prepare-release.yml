@@ -78,9 +78,10 @@ jobs:
           done
           body="$RUNNER_TEMP/body.md"
           {
-            echo "Merging this pull request publishes **Gio $TAG** ($BUMP bump from $LATEST)."
-            echo "This text becomes the release notes: edit it before merging. Merge with **Create a merge commit**."
+            echo "Merging this pull request publishes **Gio $TAG** ($BUMP bump from $LATEST). Merge with **Create a merge commit**."
+            echo "Everything after this paragraph becomes the release notes: edit it before merging."
             echo
+            echo "<!-- release notes -->"
             echo "## Changes"
             echo
             # Since the latest release (commits merged to main after it count

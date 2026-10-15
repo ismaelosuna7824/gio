@@ -247,7 +247,14 @@ jobs:
           notes="$RUNNER_TEMP/release-notes.md"
           : > "$notes"
           if [ -n "$PR" ]; then
-            gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' > "$notes"
+            # Only the part after the marker Prepare Release writes (the
+            # instructions before it are for the pull request). A body edited
+            # in the browser has CRLF line ends.
+            gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' \
+              | awk '{ sub(/\r$/, "") } found { print } /^<!-- release notes -->$/ { found = 1 }' > "$notes"
+            if [ ! -s "$notes" ]; then
+              gh pr view "$PR" --repo "$GITHUB_REPOSITORY" --json body --jq '.body' > "$notes"
+            fi
           fi
           if [ -n "$(tr -d '[:space:]' < "$notes")" ]; then
             args+=(--notes-file "$notes")
