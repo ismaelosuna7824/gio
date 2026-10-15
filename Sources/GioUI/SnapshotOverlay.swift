@@ -48,15 +48,18 @@ public struct SnapshotOverlayItem: @unchecked Sendable {
     public let target: SnapshotFace<CGImage>?
     public let from: CGRect
     public let to: CGRect
+    public let velocity: CGPoint
 
     public init(
-        id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect
+        id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect,
+        velocity: CGPoint = .zero
     ) {
         self.id = id
         self.image = image
         self.target = target
         self.from = from
         self.to = to
+        self.velocity = velocity
     }
 }
 
@@ -644,7 +647,8 @@ final class SnapshotOverlay {
             image: item.image, scale: scale,
             track: FlightTrack(
                 start: overlayLayerGeometry(frame: item.from, in: area.panelFrame, flipped: root.isFlipped),
-                end: overlayLayerGeometry(frame: item.to, in: area.panelFrame, flipped: root.isFlipped)
+                end: overlayLayerGeometry(frame: item.to, in: area.panelFrame, flipped: root.isFlipped),
+                velocity: overlayLayerVelocity(origin: item.velocity, flipped: root.isFlipped)
             )
         )
         layers.show(item.target)

@@ -34,8 +34,8 @@ public enum GestureAbandon: String, Equatable, Sendable {
 ///   motion sink: every changed window on its app's Accessibility motion
 ///   lane (latest frame wins). State does not move meanwhile. On release
 ///   the snap is committed to State (offset and focus) and the session runs
-///   an animated pass on the motion player whose springs start with the
-///   release velocity.
+///   an animated pass whose springs start with the release velocity (on the
+///   snapshot overlay when it can fly, else on the motion player).
 /// - An extra finger or a mouse button abandons the scroll: State is
 ///   untouched and the session lays the strip out as State says.
 /// - Vertical swipes switch workspace (`focus-workspace-up/down`) or toggle
