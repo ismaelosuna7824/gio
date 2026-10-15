@@ -604,7 +604,9 @@ final class SessionHost: @unchecked Sendable {
                     snapshotRefresher.noteRegistered(timing.id)
                 },
                 log: { GioLog.record($0, $1) },
-                allowsWindowWork: { [unowned self] in space.allowsWindowWork }
+                allowsWindowWork: { [unowned self] in space.allowsWindowWork },
+                listedWindows: { axWindowElements(pid: $0) },
+                windowFrame: { [unowned self] in try? actuator?.frame(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -670,7 +672,8 @@ final class SessionHost: @unchecked Sendable {
                     motionCauses.note(cause)
                 },
                 log: { GioLog.record($0, $1) },
-                allowsWindowWork: { [unowned self] in space.allowsWindowWork }
+                allowsWindowWork: { [unowned self] in space.allowsWindowWork },
+                bringTabToFront: { [unowned self] in discovery.bringTabToFront($0) }
             ),
             scheduler: scheduler
         )
@@ -882,6 +885,8 @@ final class SessionHost: @unchecked Sendable {
 
     @discardableResult
     private func restoreOffscreenWindows(_ ids: [WindowID]) -> ReconcileReport? {
+        // WC-11: a background tab is never written (macOS moves it with its front tab).
+        let ids = ids.filter { !discovery.isBackgroundTab($0) }
         guard let actuator, !ids.isEmpty else {
             return nil
         }

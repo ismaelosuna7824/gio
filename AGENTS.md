@@ -84,7 +84,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | File | Area |
 | --- | --- |
 | `gio-niri-rewrite.md` | Rewrite phases RW-00..RW-29: core, config, CLI/IPC, recovery, logging, unified app. |
-| `window-coverage.md` | Admission, per-window observers, minimize, parking, restore on exit, click focus, reveal geometry (WC-01..WC-10). |
+| `window-coverage.md` | Admission, per-window observers, minimize, parking, restore on exit, click focus, reveal geometry, native window tabs (WC-01..WC-11). |
 | `motion.md` | Timing, lean writes, per-app lanes, AX-driven animation (MO-01..MO-04). |
 | `niri-controls.md` | Width presets, maximize, fullscreen, center, consume/expel, hidden workspaces, animated switch (NC-01..NC-07). |
 | `desktop-app.md` | Main window, menu-bar lifecycle, settings, logs, diagnostics (DA-01..DA-05). |

@@ -150,6 +150,22 @@ public func focusedWindowElement(pid: pid_t) -> AXUIElement? {
     axFocusedWindow(of: AXUIElementCreateApplication(pid))
 }
 
+/// WC-11: the app's fresh `kAXWindowsAttribute` list, one AX call. Only the
+/// front tab of a native tab group is in it (background tabs' handles keep
+/// resolving). Nil when unreadable, and always for Gio's own pid.
+public func axWindowElements(pid: pid_t) -> [AXUIElement]? {
+    guard pid != ProcessInfo.processInfo.processIdentifier else {
+        return nil
+    }
+    var rawWindows: CFTypeRef?
+    guard AXUIElementCopyAttributeValue(
+        AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &rawWindows
+    ) == .success else {
+        return nil
+    }
+    return rawWindows as? [AXUIElement]
+}
+
 private func axFocusedWindow(of appElement: AXUIElement) -> AXUIElement? {
     var rawFocused: CFTypeRef?
     guard AXUIElementCopyAttributeValue(

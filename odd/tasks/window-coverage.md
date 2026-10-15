@@ -86,6 +86,62 @@ Window admission, observation and registration only. Out of scope: animation/per
   DONE `592c89d` (route: inline, 3 source files, understood fix): content-space conversion +
   `proportionalColumnWidth` (Niri semantics). 4 tests RED with the live numbers -> GREEN;
   347 executed 0 failures; signed build OK; diff --check clean. Review: UNAVAILABLE.
+- [x] WC-11 — Native window tabs (2026-10-14, user report "las pestañas se sobrelapan"; no
+  logs): every macOS tab (Ghostty, Terminal, Finder, TextEdit, Xcode) is its own settable
+  `AXStandardWindow` at the group's frame and a fresh `kAXWindowsAttribute` read lists only
+  the front tab. Gio had no tab handling: Cmd+T added a column, a background tab left an
+  empty-looking slot, a tab switch showed the selected tab over the neighbour column and
+  Gio wrote it back to its own column (the window hopped), complete scans (startup,
+  resync, SM-31 vanish scans) purged background tabs, and tabs present at startup became
+  new columns on first focus.
+  DONE `(commit pending)`: pure `TabGroupBook` + `tabGroupToJoin` / `tabMemberLeaves` /
+  `handOverTabSlot` (`GioCore/Window/TabGroups.swift`). Decision: one slot per group, held
+  by the front tab; background tabs stay registered but belong to **no workspace** (not
+  the minimized model of column membership plus filtering: nothing to filter in ~25
+  `isMinimized` sites, and column/workspace/display moves and dwindle carry the group with
+  its one member). Join (`DiscoveryService.registerNew`, every entry point): arrival listed,
+  same-pid sibling unlisted at the same frame within 1 pt (a group is listed when its front
+  is), facts = one fresh list (`axWindowElements(pid:)`, or the scan's own list) plus AX
+  frames of unlisted siblings only; the arrival takes the slot in place (column position,
+  height weight, focus, dwindle leaf) with the slot's mode, no enter motion, no rule
+  placement or title re-check; two listed windows never merge. Switch: focus adoption of a
+  background tab (`FocusCoordinator.adoptResolved` -> `bringTabToFront`) hands it the slot,
+  drops its trust and reflows, so only it is written. Leave: a closed front tab hands the
+  slot to the next member (join order) before the purge strips it; a background tab's move
+  that matches another member's frame is dropped (no trust loss, no reflow); a member
+  listed together with another member at a different frame (dragged out) leaves and is
+  placed as an arrival; a front tab moving with its group snaps back as before. Complete
+  scans (incl. SM-31 `noteSettled`) never purge the members of a group with a listed
+  member and heal a missed switch (exactly one listed member); the vanish scan also
+  reflows when only the workspaces changed. Deminimizing a background tab opens no column;
+  exit restore skips background tabs. Logs: `tab joined id= group= front=`, `tab front id=`,
+  `tab left id= reason=closed|draggedOut` (ids only). Not implemented (documented in
+  ARCHITECTURE and the user guide): Merge All Windows of already-managed windows (different
+  frames), tab bar order. Background tabs still appear in `list-windows`/Overview facts
+  without a workspace.
+  RED: `swift test --filter GioCoreTests.TabGroupTests` compile failure (no `TabGroupBook`,
+  `tabGroupToJoin`, `tabMemberLeaves`, `TabHandover`, `TabMemberFact`, `handOverTabSlot`);
+  `swift test --filter GioSessionTests.NativeTabTests` compile failure, then with the
+  context seams and stub `isBackgroundTab`/`bringTabToFront` `Executed 11 tests, with 29
+  failures` (Cmd+T: columns `[[7:1], [8:2], [7:3]]`, background tab laid out at x=1800,
+  background moves scheduled reflows, rescan purged the background tab); after rebasing on
+  SM-31 `Executed 13 tests, with 1 failure` (vanish scan healing a switch did not reflow).
+  GREEN: `swift test --filter GioCoreTests.TabGroupTests` `Executed 17 tests, with 0
+  failures`; `swift test --filter GioSessionTests.NativeTabTests` `Executed 13 tests, with 0
+  failures`; `swift test --filter "GioCoreTests\.(TabGroupTests|MinimizeLifecycleTests|DwindleMembershipTests|FocusAdoptionTests|WorkspaceManagerTests|RulePlacementTests)|GioSessionTests\.(NativeTabTests|DiscoveryServiceTests|WindowEventRouterTests|FocusCoordinatorTests|VanishedWindowScanTests|RegistrationRetryGuardTests|WindowOpenArrivalTests|ForeignSpaceDiscoveryTests|RichRuleArrivalTests|FloatingArrivalFocusTests|NamedWorkspaceRoutingTests|DeferredFollowTests)|GioMacOSTests"`
+  GioCoreTests `Executed 124 tests, with 0 failures`, GioSessionTests `Executed 135 tests,
+  with 0 failures`, GioMacOSTests `Executed 95 tests, with 0 failures`; `swift build` OK;
+  `git diff --check` clean. Full suite and signed build: integrator.
+  LIVE PENDING (TESTING.md row 1b), log level `info`: (1) Ghostty and Terminal `Cmd+T`
+  twice: no new column, `tab joined`; (2) switch tabs by click and `Cmd+Shift+]`: the window
+  never hops or covers its neighbour, one `tab front` per switch; (3) `Cmd+W` on the shown
+  tab: the tile keeps the tab macOS shows, `tab left ... reason=closed` + `tab front`; close
+  a background tab: only `tab left`; (4) drag a tab out: own column, `tab left ...
+  reason=draggedOut`, the old window keeps its tile; (5) quit Gio with a two-tab window,
+  start, click the other tab: `tab joined`, no column; (6) two separate Terminal windows at
+  the same frame stay two columns. [INFERENCE, to confirm live: macOS sends created and
+  focused-window events for tabs, lists the new tab at creation time, keeps background tabs
+  at the group frame when the front is written.]
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -123,3 +179,4 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: WC-09 done `9d25405`. Next: user live retest of click (look for `focus dropped` / `focus adopt ... parked`).
 - 2026-09-29: WC-09 hypothesis (stale focus) REFUTED by logs; real cause reveal geometry. WC-10 done. Next: live retest click.
 - 2026-09-29: LIVE PASS (user + log since last start: 53 focus adoptions, all `scroll=no scroll`, 0 `focus dropped`). PHASE 1 CLOSED. Next: phase 2 perf + animation in odd/tasks/motion.md.
+- 2026-10-14: WC-11 native tabs done `(commit pending)` on `fix/tabs-1014` (built on SM-31). LIVE PENDING: TESTING.md row 1b.

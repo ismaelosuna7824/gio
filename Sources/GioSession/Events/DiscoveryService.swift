@@ -79,6 +79,12 @@ public final class DiscoveryService: @unchecked Sendable {
         /// its retry lines (fake `pid=7`) into the user's real log file.
         public var log: (LogLevel, String) -> Void
         public var allowsWindowWork: () -> Bool
+        /// WC-11: the app's fresh `kAXWindowsAttribute` list (only front
+        /// tabs of native tab groups); nil when unreadable.
+        public var listedWindows: (pid_t) -> [AXUIElement]?
+        /// WC-11: a registered window's current AX frame (Cocoa), nil when
+        /// unreadable.
+        public var windowFrame: (WindowID) -> CGRect?
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -107,9 +113,13 @@ public final class DiscoveryService: @unchecked Sendable {
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             windowRegistered: @escaping (WindowOpenTiming) -> Void = { _ in },
             log: @escaping (LogLevel, String) -> Void,
-            allowsWindowWork: @escaping () -> Bool = { true }
+            allowsWindowWork: @escaping () -> Bool = { true },
+            listedWindows: @escaping (pid_t) -> [AXUIElement]? = { _ in nil },
+            windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil }
         ) {
             self.allowsWindowWork = allowsWindowWork
+            self.listedWindows = listedWindows
+            self.windowFrame = windowFrame
             self.followArrival = followArrival
             self.discoverAttempt = discoverAttempt
             self.now = now
@@ -169,6 +179,8 @@ public final class DiscoveryService: @unchecked Sendable {
     private var vanishScanned: Set<WindowID> = []
     /// SM-31: pids whose proof scan waits for the next turn of the queue.
     private var vanishScanPIDs: Set<pid_t> = []
+    /// WC-11: native tab groups (one slot each, held by the front tab).
+    private var tabs = TabGroupBook()
 
     /// MM-04: macOS posts several screen-parameter notifications per
     /// connect, disconnect or arrangement change; the burst syncs once,
@@ -212,6 +224,12 @@ public final class DiscoveryService: @unchecked Sendable {
         let placement = onlyPID == nil ? context.displayFrames() : nil
         var liveIDs = Set<WindowID>()
         var focusCandidates: [FocusCandidate] = []
+        // WC-11: the scan is the fresh window list of every fully read pid
+        // (only front tabs of a native tab group are in it).
+        let scanListing = Dictionary(
+            grouping: (found.windows + found.floating).filter { found.completePIDs.contains($0.window.pid) },
+            by: \.window.pid
+        ).mapValues { $0.map(\.element) }
         // Minimized windows are candidates too: they stay registered (and
         // keep their column) but sit out of the layout.
         for candidate in found.windows + found.floating {
@@ -238,8 +256,17 @@ public final class DiscoveryService: @unchecked Sendable {
             }
             // NW-02: a launched app's windows may take the user to their
             // workspace; a full scan (startup, resync) only places them.
-            if let id = registerNew(candidate, mayFollow: arrivals, placement: placement) {
+            if let id = registerNew(
+                candidate, mayFollow: arrivals, placement: placement, listing: { scanListing[$0] }
+            ) {
                 liveIDs.insert(id)
+            }
+        }
+        // WC-11: a tab switch Gio missed: the one listed member of a group
+        // is the tab macOS shows.
+        for id in liveIDs.sorted() where tabs.isBackground(id) {
+            if tabs.group(of: id)?.members.filter(liveIDs.contains).count == 1 {
+                bringTabToFront(id)
             }
         }
         // Clicks change macOS focus behind our back: adopt the observed
@@ -259,11 +286,12 @@ public final class DiscoveryService: @unchecked Sendable {
             reapDeadPids(live: liveIDs)
         }
         // Fallback for destroyed events whose element match failed: windows
-        // of a fully-read pid that the scan no longer lists are gone.
+        // of a fully-read pid that the scan no longer lists are gone. WC-11:
+        // background tabs of a listed front tab are never listed.
         purge(vanishedWindowIDs(
             registered: registry.managedWindows(),
             scannedPIDs: found.completePIDs,
-            present: liveIDs
+            present: liveIDs.union(tabs.membersKept(present: liveIDs))
         ))
     }
 
@@ -284,7 +312,8 @@ public final class DiscoveryService: @unchecked Sendable {
     /// the pids of one turn share one scan each, run on the next turn of the
     /// session queue (never inside the pass that reported them). The scan
     /// is not an arrival, and the layout reflows only when it changed the
-    /// registry.
+    /// registry or the workspaces (WC-11: a healed tab switch). The
+    /// background tabs of a listed group are never purged by it.
     public func noteSettled(vanished: [WindowID], alive: [WindowID]) {
         vanishScanned.subtract(alive)
         let registry = context.registry()
@@ -306,6 +335,8 @@ public final class DiscoveryService: @unchecked Sendable {
         let pids = vanishScanPIDs.sorted()
         vanishScanPIDs.removeAll()
         let before = Set(context.registry().managedWindows().map(\.id))
+        // WC-11: a healed tab switch changes the layout, not the registry.
+        let layoutBefore = context.manager().allWorkspaces.map(\.windows)
         for pid in pids {
             scan(onlyPID: pid, arrivals: false)
         }
@@ -315,7 +346,7 @@ public final class DiscoveryService: @unchecked Sendable {
             "window vanished scan pids=\(pids.count) purged=\(before.subtracting(after).count) "
                 + "registered=\(after.subtracting(before).count)"
         )
-        if before != after {
+        if before != after || context.manager().allWorkspaces.map(\.windows) != layoutBefore {
             context.reflowAll()
         }
     }
@@ -373,6 +404,11 @@ public final class DiscoveryService: @unchecked Sendable {
     public func applyMinimized(_ minimized: Bool, to id: WindowID) {
         context.invalidateTrust(id)
         let registry = context.registry()
+        // WC-11: a background tab has no slot of its own: only its flag.
+        if tabs.isBackground(id) {
+            try? registry.setMinimized(minimized, for: id)
+            return
+        }
         context.updateManager { manager in
             if minimized {
                 minimizeWindow(id, registry: registry, manager: &manager)
@@ -380,6 +416,115 @@ public final class DiscoveryService: @unchecked Sendable {
                 restoreWindow(id, registry: registry, manager: &manager)
             }
         }
+    }
+
+    // MARK: Native tabs (WC-11)
+
+    /// A tab macOS keeps behind its group's front tab: registered, in no
+    /// workspace, so never laid out, parked, verified or written.
+    public func isBackgroundTab(_ id: WindowID) -> Bool {
+        tabs.isBackground(id)
+    }
+
+    /// Focus reached a background tab (a tab switch): it becomes its group's
+    /// front tab and takes the slot; the tab it replaces goes behind it. True
+    /// when it switched (the caller reflows: the slot's frame is written to
+    /// the new front only, macOS keeps the group together).
+    @discardableResult
+    public func bringTabToFront(_ id: WindowID) -> Bool {
+        guard context.allowsWindowWork(), let handover = tabs.bringToFront(id) else {
+            return false
+        }
+        handOverSlot(handover)
+        return true
+    }
+
+    /// A grouped window moved on its own (`frame`: Cocoa, already read).
+    /// True when the event is handled here: a background tab following its
+    /// group (nothing of it is laid out), or a member dragged out to its own
+    /// window, which leaves the group and is placed like an arrival while
+    /// the slot stays with the others. False for an ungrouped window and for
+    /// a front tab moving with its group: the usual snap-back applies.
+    public func tabWindowMoved(_ id: WindowID, frame: CGRect) -> Bool {
+        guard context.allowsWindowWork(), let group = tabs.group(of: id) else {
+            return false
+        }
+        let background = group.front != id
+        let others = group.members.filter { $0 != id }.map { ($0, context.windowFrame($0)) }
+        if others.contains(where: { $0.1.map { tabFramesMatch($0, frame) } == true }) {
+            return background
+        }
+        guard let listing = context.listedWindows(id.pid) else {
+            return background
+        }
+        let shown = Set(listing.compactMap { context.knownWindow($0, id.pid) })
+        let facts = others.map { TabMemberFact(id: $0.0, frame: $0.1, listed: shown.contains($0.0)) }
+        guard tabMemberLeaves(frame: frame, listed: shown.contains(id), others: facts) else {
+            return background
+        }
+        for handover in tabs.remove([id], preferring: facts.first(where: \.listed)?.id) {
+            handOverSlot(handover)
+        }
+        context.log(.info, "tab left id=\(id.pid):\(id.elementID) reason=draggedOut")
+        if let window = context.registry().find(id) {
+            let outcome = evaluateRules(
+                context.rules(), app: window.application, bundleID: window.bundleID, title: window.title
+            )
+            let takesFocus = arrivalTakesFocus(outcome, mode: window.mode, minimized: window.isMinimized)
+            context.updateManager { manager in
+                placeArrival(id, outcome: outcome, takesFocus: takesFocus, manager: &manager)
+            }
+        }
+        context.invalidateTrust(id)
+        context.reflowAll()
+        return true
+    }
+
+    /// The slot moves to another member, which takes the group's mode (the
+    /// slot's) and starts untrusted so the next pass writes it there.
+    private func handOverSlot(_ handover: TabHandover) {
+        let registry = context.registry()
+        if let previous = registry.find(handover.from), previous.mode != .fullscreen,
+           var record = registry.find(handover.to)
+        {
+            record.mode = previous.mode
+            record.floatReason = previous.floatReason
+            try? registry.update(record)
+        }
+        context.updateManager { handOverTabSlot(handover, manager: &$0) }
+        context.invalidateTrust(handover.to)
+        context.log(.info, "tab front id=\(handover.to.pid):\(handover.to.elementID)")
+    }
+
+    /// The registered window `candidate` (registered as `id`, at the Cocoa
+    /// `frame`) is a new native tab of, if any. Nothing is read unless the
+    /// app has another visible window: then one fresh window list
+    /// (`listing`, or the scan's) and the frames of the siblings it omits.
+    /// A group is listed when its front tab is.
+    private func tabSibling(
+        of candidate: DiscoveredSystemWindow, id: WindowID, frame: CGRect,
+        listing: ((pid_t) -> [AXUIElement]?)?
+    ) -> WindowID? {
+        guard candidate.floatReason == nil, !candidate.window.isMinimized else {
+            return nil
+        }
+        let pid = candidate.window.pid
+        let siblings = context.registry().managedWindows().filter {
+            $0.pid == pid && $0.id != id && !$0.isMinimized && $0.mode != .fullscreen
+        }
+        guard !siblings.isEmpty, let listed = (listing ?? context.listedWindows)(pid) else {
+            return nil
+        }
+        let shown = Set(listed.compactMap { context.knownWindow($0, pid) })
+        let facts = siblings.map { sibling in
+            let isListed = shown.contains(sibling.id)
+                || tabs.group(of: sibling.id).map { shown.contains($0.front) } == true
+            return TabMemberFact(
+                id: sibling.id, frame: isListed ? nil : context.windowFrame(sibling.id), listed: isListed
+            )
+        }
+        let arrivalListed = listed.contains { CFEqual($0, candidate.element) }
+        return tabGroupToJoin(frame: frame, listed: arrivalListed, siblings: facts)
     }
 
     // MARK: Registration
@@ -494,12 +639,16 @@ public final class DiscoveryService: @unchecked Sendable {
     /// arrival) and the rule's follow policy agrees, the user goes there too.
     /// MM-01: with `placement` (a full scan's display frames), a window no
     /// rule routes lands on the display holding most of it, not the focused one.
+    /// WC-11: a new native tab (`tabSibling`, facts from `listing`, else a
+    /// fresh read) joins its group instead: it takes the slot as the front
+    /// tab, with the slot's mode, and a live one takes the focus there.
     @discardableResult
     func registerNew(
         _ candidate: DiscoveredSystemWindow, mayFollow: Bool = false,
         placement: [DisplayID: CGRect]? = nil,
         createdAt: TimeInterval? = nil, retries: Int = 0,
-        queueWait: TimeInterval = 0, classify: TimeInterval = 0
+        queueWait: TimeInterval = 0, classify: TimeInterval = 0,
+        listing: ((pid_t) -> [AXUIElement]?)? = nil
     ) -> WindowID? {
         // Discovery already filters Gio's own pid; never trust that alone.
         guard candidate.window.pid != context.ownPID else {
@@ -530,6 +679,36 @@ public final class DiscoveryService: @unchecked Sendable {
             window.floatReason = admitted
         }
         context.resetWindowState(id)
+        if let member = tabSibling(of: candidate, id: id, frame: window.frame, listing: listing),
+           let slot = context.registry().find(tabs.group(of: member)?.front ?? member), slot.mode != .fullscreen
+        {
+            window.mode = slot.mode
+            window.floatReason = slot.floatReason
+            try? context.registry().register(window)
+            let joined = tabs.join(id, with: member)!
+            var workspaceLabel = "?"
+            context.updateManager { manager in
+                handOverTabSlot(joined.handover, manager: &manager)
+                guard let workspace = manager.allWorkspaces.first(where: { $0.windows.contains(id) }) else {
+                    return
+                }
+                workspaceLabel = manager.workspace(id: workspace.id)?.name
+                    ?? manager.location(of: workspace.id).map { "\($0.index + 1)" } ?? "?"
+                if mayFollow, let focused = adoptingFocus(id, in: workspace) {
+                    manager.update(focused)
+                }
+            }
+            let label = "\(id.pid):\(id.elementID)"
+            context.log(.info, "tab joined id=\(label) group=\(joined.group) front=\(label)")
+            context.watchWindow(candidate.element, candidate.window.pid)
+            if mayFollow {
+                reportOpen(
+                    id, app: window.application, createdAt: createdAt, retries: retries, workspace: workspaceLabel,
+                    follow: false, queueWait: queueWait, classify: classify
+                )
+            }
+            return id
+        }
         try? context.registry().register(window)
         let minimized = window.isMinimized
         let now = context.now()
@@ -603,15 +782,26 @@ public final class DiscoveryService: @unchecked Sendable {
         guard mayFollow else {
             return id
         }
+        reportOpen(
+            id, app: window.application, createdAt: createdAt, retries: retries, workspace: workspaceLabel,
+            follow: followed, queueWait: queueWait, classify: classify
+        )
+        return id
+    }
+
+    /// PF-02: a live arrival's registration starts the open timeline.
+    private func reportOpen(
+        _ id: WindowID, app: String, createdAt: TimeInterval?, retries: Int, workspace: String, follow: Bool,
+        queueWait: TimeInterval, classify: TimeInterval
+    ) {
         let registeredAt = context.now()
         var timing = WindowOpenTiming(
-            id: id, app: window.application, createdAt: createdAt ?? registeredAt, registeredAt: registeredAt,
-            retries: retries, workspace: workspaceLabel, follow: followed
+            id: id, app: app, createdAt: createdAt ?? registeredAt, registeredAt: registeredAt,
+            retries: retries, workspace: workspace, follow: follow
         )
         timing.queueWait = queueWait
         timing.classify = classify
         context.windowRegistered(timing)
-        return id
     }
 
     /// WR-01: a registered window's title changed (the record already holds
@@ -653,6 +843,8 @@ public final class DiscoveryService: @unchecked Sendable {
     /// Forget windows everywhere: registry, every workspace and every
     /// per-window book (tileability, sizes, echoes, trust, render checks,
     /// physical frames, zoom, probes, snapshots, fullscreen, AX handles).
+    /// WC-11: a closed front tab first hands its slot to a surviving member
+    /// (macOS shows one; the next focus event corrects which).
     public func purge(_ ids: [WindowID]) {
         guard !ids.isEmpty else {
             return
@@ -660,6 +852,13 @@ public final class DiscoveryService: @unchecked Sendable {
         let idSet = Set(ids)
         let registry = context.registry()
         context.windowsClosing(ids.sorted())
+        let tabbed = ids.sorted().filter { tabs.group(of: $0) != nil }
+        for handover in tabs.remove(idSet) {
+            handOverSlot(handover)
+        }
+        for id in tabbed {
+            context.log(.info, "tab left id=\(id.pid):\(id.elementID) reason=closed")
+        }
         for id in ids.sorted() {
             registry.remove(id)
             pendingFollows.forget(id)

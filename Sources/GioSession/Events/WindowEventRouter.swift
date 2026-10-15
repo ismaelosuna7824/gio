@@ -276,9 +276,13 @@ public final class WindowEventRouter: @unchecked Sendable {
                 }
                 return
             }
-            if let observed = context.frame(known),
-               context.isEcho(known, observed, now)
-            {
+            let observed = context.frame(known)
+            if let observed, context.isEcho(known, observed, now) {
+                return
+            }
+            // WC-11: a background tab following its group, or a tab dragged
+            // out to its own window (placed as an arrival).
+            if let observed, discovery.tabWindowMoved(known, frame: observed) {
                 return
             }
             let record = context.registry().find(known)

@@ -55,6 +55,9 @@ public final class FocusCoordinator: @unchecked Sendable {
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
         public var allowsWindowWork: () -> Bool
+        /// WC-11: the focused window is a background native tab: it becomes
+        /// its group's front tab and takes the slot. True when it switched.
+        public var bringTabToFront: (WindowID) -> Bool
 
         public init(
             isShuttingDown: @escaping () -> Bool, isMouseDown: @escaping () -> Bool,
@@ -78,7 +81,8 @@ public final class FocusCoordinator: @unchecked Sendable {
             showWorkspace: @escaping (WorkspaceID, MotionCause) -> Void,
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-            allowsWindowWork: @escaping () -> Bool = { true }
+            allowsWindowWork: @escaping () -> Bool = { true },
+            bringTabToFront: @escaping (WindowID) -> Bool = { _ in false }
         ) {
             self.isShuttingDown = isShuttingDown
             self.isMouseDown = isMouseDown
@@ -106,6 +110,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.log = log
             self.now = now
             self.allowsWindowWork = allowsWindowWork
+            self.bringTabToFront = bringTabToFront
         }
     }
 
@@ -357,7 +362,9 @@ public final class FocusCoordinator: @unchecked Sendable {
 
     /// The frontmost app's window becomes the session focus; an unknown
     /// window goes through single-window admission; a reflow follows only
-    /// when the viewport has to scroll to show the focused column.
+    /// when the viewport has to scroll to show the focused column. WC-11: a
+    /// background native tab is the tab macOS shows now: it takes its group's
+    /// slot first (whatever the intent says) and the slot is written to it.
     private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
         guard context.allowsWindowWork() else {
             return
@@ -373,16 +380,20 @@ public final class FocusCoordinator: @unchecked Sendable {
         if context.isMinimized(id) {
             return
         }
+        let switchedTab = context.bringTabToFront(id)
         // Trailing activation events of a focus Gio just moved must not undo it.
         if focusIntent.shouldIgnoreAdoption(of: id, now: context.now()) {
             context.log(.debug, "focus adopt ignored (superseded by keyboard intent) id=\(id.pid):\(id.elementID)")
+            if switchedTab {
+                context.reflowAll()
+            }
             return
         }
         if revealOnOtherWorkspace(id, source: event.source) {
             return
         }
         adoptFocus(id, source: event.source)
-        if context.pendingScroll() != nil {
+        if switchedTab || context.pendingScroll() != nil {
             context.reflowAll()
         }
     }
