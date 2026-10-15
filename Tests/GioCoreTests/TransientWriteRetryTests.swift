@@ -31,14 +31,32 @@ final class TransientWriteRetryTests: XCTestCase {
         XCTAssertFalse(ReconcileFailure(kind: "notSettable(size)").isTransient)
     }
 
-    func testATransientFailureIsRetriedOnceAndASuccessResetsIt() {
+    /// Live (TextEdit under SIGSTOP): frozen 0.4 s, the 0.5 s retry landed it
+    /// on the external display; frozen 1.3 s, that one retry timed out too
+    /// and the window stayed on the built-in display. Retries back off so an
+    /// app busy for a few seconds still lands, then stop.
+    func testATransientFailureIsRetriedWithBackoffThenGivesUp() {
         var retry = TransientWriteRetry()
         XCTAssertEqual(
             retry.settle(report(failed: [xcode: "writeFailed(size,-25204)", figma: ReconcileFailure.frameMismatchKind])),
-            [xcode]
+            0.5
         )
-        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), [], "the retry failed too: no loop")
-        XCTAssertEqual(retry.settle(report(applied: [xcode])), [])
-        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), [xcode], "after a success it may retry again")
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 1.0)
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 2.0)
+        XCTAssertNil(retry.settle(report(failed: [xcode: "timeout"])), "still hung after ~3.5 s: no loop")
+    }
+
+    func testASuccessfulWriteResetsTheBackoff() {
+        var retry = TransientWriteRetry()
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 0.5)
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 1.0)
+        XCTAssertNil(retry.settle(report(applied: [xcode])))
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 0.5)
+    }
+
+    func testTheSoonestDueWindowSetsTheDelay() {
+        var retry = TransientWriteRetry()
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 0.5)
+        XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout", figma: "timeout"])), 0.5)
     }
 }

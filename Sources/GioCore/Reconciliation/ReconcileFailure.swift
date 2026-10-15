@@ -52,27 +52,35 @@ public struct ReconcileFailure: Equatable, Sendable {
 }
 
 /// MM-11: a write that failed only because its app was busy is tried again
-/// once (the window would otherwise stay where it was, on the wrong display
-/// after a monitor move, until the next action touched it). A retry that
-/// fails again is not retried, so a hung app never loops; a successful
-/// write of the window allows a retry again later.
+/// (the window would otherwise stay where it was, on the wrong display after
+/// a monitor move, until the next action touched it). Retries back off over
+/// `delays` and then stop, so a hung app never loops; a successful write of
+/// the window starts the backoff over.
 public struct TransientWriteRetry: Sendable {
-    /// After the app's busy moment (a display change redraws it), still
-    /// before the user notices a window left behind.
-    public static let delay: TimeInterval = 0.5
+    /// The first lands after a short busy moment (a display change redraws
+    /// the app); the last gives an app busy for ~3.5 s its window back.
+    public static let delays: [TimeInterval] = [0.5, 1.0, 2.0]
 
-    private var retried: Set<WindowID> = []
+    private var attempts: [WindowID: Int] = [:]
 
     public init() {}
 
-    /// The windows of `report` to write again after `delay`.
-    public mutating func settle(_ report: ReconcileReport) -> [WindowID] {
-        retried.subtract(report.applied + report.alreadyCorrect + report.parked)
-        let due = report.failed.filter { id in
-            report.failures[id]?.isTransient == true && !retried.contains(id)
+    /// When to run the next retry pass for `report`'s busy windows, or
+    /// `nil` when none is due (no transient failure, or backoff exhausted).
+    public mutating func settle(_ report: ReconcileReport) -> TimeInterval? {
+        for id in report.applied + report.alreadyCorrect + report.parked {
+            attempts.removeValue(forKey: id)
         }
-        retried.formUnion(due)
-        return due.sorted()
+        var next: TimeInterval?
+        for id in report.failed where report.failures[id]?.isTransient == true {
+            let attempt = attempts[id, default: 0]
+            guard attempt < Self.delays.count else {
+                continue
+            }
+            attempts[id] = attempt + 1
+            next = min(next ?? .infinity, Self.delays[attempt])
+        }
+        return next
     }
 }
 
