@@ -168,6 +168,8 @@ Measure the signed **Release** build (`-configuration Release`), never Debug und
 2. Workload: `xcrun xctrace record --template 'Time Profiler' --attach <pid> --time-limit 60s --output work.trace` while a script drives the session over IPC (`GioCLI focus right|left`, `GioCLI workspace N`), so every run does the same actions.
 3. `xcrun xctrace export --input work.trace --xpath '/trace-toc/run[@number="1"]/data/table[@schema="os-signpost"]'` gives the intervals (pair Begin/End by name and identifier), `...[@schema="time-profile"]` the samples (weight, core, backtrace), `...[@schema="potential-hangs"]` main-thread hangs. `leaks <pid>` after the workload.
 
+With more than one display, drive monitor actions too (`gio action focus-monitor-left`, `gio action move-column-to-monitor-left`, `gio move-window-to-display N`, PF-AI): cross-display flights and per-display backdrops only show there.
+
 Keep the launch method equal between runs: a launch by `open` shows the main window, and an open main window adds SwiftUI work to every comparison.
 
 ## Log recipes
