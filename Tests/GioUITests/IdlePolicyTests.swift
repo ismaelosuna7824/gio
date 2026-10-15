@@ -36,6 +36,22 @@ final class IdlePolicyTests: XCTestCase {
         XCTAssertTrue(model.windowVisible)
         XCTAssertEqual(fetches, base + 1)
     }
+
+    /// PF-AG: every Gio flight puts a display-sized overlay over the main
+    /// window, so its occlusion flipped hidden and back twice per action and
+    /// each flip re-rendered the whole SwiftUI window (two bursts per action
+    /// in the workload trace). Coming into view counts at once; being
+    /// covered only once it lasted `hideDelay`.
+    func testBriefOcclusionKeepsTheWindowVisibleAndALongOneHidesIt() {
+        var gate = OcclusionGate()
+        let flight = gate.occluded()
+        gate.uncovered()
+        XCTAssertFalse(gate.shouldHide(flight), "a covered moment shorter than the delay")
+
+        let real = gate.occluded()
+        XCTAssertTrue(gate.shouldHide(real), "still covered when the delay ends")
+        XCTAssertGreaterThanOrEqual(OcclusionGate.hideDelay, 0.5, "longer than a flight")
+    }
 }
 
 private final class Counter: @unchecked Sendable {
