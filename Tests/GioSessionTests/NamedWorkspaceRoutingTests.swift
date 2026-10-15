@@ -119,6 +119,32 @@ final class NamedWorkspaceRoutingTests: XCTestCase {
         XCTAssertEqual(windows(in: "Code").map(\.pid), [7])
     }
 
+    /// Live 2026-10-15: Chrome's address-bar suggestions (a fixed-size popup
+    /// re-created as the user types) matched the Chrome rule, and every one
+    /// took the user to "Browsers": workspace switch, keyboard focus and
+    /// cursor on the other display, typing lost. A window discovery floats
+    /// (popup, dialog, panel) stays where the user is and never follows.
+    func testAPopupOfARoutedAppStaysWhereTheUserIsAndNeverFollows() {
+        world.session.config.rules = [WindowRule(app: "Chrome", openOnWorkspace: "Chat", follow: .always)]
+        world.frontmost = 7
+        let before = manager.currentID
+        arrive(discovered(pid: 7, app: "Chrome", floatReason: .notResizable))
+        XCTAssertEqual(manager.currentID, before, "the user stays put")
+        XCTAssertTrue(world.follows.isEmpty)
+        XCTAssertEqual(windows(in: "Chat"), [])
+        XCTAssertEqual(manager.currentWorkspace().columns.flatMap(\.windows).map(\.pid), [7])
+        XCTAssertEqual(world.registered.first?.floatReason, .notResizable)
+    }
+
+    func testARealWindowOfTheSameAppStillFollowsItsRule() {
+        world.session.config.rules = [WindowRule(app: "Chrome", openOnWorkspace: "Chat", follow: .always)]
+        world.frontmost = 7
+        arrive(discovered(pid: 7, app: "Chrome", floatReason: .notResizable))
+        arrive(discovered(pid: 7, app: "Chrome"))
+        XCTAssertEqual(manager.currentWorkspace().name, "Chat")
+        XCTAssertEqual(world.follows.count, 1)
+    }
+
     func testDisplaySyncPassesTheMainDisplay() {
         world.session.config.workspaces = [
             WorkspaceDefinition(name: "Code"), WorkspaceDefinition(name: "Chat", display: .index(2)),

@@ -69,6 +69,22 @@ LIVE PENDING (persistence across restart, routing + follow, picker scan, real NS
   explains). Registration drops non-running pids. `window open` adds queueWait/classify. Deferred
   follow: launched <3s or activated <1.5s after placement (cancelled if user moved). Bundles
   232(53)/247/7/19/40/1241 all 0 failures (parent re-ran; log line count unchanged). LIVE PENDING.
+- [x] NW-07 (commit pending) — Live (2026-10-15, two displays, rule Chrome → "Browsers", typing in a Chrome
+  window on the external display): the workspace changed by itself and typing jumped to the other display.
+  Log: all 16 Chrome arrivals in `gio.log`/`gio.log.1` were popups (`discovery exclude ... float(notResizable)`
+  < 0.3 s before `window open`; the address-bar suggestions, re-created per key); 8 had `follow=true`, each
+  followed by `focus intent id=1528:2` + `cursor warped to focus id=1528:2` (the other display) and then
+  `focus reveal id=1528:1 workspace=1` when the user clicked back; a click there was dropped (`focus dropped
+  ... reason=focused window not under click`). Cause: `registerNew` routed every arrival by its rule, and the
+  follow decision did not exclude floats (`arrivalTakesFocus` only kept them from taking the strip's
+  focus). Fix: Core `arrivalPlacement(_:admissionFloat:)` (+ `FloatReason.isAdmission`): an admission float
+  (dialog, floating subrole, not resizable) without a `mode = "floating"` rule drops `workspace`,
+  `open-on-workspace` and `open-on-display`, so it lands on the current workspace and never follows; used by
+  `registerNew` and `applyTitleRecheck`. RED: `NamedWorkspaceRoutingTests.testAPopupOfARoutedAppStays...`
+  (switched to the routed workspace, followed); `testARealWindowOfTheSameAppStillFollowsItsRule` and
+  `RulePlacementTests.testAWindowDiscoveryFloatedIgnores...` guard the boundary. GREEN; bundles UI 310 (53
+  skipped) / Session 479 / POC 7 / Mac 19 / MacOS 95 / Core 1971, 0 failures. LIVE PENDING: type in Chrome's
+  address bar on the external display.
 
 ## Acceptance criteria
 - Creating a workspace + assigning an app in the app persists in config.toml and survives restart;

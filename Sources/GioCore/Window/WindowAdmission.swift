@@ -13,6 +13,17 @@ public enum FloatReason: String, Equatable, Sendable {
     /// (`SnapBackBook`): Gio stopped writing it until the user tiles it
     /// again (toggle-floating) or it is registered anew.
     case appControlled
+
+    /// Floated by discovery for what the window is (a dialog, a floating
+    /// subrole, a fixed size), not by a rule, the user or a snap-back.
+    public var isAdmission: Bool {
+        switch self {
+        case .dialog, .floatingSubrole, .notResizable:
+            true
+        case .rule, .manual, .appControlled:
+            false
+        }
+    }
 }
 
 /// Why a window is not managed at all.

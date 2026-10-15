@@ -717,9 +717,11 @@ public final class DiscoveryService: @unchecked Sendable {
         }
         // NW-02/NW-06: only a live, visible arrival routed to a named
         // workspace may take the user there; WR-04: never one that must
-        // not take focus.
+        // not take focus. A popup or dialog discovery floated is never
+        // routed (`arrivalPlacement`): it opens where the user is.
+        let routing = arrivalPlacement(outcome, admissionFloat: candidate.floatReason)
         let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused
-            && outcome.openOnWorkspace != nil
+            && routing.openOnWorkspace != nil
             ? decideArrivalFollow(
                 outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID(),
                 launchedAt: recentLaunches.launchedAt(window.pid, now: now), now: now
@@ -738,7 +740,7 @@ public final class DiscoveryService: @unchecked Sendable {
             // the last column. If the OS focuses it, focus adoption follows.
             // WR-04: neither does an `open-focused = false` arrival.
             let destID = placeArrival(
-                id, outcome: outcome,
+                id, outcome: routing,
                 takesFocus: arrivalTakesFocus(outcome, mode: window.mode, minimized: minimized),
                 onDisplay: display, manager: &manager
             )
@@ -746,7 +748,7 @@ public final class DiscoveryService: @unchecked Sendable {
             workspaceLabel = manager.workspace(id: destID)?.name
                 ?? manager.location(of: destID).map { "\($0.index + 1)" } ?? "?"
             guard decision != .stay,
-                  manager.namedWorkspaceID(outcome.openOnWorkspace!) == destID, destID != manager.currentID
+                  manager.namedWorkspaceID(routing.openOnWorkspace!) == destID, destID != manager.currentID
             else {
                 return
             }

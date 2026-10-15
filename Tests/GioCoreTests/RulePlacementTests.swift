@@ -29,6 +29,22 @@ final class RulePlacementTests: XCTestCase {
         XCTAssertEqual(column(of: id(3), in: manager)?.widthSpec, .standard)
     }
 
+    // MARK: Popups and dialogs
+
+    func testAWindowDiscoveryFloatedIgnoresTheRulesPlacementButARuleFloatKeepsIt() {
+        let routed = RuleOutcome(workspace: 2, openOnWorkspace: "Browsers", follow: .always, display: 2)
+        for reason in [FloatReason.dialog, .floatingSubrole, .notResizable] {
+            let placement = arrivalPlacement(routed, admissionFloat: reason)
+            XCTAssertNil(placement.workspace, "\(reason)")
+            XCTAssertNil(placement.openOnWorkspace, "\(reason)")
+            XCTAssertNil(placement.display, "\(reason)")
+        }
+        XCTAssertEqual(arrivalPlacement(routed, admissionFloat: nil), routed)
+        var ruleFloat = routed
+        ruleFloat.mode = .floating
+        XCTAssertEqual(arrivalPlacement(ruleFloat, admissionFloat: .notResizable), ruleFloat, "the rule asked for it")
+    }
+
     func testOpenMaximizedIsTheMaximizeToggleState() {
         var manager = WorkspaceManager()
         placeArrival(

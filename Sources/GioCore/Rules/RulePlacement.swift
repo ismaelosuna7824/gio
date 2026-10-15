@@ -11,6 +11,23 @@ public func arrivalTakesFocus(_ outcome: RuleOutcome, mode: WindowMode, minimize
     outcome.openFocused && !minimized && mode != .floating
 }
 
+/// Where a rule may send an arriving window. A window discovery floated (a
+/// dialog, a panel, a fixed-size popup such as Chrome's address-bar
+/// suggestions, re-created on every key) belongs with the window it came
+/// from: it opens where the user is, never on the rule's workspace or
+/// display, so it never takes the user there either. A rule that floats the
+/// window itself (`mode = "floating"`) keeps its placement.
+public func arrivalPlacement(_ outcome: RuleOutcome, admissionFloat: FloatReason?) -> RuleOutcome {
+    guard let reason = admissionFloat, reason.isAdmission, outcome.mode != .floating else {
+        return outcome
+    }
+    var placement = outcome
+    placement.workspace = nil
+    placement.openOnWorkspace = nil
+    placement.display = nil
+    return placement
+}
+
 /// Apply the rule's width and maximized state to a column. Maximized is
 /// exactly the `maximize-column` state: full strip width, the rule width
 /// (or the default) saved for the toggle back.
@@ -125,7 +142,8 @@ public func applyTitleRecheck(
     else {
         return
     }
-    let destID = manager.ruleDestination(outcome) ?? source.id
+    let placement = arrivalPlacement(outcome, admissionFloat: registry.find(id)?.floatReason)
+    let destID = manager.ruleDestination(placement) ?? source.id
     if destID == source.id {
         guard let index = source.columns.firstIndex(where: { $0.windows == [id] }) else {
             return
@@ -137,7 +155,7 @@ public func applyTitleRecheck(
     source.stripWindows([id])
     manager.update(source)
     // Updating the source may re-create the trailing spare: resolve again.
-    guard var dest = manager.workspace(id: manager.ruleDestination(outcome) ?? destID) else {
+    guard var dest = manager.workspace(id: manager.ruleDestination(placement) ?? destID) else {
         return
     }
     appendArrivalColumn(id, outcome: outcome, to: &dest, focus: false)
