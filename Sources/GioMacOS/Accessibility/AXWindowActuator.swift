@@ -226,6 +226,19 @@ func actuatorPermission() throws {
     }
 }
 
+/// PF-AF: the messaging timeout of every Accessibility element Gio creates
+/// without one of its own (discovery app elements, observers, focus reads,
+/// elements handed to AX callbacks). The system default lets a hung app hold
+/// the calling thread for seconds; registered handles keep their shorter
+/// `AXWindowActuator.messagingTimeoutSeconds`.
+public let globalAXMessagingTimeoutSeconds: Float = 1.0
+
+/// Set once at session start: a timeout set on the system-wide element is
+/// the global one (`AXUIElementSetMessagingTimeout` documentation).
+public func applyGlobalAXMessagingTimeout() {
+    _ = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), globalAXMessagingTimeoutSeconds)
+}
+
 /// Nil only when macOS reports the element invalid; every other read failure
 /// throws, so live-but-unreadable windows are never mislabeled as vanished.
 /// PF-AE: position and size in one Accessibility message
