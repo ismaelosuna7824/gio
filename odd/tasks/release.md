@@ -166,19 +166,24 @@ critical or high issue; every finding below was checked against the code before 
   two failures, more than three failed cases, or no failed case (build error, crash) fail. Smoke: a fake
   `swift` that fails one case then passes it exits 0 with the warning; one that fails to compile exits 1.
   CI run 38689662595 green (no retry needed).
-- [ ] RL-12 (commit pending) — Automatic releases (user, 2026-10-15): `dev` is the default branch; every merge to
-  `main` releases and bumps the version; an action picks the bump (patch, minor, major). Prepare Release
-  (`prepare-release.yml`, dispatch on `dev`, input `bump`) opens or updates the PR `dev` → `main` titled
-  `Release v<next>` with the label `release:<bump>` and a body listing `dev`'s commits (the release notes).
-  `release.yml` now runs on push to `main` (no tag trigger): job **version** reads the latest stable tag, the
-  merged PR (`commits/<sha>/pulls`) and its single `release:*` label (none = patch, two = refused), then
-  `release-version.sh` computes the version; publish creates the tag with `gh release create --target <sha>`
-  and the PR body as notes. `release-version.sh`: push on `main` + `LATEST_TAG` + `BUMP` + `HEAD_TAGS`
-  (refuses another branch, unknown bump, malformed tag, an already released commit); dispatch dry run kept;
-  the tag-push path removed. User decision: the only human gate is the PR merge (no environment reviewer);
-  `main` protected by a ruleset. RED: `scripts/test-release-version.sh` 6 new bump cases failed; GREEN 19/19.
-  `actionlint` (with `.github/actionlint.yaml` for the `xcode-27` label) clean; jq selectors checked on sample
-  API JSON.
+- [ ] RL-12 (`bb2049b`, notes range in the follow-up commit) — Automatic releases (user, 2026-10-15): `dev` is
+  the default branch; every merge to `main` releases and bumps the version; an action picks the bump (patch,
+  minor, major). Prepare Release (`prepare-release.yml`, dispatch on `dev`, input `bump`) opens or updates the
+  PR `dev` → `main` titled `Release v<next>` with the label `release:<bump>` and a body listing the commits
+  since the latest release (the release notes). `release.yml` now runs on push to `main` (no tag trigger):
+  job **version** reads the latest stable tag, the merged PR (`commits/<sha>/pulls`) and its single
+  `release:*` label (none = patch, two = refused), then `release-version.sh` computes the version; publish
+  creates the tag with `gh release create --target <sha>` and the PR body as notes. `release-version.sh`: push
+  on `main` + `LATEST_TAG` + `BUMP` + `HEAD_TAGS` (refuses another branch, unknown bump, malformed tag, an
+  already released commit); dispatch dry run kept; the tag-push path removed. User decision: the only human
+  gate is the PR merge. GitHub set by API: `dev` created from `main` (`7d6b902`) and made default; Actions may
+  create PRs; `release` environment without reviewers, deployment policy `main` only (the `v*` tag policy
+  deleted); ruleset 25141017 `main: releases only` (PR required, 0 approvals, merge commits only,
+  `test-and-build` required, no force push or deletion, no bypass). RED: `scripts/test-release-version.sh` 6
+  new bump cases failed; GREEN 19/19. `actionlint` (`.github/actionlint.yaml` for the `xcode-27` label) clean;
+  jq selectors checked on sample API JSON. Live: Prepare Release patch opened PR #7 `Release v0.1.1`
+  [`release:patch`]; minor retitled it `Release v0.2.0` [`release:minor`], patch back to `v0.1.1`. LIVE
+  PENDING: the first merge to `main` (release.yml's version job, tag creation, notes from the PR).
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or

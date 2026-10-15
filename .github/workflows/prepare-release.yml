@@ -4,7 +4,7 @@ name: Prepare Release
 # patch (0.1.0 -> 0.1.1), minor (-> 0.2.0) or major (-> 1.0.0). The pull
 # request carries the bump as its release:<bump> label, its title shows the
 # version it will publish, and its body (the release notes, editable before the
-# merge) lists dev's commits not yet on main. Merging it is the release:
+# merge) lists dev's commits since the latest release. Merging it is the release:
 # release.yml computes the version again at merge time from the latest tag and
 # the label, so a stale title never publishes a wrong version.
 on:
@@ -83,7 +83,13 @@ jobs:
             echo
             echo "## Changes"
             echo
-            git log --no-merges --reverse --format='- %s' origin/main..HEAD
+            # Since the latest release (commits merged to main after it count
+            # too), else everything dev adds to main.
+            if [ "$LATEST" != "none" ]; then
+              git log --no-merges --reverse --format='- %s' "$LATEST..HEAD"
+            else
+              git log --no-merges --reverse --format='- %s' origin/main..HEAD
+            fi
           } > "$body"
           title="Release $TAG"
           pr="$(gh pr list --repo "$repo" --base main --head dev --state open --json number --jq '.[0].number // empty')"

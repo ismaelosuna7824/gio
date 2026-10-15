@@ -2,7 +2,7 @@
 
 How a Gio release is versioned, signed, built and published, and what users see when they install it. Decisions and evidence: [`odd/tasks/release.md`](../odd/tasks/release.md) (RL-01..).
 
-Contents: [Overview](#overview) · [Versioning](#versioning) · [One-time setup: signing secrets](#one-time-setup-signing-secrets) · [Hardened Runtime](#hardened-runtime) · [Workflow security](#workflow-security) · [Cut a release](#cut-a-release) · [Dry run and local DMG](#dry-run-and-local-dmg) · [What users see](#what-users-see-the-first-time) · [Certificate renewal](#certificate-renewal-and-the-designated-requirement) · [When the repo becomes public](#when-the-repository-becomes-public) · [Troubleshooting](#troubleshooting)
+Contents: [Overview](#overview) · [Versioning](#versioning) · [One-time setup: signing secrets](#one-time-setup-signing-secrets) · [Hardened Runtime](#hardened-runtime) · [Workflow security](#workflow-security) · [Cut a release](#cut-a-release) · [Dry run and local DMG](#dry-run-and-local-dmg) · [What users see](#what-users-see-the-first-time) · [Certificate renewal](#certificate-renewal-and-the-designated-requirement) · [Public repository](#public-repository) · [Troubleshooting](#troubleshooting)
 
 **Branches.** `dev` is the default branch: all work lands there. `main` only receives release pull requests from `dev`, and every merge to `main` publishes a release.
 
@@ -10,7 +10,7 @@ Contents: [Overview](#overview) · [Versioning](#versioning) · [One-time setup:
 
 | Piece | What it does |
 | --- | --- |
-| Actions > **Prepare Release** (`.github/workflows/prepare-release.yml`) | The only thing a maintainer starts by hand, on `dev`: choose the bump, **patch** (0.1.0 → 0.1.1), **minor** (→ 0.2.0) or **major** (→ 1.0.0). It opens (or updates) the pull request `dev` → `main` titled `Release v<next>`, labeled `release:<bump>`, whose body lists `dev`'s commits not on `main` and becomes the release notes. Merging it is the release. |
+| Actions > **Prepare Release** (`.github/workflows/prepare-release.yml`) | The only thing a maintainer starts by hand, on `dev`: choose the bump, **patch** (0.1.0 → 0.1.1), **minor** (→ 0.2.0) or **major** (→ 1.0.0). It opens (or updates) the pull request `dev` → `main` titled `Release v<next>`, labeled `release:<bump>`, whose body lists the commits since the latest release and becomes the release notes. Merging it is the release. |
 | `.github/workflows/release.yml` | On every push to `main` (the merge of a release pull request), four jobs: **version** (read-only: the latest stable `v*` tag, the merged pull request's `release:*` label, no label meaning patch, and its number), **test** (`swift test`, no secrets; a failure stops the release), **build** (in the `release` environment: a Release build with the Hardened Runtime signed with the **Apple Development** identity from the environment secrets, then the signed DMG, uploaded as an artifact) and **publish** (the only job with `contents: write`; downloads the artifact, checks its SHA-256 and runs `gh release create`, which creates the tag on the merged commit, with the pull request's body as notes). Releases are always stable (a prerelease version only exists as a dry run). The macOS jobs run on the `xcode-27` runner image (arm64, macOS 27) with its newest stable Xcode: older toolchains (`macos-15`'s Xcode 16.4) do not compile the sources and cannot build the Icon Composer app icon. |
 | `scripts/release-version.sh` | The version step of both workflows: on a merge to `main`, the latest tag plus the bump (`patch`/`minor`/`major`) to `tag`/`version`/`publish`/`prerelease`; a dispatch input for a dry run. Refuses another branch, an unknown bump, a malformed tag or version, and a commit that already carries a `v*` tag (a re-run never publishes twice), without echoing the input. Tests: `scripts/test-release-version.sh`. |
 | `scripts/make-dmg.sh` | Verifies the app signature (`codesign --verify --deep --strict`, prints the team), requires an Apple-issued identity and the Hardened Runtime flag, checks the bundle version, writes `Gio-<version>.dmg` (volume `Gio <version>`: `Gio.app` plus an `Applications` link), signs the DMG with the app's identity and verifies that signature, then writes `Gio-<version>.dmg.sha256` (`<hex>  Gio-<version>.dmg`). |
@@ -156,9 +156,9 @@ Renewal steps (before the expiry date):
 
 [INFERENCE] Apple Development signatures carry no secure timestamp, so after the certificate expires a newly downloaded copy of an old release may fail Gatekeeper; keep publishing from a valid certificate.
 
-## When the repository becomes public
+## Public repository
 
-Nothing changes in the app or the workflow: the app finds releases through `GioUpdateRepository` and the public GitHub API, and the workflow publishes with the job's own `GITHUB_TOKEN`. While the repository is private the in-app updater needs a personal access token with read access; once it is public that token field becomes unnecessary and can be cleared. Users can also download the DMG from the release page without signing in.
+The repository is public (since RL-10): the app finds releases through `GioUpdateRepository` and the public GitHub API without a token, the workflow publishes with the job's own `GITHUB_TOKEN`, and anyone can download the DMG without signing in. The updater's token field only matters for a private fork.
 
 ## Troubleshooting
 
