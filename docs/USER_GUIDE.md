@@ -227,7 +227,7 @@ Used when `[focus] indicator = "ring"`. A rounded outline around the focused win
 | `hide-when-maximized` | bool | `true` | No ring on a maximized column (`Alt+F`) or a fullscreen window. `false` shows it again (in fullscreen only when `layout.fullscreen-gap` is at least the ring `width`). Also a toggle under Settings, Layout, Focus ring. |
 | `active-color` | string | `"#7fc8ff"` | Hex color (`#RGB` or `#RRGGBB`); anything else is an error. When unset the active theme's active border color is used if it defines one, else the Niri blue. |
 
-The ring is hidden when nothing is focused, the focused window is minimized, maximized or fullscreen (`hide-when-maximized`), fullscreen without room for it (it shows when `layout.fullscreen-gap` is at least the ring `width`) or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). Floating windows get the ring too. The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
+The ring is hidden when nothing is focused, the focused window is minimized or floating (a floating window moves on its own when you drag it, and the ring would stay behind), maximized or fullscreen (`hide-when-maximized`), fullscreen without room for it (it shows when `layout.fullscreen-gap` is at least the ring `width`) or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
 
 ### `[gestures]`
 

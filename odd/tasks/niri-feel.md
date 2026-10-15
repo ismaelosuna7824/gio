@@ -77,6 +77,13 @@ LIVE PENDING. Review: UNAVAILABLE.
   permission-regain placement instant (`layout instant reason=`); O_APPEND single-write batches,
   main-only rotation, reopen after rename. Observed RED each. Bundles 45(5 skipped)/7/19/39/1120
   all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
+- [x] NF-07 (commit pending, branch `fix/johan-spaces-safari`) — Live (2026-10-15, screenshot): a floating
+  window (Finder, floated by rule) kept the ring at its old frame while the user dragged it (NF-01's known
+  gap: Gio does not follow a floating window's own moves). Decision: no ring for floating windows
+  (`FocusRingWindow.isFloating`, hidden in `focusRingState`; both the live ring and the overlay's flight copy
+  pass it). Supersedes the USER_GUIDE line "Floating windows get the ring too". RED:
+  `FocusRingTests.testHiddenForAFloatingWindow` compile failure (`extra argument 'isFloating'`); GREEN.
+  LIVE PENDING: focus a floating Finder window, no ring.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
