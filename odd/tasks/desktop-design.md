@@ -85,7 +85,7 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   174(42 skipped)/7/19/39/1141 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
   Live round results: #5 menu bar OK, #6 workspaces OK (user), #2 dark/light follows system (no
   in-app toggle), #9 not run (my table-escaped `\|` broke the command).
-- [x] DD-07 (commit pending) — Gio's own identity, taken from the landing page (`gio-landing`). User
+- [x] DD-07 (`18e3f98`) — Gio's own identity, taken from the landing page (`gio-landing`). User
   (2026-10-14, Overview screenshot): "hay que ajustar el UI a lo que tenemos o a lo que representa
   Gio, algo como lo hiciste en la landing". Supersedes DD-01's "semantic system colors, accent from
   the focus-ring color". Tokens (`DesignTokens.swift`): `GioBrand` (the mascot's palette: navy ink,
