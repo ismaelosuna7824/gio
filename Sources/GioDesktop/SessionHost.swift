@@ -1926,8 +1926,11 @@ final class SessionHost: @unchecked Sendable {
         snapshotRefresher.noteVanished(report.vanished)
         discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
-        // MM-11: a write its busy app timed out is tried once more.
-        scheduleTransientRetry(transientRetry.settle(report))
+        // MM-11: writes their busy app timed out are retried with backoff.
+        if let delay = transientRetry.settle(report) {
+            let ids = report.failed.filter { report.failures[$0]?.isTransient == true }
+            scheduleTransientRetry(ids, after: delay)
+        }
         // FI-09: a floating restore this settle attempted is not repeated.
         reflowPlanner.restoreSettled(visible: visible, deferred: report.deferred)
         // Only visible windows written here are worth a render check;
@@ -1941,16 +1944,16 @@ final class SessionHost: @unchecked Sendable {
 
     /// MM-11: one deferred, non-animated pass for windows whose app did not
     /// answer in time; the failed windows are untrusted, so it writes them.
-    private func scheduleTransientRetry(_ ids: [WindowID]) {
-        guard !ids.isEmpty, !transientRetryPending else {
+    private func scheduleTransientRetry(_ ids: [WindowID], after delay: TimeInterval) {
+        guard !transientRetryPending else {
             return
         }
         transientRetryPending = true
         GioLog.record(
             .info,
-            "reconcile retry windows=\(ids.count) ids=\(ids.map { "\($0.pid):\($0.elementID)" }.joined(separator: ",")) reason=busy"
+            "reconcile retry windows=\(ids.count) ids=\(ids.map { "\($0.pid):\($0.elementID)" }.joined(separator: ",")) reason=busy ms=\(Int((delay * 1000).rounded()))"
         )
-        scheduler.asyncAfter(TransientWriteRetry.delay) { [weak self] in
+        scheduler.asyncAfter(delay) { [weak self] in
             guard let self else {
                 return
             }
