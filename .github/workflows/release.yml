@@ -60,7 +60,7 @@ jobs:
           swift --version
 
       - name: Test (all bundles)
-        run: swift test
+        run: scripts/swift-test-ci.sh
 
   build:
     needs: test

@@ -45,11 +45,12 @@ jobs:
           key: spm-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}
           restore-keys: spm-xcode27-
 
-      # Serial, like release.yml and local runs: the reconciler's lane tests
-      # measure real time against 0.1-0.25 s budgets, and --parallel on the
-      # runner's three cores pushed slow-app writes past the stall timeout.
+      # Serial, like local runs: the reconciler's lane tests measure real time
+      # against 0.1-0.3 s budgets (--parallel on the runner's three cores
+      # pushed slow-app writes past the stall). scripts/swift-test-ci.sh runs
+      # a failed case once more on its own and flags it as a warning.
       - name: Test (all bundles)
-        run: swift test
+        run: scripts/swift-test-ci.sh
 
       - name: Build the app (unsigned)
         run: |
