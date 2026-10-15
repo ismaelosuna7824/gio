@@ -37,34 +37,6 @@ final class UpdateHardeningTests: XCTestCase {
         XCTAssertNil(updateImageRequirement(teamIdentifier: "AB\"CD", leafCommonName: "x"))
     }
 
-    // MARK: Finding 6: where the GitHub token may go
-
-    func testTokenOnlyGoesToTheGitHubAPIOverHTTPS() {
-        let allowed = [
-            "https://api.github.com/repos/o/r/releases?per_page=30",
-            "https://api.github.com/repos/o/r/releases/assets/1",
-            "https://API.GitHub.com/repos/o/r/releases/assets/1",
-            "https://api.github.com:443/repos/o/r/releases/assets/1",
-        ]
-        for text in allowed {
-            XCTAssertTrue(updateTokenAllowed(for: URL(string: text)), text)
-        }
-        let refused = [
-            "http://api.github.com/repos/o/r/releases/assets/1",
-            "https://github.com/o/r/releases/download/v1/Gio-1.0.0.dmg",
-            "https://objects.githubusercontent.com/github-production-release-asset/1",
-            "https://api.github.com.evil.example/repos",
-            "https://evil.example/api.github.com",
-            "https://user:pass@api.github.com/repos",
-            "https://api.github.com:8443/repos",
-            "ftp://api.github.com/repos",
-        ]
-        for text in refused {
-            XCTAssertFalse(updateTokenAllowed(for: URL(string: text)), text)
-        }
-        XCTAssertFalse(updateTokenAllowed(for: nil))
-    }
-
     // MARK: Finding 3: metadata of the staged copy
 
     func testRegularFilesBecomeUserWritableAndWorldReadableNeverGroupOrWorldWritable() {

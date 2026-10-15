@@ -9,7 +9,6 @@ public struct UpdateDependencies: Sendable {
     public var source: any UpdateReleaseSource
     public var preparer: any UpdatePreparing
     public var installer: any UpdateInstalling
-    public var tokens: any UpdateTokenStoring
     public var eligibility: @Sendable () -> InstallEligibility
     /// Processes the helper waits for: Gio and its guardian.
     public var waitPIDs: @Sendable () -> [Int32]
@@ -18,7 +17,7 @@ public struct UpdateDependencies: Sendable {
 
     public init(
         runningVersion: String, source: any UpdateReleaseSource, preparer: any UpdatePreparing,
-        installer: any UpdateInstalling, tokens: any UpdateTokenStoring,
+        installer: any UpdateInstalling,
         eligibility: @escaping @Sendable () -> InstallEligibility, waitPIDs: @escaping @Sendable () -> [Int32],
         now: @escaping @Sendable () -> Date = { Date() },
         log: @escaping @Sendable (LogLevel, String) -> Void = { _, _ in }
@@ -27,21 +26,18 @@ public struct UpdateDependencies: Sendable {
         self.source = source
         self.preparer = preparer
         self.installer = installer
-        self.tokens = tokens
         self.eligibility = eligibility
         self.waitPIDs = waitPIDs
         self.now = now
         self.log = log
     }
 
-    /// The real thing: GitHub releases of `GioUpdateRepository`, the
-    /// Keychain token, hdiutil, the running app's own signature as the bar
-    /// a new version must clear, and the detached installer.
+    /// The real thing: GitHub releases of `GioUpdateRepository`, hdiutil,
+    /// the running app's own signature as the bar a new version must
+    /// clear, and the detached installer.
     public static func live(guardianPID: @escaping @Sendable () -> Int32?) -> UpdateDependencies {
         let version = gioVersion
         let bundle = Bundle.main
-        let tokens = KeychainTokenStore()
-        let token: @Sendable () -> String? = { tokens.read() }
         let userAgent = "Gio/\(version)"
         let signature = runningAppSignature(bundleURL: bundle.bundleURL)
         let bundleIdentifier = bundle.bundleIdentifier ?? signature.bundleIdentifier ?? "dev.gio.windowmanager"
@@ -61,10 +57,10 @@ public struct UpdateDependencies: Sendable {
         return UpdateDependencies(
             runningVersion: version,
             source: GitHubReleaseSource(
-                repository: updateRepository(infoDictionary: bundle.infoDictionary), userAgent: userAgent, token: token
+                repository: updateRepository(infoDictionary: bundle.infoDictionary), userAgent: userAgent
             ),
             preparer: UpdatePreparer(
-                downloader: URLSessionAssetDownloader(userAgent: userAgent, token: token),
+                downloader: URLSessionAssetDownloader(userAgent: userAgent),
                 verifier: {
                     guard let requirement, let imageRequirement else {
                         return nil
@@ -74,7 +70,6 @@ public struct UpdateDependencies: Sendable {
                 bundleIdentifier: bundleIdentifier, log: log
             ),
             installer: DetachedScriptInstaller(requirement: requirement),
-            tokens: tokens,
             eligibility: { eligibility },
             waitPIDs: { [getpid()] + (guardianPID().map { [$0] } ?? []) },
             log: log
@@ -94,7 +89,6 @@ public final class UpdateController: ObservableObject {
 
     @Published public private(set) var state: UpdateState = .idle
     @Published public private(set) var lastCheck: Date?
-    @Published public private(set) var hasToken: Bool
     /// The release notes sheet (the Overview and the menu bar open it).
     @Published public var notesPresented = false
     @Published public var automaticChecks: Bool {
@@ -125,7 +119,6 @@ public final class UpdateController: ObservableObject {
         automaticChecks = defaults.object(forKey: Self.automaticChecksKey) as? Bool ?? true
         includeBetas = defaults.bool(forKey: Self.includeBetasKey)
         lastCheck = defaults.object(forKey: Self.lastCheckKey) as? Date
-        hasToken = dependencies.tokens.hasToken
     }
 
     public var presentation: UpdateRowPresentation {
@@ -268,26 +261,6 @@ public final class UpdateController: ObservableObject {
             apply(.failed(failure))
             dependencies.log(.warn, "update \(update.version) installer failed: \(failure)")
         }
-    }
-
-    // MARK: Token
-
-    /// Saves a GitHub token in the Keychain. Never echoed back anywhere.
-    @discardableResult
-    public func saveToken(_ text: String) -> Bool {
-        let token = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !token.isEmpty, dependencies.tokens.save(token) else {
-            return false
-        }
-        hasToken = true
-        dependencies.log(.info, "update token saved")
-        return true
-    }
-
-    public func clearToken() {
-        _ = dependencies.tokens.clear()
-        hasToken = dependencies.tokens.hasToken
-        dependencies.log(.info, "update token cleared")
     }
 
     // MARK: gio update

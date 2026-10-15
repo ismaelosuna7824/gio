@@ -9,26 +9,19 @@ public protocol UpdateAssetDownloading: Sendable {
     ) async throws -> URL
 }
 
-/// Public repositories download `browser_download_url`; with a token the
-/// asset's API URL is used (`Accept: application/octet-stream`), which is
-/// the only route for private repositories. GitHub redirects that to a
-/// signed storage URL. The token only ever goes to https://api.github.com
-/// (`updateTokenAllowed`, UP-17): an asset URL elsewhere falls back to the
-/// anonymous download, and every redirect drops the Authorization header
-/// unless it stays on the API.
+/// Downloads the public `browser_download_url`, anonymously; GitHub
+/// redirects it to a signed storage URL.
 public final class URLSessionAssetDownloader: UpdateAssetDownloading, @unchecked Sendable {
-    private let token: @Sendable () -> String?
     private let userAgent: String
 
-    public init(userAgent: String, token: @escaping @Sendable () -> String?) {
+    public init(userAgent: String) {
         self.userAgent = userAgent
-        self.token = token
     }
 
     public func download(
         _ asset: GitHubReleaseAsset, to directory: URL, progress: @escaping @Sendable (Double) -> Void
     ) async throws -> URL {
-        guard let request = updateAssetRequest(asset, token: token(), userAgent: userAgent) else {
+        guard let request = updateAssetRequest(asset, userAgent: userAgent) else {
             throw URLError(.badURL)
         }
         let destination = directory.appendingPathComponent(asset.name)
@@ -47,46 +40,17 @@ public final class URLSessionAssetDownloader: UpdateAssetDownloading, @unchecked
     }
 }
 
-/// The request for one asset: the API URL with the token when the token may
-/// go there, else the anonymous browser URL.
-func updateAssetRequest(_ asset: GitHubReleaseAsset, token: String?, userAgent: String) -> URLRequest? {
-    let token = token.flatMap { $0.isEmpty ? nil : $0 }
-    let api = URL(string: asset.url)
-    let authorized = token != nil && updateTokenAllowed(for: api)
-    guard let url = authorized ? api : URL(string: asset.browserDownloadURL) else {
+/// The anonymous request for one asset's browser URL.
+func updateAssetRequest(_ asset: GitHubReleaseAsset, userAgent: String) -> URLRequest? {
+    guard let url = URL(string: asset.browserDownloadURL) else {
         return nil
     }
     var request = URLRequest(url: url)
     request.setValue(userAgent, forHTTPHeaderField: "User-Agent")
-    if authorized, let token {
-        request.setValue("application/octet-stream", forHTTPHeaderField: "Accept")
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-    }
     return request
 }
 
-/// The redirect policy for every updater request (UP-17): the token
-/// survives a redirect only to https://api.github.com.
-public func updateRedirectRequest(_ request: URLRequest) -> URLRequest {
-    guard !updateTokenAllowed(for: request.url) else {
-        return request
-    }
-    var next = request
-    next.setValue(nil, forHTTPHeaderField: "Authorization")
-    return next
-}
-
-/// Session delegate applying `updateRedirectRequest` (the release-list session).
-public class UpdateTokenRedirectPolicy: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    public func urlSession(
-        _ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
-        newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void
-    ) {
-        completionHandler(updateRedirectRequest(request))
-    }
-}
-
-private final class DownloadDelegate: UpdateTokenRedirectPolicy, URLSessionDownloadDelegate, @unchecked Sendable {
+private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     let expectedBytes: Int64
     let destination: URL
     let progress: @Sendable (Double) -> Void
