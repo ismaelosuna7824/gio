@@ -694,7 +694,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         }
         let frames = context.displays().map(\.frame)
         if full {
-            let print = unmanagedWindowFingerprint(server: context.serverWindows(), managed: managed, ownPid: context.ownPid)
+            let print = unmanagedWindowFingerprint(
+                server: context.serverWindows(), managed: managed, ownPid: context.ownPid, displays: frames
+            )
             if let previous = unmanagedFingerprint, previous != print {
                 backdropDirty = true
             }
