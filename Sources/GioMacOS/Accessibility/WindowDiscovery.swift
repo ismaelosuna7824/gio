@@ -375,30 +375,9 @@ func axIsSettable(_ element: AXUIElement, attribute: String) -> Bool {
         && settable.boolValue
 }
 
+/// Nil on any failure (discovery retries); one message (PF-AE, `readFrame`).
 func axFrame(of element: AXUIElement) -> CGRect? {
-    var rawPosition: CFTypeRef?
-    var rawSize: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &rawPosition)
-        == .success,
-        AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &rawSize) == .success,
-        let position = rawPosition,
-        let size = rawSize,
-        CFGetTypeID(position) == AXValueGetTypeID(),
-        CFGetTypeID(size) == AXValueGetTypeID()
-    else {
-        return nil
-    }
-    var point = CGPoint.zero
-    var dimensions = CGSize.zero
-    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-          AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-          point.x.isFinite, point.y.isFinite,
-          dimensions.width.isFinite, dimensions.height.isFinite,
-          dimensions.width > 0, dimensions.height > 0
-    else {
-        return nil
-    }
-    return CGRect(origin: point, size: dimensions)
+    (try? readFrame(element)) ?? nil
 }
 
 public func axTitle(of element: AXUIElement) -> String? {
