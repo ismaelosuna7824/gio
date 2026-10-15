@@ -57,6 +57,7 @@ public final class GestureController: @unchecked Sendable {
         public var beginTracking: () -> Void
         public var holdOverlay: ([WindowID: CGRect], CGRect, @escaping () -> Void) -> GestureTransport
         public var trackOverlay: ([WindowID: CGRect]) -> Void
+        public var overlayFrames: () -> [WindowID: CGRect]
         /// A frame a window is being moved to (physical frame, echo record).
         public var recordSampled: (WindowID, CGRect, TimeInterval) -> Void
         /// A window joined the gesture: its frame is unverified from now on.
@@ -80,6 +81,7 @@ public final class GestureController: @unchecked Sendable {
             beginTracking: @escaping () -> Void,
             holdOverlay: @escaping ([WindowID: CGRect], CGRect, @escaping () -> Void) -> GestureTransport,
             trackOverlay: @escaping ([WindowID: CGRect]) -> Void,
+            overlayFrames: @escaping () -> [WindowID: CGRect],
             recordSampled: @escaping (WindowID, CGRect, TimeInterval) -> Void,
             markUnverified: @escaping (WindowID) -> Void, focusedWindow: @escaping () -> WindowID?,
             publishFocusRing: @escaping () -> Void, settle: @escaping (GestureRelease) -> Void,
@@ -96,6 +98,7 @@ public final class GestureController: @unchecked Sendable {
             self.beginTracking = beginTracking
             self.holdOverlay = holdOverlay
             self.trackOverlay = trackOverlay
+            self.overlayFrames = overlayFrames
             self.recordSampled = recordSampled
             self.markUnverified = markUnverified
             self.focusedWindow = focusedWindow
@@ -210,15 +213,19 @@ public final class GestureController: @unchecked Sendable {
         }
         context.beginTracking()
         let physical = context.physicalFrames()
+        let drawn = physical.merging(context.overlayFrames()) { _, layer in layer }
         let committed = gestureFrames(surface, offset: strip.committedOffset)
         let base = gestureVisualOffset(
-            committed: strip.committedOffset, visible: committed?.visible ?? [:], physical: physical,
+            committed: strip.committedOffset, visible: committed?.visible ?? [:], physical: drawn,
             prefer: surface.workspace.focusedWindow
         )
         let windows = Set(tilingWorkspace(from: surface.workspace, modes: surface.modes).columns.flatMap(\.windows))
         var start: [WindowID: CGRect] = [:]
+        var held: [WindowID: CGRect] = [:]
         for id in windows {
-            start[id] = physical[id] ?? committed?.visible[id] ?? committed?.parked[id]?.frame
+            let laidOut = committed?.visible[id] ?? committed?.parked[id]?.frame
+            start[id] = physical[id] ?? laidOut
+            held[id] = drawn[id] ?? laidOut
         }
         let scroll = Scroll(
             surface: surface, strip: strip, tracker: GestureScrollTracker(base: base, maxOffset: strip.maxOffset),
@@ -226,7 +233,7 @@ public final class GestureController: @unchecked Sendable {
         )
         self.scroll = scroll
         scroll.trackedAt = context.now()
-        let transport = context.holdOverlay(start, surface.displayFrame) { [weak self, weak scroll] in
+        let transport = context.holdOverlay(held, surface.displayFrame) { [weak self, weak scroll] in
             guard let self, let scroll else {
                 return
             }

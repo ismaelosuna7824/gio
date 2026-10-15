@@ -284,12 +284,31 @@ read for the snap and focus rules.
   (`gesture scroll transport=ax reason=overlay-lost`, or an abandon when a button is down), never
   while shutting down. `beginTracking` no longer ends the overlay: `holdGesture` either takes a
   running flight over (its writes folded, its layers replaced in the same main hop, so the
-  overlay never comes down) or, refusing, ends it as before. A keyboard flight still flying is
-  not picked up where its layers are: their presentation frames live on main, and the session
-  never waits on main (it would need a round trip before the first finger frame); the hold
-  starts at the physical frames, which a snapshot flight already set to its targets, the same
-  jump TG-03's `end()` made. A flight held for its paint hand-off is at rest at those frames
-  and is picked up exactly. The vertical workspace swipe and the overview swipe are untouched.
+  overlay never comes down) or, refusing, ends it as before. A keyboard flight still flying was
+  first held at the physical frames (superseded by the review fixes below). A flight held for
+  its paint hand-off is at rest at its targets and is picked up exactly. The vertical workspace swipe and the overview swipe are untouched.
+- TG-07 review fixes (2026-10-15, independent review of `0699e0f`, both candidate-caused):
+  (1) a swipe that started during an overlay settle jumped the strip to where it would land:
+  since TG-06 the settle is an overlay flight, `dispatchUnderOverlay` records the targets as
+  physical frames at dispatch, and the hold put its layers there while main replaced the
+  mid-air ones; with flicks 300-500 ms apart and ~340 ms settles that is hundreds of points.
+  Decision: the controller keeps a session-side copy of every layer's track
+  (`FlightLayerModel`, pure GioCore: the overlay's `FlightTrack` per layer with its start time
+  on the session clock, updated at add, fly, retarget, tracking, cleared with the flight) and
+  `drawnFrames()` samples it at now without waiting on main. `GestureController` asks for
+  them (`overlayFrames`) and uses them for the hold's layers and for `gestureVisualOffset`, so
+  State's offset follows the picture; the pump's start stays the physical frames, because a
+  lost overlay must still write every window that is not where the fingers put it. The
+  session clock starts the track one main hop before the overlay does, so the take-over can
+  be ahead by that hop [INFERENCE: a few ms of travel, LIVE PENDING]. (2) The hold ignored
+  whether the release pass would animate: with `[animations.horizontal-view-movement]` off
+  the release took the `!snapshotFlight` branch, which ends the overlay one main hop before
+  slow apps' writes land and flashed the pre-swipe layout. Decision: `planGestureTransport`
+  refuses the overlay when the view-scroll animation is off (`reason=instant-settle`, the pump
+  as before), and a release whose pass still cannot fly with a hold active (renderer flipped,
+  an instant placement) runs the instant pass first, with the overlay up, and ends the overlay
+  after (`SnapshotFlightController.endHold(after:)`); the velocity is lost there, the pass is
+  instant anyway.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -390,6 +409,15 @@ read for the snap and focus rules.
   unchanged and green. Full `swift test`: GioPackageTests.xctest 2922 tests, 53 skipped, 0
   failures. Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED; `git diff
   --check` clean. LIVE PENDING (not run, same reason): TESTING.md 15i (n).
+- TG-07 review fixes: RED `swift build --build-tests` failed (`value of type
+  'SnapshotFlightController' has no member 'drawnFrames' / 'isHoldingGesture' / 'endHold'`,
+  `type 'GestureOverlayRefusal' has no member 'instantSettle'`, `extra argument
+  'overlayFrames' in call`, `missing argument for parameter 'lost'`). GREEN
+  `swift test --filter "GioCoreTests.FlightLayerModelTests|GioCoreTests.GestureTransportTests|GioSessionTests.SnapshotFlightTests|GioSessionTests.GestureControllerTests"`:
+  FlightLayerModelTests 4 (new), GestureTransportTests 10 (+1), SnapshotFlightTests 64 (+4),
+  GestureControllerTests 18 (+2), 0 failures. Full `swift test`: GioPackageTests.xctest 2933 tests, 53 skipped, 0 failures.
+  Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED; `git diff --check` clean.
+  LIVE PENDING: TESTING.md 15i (n) (two quick flicks; animation off).
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
