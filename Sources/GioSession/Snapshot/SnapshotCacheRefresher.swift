@@ -78,8 +78,12 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 /// cap is the smaller of eight display-fulls and 3 % of the RAM (logged
 /// once); it evicts the full images of hidden windows first, coverage
 /// brings those back at half, and coverage stops only when a half image
-/// had to go. Session queue only; the capture itself runs off the queue
-/// and its completion hops back.
+/// had to go. SM-31: a window macOS no longer draws (its AX element
+/// vanished, or a capture found no WindowServer window for it on screen)
+/// loses its images at once and stays out of every flight
+/// (`undrawnWindows`) until a capture matches it again; FI-08's unknown
+/// windows keep theirs. Session queue only; the capture itself runs off the
+/// queue and its completion hops back.
 public final class SnapshotCacheRefresher: @unchecked Sendable {
     public struct Context {
         public var session: () -> CommandSession
@@ -185,6 +189,10 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// SM-11: windows that missed while parked or off screen, retried only
     /// once they are visible (their previous image, if any, stays).
     private var parkedMisses: Set<WindowID> = []
+    /// SM-31: windows macOS does not draw (vanished, or `undrawn` by a
+    /// capture): no image, left out of every flight until a capture
+    /// matches them again.
+    public private(set) var undrawnWindows: Set<WindowID> = []
     /// SM-11: the workspace each covered window was last seen on.
     private var workspaceOf: [WindowID: WorkspaceID] = [:]
     /// SM-20: the shown workspaces and those next to them in each display's
@@ -241,6 +249,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         dirty.removeAll()
         tried.removeAll()
         parkedMisses.removeAll()
+        undrawnWindows.removeAll()
         workspaceOf.removeAll()
         nearWorkspaces.removeAll()
         stripPass.removeAll()
@@ -257,8 +266,30 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             dirty.removeValue(forKey: id)
             tried.remove(id)
             parkedMisses.remove(id)
+            undrawnWindows.remove(id)
             workspaceOf.removeValue(forKey: id)
         }
+    }
+
+    /// SM-31: the reconciler found these windows' AX elements invalid. They
+    /// stay registered until a scan proves them gone (absence is not
+    /// death), but their images go now and they stay out of every flight
+    /// until a capture matches them again.
+    public func noteVanished(_ ids: [WindowID]) {
+        for id in ids {
+            markUndrawn(id, reason: .vanished)
+        }
+    }
+
+    /// SM-31: one debug line per window becoming undrawn, not per report.
+    private func markUndrawn(_ id: WindowID, reason: SnapshotEvictReason) {
+        guard undrawnWindows.insert(id).inserted else {
+            return
+        }
+        cache.evict([id])
+        dirty.removeValue(forKey: id)
+        coverageStopped = false
+        context.log(.debug, snapshotEvictLine(id: id, reason: reason))
     }
 
     // MARK: Flight images (SM-11, read by the flight controller)
@@ -318,6 +349,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             at: context.now(), resolution: .full, fill: captured.fill
         )
         dirty.removeValue(forKey: id)
+        undrawnWindows.remove(id)
     }
 
     private func logResize(_ id: WindowID, _ mode: SnapshotResizeMode) {
@@ -383,6 +415,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     public func noteRegistered(_ id: WindowID) {
         tried.remove(id)
         parkedMisses.remove(id)
+        undrawnWindows.remove(id)
         markDirty([id], reason: .new)
     }
 
@@ -814,6 +847,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                 resolution: half.contains(id) ? .half : .full, fill: snapshot.fill
             )
             dirty.removeValue(forKey: id)
+            undrawnWindows.remove(id)
         }
         noteMisses(outcome.misses, requested: requested, now: now)
         for backdrop in outcome.backdrops {
@@ -832,6 +866,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         if !cache.retain(only: live).isEmpty {
             coverageStopped = false
         }
+        undrawnWindows.formIntersection(live)
         let displayPixels = context.captureScreens().screens.map {
             Int($0.frame.width * $0.scale) * Int($0.frame.height * $0.scale)
         }.max() ?? 0
@@ -890,7 +925,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// per minute). A window that missed while parked or off screen for any
     /// reason but the budget (unmatched where macOS clamped it, failed or
     /// blank because it is not drawn) is not retried, and its dirty mark is
-    /// dropped, until it shows again; its previous image stays.
+    /// dropped, until it shows again; its previous image stays. SM-31: a
+    /// shown-strip window still at the requested frame that macOS does not
+    /// draw (`snapshotUndrawnWindows`) loses its image instead.
     private func noteMisses(_ misses: [WindowID: SnapshotMiss], requested: [WindowID: CGRect], now: TimeInterval) {
         guard !misses.isEmpty else {
             return
@@ -904,6 +941,16 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                 parkedMisses.insert(id)
                 dirty.removeValue(forKey: id)
             }
+        }
+        var shown: [WindowID: CGRect] = [:]
+        for item in stripPlan().strip where misses[item.id] != nil && requested[item.id] == item.frame {
+            shown[item.id] = item.frame
+        }
+        let undrawn = snapshotUndrawnWindows(
+            misses: misses, frames: shown, server: context.serverWindows(), viewports: screens
+        )
+        for id in undrawn.sorted() {
+            markUndrawn(id, reason: .undrawn)
         }
     }
 }

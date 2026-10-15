@@ -200,6 +200,54 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         XCTAssertEqual(snapshotHolesLine(count: 3), "snapshot holes ids=3")
     }
 
+    // MARK: SM-31 undrawn windows
+
+    /// A window macOS does not draw (vanished, or a capture found no
+    /// WindowServer window for it on screen) has nothing to fly: no layer,
+    /// no hole, and it is not a miss, so the drawn windows still fly.
+    func testAnUndrawnWindowIsNeitherALayerNorAHoleNorAMiss() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(-300), id(2): win(100)],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, undrawn: [id(2)]
+        )
+        XCTAssertEqual(
+            decision,
+            .snapshot(items: [SnapshotFlightItem(id: id(1), from: win(0), to: win(-300), displayIndex: 0)], holes: [])
+        )
+    }
+
+    /// An undrawn window never counts as a miss, so it cannot make the
+    /// motion fall back for want of its image (`cache-miss`); when only
+    /// undrawn windows move, nothing visible moves.
+    func testAMotionOfUndrawnWindowsAloneHasNothingVisibleAndNoMiss() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(0), id(2): win(100)],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, undrawn: [id(2)]
+        )
+        XCTAssertEqual(decision, .fallback(reason: .nothingVisible, missing: []))
+    }
+
+    func testAnUndrawnWindowJoiningAtRetargetIsNeitherAddedNorUncovered() {
+        let plan = planSnapshotRetarget(
+            active: [id(1)], starts: [id(1): win(0), id(4): win(2000), id(5): win(2500)],
+            targets: [id(1): win(-300), id(4): win(100), id(5): win(500)],
+            displays: [display], activeDisplays: [0], hasImage: { $0 != id(5) }, undrawn: [id(4), id(5)]
+        )
+        XCTAssertEqual(plan.retargets, [id(1): win(-300)])
+        XCTAssertEqual(plan.adds, [])
+        XCTAssertEqual(plan.uncovered, [])
+    }
+
+    func testAnUndrawnWindowHasNoHole() {
+        XCTAssertEqual(
+            snapshotHoles(
+                layered: [id(1)], targets: [id(1): win(0), id(2): win(400), id(3): win(700)],
+                displays: [display], activeDisplays: [0], undrawn: [id(3)]
+            ),
+            [SnapshotHole(id: id(2), frame: win(400), displayIndex: 0)]
+        )
+    }
+
     // MARK: gate
 
     func testTheFlightSettlesOnlyWhenLayersAndTheFinalPassAreBothDone() {

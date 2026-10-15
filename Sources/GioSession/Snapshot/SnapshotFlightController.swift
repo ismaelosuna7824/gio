@@ -340,6 +340,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
             starts[id] = targets[id]
         }
         let now = context.now()
+        // SM-31: windows macOS does not draw have nothing to fly: no layer,
+        // no hole, never a miss.
+        let undrawn = cache.undrawnWindows
         // SM-11: the image of the start size, or a fresh one of the other size.
         // SM-13: looked up once per window; the layers fly exactly that image.
         // SM-27: with the image of the target size the layer crossfades to.
@@ -364,13 +367,15 @@ public final class SnapshotFlightController: @unchecked Sendable {
             self.targets.merge(targets) { _, latest in latest }
             let plan = planSnapshotRetarget(
                 active: ids, starts: starts, targets: targets, displays: screens,
-                activeDisplays: displays, hasImage: usable
+                activeDisplays: displays, hasImage: usable, undrawn: undrawn
             )
             ids.formUnion(plan.adds.map(\.id))
             windows.formUnion(plan.adds.map(\.id))
             // SM-16: the hole set follows the latest targets and layers.
             let previous = holes
-            setHoles(snapshotHoles(layered: ids, targets: self.targets, displays: screens, activeDisplays: displays))
+            setHoles(snapshotHoles(
+                layered: ids, targets: self.targets, displays: screens, activeDisplays: displays, undrawn: undrawn
+            ))
             // SM-27: every retargeted layer fades to the image of its new
             // size (the one it shows or fades to when the size stays).
             var faces: [WindowID: SnapshotFace<CGImage>] = [:]
@@ -409,7 +414,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         let cache = cache
         let decision = planSnapshotFlight(
             starts: starts, targets: targets, displays: screens, hasImage: usable,
-            backdropReady: { cache.backdrop(for: screens[$0]) != nil }
+            backdropReady: { cache.backdrop(for: screens[$0]) != nil }, undrawn: undrawn
         )
         switch decision {
         case .fallback(let reason, let missing):

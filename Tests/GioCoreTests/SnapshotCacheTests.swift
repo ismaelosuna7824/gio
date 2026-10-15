@@ -666,4 +666,64 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertTrue(throttle.shouldLog(id(2), reason: .unmatched, now: 159), "another window")
         XCTAssertTrue(throttle.shouldLog(id(1), reason: .unmatched, now: 160), "a minute later")
     }
+
+    // MARK: SM-31 undrawn windows
+
+    private let screen = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+    private let tile = CGRect(x: 0, y: 100, width: 800, height: 900)
+
+    /// A capture found no WindowServer window (`unmatched`) and the
+    /// on-screen list has nothing of the app over its frame: macOS does
+    /// not draw it.
+    func testAnUnmatchedWindowWithNothingOfItsAppOnScreenIsUndrawn() {
+        let elsewhere = ServerWindow(pid: 10, bounds: CGRect(x: 1000, y: 100, width: 700, height: 900))
+        XCTAssertEqual(
+            snapshotUndrawnWindows(
+                misses: [id(1): .unmatched], frames: [id(1): tile],
+                server: [elsewhere, ServerWindow(pid: 11, bounds: tile)], viewports: [screen]
+            ),
+            [id(1)]
+        )
+    }
+
+    /// FI-08's unknown windows keep their image: another miss reason, a
+    /// window less than half on a display (peek and edge columns, parking
+    /// slivers), an app drawing something over its frame, an ambiguous
+    /// same-size match, a window drawn elsewhere, an unavailable on-screen
+    /// list, or no frame.
+    func testWindowsTheRenderCheckCannotJudgeAreNeverUndrawn() {
+        let peek = CGRect(x: 1500, y: 100, width: 800, height: 900)
+        let other = ServerWindow(pid: 99, bounds: CGRect(x: 0, y: 0, width: 10, height: 10))
+        let cases: [(String, [WindowID: SnapshotMiss], [WindowID: CGRect], [ServerWindow])] = [
+            ("ambiguous miss", [id(1): .ambiguous], [id(1): tile], [other]),
+            ("blank miss", [id(1): .blank], [id(1): tile], [other]),
+            ("over budget", [id(1): .overBudget], [id(1): tile], [other]),
+            ("peek column", [id(1): .unmatched], [id(1): peek], [other]),
+            ("overlaps", [id(1): .unmatched], [id(1): tile],
+             [ServerWindow(pid: 10, bounds: CGRect(x: 0, y: 100, width: 400, height: 900))]),
+            ("ambiguous same size", [id(1): .unmatched], [id(1): tile], [
+                ServerWindow(pid: 10, bounds: tile.offsetBy(dx: 900, dy: 0)),
+                ServerWindow(pid: 10, bounds: tile.offsetBy(dx: 950, dy: 50)),
+            ]),
+            ("drawn elsewhere", [id(1): .unmatched], [id(1): tile],
+             [ServerWindow(pid: 10, bounds: tile.offsetBy(dx: 900, dy: 0))]),
+            ("no on-screen list", [id(1): .unmatched], [id(1): tile], []),
+            ("no frame", [id(1): .unmatched], [:], [other]),
+        ]
+        for (name, misses, frames, server) in cases {
+            XCTAssertEqual(
+                snapshotUndrawnWindows(misses: misses, frames: frames, server: server, viewports: [screen]), [], name
+            )
+        }
+    }
+
+    func testTheEvictLineNamesTheWindowAndTheReasonOnly() {
+        XCTAssertEqual(
+            snapshotEvictLine(id: WindowID(pid: 5618, elementID: 3), reason: .vanished),
+            "snapshot evict id=5618:3 reason=vanished"
+        )
+        XCTAssertEqual(
+            snapshotEvictLine(id: WindowID(pid: 7, elementID: 1), reason: .undrawn), "snapshot evict id=7:1 reason=undrawn"
+        )
+    }
 }

@@ -81,6 +81,8 @@ final class SnapshotFlightTests: XCTestCase {
         /// SM-30: the fresh captures asked for and their pending answers.
         var freshProbes: [(id: WindowID, probe: SnapshotFreshProbe<CGImage>)] = []
         var freshAnswers: [@Sendable (SnapshotFreshRead<CGImage>?) -> Void] = []
+        /// SM-31: the on-screen WindowServer windows the cache judges misses by.
+        var serverWindows: [ServerWindow] = []
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -122,6 +124,7 @@ final class SnapshotFlightTests: XCTestCase {
                     world.completions.append(done)
                 },
                 prefetch: { _, _ in },
+                serverWindows: { world.serverWindows },
                 log: { world.logs.append(($0, $1)) },
                 physicalMemory: 64 << 30,
                 now: {
@@ -178,7 +181,8 @@ final class SnapshotFlightTests: XCTestCase {
     /// fills of the captured images.
     @discardableResult
     private func refresh(
-        _ images: [WindowID: CGRect], backdrop: Bool = true, fills: [WindowID: ThemeColor] = [:]
+        _ images: [WindowID: CGRect], backdrop: Bool = true, fills: [WindowID: ThemeColor] = [:],
+        misses: [WindowID: SnapshotMiss] = [:]
     ) -> CGImage {
         cache.schedule()
         scheduler.advance(by: 0.3)
@@ -186,7 +190,8 @@ final class SnapshotFlightTests: XCTestCase {
         let backdropImage = image()
         done(SnapshotCaptureOutcome(
             images: images.reduce(into: [:]) { $0[$1.key] = CapturedImage(image: image(), frame: $1.value, fill: fills[$1.key]) },
-            backdrops: backdrop ? [CapturedBackdropImage(image: backdropImage, displayFrame: SessionFixture.screen)] : []
+            backdrops: backdrop ? [CapturedBackdropImage(image: backdropImage, displayFrame: SessionFixture.screen)] : [],
+            misses: misses
         ))
         scheduler.runPending()
         return backdropImage
@@ -589,6 +594,62 @@ final class SnapshotFlightTests: XCTestCase {
 
         XCTAssertEqual(overlay.retargets.first?.holes, [idB: b])
         XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1") })
+    }
+
+    // MARK: SM-31 vanished and undrawn windows
+
+    /// Both columns scroll 100 pt to the left.
+    private func scrollBoth() -> (animations: [WindowAnimation], plan: ParkingPlan) {
+        let toA = a.offsetBy(dx: -100, dy: 0)
+        let toB = b.offsetBy(dx: -100, dy: 0)
+        return (
+            [WindowAnimation(id: idA, from: a, to: toA, duration: 0.3), WindowAnimation(id: idB, from: b, to: toB, duration: 0.3)],
+            ParkingPlan(visible: [idA: toA, idB: toB])
+        )
+    }
+
+    /// The reconciler found idB's AX element invalid (the session forgets
+    /// its frame) while it stays in the layout: on the next motion it is
+    /// neither a layer (its old picture would vanish at the hand-off) nor a
+    /// hole, and idA still flies.
+    func testAVanishedWindowIsNotALayerOnTheNextMotion() {
+        refresh([idA: a, idB: b])
+        cache.noteVanished([idB])
+        fixture.physicalFrames.removeValue(forKey: idB)
+        let (animation, _) = slide(idA, from: a, by: -100)
+        let plan = ParkingPlan(visible: [idA: animation.to, idB: b])
+
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+
+        XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [idA])
+        XCTAssertEqual(overlay.begins.first?.holes, [:], "nothing to show through either")
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot fallback") })
+    }
+
+    /// A capture found no WindowServer window for idB and nothing of its
+    /// app is on screen: it is left out of every later flight (no layer,
+    /// no hole, no AX fallback) while idA keeps flying, until a capture
+    /// matches it again.
+    func testAnUndrawnWindowIsNotALayerOnLaterMotionsUntilACaptureMatchesItAgain() {
+        refresh([idA: a, idB: b])
+        world.serverWindows = [ServerWindow(pid: 1, bounds: a)]
+        scheduler.advance(by: 31)
+        refresh([idA: a], misses: [idB: .unmatched])
+
+        for flightNumber in 1...2 {
+            let (animations, plan) = scrollBoth()
+            XCTAssertEqual(flight.drive(animations: animations, plans: [plan], spring: .niri), .priming)
+            XCTAssertEqual(overlay.begins.last?.flights.first?.items.map(\.id), [idA], "flight \(flightNumber)")
+            XCTAssertEqual(overlay.begins.last?.holes, [:], "flight \(flightNumber)")
+            flight.end()
+        }
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot fallback") })
+
+        world.serverWindows = [ServerWindow(pid: 1, bounds: a), ServerWindow(pid: 2, bounds: b)]
+        refresh([idB: b])
+        let (animations, plan) = scrollBoth()
+        XCTAssertEqual(flight.drive(animations: animations, plans: [plan], spring: .niri), .priming)
+        XCTAssertEqual(overlay.begins.last?.flights.first?.items.map(\.id).sorted(), [idA, idB], "matched again: flies")
     }
 
     /// SM-13: the plan and the layers use one lookup per window, so an image

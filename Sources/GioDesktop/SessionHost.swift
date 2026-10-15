@@ -1819,7 +1819,8 @@ final class SessionHost: @unchecked Sendable {
 
     /// One settled report into the session's memory: minimum sizes, physical
     /// frames (failed, vanished and deferred windows are forgotten), trust,
-    /// render-check candidates.
+    /// render-check candidates. SM-31: vanished windows lose their snapshot
+    /// images and get one proof scan of their pid.
     private func foldSettle(
         _ report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
         focusTarget: WindowID?, placement: InstantPlacementDecision
@@ -1851,6 +1852,8 @@ final class SessionHost: @unchecked Sendable {
         for id in report.failed + report.vanished + report.deferred {
             physicalFrames.removeValue(forKey: id)
         }
+        snapshotRefresher.noteVanished(report.vanished)
+        discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
         // Only visible windows written here are worth a render check;
         // a settle that wrote parked/hidden windows alone checks nothing.

@@ -164,6 +164,11 @@ public final class DiscoveryService: @unchecked Sendable {
     private var titleRechecks = TitleRecheckBook()
     /// MM-04: the latest screen-parameter notification; only its one-shot syncs.
     private var displayChangeGeneration = 0
+    /// SM-31: vanished windows already given their proof scan, until they
+    /// settle again or are purged (one scan per window per vanish).
+    private var vanishScanned: Set<WindowID> = []
+    /// SM-31: pids whose proof scan waits for the next turn of the queue.
+    private var vanishScanPIDs: Set<pid_t> = []
 
     /// MM-04: macOS posts several screen-parameter notifications per
     /// connect, disconnect or arrangement change; the burst syncs once,
@@ -188,6 +193,12 @@ public final class DiscoveryService: @unchecked Sendable {
     /// the dead-pid reap is skipped then, since absence from a partial
     /// scan proves nothing.
     public func enumerateAndPlace(onlyPID: pid_t? = nil) {
+        scan(onlyPID: onlyPID, arrivals: onlyPID != nil)
+    }
+
+    /// `arrivals`: the windows found are live arrivals (NW-02: they may take
+    /// the user to their workspace; PF-02: their open is timed).
+    private func scan(onlyPID: pid_t?, arrivals: Bool) {
         guard context.allowsWindowWork() else {
             return
         }
@@ -227,7 +238,7 @@ public final class DiscoveryService: @unchecked Sendable {
             }
             // NW-02: a launched app's windows may take the user to their
             // workspace; a full scan (startup, resync) only places them.
-            if let id = registerNew(candidate, mayFollow: onlyPID != nil, placement: placement) {
+            if let id = registerNew(candidate, mayFollow: arrivals, placement: placement) {
                 liveIDs.insert(id)
             }
         }
@@ -263,6 +274,50 @@ public final class DiscoveryService: @unchecked Sendable {
         }
         enumerateAndPlace(onlyPID: pid)
         context.reflowAll()
+    }
+
+    /// SM-31: the reconciler found `vanished` windows' AX elements invalid
+    /// and `alive` windows where it wrote or read them. Absence is not
+    /// death: a vanished window is purged only by a complete scan
+    /// of its pid that no longer lists it. Each vanished, registered window
+    /// asks for that scan once (a window that settles again may ask again);
+    /// the pids of one turn share one scan each, run on the next turn of the
+    /// session queue (never inside the pass that reported them). The scan
+    /// is not an arrival, and the layout reflows only when it changed the
+    /// registry.
+    public func noteSettled(vanished: [WindowID], alive: [WindowID]) {
+        vanishScanned.subtract(alive)
+        let registry = context.registry()
+        let pids = Set(vanished.filter { registry.find($0) != nil && vanishScanned.insert($0).inserted }.map(\.pid))
+        let fresh = pids.subtracting(vanishScanPIDs)
+        guard !fresh.isEmpty else {
+            return
+        }
+        let first = vanishScanPIDs.isEmpty
+        vanishScanPIDs.formUnion(fresh)
+        if first {
+            scheduler.async { [weak self] in
+                self?.scanVanished()
+            }
+        }
+    }
+
+    private func scanVanished() {
+        let pids = vanishScanPIDs.sorted()
+        vanishScanPIDs.removeAll()
+        let before = Set(context.registry().managedWindows().map(\.id))
+        for pid in pids {
+            scan(onlyPID: pid, arrivals: false)
+        }
+        let after = Set(context.registry().managedWindows().map(\.id))
+        context.log(
+            .debug,
+            "window vanished scan pids=\(pids.count) purged=\(before.subtracting(after).count) "
+                + "registered=\(after.subtracting(before).count)"
+        )
+        if before != after {
+            context.reflowAll()
+        }
     }
 
     /// NW-06: an app was launched (its first windows may take the user to
@@ -609,6 +664,7 @@ public final class DiscoveryService: @unchecked Sendable {
             registry.remove(id)
             pendingFollows.forget(id)
             titleRechecks.forget(id)
+            vanishScanned.remove(id)
             context.forgetWindow(id)
         }
         context.updateManager { manager in

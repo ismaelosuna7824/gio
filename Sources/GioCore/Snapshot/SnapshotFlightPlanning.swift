@@ -8,7 +8,11 @@ import Foundation
 // it is visible there, the backdrop gets a hole at that frame
 // (`snapshotHoles`): the real window (painting, the panel does not occlude
 // it, SM-14) shows through, and the image layers still draw above it. The
-// motion falls back to AX only when no moving window has an image.
+// motion falls back to AX only when no moving window has an image. SM-31:
+// an `undrawn` window (its AX element vanished, or a capture found no
+// WindowServer window for it on screen) has nothing to show: no layer, no
+// hole, never a miss; a motion that moves only undrawn windows moves
+// nothing visible.
 
 public enum SnapshotFallbackReason: String, Equatable, Sendable {
     case cacheMiss = "cache-miss"
@@ -77,10 +81,10 @@ private func moves(_ a: CGRect, _ b: CGRect) -> Bool {
 /// this pass ends with (visible and parked alike), Cocoa coordinates.
 public func planSnapshotFlight(
     starts: [WindowID: CGRect], targets: [WindowID: CGRect], displays: [CGRect],
-    hasImage: (WindowID) -> Bool, backdropReady: (Int) -> Bool
+    hasImage: (WindowID) -> Bool, backdropReady: (Int) -> Bool, undrawn: Set<WindowID> = []
 ) -> SnapshotFlightDecision {
     var entries: [SnapshotFlightItem] = []
-    for id in targets.keys.sorted() {
+    for id in targets.keys.sorted() where !undrawn.contains(id) {
         let to = targets[id]!
         let from = starts[id] ?? to
         if let index = overlayDisplayIndex(from: from, to: to, displays: displays) {
@@ -109,7 +113,8 @@ public func planSnapshotFlight(
         return .fallback(reason: .noBackdrop, missing: [])
     }
     let holes = snapshotHoles(
-        layered: Set(items.map(\.id)), targets: targets, displays: displays, activeDisplays: animatedDisplays
+        layered: Set(items.map(\.id)), targets: targets, displays: displays, activeDisplays: animatedDisplays,
+        undrawn: undrawn
     )
     return .snapshot(items: items, holes: holes)
 }
@@ -117,14 +122,16 @@ public func planSnapshotFlight(
 /// SM-16: every window without a layer that is visible at its target on an
 /// overlaid display (`activeDisplays`), sorted by id. Parked windows (their
 /// 1 pt sliver included) and windows on displays without an overlay have no
-/// hole. Recomputed on every retarget with the latest targets: a window that
-/// got a layer loses its hole, one uncovered at the retarget gains one.
+/// hole, nor (SM-31) undrawn ones. Recomputed on every retarget with the
+/// latest targets: a window that got a layer loses its hole, one uncovered
+/// at the retarget gains one.
 public func snapshotHoles(
-    layered: Set<WindowID>, targets: [WindowID: CGRect], displays: [CGRect], activeDisplays: Set<Int>
+    layered: Set<WindowID>, targets: [WindowID: CGRect], displays: [CGRect], activeDisplays: Set<Int>,
+    undrawn: Set<WindowID> = []
 ) -> [SnapshotHole] {
     targets.keys.sorted().compactMap { id in
         let frame = targets[id]!
-        guard !layered.contains(id),
+        guard !layered.contains(id), !undrawn.contains(id),
               let index = overlayDisplayIndex(from: frame, to: frame, displays: displays),
               activeDisplays.contains(index)
         else {
@@ -149,9 +156,10 @@ public struct SnapshotRetargetPlan: Equatable, Sendable {
     public var uncovered: [WindowID]
 }
 
+/// SM-31: an undrawn window joining the flight is neither added nor uncovered.
 public func planSnapshotRetarget(
     active: Set<WindowID>, starts: [WindowID: CGRect], targets: [WindowID: CGRect],
-    displays: [CGRect], activeDisplays: Set<Int>, hasImage: (WindowID) -> Bool
+    displays: [CGRect], activeDisplays: Set<Int>, hasImage: (WindowID) -> Bool, undrawn: Set<WindowID> = []
 ) -> SnapshotRetargetPlan {
     var plan = SnapshotRetargetPlan(retargets: [:], adds: [], uncovered: [])
     for id in targets.keys.sorted() {
@@ -161,7 +169,7 @@ public func planSnapshotRetarget(
             continue
         }
         let from = starts[id] ?? to
-        guard let index = overlayDisplayIndex(from: from, to: to, displays: displays),
+        guard !undrawn.contains(id), let index = overlayDisplayIndex(from: from, to: to, displays: displays),
               activeDisplays.contains(index)
         else {
             continue

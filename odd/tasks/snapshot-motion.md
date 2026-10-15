@@ -1211,6 +1211,66 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   and every `fresh=none ... last=`), `snapshot fresh capture ... ok=true`, ` fade=120` only on resizes; no new
   `anim done` hitches from the mid-flight captures.
 
+- [x] SM-31 (commit pending) — A window that is gone or that macOS no longer draws never flies its cached image.
+  Report (2026-10-14, Spanish, no logs): after an app installer/prompt was dismissed, "aparecía y desaparecía como
+  flicks". Code reading (no live repro): a registered tiled window drops its image only when purged, minimized,
+  gone from the registry, or frameless past 180 s (`prune`); an image of its current size flies at any age (SM-24)
+  and a capture miss keeps it. So (A) a window still valid in AX but no longer drawn (ordered out without a
+  destroyed event, possibly a hidden app) kept its frame and flew its old picture on every motion, vanishing at
+  the hand-off; (B) a window whose AX element died without a matched destroyed event (`ReconcileReport.vanished`)
+  only lost its physical frame, stayed in the layout and flew its newest image in its tile on every flight until a
+  full rescan or the 180 s prune. Today a visible window without an image is a hole (SM-16) and forces the AX
+  fallback only when no moving window has an image (the "whole motion falls back" of older records predates SM-16).
+  Decisions (pure in `GioCore/Snapshot/SnapshotUndrawn.swift` and `SnapshotFlightPlanning.swift`; GioSession
+  decides; `SessionHost.foldSettle` wires two calls):
+  1. Vanished: `SnapshotCacheRefresher.noteVanished` evicts the images at once and adds the window to
+     `undrawnWindows`. Proof of death stays a complete scan (absence is not death):
+     `DiscoveryService.noteSettled(vanished:alive:)` asks, once per window per vanish (again only after the window
+     settled, `alive` = applied + already + parked), for one scan of its pid on the next turn of the session queue
+     (never inside the pass that reported it; the pids of one turn share one scan each, one reflow when the registry
+     changed). That scan is the launch scan without arrivals (`scan(onlyPID:arrivals: false)`: no NW-02 follow, no
+     open timing), the narrowest existing complete-scan path; `scheduleReflow(full:)` would rescan every app. The
+     window is purged through `vanishedWindowIDs` only when its pid was read completely and lacks it; an incomplete
+     read keeps it (undrawn) until a full rescan.
+  2. Undrawn: a settle capture miss `unmatched` (no WindowServer window) for a shown-strip window still at the
+     requested frame, confirmed by FI-08's `evaluateRender` on the on-screen list reading it missing
+     (`snapshotUndrawnWindows`: at least half on a display, nothing of its app over 30 % of it), evicts its images
+     and marks it undrawn. FI-08's unknown windows keep their image: other miss reasons (`ambiguous`, `blank`,
+     `failed`, `over-budget`), peek/edge columns and parking slivers (`offscreenTarget`), ambiguous matches, an
+     app drawing over the frame (`overlapsOther`), a window drawn elsewhere (matched), an empty (unavailable) list.
+     Strip coverage asks for it again once per settle; any delivered image (settle or SM-30 fresh capture), a
+     re-registration or a purge clears it.
+  3. Flight: `planSnapshotFlight`, `planSnapshotRetarget` and `snapshotHoles` take `undrawn`: no layer, no hole
+     (nothing would show through it, and its paint check could only read unknown), never a miss, so it cannot
+     force a `cache-miss` fallback; a motion that moves only undrawn windows is `nothing-visible`. A drawn window
+     without an image keeps SM-16 (hole, fallback only when nothing moving has an image).
+  4. Log: debug `snapshot evict id=P:E reason=vanished|undrawn` once per window becoming undrawn (not per miss or
+     per pass); debug `window vanished scan pids=N purged=N registered=N`. Ids and counts only.
+  RED (observed, compile): `swift build --build-tests` failed: `VanishedWindowScanTests` (5: no `noteSettled` on
+  `DiscoveryService`), `SnapshotFlightPlanningTests` (extra argument `undrawn`), and with the refresher and flight
+  controller changes stashed `SnapshotCacheRefresherTests` (no `undrawnWindows`, no `noteVanished`). Tests:
+  `SnapshotFlightPlanningTests.testAnUndrawnWindowIsNeitherALayerNorAHoleNorAMiss`,
+  `testAMotionOfUndrawnWindowsAloneHasNothingVisibleAndNoMiss`,
+  `testAnUndrawnWindowJoiningAtRetargetIsNeitherAddedNorUncovered`, `testAnUndrawnWindowHasNoHole`;
+  `SnapshotCacheTests.testAnUnmatchedWindowWithNothingOfItsAppOnScreenIsUndrawn`,
+  `testWindowsTheRenderCheckCannotJudgeAreNeverUndrawn`, `testTheEvictLineNamesTheWindowAndTheReasonOnly`;
+  `SnapshotCacheRefresherTests.testAnUnmatchedStripWindowLosesItsImageUntilACaptureMatchesItAgain`,
+  `testWindowsTheRenderCheckCannotJudgeKeepTheirImageAfterAMiss`, `testAVanishedWindowLosesItsImageAtOnce`;
+  `SnapshotFlightTests.testAVanishedWindowIsNotALayerOnTheNextMotion`,
+  `testAnUndrawnWindowIsNotALayerOnLaterMotionsUntilACaptureMatchesItAgain`; `VanishedWindowScanTests` (new:
+  one scan purges, an incomplete scan proves nothing and is not repeated until the window settles, one scan per pid,
+  no scan for unregistered or purged ids, the scan never follows an arrival).
+  GREEN: `swift test --filter "SnapshotFlightPlanningTests|SnapshotCacheTests|SnapshotCacheRefresherTests|SnapshotFlightTests|VanishedWindowScanTests"`:
+  GioSessionTests `Executed 106 tests, with 0 failures`, GioCoreTests `Executed 88 tests, with 0 failures`; with
+  the neighbours (`SnapshotHandoffTests|SnapshotPlanningTests|RenderVerificationTests|CloseGhostTests|DiscoveryServiceTests|WindowEventRouterTests|ForeignSpaceDiscoveryTests|NamedWorkspaceRoutingTests|DeferredFollowTests|RegistrationRetryGuardTests|WindowOpenArrivalTests|CloseGhostControllerTests|MultiDisplayHotPlugTests|RichRuleArrivalTests|FloatingArrivalFocusTests`
+  added): GioSessionTests `Executed 200 tests, with 0 failures`, GioCoreTests `Executed 203 tests, with 0 failures`;
+  `swift build` OK; `git diff --check` clean. Full suite and signed `xcodebuild` not run (integrator). Not
+  unit-tested: the two `SessionHost.foldSettle` calls.
+  LIVE PENDING (`docs/TESTING.md` 15k): a dismissed installer/prompt, Cmd+H on a tiled app, a closed window, each
+  followed by scrolls: no picture that flies and vanishes; note `snapshot evict` and `window vanished scan` lines,
+  and which miss (if any) Cmd+H windows log: the capture matches against every WindowServer window of the app
+  (`.optionAll`), so a hidden app's windows may still match and not read `unmatched` [INFERENCE, unverified].
+
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
 - Start latency (capture) logged; fallback to AX never leaves artifacts; overlay never stuck.
@@ -1260,3 +1320,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-12: live report of a black box beside a growing window (SM-27 crossfade); SM-28 (the covering target image goes under the fading start image) committed. Next: the SM-28 LIVE PENDING check.
 - 2026-10-12: live recording of VS Code Alt+F showed a black box where the window grew and its old layout for ~67 ms after the hand-off (app trusted, blank test blind to partial paints); SM-29 (resized windows always checked, grown-strip and size test, two matching reads after a partial one) committed and pushed. Next: the SM-29 LIVE PENDING check.
 - 2026-10-12: live recording after SM-29 still showed a purple flat box on Slack's first maximize, a 25 s old target image and a 2-frame old layout on VS Code's shrink, and hard cuts; SM-30 (fresh mid-flight capture of resized windows, content-colour fill, 120 ms fade-out of resized layers at the hand-off) committed and pushed. Next: the SM-30 LIVE PENDING check.
+- 2026-10-14: report (no logs) of a window appearing and disappearing after a dismissed installer prompt; SM-31 (vanished and undrawn windows lose their images and never fly, one pid scan proves a vanished window gone) written, targeted tests green. Next: the integrator's full suite and signed build, then the SM-31 LIVE PENDING check.

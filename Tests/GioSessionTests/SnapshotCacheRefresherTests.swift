@@ -1011,6 +1011,72 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertFalse(world.logs.contains { $0.1.contains("secret") }, "never a title")
     }
 
+    // MARK: SM-31 vanished and undrawn windows
+
+    /// idA is on screen; pid 2 draws nothing anywhere.
+    private var onlyADrawn: [ServerWindow] { [ServerWindow(pid: 1, bounds: a)] }
+
+    private func evictions(_ reason: String) -> [String] {
+        world.logs.filter { $0.0 == .debug && $0.1.hasPrefix("snapshot evict") && $0.1.hasSuffix(reason) }.map(\.1)
+    }
+
+    /// A shown-strip window a capture found no WindowServer window for,
+    /// with nothing of its app on screen over its frame, loses its image at
+    /// once (it would fly, then vanish at the hand-off, on every motion)
+    /// and stays undrawn until a later capture matches it again.
+    func testAnUnmatchedStripWindowLosesItsImageUntilACaptureMatchesItAgain() {
+        refresh([idA: a, idB: b])
+        world.serverWindows = onlyADrawn
+        scheduler.advance(by: 31)
+        refresh([idA: a], misses: [idB: .unmatched])
+
+        XCTAssertNotNil(cache.flightImage(idA, startFrame: a, at: scheduler.now), "a drawn window keeps its image")
+        XCTAssertNil(cache.flightImage(idB, startFrame: b, at: scheduler.now), "the old image never flies again")
+        XCTAssertEqual(cache.undrawnWindows, [idB])
+        XCTAssertEqual(evictions("reason=undrawn"), ["snapshot evict id=2:2 reason=undrawn"])
+
+        refresh([:], misses: [idB: .unmatched])
+        XCTAssertEqual(Set(world.captures.last?.windows.keys ?? [:].keys), [idB], "asked again at the next settle")
+        XCTAssertEqual(evictions("reason=undrawn").count, 1, "one line per eviction, not per miss")
+
+        world.serverWindows = [ServerWindow(pid: 1, bounds: a), ServerWindow(pid: 2, bounds: b)]
+        refresh([idB: b])
+        XCTAssertTrue(cache.undrawnWindows.isEmpty, "matched again")
+        XCTAssertNotNil(cache.flightImage(idB, startFrame: b, at: scheduler.now))
+        XCTAssertFalse(world.logs.contains { $0.1.contains("secret") }, "never a title")
+    }
+
+    /// FI-08's unknown windows keep their image: the app draws something
+    /// over the frame, the match was ambiguous, or no on-screen list.
+    func testWindowsTheRenderCheckCannotJudgeKeepTheirImageAfterAMiss() {
+        refresh([idA: a, idB: b])
+        world.serverWindows = [ServerWindow(pid: 1, bounds: a), ServerWindow(pid: 2, bounds: b.insetBy(dx: 100, dy: 100))]
+        scheduler.advance(by: 31)
+        refresh([:], misses: [idB: .unmatched])
+        world.serverWindows = onlyADrawn
+        refresh([:], misses: [idB: .ambiguous])
+        world.serverWindows = []
+        refresh([:], misses: [idB: .unmatched])
+
+        XCTAssertEqual(world.captures.count, 4, "idB was asked for each time")
+        XCTAssertNotNil(cache.flightImage(idB, startFrame: b, at: scheduler.now))
+        XCTAssertTrue(cache.undrawnWindows.isEmpty)
+        XCTAssertTrue(evictions("").isEmpty)
+    }
+
+    /// The reconciler found the window's AX element invalid: its image goes
+    /// at once (one line per vanish), the other window keeps flying.
+    func testAVanishedWindowLosesItsImageAtOnce() {
+        refresh([idA: a, idB: b])
+        cache.noteVanished([idB])
+        cache.noteVanished([idB])
+
+        XCTAssertNil(cache.flightImage(idB, startFrame: nil, at: scheduler.now))
+        XCTAssertNotNil(cache.flightImage(idA, startFrame: a, at: scheduler.now))
+        XCTAssertEqual(cache.undrawnWindows, [idB])
+        XCTAssertEqual(evictions("reason=vanished"), ["snapshot evict id=2:2 reason=vanished"])
+    }
+
     // MARK: Flight images (SM-11, SM-27)
 
     func testFlightPrefersTheMatchingSizeAndLogsHowItResizesWithoutStretching() throws {
