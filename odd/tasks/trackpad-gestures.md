@@ -248,6 +248,48 @@ read for the snap and focus rules.
   windows get the one instant pass under the overlay (invariant 3, as for a keyboard flight),
   and the AX motion with the same velocity stays the fallback (`.ax`, a failed prime). This
   supersedes the TG-03 release and PF-S sentences that kept the settle on the motion player.
+- TG-07 tracking on the overlay (2026-10-15, same report and log: every scroll's tracking ran
+  through the apps' Accessibility lanes, so Xcode and Safari lagged the fingers while the
+  keyboard's moves of the same strip flew at 106-118 fps). The TG-03 transport decision
+  rejected the overlay for three reasons; after PF-S and TG-06 none holds. (1) "It primes
+  asynchronously on main, the first finger frames would be late": the prime is one main hop
+  (a few ms, the same a keyboard flight waits for) and the frames that arrive meanwhile are
+  not lost: the controller keeps the latest frame of each window and applies it when main
+  reports the prime. (2) "Parked columns' images can be missing or stale": the overlay is only
+  taken when every strip window of the workspace, parked ones included, has a cached image and
+  the display a backdrop (`planGestureTransport`, pure); a strip it cannot draw keeps the pump
+  (`gesture scroll transport=ax reason=cache-miss missing=N`, and a capture is scheduled so the
+  next swipe can). The settle refreshes already walk the shown strips, parked columns included
+  (SM-21 strip passes), so a miss should be rare outside a new window [INFERENCE, LIVE PENDING].
+  (3) "The real windows still need a write under it at the end, where the velocity hand-off
+  has to happen": TG-06 made the release velocity travel with an overlay flight, so the settle
+  is the overlay's own retarget of the held layers with the release velocity, and the real
+  windows get the one instant pass under it (invariant 3, exactly as a keyboard flight). The
+  SkyLight transport that TG-03 preferred no longer exists (PF-S), so the alternative was the
+  per-app AX lanes the user reported as laggy. Decisions: `OverlayPort.trackFlight(token:frames:)`
+  sets primed layers' track start and model values without animation and re-arms the
+  watchdog; resting fingers send an empty update every `gestureOverlayKeepAlive` (0.5 s), so a
+  long hold is not aborted while the 1.5 s watchdog still guards a stalled session queue. While
+  the overlay holds the strip no write happens, so `recordSampled`, `markUnverified`,
+  `publishFocusRing` and `animatingPids` are not touched (physical frames stay the real ones).
+  The release passes the `GestureRelease` to `drive`: the held layers retarget from their
+  tracked frames with an explicit velocity (`retargetFlight(velocities:)`, applied to primed
+  layers only) for each layer that still moves more than 1 pt (`gestureSettleVelocities`: a
+  parked layer would otherwise bounce into view); the real windows' animations' velocities are
+  ignored for held layers (they describe a move from where the windows never left); the
+  layers fly in `passSettled`, after the instant pass. An extra finger flies the strip back
+  through the same overlay (no velocity); a mouse-down abandon ends the overlay at once and
+  arms the instant placement, like a mouse-aborted flight. A failed prime, the watchdog, a
+  tap mouse-down abort or a display change hand the scroll to the pump from the current offset
+  (`gesture scroll transport=ax reason=overlay-lost`, or an abandon when a button is down), never
+  while shutting down. `beginTracking` no longer ends the overlay: `holdGesture` either takes a
+  running flight over (its writes folded, its layers replaced in the same main hop, so the
+  overlay never comes down) or, refusing, ends it as before. A keyboard flight still flying is
+  not picked up where its layers are: their presentation frames live on main, and the session
+  never waits on main (it would need a round trip before the first finger frame); the hold
+  starts at the physical frames, which a snapshot flight already set to its targets, the same
+  jump TG-03's `end()` made. A flight held for its paint hand-off is at rest at those frames
+  and is picked up exactly. The vertical workspace swipe and the overview swipe are untouched.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -269,13 +311,13 @@ read for the snap and focus rules.
   on the AX motion player: live 2026-10-15 `anim done ... renderer=ax slowest=Xcode 94-178ms
   missed=17` after every swipe, against `snapshot flight ... fps=106-118` for the same strip
   moved by hotkeys). AX motion stays the fallback. Route: delegated (5+ files across GioCore,
-  GioSession, GioUI, GioDesktop). Branch `fix/gesture-scroll-overlay`. Commit recorded under
-  Progress. LIVE PENDING (TESTING.md 15i (c), (l), (m)).
-- [ ] TG-07 — The fingers move the overlay's images, not the real windows: the overlay primes at
+  GioSession, GioUI, GioDesktop). Branch `fix/gesture-scroll-overlay`. Commit `974ece7`. LIVE
+  PENDING (TESTING.md 15i (c), (l), (m)).
+- [x] TG-07 — The fingers move the overlay's images, not the real windows: the overlay primes at
   the scroll's start holding every strip window of the display, each drain sets the layers'
   frames, the real windows are written once at the release; the AX pump stays the fallback
   (renderer `ax`, no Screen Recording, a missing image or backdrop, a failed prime). Route:
-  delegated, same branch.
+  delegated, same branch. Commit recorded under Progress. LIVE PENDING (TESTING.md 15i (n)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -336,6 +378,18 @@ read for the snap and focus rules.
   SUCCEEDED; `git diff --check` clean. LIVE PENDING (not run: the user's Gio is running on
   this desktop; nothing that captures input or moves windows may run here): TESTING.md 15i
   (c), (l), (m).
+- TG-07: RED `swift build --build-tests` failed (`value of type 'SnapshotFlightController' has
+  no member 'holdGesture' / 'trackGesture'`, `cannot find type 'GestureTransport' in scope`,
+  `cannot find 'gestureOverlayKeepAlive' in scope`, `type 'FakeOverlay' does not conform to
+  protocol 'OverlayPort'`, `extra argument 'velocities' in call`). The first GREEN run failed
+  two `GestureControllerTests` on exact equality (`-41.999999999999986` for `-42`): layer
+  frames are not rounded to whole points like the pump's, so those asserts use an accuracy
+  of 1e-6. GREEN `swift test --filter "GioCoreTests.GestureTransportTests|GioSessionTests.SnapshotFlightTests|GioSessionTests.GestureControllerTests"`:
+  GestureTransportTests 9 (new), GestureControllerTests 16 (+7), SnapshotFlightTests 60
+  (+11), 0 failures; OverlayGeometryTests 24, StripGestureTests 18, GestureFramePumpTests 4
+  unchanged and green. Full `swift test`: GioPackageTests.xctest 2922 tests, 53 skipped, 0
+  failures. Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED; `git diff
+  --check` clean. LIVE PENDING (not run, same reason): TESTING.md 15i (n).
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
@@ -345,3 +399,6 @@ read for the snap and focus rules.
 - TG-05 (with PF-N) committed `b2ed03e` on `main`, not pushed; LIVE PENDING.
 - 2026-10-12: PF-S (`3511e90`) removed SkyLight: TG-03's frames go through the Accessibility
   lanes only and TG-05's alignment and SkyLight repair are gone (Decisions).
+- 2026-10-15: TG-06 committed `974ece7` on `fix/gesture-scroll-overlay` (settle on the overlay
+  with the release velocity); TG-07 committed next on the same branch (tracking on the
+  overlay). Not pushed; LIVE PENDING (TESTING.md 15i (c), (l), (m), (n)).

@@ -163,8 +163,10 @@ final class SessionHost: @unchecked Sendable {
     var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
     var overlayFly: ((Int) -> Void)?
     var overlayRetarget: ((
-        Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [SnapshotDisplayFlight], [CGRect], OverlayDecorations
+        Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [WindowID: CGPoint], [SnapshotDisplayFlight],
+        [CGRect], OverlayDecorations
     ) -> Void)?
+    var overlayTrack: ((Int, [WindowID: CGRect]) -> Void)?
     var overlayEnd: (() -> Void)?
     /// SM-30: a resized layer's fresh image of its landing size (token,
     /// faces), and the hand-off that fades the resized layers out (ids,
@@ -751,10 +753,16 @@ final class SessionHost: @unchecked Sendable {
                 // The fingers take the strip from wherever a motion left it;
                 // passes wait for the release (`performReflow`).
                 motion.stop()
-                overlayFlight.end()
                 renderVerifier.cancel()
                 focusDim.update()
             },
+            holdOverlay: { [unowned self] frames, display, lost in
+                let spring = session.config.animations.resolved(MotionCause.viewScroll.kind).spring
+                let transport = overlayFlight.holdGesture(frames: frames, display: display, spring: spring, lost: lost)
+                publishFocusRing()
+                return transport
+            },
+            trackOverlay: { [unowned self] in overlayFlight.trackGesture($0) },
             recordSampled: { [unowned self] id, frame, now in
                 physicalFrames[id] = frame
                 echoGate.recordApplied(id, frame: frame, at: now)
@@ -778,6 +786,7 @@ final class SessionHost: @unchecked Sendable {
                 // flight: instantly, once the button is up.
                 if reason == .mouse {
                     instantPlacement.arm(.mouse)
+                    overlayFlight.end()
                 }
                 reflowAll()
             },
@@ -1655,14 +1664,16 @@ final class SessionHost: @unchecked Sendable {
         // controller, which runs it once main reports the prime (or the AX
         // motion instead when the overlay never made it). The AX motion is
         // the fallback. TG-06: a gesture's settle flies there too, its layers
-        // starting from where the fingers left the windows with the release
-        // velocity (the AX fallback keeps that velocity as well).
+        // starting where the fingers left the strip with the release velocity
+        // (TG-07: the held layers retarget from their tracked frames); the AX
+        // fallback keeps that velocity as well.
         var snapshotFlight = false
         if animating, snapshotRefresher.rendererUsable(),
            !animations.isEmpty || overlayFlight.isActive
         {
             switch overlayFlight.drive(
-                animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps
+                animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps,
+                release: gestureRelease
             ) {
             case .ax:
                 break
@@ -2270,12 +2281,17 @@ private final class HostOverlayPort: OverlayPort {
     }
 
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
     ) {
         host.overlayRetarget?(
-            token, targets, images, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations
+            token, targets, images, velocities, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations
         )
+    }
+
+    func trackFlight(token: Int, frames: [WindowID: CGRect]) {
+        host.overlayTrack?(token, frames)
     }
 
     func endFlight() {
