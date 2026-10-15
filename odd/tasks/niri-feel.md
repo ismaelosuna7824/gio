@@ -84,6 +84,17 @@ LIVE PENDING. Review: UNAVAILABLE.
   pass it). Supersedes the USER_GUIDE line "Floating windows get the ring too". RED:
   `FocusRingTests.testHiddenForAFloatingWindow` compile failure (`extra argument 'isFloating'`); GREEN.
   LIVE PENDING: focus a floating Finder window, no ring.
+- [x] NF-08 (commit pending, branch `fix/johan-spaces-safari`) — The ring is the default focus
+  indicator (user choice 2026-10-15, after the PF-U..PF-AB measurements showed no meaningful cost
+  difference: in the throwaway compositor experiment both panels were within the noise, and the
+  ring's per-tick refresh was ~2 % of Gio's CPU in the heaviest run). `FocusSectionConfig` defaults
+  to `.ring`; the template writes `indicator = "ring"`; configs that already say `"dim"` keep it.
+  Docs: USER_GUIDE (`[focus]` row and example), ARCHITECTURE (focus dim bullet), TESTING 15c (set
+  the dim explicitly). RED: `FocusDimTests.testDefaultsAreTheRingWithTheDimAtFifteenPercent`
+  ("dim" is not equal to "ring"); `FocusDimPublisherTests` now set the dim in `setUp`; the
+  template wording pin was dropped (the template still must parse to the defaults). GREEN: all
+  bundles 0 failures (UI 312/53 skipped, Session 484, POC 7, Mac 19, MacOS 98, Core 1965); signed
+  build OK. LIVE PENDING: a fresh config (no `indicator` key) shows the ring.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.

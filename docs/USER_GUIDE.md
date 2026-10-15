@@ -213,7 +213,7 @@ Which focus indicator runs.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `indicator` | string | `"dim"` | `"dim"` darkens the other visible tiled windows while nothing moves, so the focused window stays lit. `"ring"` draws the outline configured in `[focus-ring]`. `"none"` draws nothing. Anything else is an error. |
+| `indicator` | string | `"ring"` | `"ring"` draws the outline configured in `[focus-ring]`. `"dim"` darkens the other visible tiled windows while nothing moves, so the focused window stays lit. `"none"` draws nothing. Anything else is an error. |
 | `dim-strength` | number | `0.15` | Opacity of the black dim over unfocused windows, clamped to `0.0...0.5` with a warning. Dark mode uses 80% of it. |
 
 The dim is drawn by click-through overlays (one per display, just above ordinary windows and below floating panels, menus and the Dock) and never takes focus. Only tiled windows are dimmed; floating windows, popovers and any window in front of a dimmed one (other apps included) stay untouched, and so do minimized, parked and off-screen windows. It fades out (80 ms) when a motion, workspace switch, native zoom or window drag starts and fades back in (150 ms) once everything settled; with Reduce Motion it appears and disappears without a fade. Settings, Layout, Focus indicator has a Dim / Ring / None control and a strength slider.
@@ -301,7 +301,7 @@ native-zoom = true
 renderer = "snapshot"
 
 [focus]
-indicator = "dim"
+indicator = "ring"
 dim-strength = 0.15
 
 [focus-ring]

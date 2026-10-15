@@ -218,9 +218,11 @@ final class FocusDimTests: XCTestCase {
 
     // MARK: config
 
-    func testDefaultsAreDimAtFifteenPercent() {
+    /// NF-08: the ring is the default indicator (user choice 2026-10-15);
+    /// the dim keeps its 15 % strength for whoever picks it.
+    func testDefaultsAreTheRingWithTheDimAtFifteenPercent() {
         let focus = defaultGioConfig().focus
-        XCTAssertEqual(focus.indicator, .dim)
+        XCTAssertEqual(focus.indicator, .ring)
         XCTAssertEqual(focus.dimStrength, 0.15, accuracy: 0.0001)
     }
 
@@ -263,7 +265,6 @@ final class FocusDimTests: XCTestCase {
     func testTemplateDocumentsTheSectionAndParsesClean() throws {
         let template = defaultConfigTemplate()
         XCTAssertTrue(template.contains("[focus]"))
-        XCTAssertTrue(template.contains("indicator = \"dim\""))
         let (config, warnings) = try parseGioConfig(template).get()
         XCTAssertEqual(warnings, [])
         XCTAssertEqual(config.focus, FocusSectionConfig())

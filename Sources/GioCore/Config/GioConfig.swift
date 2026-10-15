@@ -197,7 +197,7 @@ public struct GioConfig: Sendable {
     public var animations: AnimationsSectionConfig
     /// NF-01: consumed by the session host (focus ring overlay).
     public var focusRing: FocusRingSectionConfig
-    /// NF-06: which focus indicator runs (dim by default) and its strength.
+    /// NF-06: which focus indicator runs (the ring by default, NF-08) and the dim strength.
     public var focus: FocusSectionConfig
     public var logging: LoggingSectionConfig
     /// Ordered file bindings; applied over dispatcher defaults. A combo set
