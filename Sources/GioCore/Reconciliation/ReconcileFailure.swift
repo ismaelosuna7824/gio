@@ -41,6 +41,39 @@ public struct ReconcileFailure: Equatable, Sendable {
     }
 
     public static let frameMismatchKind = "frameMismatch"
+
+    /// MM-11: the app did not answer in time (lane stall `timeout`, or the
+    /// Accessibility call ended with `kAXErrorCannotComplete`, -25204): the
+    /// same write may land a moment later. A refusal (mismatch, not
+    /// settable, other errors) is not transient.
+    public var isTransient: Bool {
+        kind == "timeout" || kind.hasSuffix(",-25204)")
+    }
+}
+
+/// MM-11: a write that failed only because its app was busy is tried again
+/// once (the window would otherwise stay where it was, on the wrong display
+/// after a monitor move, until the next action touched it). A retry that
+/// fails again is not retried, so a hung app never loops; a successful
+/// write of the window allows a retry again later.
+public struct TransientWriteRetry: Sendable {
+    /// After the app's busy moment (a display change redraws it), still
+    /// before the user notices a window left behind.
+    public static let delay: TimeInterval = 0.5
+
+    private var retried: Set<WindowID> = []
+
+    public init() {}
+
+    /// The windows of `report` to write again after `delay`.
+    public mutating func settle(_ report: ReconcileReport) -> [WindowID] {
+        retried.subtract(report.applied + report.alreadyCorrect + report.parked)
+        let due = report.failed.filter { id in
+            report.failures[id]?.isTransient == true && !retried.contains(id)
+        }
+        retried.formUnion(due)
+        return due.sorted()
+    }
 }
 
 /// `(x,y,w,h)` in whole points; non-finite or absurd values never crash.

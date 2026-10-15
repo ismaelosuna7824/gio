@@ -118,6 +118,10 @@ final class SessionHost: @unchecked Sendable {
     private var renderVerifier: RenderVerifier!
     /// PF-A: one more final pass for windows a busy app made the last one defer.
     private var deferredSettle: DeferredSettle!
+    /// MM-11: windows whose write timed out because their app was busy get
+    /// one more write (session queue only).
+    private var transientRetry = TransientWriteRetry()
+    private var transientRetryPending = false
     /// PA-04: frames Gio placed and verified; the final pass skips their AX
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
@@ -1922,6 +1926,8 @@ final class SessionHost: @unchecked Sendable {
         snapshotRefresher.noteVanished(report.vanished)
         discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
+        // MM-11: a write its busy app timed out is tried once more.
+        scheduleTransientRetry(transientRetry.settle(report))
         // FI-09: a floating restore this settle attempted is not repeated.
         reflowPlanner.restoreSettled(visible: visible, deferred: report.deferred)
         // Only visible windows written here are worth a render check;
@@ -1931,6 +1937,29 @@ final class SessionHost: @unchecked Sendable {
         }
         renderVerifier.recordSettled(from: report.settledFrames)
         GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
+    }
+
+    /// MM-11: one deferred, non-animated pass for windows whose app did not
+    /// answer in time; the failed windows are untrusted, so it writes them.
+    private func scheduleTransientRetry(_ ids: [WindowID]) {
+        guard !ids.isEmpty, !transientRetryPending else {
+            return
+        }
+        transientRetryPending = true
+        GioLog.record(
+            .info,
+            "reconcile retry windows=\(ids.count) ids=\(ids.map { "\($0.pid):\($0.elementID)" }.joined(separator: ",")) reason=busy"
+        )
+        scheduler.asyncAfter(TransientWriteRetry.delay) { [weak self] in
+            guard let self else {
+                return
+            }
+            transientRetryPending = false
+            guard !isShuttingDown else {
+                return
+            }
+            performReflow(animate: false)
+        }
     }
 
     /// Every window of the pass is on its final frame (or failed). A zoom

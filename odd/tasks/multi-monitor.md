@@ -733,6 +733,27 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   `testAJumpingWindowDoesNotFlyAcrossTheDisplay` asserted exactly that). GREEN: full `swift test`
   UI 310 (53 skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1970, 0 failures. LIVE
   PENDING: same recording scenario, no bare-desktop frame.
+- [x] MM-11 (commit below) — A write its busy app timed out is retried once. Evidence: screen
+  recording of both displays (`screencapture -v -D1/-D2`, 2026-10-15 22:21:58Z) during the
+  `move-window-to-display` / `move-*-to-monitor-*` workloads, plus the log. At 22:22:07.685Z
+  `reconcile failure id=30453:10 app=Xcode kind=writeFailed(size,-25204)
+  requested=(-1076,-216,1068,1394) actual=(904,8,888,1114)` (Xcode busy 295 ms, the 0.25 s AX
+  timeout) and `snapshot handoff waited ms=312 ... held=stale`; the frame 1.1 s later shows Xcode
+  still on the built-in display and the external without it: the overlay flew it, the real
+  window stayed. Nothing wrote it again until the next action. Fix:
+  `ReconcileFailure.isTransient` (`timeout`, or AX `-25204` cannotComplete) and
+  `TransientWriteRetry` (Core: a transient failure is due once; a retry that fails again is not
+  retried, a success resets it); `SessionHost.foldSettle` schedules one non-animated pass after
+  0.5 s (`reconcile retry windows=N ids=... reason=busy`). RED: compile (no `isTransient`, no
+  `TransientWriteRetry`). GREEN: `TransientWriteRetryTests` 2/2; full `swift test` UI 313 (53
+  skipped) / Session 513 / POC 7 / Mac 19 / MacOS 98 / Core 1996, 0 failures; Release build OK.
+  The second recorded run (22:27Z) had no transient failure, so the retry did not fire live.
+  Not changed, seen in the same runs: Code, Figma and Postman clamp their height on the external
+  display (`frameMismatch requested=(-1076,-216,1068,1394) actual=(-1076,0,1100,1130)` or
+  `(...,-224,1100,1354)`: top kept at y=1130, the built-in display's visible top), Code/Figma
+  `(8,8)` -> `(8,16)` on the built-in one, and `handoff waited ms=305-320 held=partial` when such
+  a resized window never paints its target size. LIVE PENDING: a busy app sent across displays
+  lands on the right display ~0.5 s later.
 
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
