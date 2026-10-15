@@ -85,7 +85,7 @@ LIVE PENDING (persistence across restart, routing + follow, picker scan, real NS
   `RulePlacementTests.testAWindowDiscoveryFloatedIgnores...` guard the boundary. GREEN; bundles UI 310 (53
   skipped) / Session 479 / POC 7 / Mac 19 / MacOS 95 / Core 1971, 0 failures. LIVE PENDING: type in Chrome's
   address bar on the external display.
-- [x] NW-08 (commit pending) — Live (2026-10-15, after NW-07): the "music" workspace looked empty and Music
+- [x] NW-08 (`fdf06a8`) — Live (2026-10-15, after NW-07): the "music" workspace looked empty and Music
   floated behind the tiles of "Code". `gio status`: `music` 0 windows, `floatingWindows` = Music `91010:12`
   reason `dialog`; log: `discovery exclude pid=91010 app=Music float(dialog)` at the startup scan (its only
   window, so Music's main window reports a dialog subrole; [INFERENCE] from the log, the AX subrole was not

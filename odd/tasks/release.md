@@ -189,7 +189,7 @@ critical or high issue; every finding below was checked against the code before 
   test, build, publish) green; `v0.1.1` tagged on the merge commit `eac0398`, assets `Gio-0.1.1.dmg`,
   `.sha256`, `Gio.dmg`; the public API's `releases/latest` is `v0.1.1` and `latest/download/Gio.dmg` redirects
   to its asset. The notes carried the PR's instructions (trimmed by hand on the release, fixed by RL-13).
-- [ ] RL-13 (commit pending) — The user asked whether all those runs cost Actions minutes. Standard GitHub-hosted
+- [ ] RL-13 (`698de8c`) — The user asked whether all those runs cost Actions minutes. Standard GitHub-hosted
   runners are free for public repositories (GitHub Docs, Actions billing); the earlier private-repo runs did
   count. Still one run per commit now: CI no longer runs on pushes to `main` (release.yml tests the merge) and
   skips pull-request runs from this repository's own branches (the branch push already tested that commit; a
