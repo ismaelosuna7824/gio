@@ -197,8 +197,10 @@ private final class WindowLayers {
     }
 
     /// SM-32: from now on the layer shows `target` (the image of the end
-    /// size: a face it has, or a new one on top) alone, or without one its
-    /// face closest in size. No dissolve: two layouts never mix.
+    /// size: a face it has, or a new one on top), or without one its face
+    /// closest in size. No dissolve: two layouts never blend. SM-34: a
+    /// larger image covering the whole flight stays under it (a shrink keeps
+    /// real content where the shown image ends, not a flat fill).
     func show(_ target: SnapshotFace<CGImage>?) {
         let index: Int
         if let target {
@@ -209,7 +211,10 @@ private final class WindowLayers {
         } else {
             index = overlayClosestFace(sources.map(\.size), to: track.end.bounds.size)
         }
-        shown = shown.showing(index)
+        let underlay = overlayUnderlay(
+            sizes: sources.map(\.size), shown: index, start: track.start.bounds.size, end: track.end.bounds.size
+        )
+        shown = shown.showing(index, over: underlay)
         if faces.isEmpty, overlayDrawsDirect(
             image: sources[0].size, faces: sources.count, start: track.start.bounds.size, end: track.end.bounds.size
         ) {
@@ -269,14 +274,21 @@ private final class WindowLayers {
     }
 
     /// The clip draws faces: its own contents go, a layer per source not yet
-    /// drawn joins on top.
+    /// drawn joins, every face takes its drawing order, and only the
+    /// underlay (SM-34), when there is one, draws its fill: the faces above
+    /// it end where their image ends.
     private func buildFaces() {
         clip.contents = nil
         for source in sources.dropFirst(faces.count) {
             let face = FaceLayers(source)
-            face.group.zPosition = CGFloat(faces.count)
             faces.append(face)
             clip.addSublayer(face.group)
+        }
+        for (position, index) in shown.order.enumerated() {
+            faces[index].group.zPosition = CGFloat(position)
+        }
+        for (index, face) in faces.enumerated() {
+            face.fill.isHidden = shown.underlay.map { $0 != index } ?? false
         }
     }
 

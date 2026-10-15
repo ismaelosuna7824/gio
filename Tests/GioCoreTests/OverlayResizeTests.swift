@@ -65,6 +65,26 @@ final class OverlayResizeTests: XCTestCase {
         XCTAssertEqual(base.showing(0), base, "the start image is the target: nothing changes")
     }
 
+    /// Live 2026-10-15 (third recording, after SM-32/33): un-maximizing showed
+    /// the narrow image over a flat fill across the rest of the still-wide
+    /// frame for the first frames, a dark block that read as a blink. A
+    /// larger image that covers the whole flight stays under the new one
+    /// (side by side, never blended), so the part of the frame being cut
+    /// off keeps real content instead of a fill.
+    func testShrinkingKeepsTheLargerImageUnderTheNewOne() {
+        XCTAssertEqual(overlayUnderlay(sizes: [maximized, column], shown: 1, start: maximized, end: column), 0)
+        XCTAssertNil(overlayUnderlay(sizes: [column, maximized], shown: 1, start: column, end: maximized), "growing: the new image covers")
+        XCTAssertNil(overlayUnderlay(sizes: [column], shown: 0, start: maximized, end: column), "no larger image: the fill")
+        let shrink = OverlayFaces().showing(1, over: 0)
+        XCTAssertEqual(shrink.opacities, [1, 1])
+        XCTAssertEqual(shrink.order, [0, 1], "the larger image under the new one")
+        XCTAssertEqual(shrink.underlay, 0)
+        let backAgain = shrink.showing(1).showing(0, over: 1)
+        XCTAssertEqual(backAgain.order.last, 0, "the shown face is always on top")
+        XCTAssertEqual(backAgain.order.dropLast().last, 1)
+        XCTAssertEqual(OverlayFaces().showing(1).underlay, nil)
+    }
+
     func testWithoutAnImageOfTheNewSizeTheClosestFaceWins() {
         XCTAssertEqual(overlayClosestFace([column, maximized], to: CGSize(width: 1500, height: 900)), 1)
         XCTAssertEqual(overlayClosestFace([column, maximized], to: CGSize(width: 900, height: 900)), 0)

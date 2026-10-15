@@ -1294,7 +1294,18 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   ring above replaces this one"), but the live ring panel is shown by a later main-queue hop
   (`focus ring shown` at the hand-off). Now the ring copy fades out with shadow, image and dim over the 120 ms
   hand-off, at the frame the live ring takes. Not unit-tested (the overlay's CALayers are private, main-thread
-  only; no overlay test harness). LIVE PENDING: `Alt+F` back on a ringed window, the ring never blinks.
+  only; no overlay test harness). Live (third recording, 07:59, build with it): no frame without the ring.
+- [x] SM-34 (commit pending, branch `fix/johan-spaces-safari`) — "Aún pasa" (third recording, 07:59:40, 747
+  frames VFR, the running Gio's GioUI.o built 07:59:15). The single-frame scan found no outlier any more;
+  every frame of one maximize and one un-maximize viewed: the maximize swaps cleanly; the un-maximize's first
+  frame shows the narrow image at the left and a flat dark fill across the rest of the still-wide frame, which
+  then shrinks within a few frames: a dark block flashing in, the blink left. Fix: `overlayUnderlay` (the
+  largest other image covering every frame of the flight, when the shown one does not: a shrink's start image)
+  stays under the shown face (`OverlayFaces.showing(_:over:)`, `order`, `underlay`), and only the underlay
+  draws its fill: the part being cut off shows the old content side by side, never blended. RED:
+  `OverlayResizeTests.testShrinkingKeepsTheLargerImageUnderTheNewOne` compile failure (`overlayUnderlay`,
+  `over:`, `underlay` missing); GREEN; bundles UI 310 (53 skipped) / Session 481 / POC 7 / Mac 19 / MacOS 95
+  / Core 1962, 0 failures. LIVE PENDING: `Alt+F` back on Postman, no dark block.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.

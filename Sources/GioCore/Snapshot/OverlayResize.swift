@@ -54,26 +54,41 @@ public func snapshotResizeMode(
 
 // MARK: faces
 
-/// The images (faces) of one layer, drawn in index order (a new face goes on
-/// top), and the opacity of each. One face shows at a time (SM-32): showing
-/// another hides every other face at once, so no frame mixes two layouts.
-/// SM-30's fresh face is the exception: it goes on top of the shown face
+/// The images (faces) of one layer, their drawing order (`order`, face
+/// indices bottom to top) and the opacity of each. One face shows at a time
+/// (SM-32): showing another hides every other face at once, so no frame
+/// blends two layouts. SM-34: a larger image that covers the whole flight
+/// may stay under the shown one (`underlay`, side by side, never blended),
+/// so a shrinking frame shows real content where the shown image ends
+/// instead of a flat fill. SM-30's fresh face goes on top of the shown face
 /// (both of the landing size) and the overlay fades it in.
 public struct OverlayFaces: Equatable, Sendable {
     public private(set) var opacities: [Double]
+    public private(set) var order: [Int]
+    /// The face kept under the shown one (SM-34), nil when there is none.
+    public private(set) var underlay: Int?
 
     /// One face, opaque.
     public init() {
         opacities = [1]
+        order = [0]
     }
 
     public var count: Int { opacities.count }
 
-    /// Face `index` alone (`count`: a new face, added on top).
-    public func showing(_ index: Int) -> OverlayFaces {
+    /// Face `index` on top (`count`: a new face), over face `underlay` when
+    /// given; every other face hidden.
+    public func showing(_ index: Int, over underlay: Int? = nil) -> OverlayFaces {
         var faces = self
         let shown = min(index, count)
-        faces.opacities = (0...max(count - 1, shown)).map { $0 == shown ? 1 : 0 }
+        if shown == count {
+            faces.order.append(shown)
+        }
+        let kept = underlay.flatMap { $0 != shown && $0 < faces.order.count ? $0 : nil }
+        faces.opacities = faces.order.indices.map { $0 == shown || $0 == kept ? 1 : 0 }
+        faces.order.removeAll { $0 == shown || $0 == kept }
+        faces.order += [kept, shown].compactMap { $0 }
+        faces.underlay = kept
         return faces
     }
 
@@ -82,9 +97,29 @@ public struct OverlayFaces: Equatable, Sendable {
     /// one in over the shown face).
     public func freshened() -> OverlayFaces {
         var faces = self
+        faces.order.append(count)
         faces.opacities.append(1)
         return faces
     }
+}
+
+/// SM-34: the face to keep under face `shown` (see `OverlayFaces`): the
+/// largest other image that covers every frame of a flight from `start` to
+/// `end` (within the cache's 2 pt), when `shown` itself does not. Nil when
+/// the shown image covers (a grow) or no image does (its fill then shows).
+public func overlayUnderlay(
+    sizes: [CGSize], shown: Int, start: CGSize, end: CGSize, tolerance: CGFloat = 2
+) -> Int? {
+    let reach = CGSize(width: max(start.width, end.width), height: max(start.height, end.height))
+    func covers(_ size: CGSize) -> Bool {
+        size.width >= reach.width - tolerance && size.height >= reach.height - tolerance
+    }
+    guard sizes.indices.contains(shown), !covers(sizes[shown]) else {
+        return nil
+    }
+    return sizes.indices
+        .filter { $0 != shown && covers(sizes[$0]) }
+        .max { sizes[$0].width * sizes[$0].height < sizes[$1].width * sizes[$1].height }
 }
 
 /// SM-30: how long a fresh face fades in on top of a layer (eased).
