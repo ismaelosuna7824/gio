@@ -752,16 +752,19 @@ public struct ServerWindowKey: Hashable, Sendable {
 /// wallpaper. Gio's own windows and every managed window (matched by pid
 /// and a frame within the render tolerance) are left out, so Gio moving its
 /// own layout never changes the fingerprint; anything else appearing,
-/// closing or moving does, and the backdrop is captured again.
+/// closing or moving does, and the backdrop is captured again. PF-AJ: so is
+/// every window that shows no more than a parking sliver on any of
+/// `displays` (it is not in the picture; parked windows macOS clamped or
+/// whose app kept its own size used to change it on every re-park).
 public func unmanagedWindowFingerprint(
-    server: [ServerWindow], managed: [WindowID: CGRect], ownPid: pid_t
+    server: [ServerWindow], managed: [WindowID: CGRect], ownPid: pid_t, displays: [CGRect]
 ) -> Set<ServerWindowKey> {
     var byPid: [pid_t: [CGRect]] = [:]
     for (id, frame) in managed {
         byPid[id.pid, default: []].append(frame)
     }
     var result: Set<ServerWindowKey> = []
-    for window in server where window.pid != ownPid {
+    for window in server where window.pid != ownPid && showsMoreThanASliver(window.bounds, on: displays) {
         if let frames = byPid[window.pid], frames.contains(where: { near($0, window.bounds) }) {
             continue
         }
@@ -771,6 +774,13 @@ public func unmanagedWindowFingerprint(
         ))
     }
     return result
+}
+
+private func showsMoreThanASliver(_ frame: CGRect, on displays: [CGRect]) -> Bool {
+    displays.contains { display in
+        let inside = frame.intersection(display)
+        return !inside.isNull && inside.width > parkingSliver * 2 && inside.height > parkingSliver * 2
+    }
 }
 
 /// Whether a managed window is cut out of the backdrop: only windows that

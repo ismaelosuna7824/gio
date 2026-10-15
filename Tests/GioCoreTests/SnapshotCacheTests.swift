@@ -261,12 +261,38 @@ final class SnapshotCacheTests: XCTestCase {
             ServerWindow(pid: 77, bounds: CGRect(x: 0, y: 0, width: 1000, height: 800)),
             ServerWindow(pid: 20, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
         ]
-        let print = unmanagedWindowFingerprint(server: server, managed: [id(1): managed], ownPid: 77)
+        let print = unmanagedWindowFingerprint(
+            server: server, managed: [id(1): managed], ownPid: 77, displays: [CGRect(x: 0, y: 0, width: 1800, height: 1169)]
+        )
         XCTAssertEqual(
             print, [ServerWindowKey(pid: 10, x: 900, y: 0, width: 300, height: 200), ServerWindowKey(pid: 20, x: 100, y: 100, width: 50, height: 50)]
         )
         let moved = server.map { $0.pid == 20 ? ServerWindow(pid: 20, bounds: $0.bounds.offsetBy(dx: 10, dy: 0)) : $0 }
-        XCTAssertNotEqual(unmanagedWindowFingerprint(server: moved, managed: [id(1): managed], ownPid: 77), print)
+        XCTAssertNotEqual(
+            unmanagedWindowFingerprint(
+                server: moved, managed: [id(1): managed], ownPid: 77, displays: [CGRect(x: 0, y: 0, width: 1800, height: 1169)]
+            ),
+            print
+        )
+    }
+
+    /// PF-AJ: live with two displays, parked and hidden-workspace windows
+    /// whose WindowServer frame is not the one Gio recorded (macOS clamps
+    /// them; an app keeps its own width) counted as unmanaged windows, so
+    /// every re-park changed the fingerprint and recaptured both backdrops
+    /// (9 of 17 backdrop runs in the monitor workload). A window showing no
+    /// more than a parking sliver on any display is not in the picture.
+    func testWindowsOffEveryDisplayDoNotEnterTheFingerprint() {
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let server = [
+            ServerWindow(pid: 10, bounds: CGRect(x: 1799, y: 8, width: 970, height: 1114)),
+            ServerWindow(pid: 11, bounds: CGRect(x: 1799, y: -1113, width: 888, height: 1114)),
+            ServerWindow(pid: 12, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
+        ]
+        XCTAssertEqual(
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, displays: [display]),
+            [ServerWindowKey(pid: 12, x: 100, y: 100, width: 50, height: 50)]
+        )
     }
 
     func testBackdropExcludesOnlyWindowsThatCanFly() {
