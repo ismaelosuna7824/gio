@@ -690,6 +690,13 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   GREEN: full `swift test` UI 310 (53 skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 /
   Core 1966, 0 failures. LIVE PENDING: external on the left, `Alt+L` across the strip, no empty
   band; `render missing detail` still wanted if a column is missing although its tile is shown.
+  Second report (20:16 local, two screenshots, still the 20:08 build without MM-08): Tern
+  maximized (Alt+F, 1784 pt), Alt+L onto OrbStack: OrbStack at 904, the left half empty (Tern at
+  -888..896 across the shared edge, parked). Same cause; regression test
+  `testLeavingAMaximizedColumnLeavesNoEmptyHalf`: with the pre-MM-08 planner `OrbStack 904
+  instead of 8, no Postman at 904` (2 failures), with MM-08 `Executed 19 tests, with 0
+  failures`. Limit: when the focused column is the strip's last one there is nothing to show on
+  the free side, the offset is clamped and the parked neighbour still leaves its side empty.
 
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;

@@ -224,6 +224,24 @@ final class MultiDisplayRepairTests: XCTestCase {
         XCTAssertEqual(planned.plan.visible[id(2)]?.minX, -74)
     }
 
+    func testLeavingAMaximizedColumnLeavesNoEmptyHalf() throws {
+        // Live 2026-10-14 20:16 (screenshots): Tern maximized (Alt+F, 1784 pt)
+        // at offset 0, then Alt+L onto OrbStack. The minimal reveal put OrbStack
+        // at 904 and Tern at -888..896 across the shared edge: parked, the left
+        // half empty. Flush left, Postman peeks on the right instead.
+        var strip = workspace(columns: 4, focus: 1, spec: .points(888))
+        strip.columns[0].widthSpec = .points(1784)
+        strip.viewportOffset = 0
+        let planned = try planDisplayLayout(
+            workspace: strip, modes: [:], engine: engine,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        assertConfined(planned, display: Live.builtInFrame, other: Live.externalFrame, "built-in")
+        XCTAssertEqual(planned.plan.visible[id(1)]?.minX, 8)
+        XCTAssertEqual(planned.plan.visible[id(2)]?.minX, 904)
+        XCTAssertNotNil(planned.plan.parked[id(0)])
+    }
+
     func testAStripRightOfItsSharedEdgeAlignsTheFocusedColumnRight() throws {
         // The external: the built-in shares its right edge. Moving left onto
         // column 1, the minimal reveal leaves column 2 across that edge;
