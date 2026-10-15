@@ -335,7 +335,7 @@ public struct AnimationsForm: Equatable, Sendable {
     public func preview(for kind: AnimationKind) -> MotionPreviewParameters {
         guard let row = kinds[kind], row.custom else {
             var inherited = preview
-            inherited.enabled = enabled && (kinds[kind]?.enabled ?? true)
+            inherited.enabled = enabled && (kinds[kind]?.enabled ?? kind.enabledByDefault)
             return inherited
         }
         return MotionPreviewParameters(
@@ -381,6 +381,7 @@ public struct AnimationsForm: Equatable, Sendable {
 
 /// NA-04: one animation's row: on/off, and its own curve when custom.
 public struct AnimationKindForm: Equatable, Sendable {
+    public let kind: AnimationKind
     public var enabled: Bool
     public var custom: Bool
     public var curve: MotionCurveKind
@@ -389,9 +390,10 @@ public struct AnimationKindForm: Equatable, Sendable {
     public var durationMilliseconds: Double
 
     public init(kind: AnimationKind, config: AnimationsSectionConfig) {
+        self.kind = kind
         let own = config.overrides[kind] ?? AnimationOverride()
         let resolved = config.resolved(kind)
-        enabled = own.enabled ?? true
+        enabled = own.enabled ?? kind.enabledByDefault
         custom = own.hasCustomTiming
         curve = resolved.curve
         dampingRatio = resolved.spring.dampingRatio
@@ -399,11 +401,11 @@ public struct AnimationKindForm: Equatable, Sendable {
         durationMilliseconds = Double(resolved.durationMilliseconds)
     }
 
-    /// Only what this row changes: `enabled = false`, and when custom the
-    /// curve with the parameters it uses (spring: damping and stiffness;
-    /// ease-out: duration).
+    /// Only what this row changes: `enabled` when it differs from the kind's
+    /// default, and when custom the curve with the parameters it uses
+    /// (spring: damping and stiffness; ease-out: duration).
     public var override: AnimationOverride {
-        var result = AnimationOverride(enabled: enabled ? nil : false)
+        var result = AnimationOverride(enabled: enabled == kind.enabledByDefault ? nil : enabled)
         guard custom else {
             return result
         }

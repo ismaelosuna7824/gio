@@ -116,6 +116,8 @@ public func defaultConfigTemplate() -> String {
 
     [animations.window-resize]
     # Maximize, fullscreen and width changes (native zoom neighbours too).
+    # Off by default: the window takes its new size at once. true animates it.
+    # enabled = false
 
     [focus]
     # How the focused window stands out: "dim" (default) darkens the other

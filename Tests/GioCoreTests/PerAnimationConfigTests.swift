@@ -30,12 +30,32 @@ final class PerAnimationConfigTests: XCTestCase {
         config.springStiffness = 500
         for kind in AnimationKind.allCases {
             let resolved = config.resolved(kind)
-            XCTAssertTrue(resolved.enabled)
+            XCTAssertEqual(resolved.enabled, kind != .windowResize, "\(kind)")
             XCTAssertEqual(resolved.curve, .easeOut)
             XCTAssertEqual(resolved.durationMilliseconds, 320)
             XCTAssertEqual(resolved.spring, config.spring)
-            XCTAssertTrue(resolved.isActive)
         }
+    }
+
+    /// Live 2026-10-15: animating a resize with window images always shows
+    /// the content jump from one layout to the other (Alt+F on Postman, three
+    /// recordings); the user found an instant resize better and chose it as
+    /// the default. `[animations.window-resize] enabled = true` brings the
+    /// animation back.
+    func testResizesAreInstantByDefaultAndTheirTableTurnsThemOn() {
+        let defaults = AnimationsSectionConfig()
+        XCTAssertFalse(defaults.resolved(.windowResize).isActive)
+        XCTAssertTrue(defaults.resolved(.windowMovement).isActive)
+        let (config, warnings) = parse("""
+        [animations.window-resize]
+        enabled = true
+        """)
+        XCTAssertEqual(warnings, [])
+        XCTAssertTrue(config.animations.resolved(.windowResize).isActive)
+        var off = AnimationsSectionConfig()
+        off.enabled = false
+        off.overrides[.windowResize] = AnimationOverride(enabled: true)
+        XCTAssertFalse(off.resolved(.windowResize).isActive, "the global switch still turns every animation off")
     }
 
     func testOverridesReplaceOnlyWhatTheySet() {
