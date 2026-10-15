@@ -127,7 +127,7 @@ final class WriteLaneTests: XCTestCase {
 
     func testLanesOverlapSoTotalTimeIsTheSlowestLaneNotTheSum() {
         let ids = [10, 20, 30, 40].flatMap { pid in [id(1, pid: pid_t(pid)), id(2, pid: pid_t(pid))] }
-        let actuator = seeded(ids, delays: [10: 0.08, 20: 0.08, 30: 0.08, 40: 0.08])
+        let actuator = seeded(ids, delays: [10: 0.2, 20: 0.2, 30: 0.2, 40: 0.2])
         let reconciler = patientReconciler(actuator)
         let started = Date()
         let report = reconciler.reconcile(
@@ -135,8 +135,9 @@ final class WriteLaneTests: XCTestCase {
             focused: nil, currentlyFocused: nil
         )
         let elapsed = Date().timeIntervalSince(started)
-        // Serial would take 8 x 80ms = 640ms; four overlapping lanes ~160ms.
-        XCTAssertLessThan(elapsed, 0.45)
+        // Serial would take 8 x 200 ms = 1.6 s; four overlapping lanes ~400 ms.
+        // The bound sits between them with room for a loaded runner.
+        XCTAssertLessThan(elapsed, 1.0)
         XCTAssertEqual(report.applied, ids.sorted())
         XCTAssertTrue(report.failed.isEmpty)
     }

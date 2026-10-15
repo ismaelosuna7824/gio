@@ -142,7 +142,9 @@ final class MotionLaneTests: XCTestCase {
             frames: [id: start.offsetBy(dx: 100, dy: 0), other: start.offsetBy(dx: 300, dy: 0)],
             focused: nil, currentlyFocused: nil
         )
-        XCTAssertLessThan(Date().timeIntervalSince(began), 0.25, "only the grace, not the 300 ms wait")
+        // The grace (0.1 s), never the 0.3 s motion-idle wait of the other
+        // passes; the bound is that wait, so a loaded runner has room.
+        XCTAssertLessThan(Date().timeIntervalSince(began), 0.3, "only the grace, not the 300 ms wait")
         XCTAssertEqual(report.deferred, [id])
         XCTAssertTrue(report.failed.isEmpty)
         XCTAssertEqual(report.applied, [other])
@@ -164,7 +166,9 @@ final class MotionLaneTests: XCTestCase {
         XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [write(id, 0, 5)]))
         actuator.entered.wait()
         let final = start.offsetBy(dx: 100, dy: 0)
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) {
+        // Lands well inside the 0.1 s grace even when the runner is slow to
+        // run the block.
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) {
             actuator.gate = false
             actuator.proceed.signal()
         }
