@@ -146,6 +146,10 @@ public final class IPCServer: @unchecked Sendable {
             }
             let conn = accept(fd, nil, nil)
             guard conn >= 0 else {
+                let delay = ipcAcceptRetryDelay(errno: errno)
+                if delay > 0 {
+                    Thread.sleep(forTimeInterval: delay)
+                }
                 continue
             }
             serveConnection(conn)
@@ -194,4 +198,17 @@ public func sendIPCRequest(_ argv: [String], socketPath: String) throws -> IPCRe
         throw IPCError.decodeFailed
     }
     return response
+}
+
+/// PF-Y: how long the accept loop waits after `accept` failed with `errno`.
+/// An interrupted or aborted connection is retried at once; anything else
+/// (out of descriptors or buffers) may last, so the loop waits instead of
+/// spinning a thread at full speed.
+public func ipcAcceptRetryDelay(errno code: Int32) -> TimeInterval {
+    switch code {
+    case EINTR, ECONNABORTED:
+        return 0
+    default:
+        return 0.1
+    }
 }

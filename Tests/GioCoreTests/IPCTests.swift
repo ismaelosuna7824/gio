@@ -141,4 +141,16 @@ final class IPCTests: XCTestCase {
         let help = dispatchIPC(["help"], session: &session)
         XCTAssertTrue(help.ok)
     }
+
+    /// PF-Y: the accept loop retried every failure at once, so a lasting one
+    /// (out of file descriptors) would spin a thread at 100 % CPU for the
+    /// rest of the session. Only an interrupted or aborted connection is
+    /// retried at once; any other failure waits.
+    func testAcceptFailuresBackOffUnlessTransient() {
+        XCTAssertEqual(ipcAcceptRetryDelay(errno: EINTR), 0)
+        XCTAssertEqual(ipcAcceptRetryDelay(errno: ECONNABORTED), 0)
+        for code in [EMFILE, ENFILE, ENOBUFS, ENOMEM, EINVAL] {
+            XCTAssertGreaterThanOrEqual(ipcAcceptRetryDelay(errno: code), 0.1, "errno \(code)")
+        }
+    }
 }
