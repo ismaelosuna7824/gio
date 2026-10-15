@@ -711,6 +711,28 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1969, 0 failures. Cost: entering
   and leaving such a column resizes it (888 <-> 1784). LIVE PENDING: Zed maximized, Alt+L onto
   Xcode with the external on the left.
+- [x] MM-10 (commit pending) — Columns leaving by the shared edge slide out instead of vanishing.
+  Report (2026-10-14 20:59 local): "parpadea ... cuando me muevo lento y llego a WhatsApp, y a
+  veces en otras pantallas". Evidence: screen recording 03:59:34Z-03:59:59Z (3600x2338, VFR, ~60
+  fps, start aligned to the first focusRight at 36.694Z, t≈1.75 s) and the log. Every Alt+L from
+  Postman onto WhatsApp (37.150Z, 45.373Z, 53.493Z, 57.125Z): `reconcile dispatched windows=4`,
+  `snapshot flight layers=2`, `reconcile applied=2 parked=2`. Contact sheets (t 2.15-2.85 s and
+  10.40-10.95 s): OrbStack and Postman on screen, then ONE frame of bare wallpaper (t≈2.375),
+  then WhatsApp and Slack sliding in from the right over the wallpaper. Cause (code): MM-08
+  aligns WhatsApp flush left, so OrbStack and Postman leave by the left edge, which the external
+  display shares; `parkedTarget` parks them far side (right sliver) and MM-04 makes that a jump
+  whose snapshot layer "starts at its target" (a parked frame: no layer), so they disappear at
+  the first overlay frame. Flights themselves were smooth (109-120 fps). Fix: `ReflowPlan.jumps`
+  carries a `JumpPath` (leaving: tile -> strip frame pushed past the display edge; returning: the
+  pre-scroll strip frame pushed past the edge -> tile); `SnapshotFlightController.drive(jumps:)`
+  flies the layer along it, pinned to the window's own display (`pinnedDisplays` in
+  `planSnapshotFlight` / `planSnapshotRetarget`) so its overlay clips it at the edge and nothing is
+  drawn on the other display. The real window still jumps under the overlay; the AX renderer
+  still jumps. RED: compile (`ReflowPlan.jumps` was a set, no `JumpPath`, no `pinnedDisplays`);
+  behaviourally the old drive gave the far-side window no layer (the replaced
+  `testAJumpingWindowDoesNotFlyAcrossTheDisplay` asserted exactly that). GREEN: full `swift test`
+  UI 310 (53 skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1970, 0 failures. LIVE
+  PENDING: same recording scenario, no bare-desktop frame.
 
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;

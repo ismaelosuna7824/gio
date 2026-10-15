@@ -28,9 +28,36 @@ public struct ReflowPlan: Equatable, Sendable {
     public var entries: Set<WindowID> = []
     /// MM-04: windows parking on the far side of their display (the near
     /// side is another display) or coming back from there: no flight across
-    /// the display; they are pre-positioned at their target instead (and the
-    /// snapshot overlay starts their layers there).
-    public var jumps: Set<WindowID> = []
+    /// the display; they are pre-positioned at their target instead. MM-10:
+    /// the snapshot overlay slides their layers along `JumpPath` (out by,
+    /// or in from, the shared edge, clipped by their display's overlay).
+    public var jumps: [WindowID: JumpPath] = [:]
+}
+
+/// MM-10: the layer path of a window that jumps (`ReflowPlan.jumps`): its
+/// real window is written once at the motion start, while its snapshot
+/// layer slides `from` -> `to` on `display`'s overlay. Leaving, `to` is its
+/// strip frame pushed just past the display edge; coming back, `from` is.
+public struct JumpPath: Equatable, Sendable {
+    public let from: CGRect
+    public let to: CGRect
+    public let display: CGRect
+
+    public init(from: CGRect, to: CGRect, display: CGRect) {
+        self.from = from
+        self.to = to
+        self.display = display
+    }
+}
+
+/// MM-10: `frame` moved along x until it is off `display` on the side of
+/// its centre (unchanged when it already is).
+func pushedOffDisplay(_ frame: CGRect, display: CGRect) -> CGRect {
+    guard frame.intersects(display) else {
+        return frame
+    }
+    let x = frame.midX < display.midX ? display.minX - frame.width : display.maxX
+    return CGRect(x: x, y: frame.minY, width: frame.width, height: frame.height)
 }
 
 /// The planning half of `performReflow`: lays every display out, parks the
@@ -328,7 +355,24 @@ public final class ReflowPlanner: @unchecked Sendable {
                 result.animations += motion.animations
                 result.prepositions.merge(motion.prepositions) { _, new in new }
                 result.prepositions.merge(jumps) { _, new in new }
-                result.jumps.formUnion(jumps.keys)
+                // MM-10: their layers slide by the shared edge: out to the
+                // strip frame (pushed past the edge), or in from where the
+                // strip had them before this scroll.
+                let scrolled = planned.layout.viewportOffset - workspace.viewportOffset
+                for (id, target) in jumps {
+                    let path = farHere.contains(id)
+                        ? JumpPath(
+                            from: current[id] ?? target,
+                            to: pushedOffDisplay(planned.layout.frames[id] ?? target, display: display.frame),
+                            display: display.frame
+                        )
+                        : JumpPath(
+                            from: pushedOffDisplay(target.offsetBy(dx: scrolled, dy: 0), display: display.frame),
+                            to: target,
+                            display: display.frame
+                        )
+                    result.jumps[id] = path
+                }
                 result.prepositions.merge(entries) { _, new in new }
                 result.entries.formUnion(entries.keys)
                 // NA-04: risers (pre-positioned below) and hidden windows that

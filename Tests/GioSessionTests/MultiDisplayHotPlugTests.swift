@@ -259,7 +259,14 @@ final class FarSideParkingMotionTests: XCTestCase {
         XCTAssertFalse(parked.frame.intersects(Live.builtInFrame))
         XCTAssertFalse(plan.animations.contains { $0.id == ids[2] }, "no flight across the external")
         XCTAssertEqual(plan.prepositions[ids[2]], parked.frame, "it jumps when the motion starts")
-        XCTAssertTrue(plan.jumps.contains(ids[2]))
+        // 2026-10-14 recording: a column leaving by the shared edge vanished
+        // at the first overlay frame. Its snapshot layer slides out to its
+        // strip frame past that edge, clipped by its own display's overlay.
+        let path = try XCTUnwrap(plan.jumps[ids[2]])
+        XCTAssertEqual(path.from, world.physicalFrames[ids[2]])
+        XCTAssertEqual(path.display, Live.externalFrame)
+        XCTAssertGreaterThan(path.to.maxX, Live.externalFrame.maxX, "past the shared edge")
+        XCTAssertEqual(path.to.size, path.from.size)
         XCTAssertTrue(plan.animations.contains { $0.id == ids[0] }, "the others still slide")
     }
 
@@ -284,6 +291,9 @@ final class FarSideParkingMotionTests: XCTestCase {
         XCTAssertTrue(Live.externalFrame.contains(tile))
         XCTAssertFalse(second.animations.contains { $0.id == ids[2] })
         XCTAssertEqual(second.prepositions[ids[2]], tile)
-        XCTAssertTrue(second.jumps.contains(ids[2]))
+        let back = try XCTUnwrap(second.jumps[ids[2]])
+        XCTAssertEqual(back.to, tile)
+        XCTAssertGreaterThan(back.from.maxX, Live.externalFrame.maxX, "it enters by the shared edge")
+        XCTAssertEqual(back.display, Live.externalFrame)
     }
 }

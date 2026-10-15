@@ -79,15 +79,19 @@ private func moves(_ a: CGRect, _ b: CGRect) -> Bool {
 
 /// `starts` are the windows' current physical frames, `targets` the frames
 /// this pass ends with (visible and parked alike), Cocoa coordinates.
+/// MM-10: `pinnedDisplays` puts a window's layer on that display's overlay
+/// whatever its frames overlap (a layer sliding out by an edge another
+/// display shares; its own overlay clips it there).
 public func planSnapshotFlight(
     starts: [WindowID: CGRect], targets: [WindowID: CGRect], displays: [CGRect],
-    hasImage: (WindowID) -> Bool, backdropReady: (Int) -> Bool, undrawn: Set<WindowID> = []
+    hasImage: (WindowID) -> Bool, backdropReady: (Int) -> Bool, undrawn: Set<WindowID> = [],
+    pinnedDisplays: [WindowID: Int] = [:]
 ) -> SnapshotFlightDecision {
     var entries: [SnapshotFlightItem] = []
     for id in targets.keys.sorted() where !undrawn.contains(id) {
         let to = targets[id]!
         let from = starts[id] ?? to
-        if let index = overlayDisplayIndex(from: from, to: to, displays: displays) {
+        if let index = pinnedDisplays[id] ?? overlayDisplayIndex(from: from, to: to, displays: displays) {
             entries.append(SnapshotFlightItem(id: id, from: from, to: to, displayIndex: index))
         }
     }
@@ -157,9 +161,11 @@ public struct SnapshotRetargetPlan: Equatable, Sendable {
 }
 
 /// SM-31: an undrawn window joining the flight is neither added nor uncovered.
+/// MM-10: `pinnedDisplays` as in `planSnapshotFlight`.
 public func planSnapshotRetarget(
     active: Set<WindowID>, starts: [WindowID: CGRect], targets: [WindowID: CGRect],
-    displays: [CGRect], activeDisplays: Set<Int>, hasImage: (WindowID) -> Bool, undrawn: Set<WindowID> = []
+    displays: [CGRect], activeDisplays: Set<Int>, hasImage: (WindowID) -> Bool, undrawn: Set<WindowID> = [],
+    pinnedDisplays: [WindowID: Int] = [:]
 ) -> SnapshotRetargetPlan {
     var plan = SnapshotRetargetPlan(retargets: [:], adds: [], uncovered: [])
     for id in targets.keys.sorted() {
@@ -169,7 +175,8 @@ public func planSnapshotRetarget(
             continue
         }
         let from = starts[id] ?? to
-        guard !undrawn.contains(id), let index = overlayDisplayIndex(from: from, to: to, displays: displays),
+        guard !undrawn.contains(id),
+              let index = pinnedDisplays[id] ?? overlayDisplayIndex(from: from, to: to, displays: displays),
               activeDisplays.contains(index)
         else {
             continue

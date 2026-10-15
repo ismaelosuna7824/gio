@@ -318,7 +318,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// now (the real windows' one write under a primed overlay). `.priming`:
     /// the caller defers that pass with `deferPass`.
     public func drive(
-        animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: Set<WindowID> = []
+        animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: [WindowID: JumpPath] = [:]
     ) -> SnapshotDrive {
         let screens = context.displayFrames()
         var targets: [WindowID: CGRect] = [:]
@@ -334,10 +334,15 @@ public final class SnapshotFlightController: @unchecked Sendable {
         for animation in animations {
             starts[animation.id] = animation.from
         }
-        // MM-04: a far-side park (or a return from one) starts at its target:
-        // no layer flies across the display.
-        for id in jumps {
-            starts[id] = targets[id]
+        // MM-04 / MM-10: a far-side park (or a return from one) never flies
+        // across the display: its layer slides out by (or in from) the shared
+        // edge on its own display's overlay, which clips it there; the real
+        // window jumps under the overlay.
+        var pinned: [WindowID: Int] = [:]
+        for (id, path) in jumps where targets[id] != nil {
+            starts[id] = path.from
+            targets[id] = path.to
+            pinned[id] = screens.firstIndex(of: path.display)
         }
         let now = context.now()
         // SM-31: windows macOS does not draw have nothing to fly: no layer,
@@ -367,7 +372,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             self.targets.merge(targets) { _, latest in latest }
             let plan = planSnapshotRetarget(
                 active: ids, starts: starts, targets: targets, displays: screens,
-                activeDisplays: displays, hasImage: usable, undrawn: undrawn
+                activeDisplays: displays, hasImage: usable, undrawn: undrawn, pinnedDisplays: pinned
             )
             ids.formUnion(plan.adds.map(\.id))
             windows.formUnion(plan.adds.map(\.id))
@@ -414,7 +419,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         let cache = cache
         let decision = planSnapshotFlight(
             starts: starts, targets: targets, displays: screens, hasImage: usable,
-            backdropReady: { cache.backdrop(for: screens[$0]) != nil }, undrawn: undrawn
+            backdropReady: { cache.backdrop(for: screens[$0]) != nil }, undrawn: undrawn, pinnedDisplays: pinned
         )
         switch decision {
         case .fallback(let reason, let missing):

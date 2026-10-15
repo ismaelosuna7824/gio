@@ -227,23 +227,32 @@ final class SnapshotFlightTests: XCTestCase {
         )
     }
 
-    // MARK: MM-04 far-side parks jump
+    // MARK: MM-04 / MM-10 far-side parks
 
     /// A window parking on the far side of its display (the near edge is
-    /// another display), or coming back from there, gets no layer flying
-    /// across the display: it starts at its target.
-    func testAJumpingWindowDoesNotFlyAcrossTheDisplay() {
+    /// another display) never flies across the display. MM-10 (2026-10-14
+    /// recording: such columns vanished at the first overlay frame): its
+    /// layer slides out by the shared edge to its strip frame instead, on its
+    /// own display's overlay, which clips it there.
+    func testAFarSideParkSlidesOutByTheSharedEdge() {
         refresh([idA: a, idB: b])
         let (animation, plan) = slide(idA, from: a, by: 100)
         var parkedPlan = plan
         let far = CGRect(x: SessionFixture.screen.maxX - 1, y: b.minY, width: b.width, height: b.height)
         parkedPlan.visible.removeValue(forKey: idB)
         parkedPlan.parked[idB] = ParkedTarget(frame: far, edge: .right, display: SessionFixture.screen, farSide: true)
+        let strip = b.offsetBy(dx: -(b.maxX + 20), dy: 0)
         XCTAssertEqual(
-            flight.drive(animations: [animation], plans: [parkedPlan], spring: .niri, jumps: [idB]), .priming
+            flight.drive(
+                animations: [animation], plans: [parkedPlan], spring: .niri,
+                jumps: [idB: JumpPath(from: b, to: strip, display: SessionFixture.screen)]
+            ),
+            .priming
         )
         let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
-        XCTAssertNil(items.first { $0.id == idB }, "no layer flies to the far side")
+        let layer = items.first { $0.id == idB }
+        XCTAssertEqual(layer?.from, b)
+        XCTAssertEqual(layer?.to, strip, "out by the edge, not to the far side")
         XCTAssertEqual(items.first { $0.id == idA }?.from, a)
     }
 

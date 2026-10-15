@@ -104,6 +104,24 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         XCTAssertEqual(holes, [], "a display without motion gets no overlay, so no hole")
     }
 
+    /// MM-10: a layer sliding out by an edge another display shares ends on
+    /// that display; pinned to its own display, that overlay clips it at the
+    /// edge instead of the other display drawing it.
+    func testAPinnedLayerStaysOnItsOwnDisplayPastASharedEdge() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(600)], targets: [id(1): win(1100)],
+            displays: [display, other], hasImage: all, backdropReady: { _ in true },
+            pinnedDisplays: [id(1): 0]
+        )
+        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
+        XCTAssertEqual(items.map(\.displayIndex), [0])
+        let retarget = planSnapshotRetarget(
+            active: [], starts: [id(1): win(600)], targets: [id(1): win(1100)],
+            displays: [display, other], activeDisplays: [0], hasImage: all, pinnedDisplays: [id(1): 0]
+        )
+        XCTAssertEqual(retarget.adds.map(\.displayIndex), [0])
+    }
+
     func testNothingMovingOnScreenIsNotASnapshotFlight() {
         let decision = planSnapshotFlight(
             starts: [id(1): win(0)], targets: [id(1): win(0)],
