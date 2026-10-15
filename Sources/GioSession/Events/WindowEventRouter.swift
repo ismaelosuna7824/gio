@@ -30,6 +30,9 @@ public final class WindowEventRouter: @unchecked Sendable {
     public struct Context {
         /// A fresh port delivering events (on any thread) to the callback.
         public var makePort: (@escaping @Sendable (SystemWindowEvent) -> Void) -> EventPort
+        /// PF-U: Gio's own pid, never observed (rule 4; Gio is `.regular`
+        /// while its main window is open).
+        public var ownPID: pid_t
         public var runningRegularPIDs: () -> Set<pid_t>
         public var isRegularApplication: (pid_t) -> Bool
         /// The hotkey tap never started (permission may have arrived late).
@@ -73,6 +76,7 @@ public final class WindowEventRouter: @unchecked Sendable {
 
         public init(
             makePort: @escaping (@escaping @Sendable (SystemWindowEvent) -> Void) -> EventPort,
+            ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
             runningRegularPIDs: @escaping () -> Set<pid_t>, isRegularApplication: @escaping (pid_t) -> Bool,
             isTapMissing: @escaping () -> Bool, scheduleReflow: @escaping (Bool) -> Void,
             reflowAll: @escaping () -> Void,
@@ -94,6 +98,7 @@ public final class WindowEventRouter: @unchecked Sendable {
             learnLateClamp: @escaping (WindowID, CGRect, CGRect) -> Bool
         ) {
             self.makePort = makePort
+            self.ownPID = ownPID
             self.runningRegularPIDs = runningRegularPIDs
             self.isRegularApplication = isRegularApplication
             self.isTapMissing = isTapMissing
@@ -170,7 +175,9 @@ public final class WindowEventRouter: @unchecked Sendable {
         guard let port else {
             return
         }
-        let plan = book.reconcile(running: context.runningRegularPIDs())
+        var running = context.runningRegularPIDs()
+        running.remove(context.ownPID)
+        let plan = book.reconcile(running: running)
         for pid in plan.detach {
             port.detach(pid: pid)
             book.didDetach(pid)
@@ -215,7 +222,7 @@ public final class WindowEventRouter: @unchecked Sendable {
             discovery.appTerminated(event.pid)
         case .appActivated:
             // A previously refused (or missed) app gets another chance now.
-            if book.needsAttach(event.pid), let port,
+            if event.pid != context.ownPID, book.needsAttach(event.pid), let port,
                port.attach(pid: event.pid)
             {
                 book.didAttach(event.pid)
@@ -409,6 +416,7 @@ public final class WindowEventRouter: @unchecked Sendable {
     /// appear later arrive through the app-level window-created event.
     private func attachLaunchedApp(_ pid: pid_t, attempt: Int) {
         guard let port,
+              pid != context.ownPID,
               context.isRegularApplication(pid),
               book.needsAttach(pid)
         else {

@@ -172,6 +172,7 @@ final class EventWorld: @unchecked Sendable {
                 self.port = port
                 return port
             },
+            ownPID: Self.ownPID,
             runningRegularPIDs: { self.regular },
             isRegularApplication: { self.regular.contains($0) },
             isTapMissing: { self.tapMissing },
@@ -674,6 +675,21 @@ final class WindowEventRouterTests: XCTestCase {
         world.tapMissing = true
         send(.appActivated)
         XCTAssertEqual(world.scheduledReflows, [true])
+    }
+
+    /// PF-U: Gio turns `.regular` while its main window is open, so the
+    /// running set, launch and activation all name its own pid. Observing
+    /// it is AX on in-process elements (rule 4: AppKit runs on the calling
+    /// thread and crashes) and subscribes Gio to its own overlay panels.
+    func testOwnPidIsNeverObserved() {
+        world.regular = [7, EventWorld.ownPID]
+        router.syncObservers()
+        send(.appActivated, pid: EventWorld.ownPID)
+        send(.appLaunched, pid: EventWorld.ownPID)
+        scheduler.advance(by: 10)
+
+        XCTAssertFalse(world.port!.attachCalls.contains(EventWorld.ownPID))
+        XCTAssertTrue(world.console.isEmpty, "not a refusal either")
     }
 
     // MARK: Window events
