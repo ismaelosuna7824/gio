@@ -12,6 +12,12 @@ name: Release
 # (contents: write, no secrets, no repository code: downloads the built DMG
 # and runs gh release create). Every action is pinned to a full commit SHA.
 # See docs/RELEASING.md for the environment, the secrets and the release steps.
+#
+# The macOS jobs run on the xcode-27 image (arm64, macOS 27): the app is
+# developed with Xcode 27, its icon is an Icon Composer document (Xcode 26+)
+# and older toolchains do not compile the sources (main-actor isolation, type
+# checking). They use the newest stable Xcode_<version>.app on the image, or
+# its default Xcode when there is none.
 on:
   push:
     tags: ["v*"]
@@ -37,7 +43,7 @@ env:
 
 jobs:
   test:
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,12 +52,10 @@ jobs:
 
       - name: Select the latest stable Xcode
         run: |
-          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)"
-          if [ -z "$xcode" ]; then
-            echo "::error::No stable Xcode_<version>.app on the runner"
-            exit 1
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1 || true)"
+          if [ -n "$xcode" ]; then
+            sudo xcode-select -s "$xcode/Contents/Developer"
           fi
-          sudo xcode-select -s "$xcode/Contents/Developer"
           xcodebuild -version
           swift --version
 
@@ -62,7 +66,7 @@ jobs:
     needs: test
     # Signing never runs for a dispatch from another branch.
     if: github.event_name == 'push' || github.ref == 'refs/heads/main'
-    runs-on: macos-15
+    runs-on: xcode-27
     timeout-minutes: 60
     environment: release
     outputs:
@@ -77,12 +81,10 @@ jobs:
 
       - name: Select the latest stable Xcode
         run: |
-          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1)"
-          if [ -z "$xcode" ]; then
-            echo "::error::No stable Xcode_<version>.app on the runner"
-            exit 1
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1 || true)"
+          if [ -n "$xcode" ]; then
+            sudo xcode-select -s "$xcode/Contents/Developer"
           fi
-          sudo xcode-select -s "$xcode/Contents/Developer"
           xcodebuild -version
 
       - name: Resolve the version
@@ -202,6 +204,11 @@ jobs:
         run: |
           cd dist
           sha256sum -c "Gio-$VERSION.dmg.sha256"
+          # Gio.dmg: the same file under a fixed name, so
+          # releases/latest/download/Gio.dmg (the landing page's Download
+          # button) always serves the newest stable release. The updater
+          # only reads Gio-<version>.dmg and its .sha256.
+          cp "Gio-$VERSION.dmg" Gio.dmg
           args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Gio $VERSION")
           if [ -f release-notes.md ] && [ -n "$(tr -d '[:space:]' < release-notes.md)" ]; then
             args+=(--notes-file release-notes.md)
@@ -211,4 +218,4 @@ jobs:
           if [ "$PRERELEASE" = "true" ]; then
             args+=(--prerelease)
           fi
-          gh release create "$TAG" "${args[@]}" "Gio-$VERSION.dmg" "Gio-$VERSION.dmg.sha256"
+          gh release create "$TAG" "${args[@]}" "Gio-$VERSION.dmg" "Gio-$VERSION.dmg.sha256" Gio.dmg

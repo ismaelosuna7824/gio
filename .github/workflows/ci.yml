@@ -18,17 +18,23 @@ permissions:
 
 jobs:
   test-and-build:
-    # Package.swift needs swift-tools-version 6.0 (Xcode 16+). macos-15 ships
-    # it; macos-14 would need an explicit `sudo xcode-select -s` to an Xcode 16.
-    runs-on: macos-15
+    # The xcode-27 image (arm64, macOS 27): the app is developed with Xcode 27,
+    # its icon is an Icon Composer document (Xcode 26+), and older toolchains
+    # do not compile the sources (macos-15's Xcode 16.4 failed on main-actor
+    # isolation and type checking). Same Xcode selection as release.yml.
+    runs-on: xcode-27
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
-      - name: Toolchain
+      - name: Select the latest stable Xcode
         run: |
+          xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1 || true)"
+          if [ -n "$xcode" ]; then
+            sudo xcode-select -s "$xcode/Contents/Developer"
+          fi
           xcodebuild -version
           swift --version
 
@@ -36,8 +42,8 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .build
-          key: spm-${{ runner.os }}-${{ hashFiles('Package.swift', 'Package.resolved') }}
-          restore-keys: spm-${{ runner.os }}-
+          key: spm-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}
+          restore-keys: spm-xcode27-
 
       - name: Test (all bundles)
         run: swift test --parallel
