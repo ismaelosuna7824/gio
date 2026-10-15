@@ -118,7 +118,7 @@ A *user-configurable* per-app rule is different: extend `WindowRule` / `RuleOutc
 
 ## Continuous integration
 
-`.github/workflows/ci.yml` runs on every push (any branch) and pull request, on a GitHub-hosted `macos-15` runner (Swift tools 6.0 needs Xcode 16 or newer; on `macos-14` the job would have to select an Xcode 16 first). It prints the toolchain, restores the `.build` cache (keyed on `Package.swift` and `Package.resolved`), runs `swift test --parallel`, then builds the `Gio` app target **unsigned** into its own derived data:
+`.github/workflows/ci.yml` runs on every push (any branch) and pull request, on the GitHub-hosted `xcode-27` runner image (arm64, macOS 27) with its newest stable Xcode: the app is developed with Xcode 27, older toolchains (`macos-15`'s Xcode 16.4) do not compile the sources and cannot build the Icon Composer app icon. It prints the toolchain, restores the `.build` cache (keyed on `Package.swift` and `Package.resolved`), runs `swift test --parallel`, then builds the `Gio` app target **unsigned** into its own derived data:
 
 ```sh
 xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \

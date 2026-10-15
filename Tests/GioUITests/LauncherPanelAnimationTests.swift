@@ -14,7 +14,10 @@ final class LauncherPanelAnimationTests: XCTestCase {
             styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: true
         )
         panel.anchoredTop = nil
-        let target = NSRect(x: 300, y: 400, width: 640, height: 469)
+        // Inside the screen: AppKit keeps a window on a small display (CI's
+        // virtual screen) by moving it, which would hide the bug under test.
+        let visible = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        let target = NSRect(x: visible.minX + 20, y: visible.minY + 20, width: 640, height: min(469, visible.height - 40))
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.05
             panel.animateFrame(to: target)

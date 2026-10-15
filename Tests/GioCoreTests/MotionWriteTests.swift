@@ -85,12 +85,19 @@ final class MotionWriteTests: XCTestCase {
 
     func testReconcileWaitsForInFlightMotionInsteadOfSkippingTheApp() {
         let actuator = Actuator()
-        actuator.delay = 0.05
+        actuator.gate = true
         let id = window(1)
         actuator.seed(id, start)
         let reconciler = WindowReconciler(actuator: actuator)
         let mid = start.offsetBy(dx: 30, dy: 0)
         XCTAssertTrue(reconciler.submitMotion(pid: 10, writes: [MotionWrite(id: id, from: start, to: mid)]))
+        // The motion write is in flight; it lands well inside the final
+        // pass's grace, then the reconcile's own write passes the gate.
+        actuator.entered.wait()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.01) {
+            actuator.proceed.signal()
+            actuator.proceed.signal()
+        }
         let final = start.offsetBy(dx: 100, dy: 0)
         let report = reconciler.reconcile(frames: [id: final], focused: nil, currentlyFocused: nil)
         XCTAssertEqual(report.applied, [id])
