@@ -250,7 +250,7 @@ final class DwindleActionsTests: XCTestCase {
         XCTAssertEqual(dwindleToggleMaximize(in: workspace), workspace)
         XCTAssertEqual(dwindleResize(in: workspace, axis: .horizontal, by: 0.1, geometry: geometry), workspace)
         XCTAssertEqual(dwindleFocusEnd(in: workspace, last: true), workspace)
-        XCTAssertEqual(focusNeighbour(in: workspace, direction: .right, geometry: geometry), moveFocus(in: workspace, direction: .right))
+        XCTAssertEqual(focusNeighbour(in: workspace, direction: .right, geometry: geometry), moveFocus(in: workspace, direction: .right, modes: geometry.modes))
     }
 
     // MARK: - Manager: Move Edge and focus-or-workspace
