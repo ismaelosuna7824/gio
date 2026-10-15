@@ -339,19 +339,19 @@ final class SnapshotCacheTests: XCTestCase {
     // MARK: SM-27 resize without stretching
 
     /// Alt+F with both sizes cached: the layer starts on the column image and
-    /// crossfades into the maximized one; back again the other way round.
-    func testAResizeFlightGetsTheImageOfItsTargetSizeToCrossfadeTo() {
+    /// swaps to the maximized one; back again the other way round.
+    func testAResizeFlightGetsTheImageOfItsTargetSizeToSwapTo() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1)
         cache.store(id(1), image: "maximized", frame: maximized, pixels: 1, at: 2)
         let grow = cache.usableEntry(id(1), startFrame: frame, targetFrame: maximized, now: 10)
         XCTAssertEqual(grow?.entry.image, "column")
         XCTAssertEqual(grow?.target?.image, "maximized")
-        XCTAssertEqual(grow?.resize, .crossfade)
+        XCTAssertEqual(grow?.resize, .swap)
         let shrink = cache.usableEntry(id(1), startFrame: maximized, targetFrame: frame.offsetBy(dx: 40, dy: 0), now: 10)
         XCTAssertEqual(shrink?.entry.image, "maximized")
         XCTAssertEqual(shrink?.target?.image, "column")
-        XCTAssertEqual(shrink?.resize, .crossfade)
+        XCTAssertEqual(shrink?.resize, .swap)
     }
 
     /// The first maximize of a window (never captured at that size): no

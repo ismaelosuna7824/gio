@@ -1102,9 +1102,9 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     }
 
     /// A capture's edge fill is kept with its image; with both sizes the
-    /// layer crossfades, and a retarget to a new size is told the face of
+    /// layer swaps images, and a retarget to a new size is told the face of
     /// that size (or none) and logged once.
-    func testCapturedFillsAreKeptAndBothSizesCrossfade() throws {
+    func testCapturedFillsAreKeptAndBothSizesSwap() throws {
         let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
         let white = ThemeColor(red: 1, green: 1, blue: 1)
         cache.schedule()
@@ -1122,13 +1122,13 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a])
         let grow = try XCTUnwrap(cache.flightImage(idA, startFrame: a, targetFrame: wide, at: scheduler.now))
         XCTAssertEqual(grow.target?.fill, white)
-        XCTAssertEqual(grow.resize, .crossfade)
+        XCTAssertEqual(grow.resize, .swap)
         cache.flies(idA, grow, at: scheduler.now)
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
 
         let back = cache.retargetFace(idA, image: a.size, from: wide, to: a.offsetBy(dx: 20, dy: 0), at: scheduler.now)
         XCTAssertEqual(back?.size, a.size)
-        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") }.count, 2)
+        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=swap") }.count, 2)
         let onward = cache.retargetFace(idB, image: b.size, from: b, to: b.offsetBy(dx: 20, dy: 0), at: scheduler.now)
         XCTAssertEqual(onward?.size, b.size, "same size: the face it is fading to, no log")
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })

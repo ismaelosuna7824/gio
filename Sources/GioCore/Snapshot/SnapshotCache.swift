@@ -145,7 +145,7 @@ func snapshotSameSize(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
 }
 
 /// SM-11: the image a flight uses. SM-27: with the image of the target size
-/// (crossfaded to) and how the layer shows the window without stretching it.
+/// (shown instead, SM-32) and how the layer shows the window without stretching it.
 public struct SnapshotCacheUse<Image> {
     public let entry: SnapshotCacheEntry<Image>
     /// Captured at another size than the start frame (only while younger

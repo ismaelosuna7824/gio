@@ -984,7 +984,7 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(item.target?.size, wide.size)
         let still = try XCTUnwrap(items.first { $0.id == idB })
         XCTAssertTrue(still.target?.image === still.image.image, "a move: its own image again, nothing to fade")
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
         XCTAssertEqual(world.logs.filter { $0.1.hasPrefix("snapshot resize") }.count, 1)
     }
 
@@ -1004,7 +1004,7 @@ final class SnapshotFlightTests: XCTestCase {
         let retarget = try XCTUnwrap(overlay.retargets.first)
         XCTAssertEqual(retarget.images[idA]?.size, wide.size, "fade to the maximized image")
         XCTAssertEqual(retarget.images[idB]?.size, b.size, "same size: the image it already shows")
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
     }
 
@@ -1104,7 +1104,7 @@ final class SnapshotFlightTests: XCTestCase {
         flight.layersFinished(token)
         scheduler.runPending()
         answerPaint([idA: .painted])
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade fresh=200 attempts=3") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap fresh=200 attempts=3") })
     }
 
     func testAPureMoveIsNotCapturedAgainAndLeavesAtOnce() {

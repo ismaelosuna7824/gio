@@ -5,8 +5,10 @@ import Foundation
 // (live report: "como son imágenes ... se ve un poco como que se estira").
 // Like niri's resize: every image is drawn at its own size, hanging from the
 // window's top-left corner and clipped to the animated frame (corner radius
-// and shadow unchanged); the start-size image crossfades into the
-// target-size one along the resize. Without a target-size image the start
+// and shadow unchanged). SM-32: the image of the target size replaces the
+// start image at the start of the resize; SM-27's dissolve between them showed
+// both layouts on top of each other for a few frames, which read as a blink
+// (live, 2026-10-15, Alt+F on Postman). Without a target-size image the start
 // image stays unscaled: what it does not cover shows a flat fill (SM-30: the
 // most common colour of its right half, `snapshotContentFill`; SM-27 sampled
 // its right edge), and what the frame no longer covers is cut off
@@ -17,8 +19,9 @@ import Foundation
 
 /// How a layer shows a window whose frame and image sizes differ.
 public enum SnapshotResizeMode: String, Equatable, Sendable {
-    /// Start image fading into the image of the target size, both unscaled.
-    case crossfade
+    /// The image of the target size, unscaled, in place of the start image
+    /// from the first frame (SM-32).
+    case swap
     /// One image, unscaled, over its fill where the frame outgrows it.
     case fill
     /// One image, unscaled, cut off by a frame smaller than it.
@@ -37,7 +40,7 @@ public func snapshotResizeMode(
     image: CGSize, target: CGSize?, from: CGSize, to: CGSize, tolerance: CGFloat = 2
 ) -> SnapshotResizeMode? {
     if let target, !sameSize(target, image, tolerance: tolerance) {
-        return .crossfade
+        return .swap
     }
     if sameSize(image, from, tolerance: tolerance), sameSize(image, to, tolerance: tolerance) {
         return nil
@@ -49,132 +52,45 @@ public func snapshotResizeMode(
     return .crop
 }
 
-// MARK: crossfade
+// MARK: faces
 
-/// Fraction of the resize (not of the time) by which the target-size image
-/// is fully opaque. Gio's spring covers distance early (niri's default: 60 %
-/// of an Alt+F within ~70 ms of a ~350 ms flight), so the dissolve lasts a
-/// few frames (no pop) while the double exposure of two text layouts never
-/// lingers, and the target image alone shows for the rest of the flight:
-/// the last frame before the hand-off is the image of the size the real
-/// window lands at.
-public let overlayCrossfadeSpan = 0.6
-
-/// Weight of the fade at `progress` of the resize: smoothstep over
-/// `0...overlayCrossfadeSpan`, flat at both ends (no visible start or stop).
-public func overlayCrossfadeWeight(progress: Double) -> Double {
-    let x = min(max(progress / overlayCrossfadeSpan, 0), 1)
-    return x * x * (3 - 2 * x)
-}
-
-/// How far `geometry` is along `track`, 0...1 (clamped: a spring overshoot
-/// or a carried velocity away from the target never leaves the range). The
-/// largest size change leads; a track that keeps its size follows its
-/// largest move; a track that does neither is done.
-public func overlayResizeProgress(track: FlightTrack, geometry: LayerGeometry) -> Double {
-    let sizes: [(start: CGFloat, end: CGFloat, now: CGFloat)] = [
-        (track.start.bounds.width, track.end.bounds.width, geometry.bounds.width),
-        (track.start.bounds.height, track.end.bounds.height, geometry.bounds.height),
-    ]
-    let moves: [(start: CGFloat, end: CGFloat, now: CGFloat)] = [
-        (track.start.position.x, track.end.position.x, geometry.position.x),
-        (track.start.position.y, track.end.position.y, geometry.position.y),
-    ]
-    for axes in [sizes, moves] {
-        guard let lead = axes.max(by: { abs($0.start - $0.end) < abs($1.start - $1.end) }),
-              abs(lead.start - lead.end) >= SpringParameters.minimumThreshold
-        else {
-            continue
-        }
-        let progress = 1 - Double((lead.now - lead.end) / (lead.start - lead.end))
-        return min(max(progress, 0), 1)
-    }
-    return 1
-}
-
-/// The images (faces) of one layer, their drawing order (`order`, face
-/// indices bottom to top) and the opacity of each at the start and at the
-/// end of the current track. The bottom face stays opaque, so nothing behind
-/// the window shows through mid-fade; a face fades in on top of it, or out.
-/// SM-28: a new face that covers every frame of the flight (a grow) goes
-/// under the others, opaque at once, and the faces above it fade out: the
-/// growing frame never shows what is behind the window.
-public struct OverlayCrossfade: Equatable, Sendable {
-    public private(set) var from: [Double]
-    public private(set) var to: [Double]
-    public private(set) var order: [Int]
+/// The images (faces) of one layer, drawn in index order (a new face goes on
+/// top), and the opacity of each. One face shows at a time (SM-32): showing
+/// another hides every other face at once, so no frame mixes two layouts.
+/// SM-30's fresh face is the exception: it goes on top of the shown face
+/// (both of the landing size) and the overlay fades it in.
+public struct OverlayFaces: Equatable, Sendable {
+    public private(set) var opacities: [Double]
 
     /// One face, opaque.
     public init() {
-        from = [1]
-        to = [1]
-        order = [0]
+        opacities = [1]
     }
 
-    public var count: Int { from.count }
+    public var count: Int { opacities.count }
 
-    /// Every face's opacity at `progress` of the current track.
-    public func opacities(at progress: Double) -> [Double] {
-        let weight = overlayCrossfadeWeight(progress: progress)
-        return zip(from, to).map { $0 + ($1 - $0) * weight }
+    /// Face `index` alone (`count`: a new face, added on top).
+    public func showing(_ index: Int) -> OverlayFaces {
+        var faces = self
+        let shown = min(index, count)
+        faces.opacities = (0...max(count - 1, shown)).map { $0 == shown ? 1 : 0 }
+        return faces
     }
 
-    /// A new track from `progress` of the current one, fading to face
-    /// `index` (`count`: a new face, on top and transparent at first, or
-    /// with `underlay` at the bottom and opaque). The faces drawn above it
-    /// fade out, it fades in, the ones below keep their opacity (hidden by it
-    /// at the end). Continuous: the new track starts at the opacities this
-    /// one has at `progress`.
-    public func retargeted(at progress: Double, toward index: Int, underlay: Bool = false) -> OverlayCrossfade {
-        var current = opacities(at: progress)
-        var crossfade = self
-        if index >= current.count {
-            current.append(underlay ? 1 : 0)
-            if underlay {
-                crossfade.order.insert(current.count - 1, at: 0)
-            } else {
-                crossfade.order.append(current.count - 1)
-            }
-        }
-        let face = min(index, current.count - 1)
-        let position = crossfade.order.firstIndex(of: face)!
-        var next = current
-        for above in crossfade.order[(position + 1)...] {
-            next[above] = 0
-        }
-        next[face] = 1
-        crossfade.from = current
-        crossfade.to = next
-        return crossfade
-    }
-
-    /// SM-30: a fresh image of the landing size arrived (`count`: a new
-    /// face) at `progress` of the current track. It goes on top and fades in
-    /// over `overlayFreshFadeDuration` (timed: the resize is nearly done by
-    /// then, a fade along it would pop); every other face holds the opacity
-    /// it has now. A later retarget starts from there, continuous.
-    public func freshened(at progress: Double) -> OverlayCrossfade {
-        var crossfade = self
-        let current = opacities(at: progress) + [1]
-        crossfade.order.append(current.count - 1)
-        crossfade.from = current
-        crossfade.to = current
-        return crossfade
+    /// SM-30: a fresh image of the landing size arrived: a new face on top,
+    /// opaque; every other face keeps its opacity (the overlay fades the new
+    /// one in over the shown face).
+    public func freshened() -> OverlayFaces {
+        var faces = self
+        faces.opacities.append(1)
+        return faces
     }
 }
 
 /// SM-30: how long a fresh face fades in on top of a layer (eased).
 public let overlayFreshFadeDuration: TimeInterval = 0.1
 
-/// SM-28: an image as large as every frame of a flight from `start` to
-/// `end` (within the cache's 2 pt; a spring overshoot is not counted): drawn
-/// under the others, it leaves nothing of the frame uncovered.
-public func overlayFaceCovers(image: CGSize, start: CGSize, end: CGSize, tolerance: CGFloat = 2) -> Bool {
-    let reach = overlayReach([start, end])
-    return image.width >= reach.width - tolerance && image.height >= reach.height - tolerance
-}
-
-/// The face to fade to when no image of the new size is cached: the one
+/// The face to show when no image of the new size is cached: the one
 /// whose size is closest to it (ties: the lower face). The layer then lands
 /// on one image, unscaled over its fill or cut off, instead of a mix.
 public func overlayClosestFace(_ sizes: [CGSize], to target: CGSize) -> Int {
@@ -189,23 +105,6 @@ public func overlayClosestFace(_ sizes: [CGSize], to target: CGSize) -> Int {
     }
     return best
 }
-
-/// Every face's opacity at each keyframe of `track` (one array per face,
-/// index-aligned with `keyframes.times`): sampled from the same spring as
-/// the geometry, so the fade follows the resize and lands exactly on `to`.
-public func overlayCrossfadeKeyframes(
-    _ crossfade: OverlayCrossfade, track: FlightTrack, keyframes: FlightKeyframes
-) -> [[Double]] {
-    var values = Array(repeating: [Double](), count: crossfade.count)
-    for geometry in keyframes.geometries {
-        let opacities = crossfade.opacities(at: overlayResizeProgress(track: track, geometry: geometry))
-        for face in opacities.indices {
-            values[face].append(opacities[face])
-        }
-    }
-    return values
-}
-
 // MARK: drawing
 
 /// A layer may draw its one image straight into its frame (the layer's own

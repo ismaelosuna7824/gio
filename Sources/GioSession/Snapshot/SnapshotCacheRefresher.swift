@@ -297,7 +297,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// The image a flight from `startFrame` to `targetFrame` would use at
     /// `now` (see `SnapshotCache.usableEntry`): the one of the start size, or
     /// a fresh one of the other size, and (SM-27) the one of the target size
-    /// to crossfade to. Nil start: any image within the max age. A lookup
+    /// to show instead (SM-32). Nil start: any image within the max age. A lookup
     /// only; SM-13: the flight looks each window up once and flies exactly
     /// that image (`flies`).
     public func flightImage(
@@ -320,9 +320,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     }
 
     /// SM-27: a flying layer is retargeted from `from` to `to`: the face of
-    /// `to`'s size it fades to (the one it already shows or fades to when
-    /// the size stays), nil when none is cached (the overlay then fades to
-    /// its closest face). A new size is logged: `crossfade` with a face,
+    /// `to`'s size it shows (the one it already shows when the size
+    /// stays), nil when none is cached (the overlay then shows its closest
+    /// face). A new size is logged: `swap` with a face,
     /// otherwise `fill`/`crop` against the layer's start `image` size.
     public func retargetFace(
         _ id: WindowID, image: CGSize, from: CGRect, to: CGRect, at now: TimeInterval
@@ -333,7 +333,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         }
         let resized = abs(from.width - to.width) > 2 || abs(from.height - to.height) > 2
         if resized,
-           let mode = entry != nil ? .crossfade : snapshotResizeMode(image: image, target: nil, from: from.size, to: to.size) {
+           let mode = entry != nil ? .swap : snapshotResizeMode(image: image, target: nil, from: from.size, to: to.size) {
             logResize(id, mode)
         }
         return entry?.face

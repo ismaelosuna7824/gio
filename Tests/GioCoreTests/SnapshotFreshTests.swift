@@ -169,9 +169,9 @@ final class SnapshotFreshTests: XCTestCase {
     func testTheResizeLineSaysWhenTheFreshImageCameOrWhyNot() {
         XCTAssertEqual(
             snapshotResizeOutcomeLine(
-                id, mode: .crossfade, fresh: SnapshotFreshOutcome(milliseconds: 212, attempts: 1, last: .fresh)
+                id, mode: .swap, fresh: SnapshotFreshOutcome(milliseconds: 212, attempts: 1, last: .fresh)
             ),
-            "snapshot resize id=13261:4 mode=crossfade fresh=212 attempts=1"
+            "snapshot resize id=13261:4 mode=swap fresh=212 attempts=1"
         )
         XCTAssertEqual(
             snapshotResizeOutcomeLine(id, mode: .fill, fresh: SnapshotFreshOutcome(milliseconds: nil, attempts: 3, last: .stale)),

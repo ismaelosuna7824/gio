@@ -1270,6 +1270,22 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   followed by scrolls: no picture that flies and vanishes; note `snapshot evict` and `window vanished scan` lines,
   and which miss (if any) Cmd+H windows log: the capture matches against every WindowServer window of the app
   (`.optionAll`), so a hidden app's windows may still match and not read `unmatched` [INFERENCE, unverified].
+- [x] SM-32 (commit pending, branch `fix/johan-spaces-safari`) — `Alt+F` blinks (live 2026-10-15, a 120 fps
+  screen recording of repeated `Alt+F` on Postman, the log shows `snapshot resize ... mode=crossfade`,
+  `handoff ... painted=1 resized=1 fade=120`). Frames sampled at 50 fps through one maximize: two frames
+  (~40 ms) at the start of the resize show the narrow and the maximized layouts on top of each other (SM-27's
+  dissolve, smoothstep over 60 % of the resize), then the maximized image alone; that double exposure is the
+  blink. (A first reading of the file by frame index looked like a 0.5 s jump back; the recording is
+  variable frame rate, 592 frames in 15 s, and the indices spanned several toggles: no such jump.) User
+  decision: switch directly, no blend. `OverlayCrossfade` (from/to opacities along the resize, keyframed) became
+  `OverlayFaces` (one-hot opacities, `showing(_:)`, `freshened()`); gone: `overlayCrossfadeSpan`,
+  `overlayCrossfadeWeight`, `overlayResizeProgress`, `overlayCrossfadeKeyframes`, `overlayFaceCovers` (SM-28's
+  underlay: the shown face's fill reaches the largest frame, so drawing order no longer matters) and the
+  overlay's opacity keyframes and progress plumbing; `SnapshotResizeMode.crossfade` → `.swap` (log
+  `mode=swap`). SM-30's fresh face still fades in (same size, 100 ms). RED: `OverlayResizeTests` compile
+  failure (`cannot find 'OverlayFaces'`, `no member 'swap'`); GREEN snapshot suites (OverlayResize, cache,
+  fresh, refresher, flight). LIVE PENDING: `Alt+F` back and forth on Postman/Code, no double image; first
+  maximize (no cached size) unchanged (`mode=fill`).
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.

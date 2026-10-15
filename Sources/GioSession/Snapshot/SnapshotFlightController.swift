@@ -4,8 +4,8 @@ import GioCore
 
 /// One window image to fly. Frames are Cocoa global coordinates. SM-27:
 /// `image` is drawn at its own size, never scaled; `target` is the image of
-/// the `to` size the layer crossfades to (the same image on a move, nil
-/// when none is cached).
+/// the `to` size the layer shows from the first frame (SM-32; the same image
+/// on a move, nil when none is cached).
 public struct OverlayFlightItem: @unchecked Sendable {
     public let id: WindowID
     public let image: SnapshotFace<CGImage>
@@ -58,7 +58,7 @@ public protocol OverlayPort: AnyObject {
     func flyFlight(token: Int)
     /// `holes` replaces the flight's whole hole set. SM-27: `images` holds,
     /// for each retargeted layer, the image of its new size when cached
-    /// (the layer fades to it; without one, to its closest image).
+    /// (the layer shows it at once, SM-32; without one, its closest image).
     func retargetFlight(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
         holes: [WindowID: CGRect], decorations: OverlayDecorations
@@ -350,7 +350,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         let undrawn = cache.undrawnWindows
         // SM-11: the image of the start size, or a fresh one of the other size.
         // SM-13: looked up once per window; the layers fly exactly that image.
-        // SM-27: with the image of the target size the layer crossfades to.
+        // SM-27: with the image of the target size the layer shows (SM-32).
         var images: [WindowID: SnapshotCacheUse<CGImage>] = [:]
         let usable: (WindowID) -> Bool = { [cache] id in
             if images[id] != nil {
@@ -381,8 +381,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
             setHoles(snapshotHoles(
                 layered: ids, targets: self.targets, displays: screens, activeDisplays: displays, undrawn: undrawn
             ))
-            // SM-27: every retargeted layer fades to the image of its new
-            // size (the one it shows or fades to when the size stays).
+            // SM-27: every retargeted layer shows the image of its new size
+            // (SM-32: at once; the one it shows when the size stays).
             var faces: [WindowID: SnapshotFace<CGImage>] = [:]
             for (id, frame) in plan.retargets.sorted(by: { $0.key < $1.key }) {
                 let from = previousTargets[id] ?? starts[id] ?? frame
@@ -391,7 +391,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 )
                 if snapshotResized(from: from.size, to: frame.size, tolerance: 2) {
                     resizeModes[id] = faces[id] != nil
-                        ? .crossfade
+                        ? .swap
                         : snapshotResizeMode(image: imageSizes[id] ?? from.size, target: nil, from: from.size, to: frame.size)
                 }
             }
