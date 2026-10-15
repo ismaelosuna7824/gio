@@ -126,7 +126,7 @@ struct InlineProblem: View {
     var body: some View {
         Label(message, systemImage: "exclamationmark.triangle.fill")
             .font(GioFont.caption)
-            .foregroundStyle(GioColor.ink(.systemOrange))
+            .foregroundStyle(GioColor.warningInk)
             .fixedSize(horizontal: false, vertical: true)
     }
 }

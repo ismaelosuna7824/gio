@@ -12,7 +12,7 @@ final class ShellSnapshotTests: XCTestCase {
     private func page<V: View>(_ view: V) -> some View {
         view
             .environment(\.gioStaticPage, true)
-            .environment(\.gioAccent, FocusRingSectionConfig.defaultColor)
+            .environment(\.gioAccent, GioBrand.accent)
     }
 
     private func onboarding(

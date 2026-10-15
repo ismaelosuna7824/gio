@@ -226,7 +226,7 @@ struct RulesEmptyState: View {
                 Circle().fill(GioColor.tint(.orange).opacity(0.12)).frame(width: 84, height: 84)
                 Image(systemName: "macwindow.badge.plus")
                     .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(GioColor.ink(.systemOrange))
+                    .foregroundStyle(GioColor.warningInk)
             }
             .accessibilityHidden(true)
             VStack(spacing: GioSpacing.xxs + 2) {

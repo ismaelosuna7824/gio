@@ -30,7 +30,7 @@ struct UpdatesCard: View {
                             Text(row.status).font(GioFont.body)
                             Text(row.detail ?? lastCheckCaption)
                                 .font(GioFont.caption)
-                                .foregroundStyle(row.kind == .error ? GioColor.ink(.systemRed) : GioColor.secondaryText)
+                                .foregroundStyle(row.kind == .error ? GioColor.errorInk : GioColor.secondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
                         }
@@ -69,7 +69,7 @@ struct UpdatesCard: View {
                 .controlSize(.small)
         case .updateAndRestart?:
             Button("Update and Restart") { controller.startUpdate() }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandProminentButtonStyle())
                 .controlSize(.small)
         case .openReleasePage(let page)?:
             Button("Open Release Page") { openReleasePage(page) }
@@ -205,7 +205,7 @@ struct ReleaseNotesSheet: View {
                         controller.startUpdate()
                         dismiss()
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(BrandProminentButtonStyle())
                     .keyboardShortcut(.defaultAction)
                 }
             }

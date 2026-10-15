@@ -238,11 +238,11 @@ struct LogLevelStyle {
     init(_ level: LogLevel) {
         switch level {
         case .error:
-            dot = GioColor.error; fill = GioColor.error; ink = GioColor.ink(.systemRed)
+            dot = GioColor.error; fill = GioColor.error; ink = GioColor.errorInk
         case .warn:
-            dot = GioColor.warning; fill = GioColor.warning; ink = GioColor.ink(.systemOrange)
+            dot = GioColor.warning; fill = GioColor.warning; ink = GioColor.warningInk
         case .info:
-            dot = GioColor.info; fill = GioColor.info; ink = GioColor.ink(.systemBlue)
+            dot = GioColor.info; fill = GioColor.info; ink = GioColor.infoInk
         case .debug:
             dot = GioColor.neutral; fill = GioColor.neutral; ink = GioColor.secondaryText
         case .trace:

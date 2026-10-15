@@ -87,7 +87,7 @@ struct GioSwitch: View {
     var body: some View {
         if isStatic {
             Capsule()
-                .fill(isOn ? Color(nsColor: .controlAccentColor) : Color.primary.opacity(colorScheme == .dark ? 0.2 : 0.12))
+                .fill(isOn ? GioColor.accent : Color.primary.opacity(colorScheme == .dark ? 0.2 : 0.12))
                 .overlay(alignment: isOn ? .trailing : .leading) {
                     Circle()
                         .fill(Color.white)
@@ -124,7 +124,7 @@ struct GioSlider: View {
                 let x = (proxy.size.width - knob) * CGFloat(fraction)
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.primary.opacity(0.12)).frame(height: 4)
-                    Capsule().fill(Color(nsColor: .controlAccentColor)).frame(width: x + knob / 2, height: 4)
+                    Capsule().fill(GioColor.accent).frame(width: x + knob / 2, height: 4)
                     Circle()
                         .fill(Color.white)
                         .shadow(color: .black.opacity(0.3), radius: 1, y: 0.5)
@@ -246,7 +246,7 @@ struct GioButton: View {
             .keyboardShortcut(shortcut)
         switch role {
         case .normal: button
-        case .prominent: button.buttonStyle(.borderedProminent)
+        case .prominent: button.buttonStyle(BrandProminentButtonStyle())
         case .borderless: button.buttonStyle(.borderless)
         }
     }
@@ -255,24 +255,45 @@ struct GioButton: View {
     private var replica: some View {
         switch role {
         case .borderless:
-            label.font(GioFont.body).foregroundStyle(Color(nsColor: .linkColor))
+            label.font(GioFont.body).foregroundStyle(GioColor.accent)
                 .opacity(isEnabled ? 1 : 0.4)
         case .normal, .prominent:
             label
                 .font(GioFont.body.weight(role == .prominent ? .medium : .regular))
-                .foregroundStyle(role == .prominent ? Color.white : GioColor.primaryText)
+                .foregroundStyle(role == .prominent ? GioColor.onAccent : GioColor.primaryText)
                 .padding(.horizontal, 10)
                 .frame(height: ReplicaMetrics.height)
                 .background {
                     if role == .prominent {
                         RoundedRectangle(cornerRadius: ReplicaMetrics.radius, style: .continuous)
-                            .fill(Color(nsColor: .controlAccentColor))
+                            .fill(GioColor.accent)
                     } else {
                         ReplicaSurface()
                     }
                 }
                 .opacity(isEnabled ? 1 : 0.4)
         }
+    }
+}
+
+/// The prominent button in Gio's mint with navy (dark) or cream (light)
+/// text, like the landing page's Download button. AppKit's own prominent
+/// style draws white text, unreadable on the light mint.
+struct BrandProminentButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(GioFont.body.weight(.medium))
+            .foregroundStyle(GioColor.onAccent)
+            .padding(.horizontal, 10)
+            .frame(height: ReplicaMetrics.height)
+            .background(
+                RoundedRectangle(cornerRadius: ReplicaMetrics.radius, style: .continuous)
+                    .fill(GioColor.accent)
+            )
+            .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.4)
+            .contentShape(RoundedRectangle(cornerRadius: ReplicaMetrics.radius, style: .continuous))
     }
 }
 

@@ -217,6 +217,7 @@ struct OnboardingContent: View {
         }
         .frame(width: 560, height: 520)
         .background(GioColor.page)
+        .tint(GioColor.accent)
         .animation(reduceMotion ? nil : .spring(response: 0.36, dampingFraction: 0.9), value: state.step)
     }
 
@@ -229,8 +230,14 @@ struct OnboardingContent: View {
     private var welcome: some View {
         VStack(spacing: GioSpacing.m) {
             Spacer(minLength: 0)
-            GioAppMark(size: 96)
-            Text("Welcome to Gio").font(.system(size: 26, weight: .bold))
+            GioMascot(size: 132)
+            HStack(spacing: 0) {
+                Text("Hi, I'm ")
+                Text("Gio").foregroundStyle(GioColor.tint(.green)).squiggleUnderline(GioColor.tint(.green))
+                Text(".")
+            }
+            .font(.system(size: 28, weight: .bold, design: .rounded))
+            .foregroundStyle(GioColor.primaryText)
             Text("Scrollable tiling for macOS. Windows open as columns on an endless strip, and your keyboard glides you along it.")
                 .font(.system(size: 14))
                 .foregroundStyle(GioColor.secondaryText)
@@ -238,21 +245,18 @@ struct OnboardingContent: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 400)
             HStack(spacing: GioSpacing.l) {
-                valuePoint("rectangle.split.3x1.fill", "Columns, not piles")
-                valuePoint("keyboard", "Keyboard first")
-                valuePoint("sparkles", "Smooth motion")
+                valuePoint("rectangle.split.3x1.fill", "Columns, not piles", tint: .green)
+                valuePoint("keyboard", "Keyboard first", tint: .orange)
+                valuePoint("sparkles", "Smooth motion", tint: .pink)
             }
             .padding(.top, GioSpacing.s)
             Spacer(minLength: 0)
         }
     }
 
-    private func valuePoint(_ symbol: String, _ title: String) -> some View {
-        VStack(spacing: GioSpacing.xs - 2) {
-            Image(systemName: symbol)
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(GioColor.secondaryText)
-                .frame(height: 22)
+    private func valuePoint(_ symbol: String, _ title: String, tint: SectionTint) -> some View {
+        VStack(spacing: GioSpacing.xs) {
+            SectionIcon(symbol: symbol, tint: tint, size: 30)
             Text(title).font(GioFont.caption.weight(.medium)).foregroundStyle(GioColor.secondaryText)
         }
         .frame(width: 120)
@@ -425,34 +429,5 @@ private struct ProgressDots: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Step \(progress.index + 1) of \(progress.count)")
-    }
-}
-
-/// The app icon when running as the app, else the Gio mark tile.
-struct GioAppMark: View {
-    let size: CGFloat
-    @Environment(\.gioAccent) private var accent
-    @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.gioStaticPage) private var isStatic
-
-    var body: some View {
-        if !isStatic, Bundle.main.bundleURL.pathExtension == "app", let icon = NSApp?.applicationIconImage {
-            Image(nsImage: icon)
-                .resizable()
-                .frame(width: size, height: size)
-                .accessibilityHidden(true)
-        } else {
-            let palette = AccentPalette(accent: accent, colorScheme: colorScheme)
-            RoundedRectangle(cornerRadius: size * 0.23, style: .continuous)
-                .fill(palette.gradient)
-                .overlay(
-                    Image(systemName: "rectangle.split.3x1.fill")
-                        .font(.system(size: size * 0.42, weight: .semibold))
-                        .foregroundStyle(palette.onGradient)
-                )
-                .frame(width: size, height: size)
-                .shadow(color: .black.opacity(0.18), radius: size * 0.06, y: size * 0.03)
-                .accessibilityHidden(true)
-        }
     }
 }

@@ -15,7 +15,7 @@ let package = Package(
         .target(name: "GioCore"),
         .target(name: "GioMac", dependencies: ["GioCore"]),
         .target(name: "GioMacOS", dependencies: ["GioCore"]),
-        .target(name: "GioUI", dependencies: ["GioCore", "GioMacOS"]),
+        .target(name: "GioUI", dependencies: ["GioCore", "GioMacOS"], resources: [.process("Resources")]),
         .target(name: "GioSession", dependencies: ["GioCore", "GioMacOS"]),
         .executableTarget(name: "GioPOC", dependencies: ["GioMacOS"]),
         .executableTarget(name: "GioCLI", dependencies: ["GioCore"]),

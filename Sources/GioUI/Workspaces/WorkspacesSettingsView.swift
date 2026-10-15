@@ -70,7 +70,6 @@ struct WorkspacesSettingsView: View {
                 } onCancel: {
                     pickerTarget = nil
                 }
-                .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
             }
         }
         .confirmationDialog(

@@ -314,26 +314,26 @@ private struct LauncherRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(primary)
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? Color.white : GioColor.primaryText)
+                    .foregroundStyle(isSelected ? GioColor.onAccent : GioColor.primaryText)
                     .lineLimit(1)
                 if let secondary {
                     Text(secondary)
                         .font(GioFont.caption)
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : GioColor.secondaryText)
+                        .foregroundStyle(isSelected ? GioColor.onAccent.opacity(0.8) : GioColor.secondaryText)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: GioSpacing.s)
             Text(badge)
                 .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isSelected ? Color.white : GioColor.secondaryText)
+                .foregroundStyle(isSelected ? GioColor.onAccent : GioColor.secondaryText)
                 .padding(.horizontal, 6)
                 .frame(height: 18)
-                .background(Capsule().fill(isSelected ? Color.white.opacity(0.2) : Color.primary.opacity(0.07)))
+                .background(Capsule().fill(isSelected ? GioColor.onAccent.opacity(0.16) : Color.primary.opacity(0.07)))
             if index < 9 {
                 Text("⌘\(index + 1)")
                     .font(GioFont.caption.monospacedDigit())
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.85) : GioColor.tertiaryText)
+                    .foregroundStyle(isSelected ? GioColor.onAccent.opacity(0.85) : GioColor.tertiaryText)
                     .frame(width: 26, alignment: .trailing)
             }
         }
@@ -341,7 +341,7 @@ private struct LauncherRow: View {
         .frame(height: 44)
         .background(
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(isSelected ? Color(nsColor: .controlAccentColor) : Color.clear)
+                .fill(isSelected ? GioColor.accent : Color.clear)
         )
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

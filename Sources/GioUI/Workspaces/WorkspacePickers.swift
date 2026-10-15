@@ -246,7 +246,7 @@ struct WorkspaceAppPicker: View {
                 if alreadyHere {
                     InlineTag(text: "Added")
                 } else if let owner {
-                    InlineTag(text: "In \(owner.trimmedName)", tint: GioColor.warning, ink: GioColor.ink(.systemOrange))
+                    InlineTag(text: "In \(owner.trimmedName)", tint: GioColor.warning, ink: GioColor.warningInk)
                 }
             }
             .padding(.horizontal, GioSpacing.xs)
@@ -281,7 +281,7 @@ struct WorkspaceAppPicker: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } icon: {
                     Image(systemName: "arrow.right.arrow.left.circle.fill")
-                        .foregroundStyle(GioColor.ink(.systemOrange))
+                        .foregroundStyle(GioColor.warningInk)
                 }
                 .font(GioFont.caption)
                 .foregroundStyle(GioColor.secondaryText)

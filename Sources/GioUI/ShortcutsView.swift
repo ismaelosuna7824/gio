@@ -152,7 +152,7 @@ private struct ShortcutRow: View {
                 HStack(spacing: GioSpacing.xs - 2) {
                     Text(row.name).font(GioFont.body.weight(.medium))
                     if row.isCustomized {
-                        InlineTag(text: "config", tint: GioColor.warning, ink: GioColor.ink(.systemOrange))
+                        InlineTag(text: "config", tint: GioColor.warning, ink: GioColor.warningInk)
                             .help("Changed from the default (stored in config.toml)")
                     }
                 }
@@ -410,7 +410,7 @@ struct ShortcutRecorderSheet: View {
         .background(RoundedRectangle(cornerRadius: GioRadius.medium, style: .continuous).fill(GioColor.well))
         .overlay(
             RoundedRectangle(cornerRadius: GioRadius.medium, style: .continuous)
-                .strokeBorder(Color(nsColor: .controlAccentColor).opacity(0.6), lineWidth: 1.5)
+                .strokeBorder(GioColor.accent.opacity(0.6), lineWidth: 1.5)
         )
         .accessibilityLabel(recorder.combo.map { "Recorded \($0.describe())" } ?? "Recording, press a key combination")
     }

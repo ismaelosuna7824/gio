@@ -22,7 +22,7 @@ final class WorkspacesSnapshotTests: XCTestCase {
     private func page<V: View>(_ view: V) -> some View {
         view
             .environment(\.gioStaticPage, true)
-            .environment(\.gioAccent, FocusRingSectionConfig.defaultColor)
+            .environment(\.gioAccent, GioBrand.accent)
     }
 
     func testWorkspacesList() throws {

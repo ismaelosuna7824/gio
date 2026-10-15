@@ -3,7 +3,8 @@ import SwiftUI
 
 // MARK: - SectionIcon
 
-/// A white SF Symbol on a rounded-square colored tile (System Settings).
+/// A navy SF Symbol on a rounded tile in one of the mascot's spot colors,
+/// like the landing page's workspace pills.
 public struct SectionIcon: View {
     let symbol: String
     let tint: SectionTint
@@ -21,19 +22,16 @@ public struct SectionIcon: View {
     }
 
     public var body: some View {
-        let color = GioColor.tint(tint)
-        RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-            .fill(LinearGradient(
-                colors: [color.opacity(0.82), color], startPoint: .top, endPoint: .bottom
-            ))
+        RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+            .fill(GioColor.tintFill(tint))
             .overlay(
-                RoundedRectangle(cornerRadius: size * 0.24, style: .continuous)
-                    .strokeBorder(Color.black.opacity(0.08), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: size * 0.28, style: .continuous)
+                    .strokeBorder(GioBrand.onSpot.opacity(0.18), lineWidth: 0.5)
             )
             .overlay(
                 Image(systemName: symbol)
-                    .font(.system(size: size * 0.55, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.system(size: size * 0.52, weight: .bold))
+                    .foregroundStyle(GioBrand.onSpot)
             )
             .frame(width: size, height: size)
             .accessibilityHidden(true)
@@ -67,10 +65,10 @@ public enum StatusKind: Equatable, Sendable {
 
     var ink: Color {
         switch self {
-        case .ok: return GioColor.ink(.systemGreen)
-        case .warning: return GioColor.ink(.systemOrange)
-        case .error: return GioColor.ink(.systemRed)
-        case .info: return GioColor.ink(.systemBlue)
+        case .ok: return GioColor.okInk
+        case .warning: return GioColor.warningInk
+        case .error: return GioColor.errorInk
+        case .info: return GioColor.infoInk
         case .neutral: return GioColor.secondaryText
         }
     }
@@ -106,11 +104,10 @@ public struct StatusBadge: View {
 
 // MARK: - Keycap
 
-/// One key: rounded cap with a subtle bezel and a 1 pt drop, legible in
-/// both appearances.
+/// One key, like the landing page's `<kbd>`: a raised cap with a hairline
+/// and a 1 pt drop of the same hairline, legible in both appearances.
 public struct Keycap: View {
     let glyph: KeycapGlyph
-    @Environment(\.colorScheme) private var colorScheme
 
     public init(_ glyph: KeycapGlyph) {
         self.glyph = glyph
@@ -121,25 +118,19 @@ public struct Keycap: View {
     }
 
     public var body: some View {
-        let dark = colorScheme == .dark
         Text(glyph.text)
             .font(glyph.role == .wideKey ? GioFont.caption.weight(.medium) : GioFont.keycap)
-            .foregroundStyle(GioColor.primaryText.opacity(0.85))
+            .foregroundStyle(GioColor.primaryText)
             .padding(.horizontal, glyph.role == .wideKey ? 6 : 0)
             .frame(minWidth: 22, minHeight: 22)
             .background(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(LinearGradient(
-                        colors: dark
-                            ? [Color.white.opacity(0.16), Color.white.opacity(0.10)]
-                            : [Color.white, Color(nsColor: .controlBackgroundColor)],
-                        startPoint: .top, endPoint: .bottom
-                    ))
-                    .shadow(color: .black.opacity(dark ? 0.5 : 0.18), radius: 0, x: 0, y: 1)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(GioColor.raised)
+                    .shadow(color: GioColor.hairline, radius: 0, x: 0, y: 1)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .strokeBorder(dark ? Color.white.opacity(0.10) : Color.black.opacity(0.12), lineWidth: 0.5)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(GioColor.hairline, lineWidth: 0.5)
             )
     }
 }
@@ -336,12 +327,47 @@ private struct GioStaticPageKey: EnvironmentKey {
     static let defaultValue = false
 }
 
+private struct GioPageSectionKey: EnvironmentKey {
+    static let defaultValue: MainSection? = nil
+}
+
 extension EnvironmentValues {
     /// Lay pages out without a `ScrollView` (NSScrollView-backed, so it does
     /// not render through `ImageRenderer`). Snapshot tests only.
     public var gioStaticPage: Bool {
         get { self[GioStaticPageKey.self] }
         set { self[GioStaticPageKey.self] = newValue }
+    }
+
+    /// The sidebar section a page belongs to: its header shows the
+    /// section's number pill. Nil (sheets, previews) shows the title alone.
+    public var gioPageSection: MainSection? {
+        get { self[GioPageSectionKey.self] }
+        set { self[GioPageSectionKey.self] = newValue }
+    }
+}
+
+/// A section's number on its spot color, like a workspace pill in the menu
+/// bar (`1 · Code`) and the landing page's section labels.
+public struct SectionNumberPill: View {
+    let section: MainSection
+    let size: CGFloat
+
+    public init(_ section: MainSection, size: CGFloat = 26) {
+        self.section = section
+        self.size = size
+    }
+
+    public var body: some View {
+        Text("\(sectionNumber(section))")
+            .font(.system(size: size * 0.5, weight: .semibold, design: .monospaced))
+            .foregroundStyle(GioBrand.onSpot)
+            .frame(minWidth: size, minHeight: size)
+            .background(
+                RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
+                    .fill(GioColor.tintFill(sectionStyle(section).tint))
+            )
+            .accessibilityHidden(true)
     }
 }
 
@@ -354,6 +380,7 @@ public struct GioPage<Content: View, Accessory: View>: View {
     let content: Content
     let scrolls: Bool
     @Environment(\.gioStaticPage) private var isStatic
+    @Environment(\.gioPageSection) private var section
 
     /// `scrolls: false` pins the header and lets the content fill the rest
     /// (pages with their own scrolling list, like Logs).
@@ -382,13 +409,20 @@ public struct GioPage<Content: View, Accessory: View>: View {
             }
         }
         .background(GioColor.page)
+        // Switches, sliders and links take the mascot's mint.
+        .tint(GioColor.accent)
     }
 
     private var column: some View {
         VStack(alignment: .leading, spacing: GioSpacing.xl) {
             HStack(alignment: .firstTextBaseline, spacing: GioSpacing.m) {
                 VStack(alignment: .leading, spacing: GioSpacing.xxs) {
-                    Text(title).font(GioFont.pageTitle)
+                    HStack(alignment: .center, spacing: GioSpacing.s - 2) {
+                        if let section {
+                            SectionNumberPill(section)
+                        }
+                        Text(title).font(GioFont.pageTitle).foregroundStyle(GioColor.primaryText)
+                    }
                     if let subtitle {
                         Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
                     }

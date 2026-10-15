@@ -11,7 +11,7 @@ final class FollowUpSnapshotTests: XCTestCase {
     private func page<V: View>(_ view: V) -> some View {
         view
             .environment(\.gioStaticPage, true)
-            .environment(\.gioAccent, FocusRingSectionConfig.defaultColor)
+            .environment(\.gioAccent, GioBrand.accent)
     }
 
     func testLayoutWithPresetChips() throws {
@@ -49,7 +49,7 @@ final class FollowUpSnapshotTests: XCTestCase {
             SidebarReplica(
                 status: SessionStatus(kind: .ok, label: "Running"), selected: .focus, dirty: [.layout, .focus]
             )
-            .environment(\.gioAccent, FocusRingSectionConfig.defaultColor)
+            .environment(\.gioAccent, GioBrand.accent)
         }
     }
 }

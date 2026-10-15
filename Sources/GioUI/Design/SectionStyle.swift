@@ -14,7 +14,7 @@ public struct SectionStyle: Equatable, Sendable {
 /// Symbol (filled, drawn white in a colored tile) and tint per section.
 public func sectionStyle(_ section: MainSection) -> SectionStyle {
     switch section {
-    case .overview: return SectionStyle(symbol: "square.grid.2x2.fill", tint: .blue)
+    case .overview: return SectionStyle(symbol: "square.grid.2x2.fill", tint: .green)
     case .shortcuts: return SectionStyle(symbol: "command", tint: .gray)
     case .workspaces: return SectionStyle(symbol: "square.stack.3d.up.fill", tint: .cyan)
     case .layout: return SectionStyle(symbol: "rectangle.split.3x1.fill", tint: .indigo)
@@ -22,8 +22,14 @@ public func sectionStyle(_ section: MainSection) -> SectionStyle {
     case .animations: return SectionStyle(symbol: "wand.and.stars", tint: .pink)
     case .rules: return SectionStyle(symbol: "checklist", tint: .orange)
     case .logs: return SectionStyle(symbol: "doc.text.fill", tint: .teal)
-    case .diagnostics: return SectionStyle(symbol: "stethoscope", tint: .green)
+    case .diagnostics: return SectionStyle(symbol: "stethoscope", tint: .blue)
     }
+}
+
+/// The section's place in the sidebar, 1-based: its page header shows it
+/// like a workspace pill (`1 · Overview`), the landing page's metaphor.
+public func sectionNumber(_ section: MainSection) -> Int {
+    (sidebarGroups.flatMap(\.sections).firstIndex(of: section) ?? 0) + 1
 }
 
 /// One titled group of sidebar rows.

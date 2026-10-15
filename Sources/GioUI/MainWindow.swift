@@ -82,17 +82,21 @@ public struct GioMainView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(GioColor.sidebar)
             .safeAreaInset(edge: .top, spacing: 0) {
                 SidebarHeader(status: sessionStatus(model.snapshot.facts), version: gioVersion)
             }
             .navigationSplitViewColumnWidth(min: 200, ideal: 220, max: 280)
         } detail: {
             detail(for: selection ?? .overview)
+                .environment(\.gioPageSection, selection ?? .overview)
                 .navigationTitle((selection ?? .overview).title)
                 .updateNotesSheet(updates)
         }
+        // The mint of the mascot, deep enough for white text on a selected row.
+        .tint(GioColor.accent)
         .environment(\.updateController, updates)
-        .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
         .environment(\.onboardingPresenter, onboarding)
         .sheet(isPresented: $onboarding.isPresented) {
             OnboardingSheet(
@@ -100,7 +104,6 @@ public struct GioMainView: View {
                 onFinish: { onboarding.finish() }, onLater: { onboarding.later() },
                 onPrepareRelaunch: { onboarding.prepareRelaunch(at: .screenRecording) }
             )
-                .environment(\.gioAccent, model.snapshot.config.focusRing.resolvedColor())
         }
         .onReceive(model.$snapshot) { onboarding.evaluate($0.facts) }
         .frame(minWidth: mainWindowMinSize.width, minHeight: mainWindowMinSize.height)
@@ -159,25 +162,14 @@ struct SidebarRow: View {
     }
 }
 
-/// Top of the sidebar: Gio mark, name, version and the session status dot.
+/// Top of the sidebar: the mascot, name, version and the session status dot.
 struct SidebarHeader: View {
     let status: SessionStatus
     let version: String
-    @Environment(\.gioAccent) private var accent
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        let palette = AccentPalette(accent: accent, colorScheme: colorScheme)
         HStack(spacing: GioSpacing.s - 2) {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(palette.gradient)
-                .overlay(
-                    Image(systemName: "rectangle.split.3x1.fill")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(palette.onGradient)
-                )
-                .frame(width: 34, height: 34)
-                .shadow(color: .black.opacity(0.12), radius: 1.5, y: 1)
+            GioMascot(size: 38)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(alignment: .firstTextBaseline, spacing: GioSpacing.xxs + 1) {
                     Text("Gio").font(.system(size: 15, weight: .semibold))

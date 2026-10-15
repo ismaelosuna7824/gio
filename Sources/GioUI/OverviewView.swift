@@ -124,7 +124,7 @@ struct OverviewDashboard: View {
             }
             Spacer(minLength: GioSpacing.s)
             Button("Grant Access…", action: requestAccessibility)
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(BrandProminentButtonStyle())
                 .controlSize(.large)
         }
         .padding(GioSpacing.m)
@@ -243,7 +243,7 @@ struct OverviewDashboard: View {
                         ForEach(Array(overview.gestureWarnings.enumerated()), id: \.offset) { _, warning in
                             Text(warning)
                                 .font(GioFont.caption)
-                                .foregroundStyle(GioColor.ink(.systemOrange))
+                                .foregroundStyle(GioColor.warningInk)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .textSelection(.enabled)
                                 .padding(.leading, 38)
@@ -274,7 +274,7 @@ struct OverviewDashboard: View {
                     ForEach(Array(overview.configIssues.enumerated()), id: \.offset) { _, issue in
                         Text(issue)
                             .font(GioFont.mono)
-                            .foregroundStyle(GioColor.ink(.systemOrange))
+                            .foregroundStyle(GioColor.warningInk)
                             .textSelection(.enabled)
                             .padding(.leading, 38)
                     }

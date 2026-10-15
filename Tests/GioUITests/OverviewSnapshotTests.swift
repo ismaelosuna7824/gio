@@ -46,10 +46,11 @@ private struct ComposedWindow: View {
                 .frame(width: 220)
             Divider()
             // The window scrolls; the snapshot shows the top of the page.
-            Color(nsColor: .windowBackgroundColor)
+            GioColor.page
                 .overlay(alignment: .top) {
                     OverviewDashboard(facts: facts, config: OverviewFixture.config)
                         .environment(\.gioStaticPage, true)
+                        .environment(\.gioPageSection, .overview)
                 }
                 .clipped()
         }
@@ -60,7 +61,6 @@ struct SidebarReplica: View {
     let status: SessionStatus
     let selected: MainSection
     var dirty: Set<MainSection> = []
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -81,7 +81,7 @@ struct SidebarReplica: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(
                             RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .fill(section == selected ? Color.primary.opacity(0.1) : .clear)
+                                .fill(section == selected ? GioColor.tint(.green) : .clear)
                         )
                         .padding(.horizontal, 10)
                 }
@@ -89,8 +89,7 @@ struct SidebarReplica: View {
             Spacer()
         }
         .frame(maxHeight: .infinity)
-        // Stand-in for the sidebar material (not renderable offscreen).
-        .background(colorScheme == .dark ? Color(white: 0.16) : Color(white: 0.93))
+        .background(GioColor.sidebar)
     }
 }
 

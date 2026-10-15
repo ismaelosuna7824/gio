@@ -85,6 +85,29 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   174(42 skipped)/7/19/39/1141 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
   Live round results: #5 menu bar OK, #6 workspaces OK (user), #2 dark/light follows system (no
   in-app toggle), #9 not run (my table-escaped `\|` broke the command).
+- [x] DD-07 (commit pending) — Gio's own identity, taken from the landing page (`gio-landing`). User
+  (2026-10-14, Overview screenshot): "hay que ajustar el UI a lo que tenemos o a lo que representa
+  Gio, algo como lo hiciste en la landing". Supersedes DD-01's "semantic system colors, accent from
+  the focus-ring color". Tokens (`DesignTokens.swift`): `GioBrand` (the mascot's palette: navy ink,
+  cream paper, mint, butter, coral, sky, lilac, the landing's hex values); `GioColor` page / sidebar
+  / card / raised / well / hairline / text in navy (dark) and cream (light); status hues are the
+  spots (ok mint, warning butter, error coral, info sky) with `okInk` / `warningInk` / `errorInk` /
+  `infoInk` for text (the system-color `ink(_:)` is gone); `accent` / `onAccent` for controls;
+  `tintFill` (pastel spot) vs `tint` (deeper on cream) per `SectionTint`. App accent is the brand
+  mint (`GioBrand.accent`, the `gioAccent` default); the focus ring keeps its configurable color on
+  screen (Alt+O overview still uses it). Components: `SectionIcon` = navy glyph on a pastel spot
+  tile, keycaps like the landing's `<kbd>`, `GioSwitch` / `GioSlider` / prominent buttons
+  (`BrandProminentButtonStyle`, navy/cream text on mint) / launcher selection in the accent, page
+  titles in SF Pro Rounded with a section number pill (`SectionNumberPill`, `sectionNumber`, the
+  landing's `2 · The strip` labels), Overview tile mint and Diagnostics sky. Mascot: GioUI resource
+  `gio-mascot.png` (landing art downscaled to 403x440), `GioMascot` in the sidebar header and the
+  onboarding welcome ("Hi, I'm Gio." with the landing's squiggle, spot-tile value points);
+  `GioAppMark` removed. Fonts stay system (Bricolage/Figtree not bundled). Evidence: every
+  `GioUITests` snapshot rendered light and dark (106 PNGs) and reviewed (window, onboarding, layout,
+  logs, components); full `swift test` UI 310 (53 skipped) / Session 477 / POC 7 / Mac 19 / MacOS
+  95 / Core 1970, 0 failures; signed `xcodebuild` BUILD SUCCEEDED, `Gio_GioUI.bundle` with the
+  mascot inside `Gio.app`, `codesign --verify --deep --strict` OK. Not verified live: the real
+  sidebar's selection color (`.tint` on the `List`; AppKit may keep the system accent).
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.
