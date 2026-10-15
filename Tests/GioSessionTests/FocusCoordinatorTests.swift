@@ -22,7 +22,7 @@ final class FocusCoordinatorTests: XCTestCase {
         var scroll: (from: CGFloat, to: CGFloat)?
         var topPID: pid_t?
         var topLookups = 0
-        var clickOnSystemUI = false
+        var clickTarget = ClickTarget(onSystemUI: false, ownerPID: nil)
         var warps: [CGPoint] = []
         var mouseFollowsFocus = true
         var centerMode = CenterFocusedColumnMode.never
@@ -97,7 +97,7 @@ final class FocusCoordinatorTests: XCTestCase {
                     return world.topPID
                 },
                 warpCursor: { world.warps.append($0) },
-                clickOnSystemUI: { _ in world.clickOnSystemUI },
+                clickTarget: { _ in world.clickTarget },
                 mouseFollowsFocus: { world.mouseFollowsFocus },
                 centerMode: { world.centerMode },
                 publishFocusRing: { world.ringPublishes += 1 },
@@ -324,7 +324,7 @@ final class FocusCoordinatorTests: XCTestCase {
     /// activation reveals the app's window on its workspace.
     func testADockClickRevealsTheActivatedAppsWindowOnItsWorkspace() {
         moveToHiddenWorkspace(2)
-        world.clickOnSystemUI = true
+        world.clickTarget = ClickTarget(onSystemUI: true, ownerPID: nil)
         focus.recordClick(at: CGPoint(x: 900, y: 40))
         scheduler.runPending()
         XCTAssertNil(focus.currentClick(), "the Dock is not a window")
@@ -337,6 +337,28 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(fixture.session.manager.current, 2)
         XCTAssertEqual(focused, ids[2])
         XCTAssertTrue(world.logs.contains { $0.1 == "focus reveal id=2:3 workspace=2 source=activation" })
+    }
+
+    /// WC-16 live (2026-10-15): a link clicked in Slack opened in Chrome on
+    /// another workspace; the activation was checked against the click
+    /// point and dropped, so the browser stayed behind. A click on one app's
+    /// window followed by another app taking the focus is a hand-off: the
+    /// activation reveals that app's window like a Dock click.
+    func testALinkClickedInOneAppRevealsTheWindowOfTheAppItOpened() {
+        moveToHiddenWorkspace(2)
+        world.clickTarget = ClickTarget(onSystemUI: false, ownerPID: 1)
+        focus.recordClick(at: center(0))
+        scheduler.runPending()
+
+        world.frontmost = 2
+        world.focusedElements[2] = element(2)
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+        scheduler.advance(by: 1)
+
+        XCTAssertEqual(fixture.session.manager.current, 2)
+        XCTAssertEqual(focused, ids[2])
+        XCTAssertTrue(world.logs.contains { $0.1 == "focus reveal id=2:3 workspace=2 source=activation" })
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("focus dropped") })
     }
 
     func testRevealOnAnotherDisplaysShownWorkspaceIsNotAWorkspaceSwitch() {
@@ -457,7 +479,10 @@ final class FocusCoordinatorTests: XCTestCase {
     func testClickNotOnTheFocusedWindowIsReReadOnceThenDropped() {
         world.frontmost = 2
         world.focusedElements[2] = element(1)
+        // The clicked window is the same app's: no hand-off.
+        world.clickTarget = ClickTarget(onSystemUI: false, ownerPID: 2)
         focus.recordClick(at: center(2))
+        scheduler.runPending()
 
         focus.requestAdoption(.activation, pid: 2, element: nil)
         scheduler.advance(by: 0.15)

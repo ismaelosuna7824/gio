@@ -395,9 +395,9 @@ Bounds (`RenderCheckBook`): at most one position nudge and one size nudge per wi
 
 Clicking a window makes the activation event and the focused-window event outrun the app's own `AXFocusedWindow`. `FocusSettle` (pure state machine in `GioCore/Focus/FocusSettle.swift`) handles it:
 
-1. Keyboard-driven focus events (no click in the last 0.3 s) are adopted immediately. So are activations from a click outside every display's usable area or (WC-13) on the Dock or the menu bar: the session classifies each click with one WindowServer query (`clickIsOnSystemUI`: the frontmost window under it, Gio's own panels aside, is at the Dock's layer 20 or above) before the activation arrives, so with an auto-hidden Dock (inside the usable area) a Dock click still reveals the app's focused window on its workspace.
+1. Keyboard-driven focus events (no click in the last 0.3 s) are adopted immediately. So are activations from a click outside every display's usable area or (WC-13) on the Dock or the menu bar: the session classifies each click with one WindowServer query (`clickTarget`: the frontmost window under it, Gio's own panels aside; layer 20 or above is the Dock or the menu bar) before the activation arrives, so with an auto-hidden Dock (inside the usable area) a Dock click still reveals the app's focused window on its workspace.
 2. Mouse-driven ones are coalesced (last event wins), wait for the button to be released plus an 80 ms settle delay (polling every 20 ms), then the focused window is read.
-3. The window must contain the click point (2 pt slack). On mismatch it is re-read once after 100 ms; a second mismatch drops the adoption and logs `focus dropped`.
+3. The window must contain the click point (2 pt slack). On mismatch it is re-read once after 100 ms; a second mismatch drops the adoption and logs `focus dropped`. WC-16: when the click hit a normal window (layer 0) of another app than the one taking the focus, the click handed the focus off (a link opening the browser, "Open in…"): no match is required, and an activation reveals that app's window on its workspace.
 4. Clicks outside every display's usable area (menu bar, Dock) are not window clicks. Focus events from a non-frontmost app and from Gio itself are ignored.
 5. After adoption a reflow happens only if the viewport has to scroll to show the focused column (`pendingScroll`).
 

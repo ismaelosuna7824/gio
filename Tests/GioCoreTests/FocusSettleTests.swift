@@ -61,20 +61,34 @@ final class FocusSettleTests: XCTestCase {
     /// click-through panels (ring, dim, overlay) aside: the Dock (layer 20)
     /// and above (menu bar, status items, menus) are system UI; app windows
     /// (0), app panels below the Dock and the desktop (negative) are not.
-    func testSystemUIIsTheDockLayerAndAboveSkippingGiosOwnPanels() {
+    /// WC-16: the same window names the app that was clicked (a normal
+    /// window only; panels, the desktop and system UI name none).
+    func testTheClickTargetIsTheFrontmostWindowSkippingGiosOwnPanels() {
         let point = CGPoint(x: 100, y: 100)
         let box = CGRect(x: 0, y: 0, width: 200, height: 200)
         let gio: pid_t = 99
-        func onSystemUI(_ windows: [PointWindow]) -> Bool {
-            clickIsOnSystemUI(at: point, frontToBack: windows, ownPID: gio)
+        func target(_ windows: [PointWindow]) -> ClickTarget {
+            clickTarget(at: point, frontToBack: windows, ownPID: gio)
         }
-        XCTAssertTrue(onSystemUI([PointWindow(pid: 5, layer: 20, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]))
-        XCTAssertTrue(onSystemUI([PointWindow(pid: 5, layer: 25, bounds: box)]))
-        XCTAssertFalse(onSystemUI([PointWindow(pid: gio, layer: 3, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]))
-        XCTAssertFalse(onSystemUI([PointWindow(pid: 7, layer: 3, bounds: box)]), "an app's floating panel")
-        XCTAssertFalse(onSystemUI([PointWindow(pid: 8, layer: -2_147_483_603, bounds: box)]), "the desktop")
-        XCTAssertFalse(onSystemUI([PointWindow(pid: 5, layer: 20, bounds: CGRect(x: 300, y: 0, width: 10, height: 10))]))
-        XCTAssertFalse(onSystemUI([]))
+        XCTAssertEqual(
+            target([PointWindow(pid: 5, layer: 20, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]),
+            ClickTarget(onSystemUI: true, ownerPID: nil)
+        )
+        XCTAssertEqual(target([PointWindow(pid: 5, layer: 25, bounds: box)]), ClickTarget(onSystemUI: true, ownerPID: nil))
+        XCTAssertEqual(
+            target([PointWindow(pid: gio, layer: 3, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]),
+            ClickTarget(onSystemUI: false, ownerPID: 7)
+        )
+        XCTAssertEqual(target([PointWindow(pid: 7, layer: 3, bounds: box)]), ClickTarget(onSystemUI: false, ownerPID: nil), "an app's floating panel")
+        XCTAssertEqual(
+            target([PointWindow(pid: 8, layer: -2_147_483_603, bounds: box)]), ClickTarget(onSystemUI: false, ownerPID: nil),
+            "the desktop"
+        )
+        XCTAssertEqual(
+            target([PointWindow(pid: 5, layer: 20, bounds: CGRect(x: 300, y: 0, width: 10, height: 10))]),
+            ClickTarget(onSystemUI: false, ownerPID: nil)
+        )
+        XCTAssertEqual(target([]), ClickTarget(onSystemUI: false, ownerPID: nil))
     }
 
     // MARK: Click validation
@@ -90,6 +104,22 @@ final class FocusSettleTests: XCTestCase {
             frame: CGRect(x: 1439, y: 100, width: 800, height: 600), click: click.location
         ))
         XCTAssertFalse(focusMatchesClick(frame: nil, click: click.location))
+    }
+
+    /// WC-16 live (2026-10-15): a link clicked in Slack opened in Chrome,
+    /// whose window was parked on another workspace; the activation was
+    /// judged against the click point (`focus dropped source=activation
+    /// id=1528:3 frame=1799,-1073 ... reason=focused window not under
+    /// click`) and the browser stayed behind. When another app than the
+    /// clicked one takes the focus, the click handed off to it.
+    func testAClickHandsOffToAnotherAppButMustMatchForTheClickedApp() {
+        let parked = CGRect(x: 1799, y: -1073, width: 1784, height: 1114)
+        var onSlack = click
+        onSlack.ownerPID = 10
+        XCTAssertTrue(clickExplainsFocus(onSlack, focusPID: 20, frame: parked), "Slack link -> Chrome")
+        XCTAssertFalse(clickExplainsFocus(onSlack, focusPID: 10, frame: parked), "Slack itself: must be under the click")
+        XCTAssertTrue(clickExplainsFocus(onSlack, focusPID: 10, frame: CGRect(x: 400, y: 300, width: 300, height: 300)))
+        XCTAssertFalse(clickExplainsFocus(click, focusPID: 20, frame: parked), "unknown clicked app: must match")
     }
 
     // MARK: Keyboard-driven

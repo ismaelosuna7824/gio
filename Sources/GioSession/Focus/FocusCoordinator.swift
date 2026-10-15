@@ -43,9 +43,9 @@ public final class FocusCoordinator: @unchecked Sendable {
         /// The pid owning the topmost on-screen window at a point.
         public var topWindowOwnerPID: (CGPoint) -> pid_t?
         public var warpCursor: (CGPoint) -> Void
-        /// WC-13: the click at this point landed on the Dock or the menu bar
-        /// (one WindowServer query, `clickIsOnSystemUI`).
-        public var clickOnSystemUI: (CGPoint) -> Bool
+        /// What the click at this point landed on (one WindowServer query,
+        /// `clickTarget`): WC-13 the Dock or menu bar, WC-16 the clicked app.
+        public var clickTarget: (CGPoint) -> ClickTarget
         public var mouseFollowsFocus: () -> Bool
         public var centerMode: () -> CenterFocusedColumnMode
         public var publishFocusRing: () -> Void
@@ -80,7 +80,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             isVisibleInViewport: @escaping (WindowID) -> Bool?,
             topWindowOwnerPID: @escaping (CGPoint) -> pid_t?,
             warpCursor: @escaping (CGPoint) -> Void,
-            clickOnSystemUI: @escaping (CGPoint) -> Bool = { _ in false },
+            clickTarget: @escaping (CGPoint) -> ClickTarget = { _ in ClickTarget(onSystemUI: false, ownerPID: nil) },
             mouseFollowsFocus: @escaping () -> Bool,
             centerMode: @escaping () -> CenterFocusedColumnMode,
             publishFocusRing: @escaping () -> Void, reflowAll: @escaping () -> Void,
@@ -109,7 +109,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.isVisibleInViewport = isVisibleInViewport
             self.topWindowOwnerPID = topWindowOwnerPID
             self.warpCursor = warpCursor
-            self.clickOnSystemUI = clickOnSystemUI
+            self.clickTarget = clickTarget
             self.mouseFollowsFocus = mouseFollowsFocus
             self.centerMode = centerMode
             self.publishFocusRing = publishFocusRing
@@ -186,8 +186,9 @@ public final class FocusCoordinator: @unchecked Sendable {
 
     /// Tap thread (PF-AB): a mouse-down. A click is the user choosing the
     /// focus: any pending keyboard intent is dropped on the session queue.
-    /// WC-13: there, before the activation it causes arrives, the click is
-    /// marked when it landed on the Dock or the menu bar (no window click).
+    /// WC-13/WC-16: there, before the activation it causes arrives, the
+    /// click is marked with what it landed on: the Dock or the menu bar (no
+    /// window click) or the app whose window it hit.
     public func recordClick(at location: CGPoint) {
         let click = MouseClick(location: location, time: context.now())
         clickLock.lock()
@@ -198,15 +199,16 @@ public final class FocusCoordinator: @unchecked Sendable {
                 return
             }
             focusIntent.cancel()
-            guard context.clickOnSystemUI(location) else {
-                return
-            }
+            let target = context.clickTarget(location)
             clickLock.lock()
             if tappedClick == click {
-                tappedClick?.onSystemUI = true
+                tappedClick?.onSystemUI = target.onSystemUI
+                tappedClick?.ownerPID = target.ownerPID
             }
             clickLock.unlock()
-            context.log(.debug, "focus click on system UI x=\(Int(location.x)) y=\(Int(location.y))")
+            if target.onSystemUI {
+                context.log(.debug, "focus click on system UI x=\(Int(location.x)) y=\(Int(location.y))")
+            }
         }
     }
 
@@ -353,7 +355,8 @@ public final class FocusCoordinator: @unchecked Sendable {
         var frame: CGRect?
         if let known {
             frame = context.frame(known)
-            matches = focusMatchesClick(frame: frame, click: click.location)
+            // WC-16: a click that brought another app forward handed off.
+            matches = clickExplainsFocus(click, focusPID: event.pid, frame: frame)
         } else if element != nil {
             // Unknown window: single-window admission decides, nothing to compare.
             matches = true

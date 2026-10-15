@@ -26,17 +26,33 @@ public enum FocusSource: String, Sendable {
 }
 
 /// A mouse-down: where (Cocoa global coordinates, the frames' space) and
-/// when (system uptime). WC-13: `onSystemUI` once the session learned the
-/// click landed on the Dock or the menu bar (`clickIsOnSystemUI`).
+/// when (system uptime). Once the session looked at what was under it
+/// (`clickTarget`): WC-13 `onSystemUI`, the Dock or the menu bar; WC-16
+/// `ownerPID`, the app whose window was clicked (nil: unknown or none).
 public struct MouseClick: Equatable, Sendable {
     public let location: CGPoint
     public let time: TimeInterval
     public var onSystemUI: Bool
+    public var ownerPID: pid_t?
 
-    public init(location: CGPoint, time: TimeInterval, onSystemUI: Bool = false) {
+    public init(location: CGPoint, time: TimeInterval, onSystemUI: Bool = false, ownerPID: pid_t? = nil) {
         self.location = location
         self.time = time
         self.onSystemUI = onSystemUI
+        self.ownerPID = ownerPID
+    }
+}
+
+/// What a click landed on (one WindowServer look per click).
+public struct ClickTarget: Equatable, Sendable {
+    /// WC-13: the Dock, the menu bar or another system UI layer.
+    public var onSystemUI: Bool
+    /// WC-16: the app owning the normal window under the click.
+    public var ownerPID: pid_t?
+
+    public init(onSystemUI: Bool, ownerPID: pid_t?) {
+        self.onSystemUI = onSystemUI
+        self.ownerPID = ownerPID
     }
 }
 
@@ -61,12 +77,13 @@ public let systemUIWindowLayer = 20
 /// WC-13: whether a click at `point` landed on the Dock or the menu bar: the
 /// frontmost window under it, skipping Gio's own click-through panels (ring,
 /// dim, overlay), is at the Dock's layer or above. App windows, app panels
-/// below the Dock and the desktop are not system UI.
-public func clickIsOnSystemUI(at point: CGPoint, frontToBack: [PointWindow], ownPID: pid_t) -> Bool {
+/// below the Dock and the desktop are not system UI. WC-16: when that
+/// window is a normal app window (layer 0), its app is the clicked one.
+public func clickTarget(at point: CGPoint, frontToBack: [PointWindow], ownPID: pid_t) -> ClickTarget {
     guard let top = frontToBack.first(where: { $0.pid != ownPID && $0.bounds.contains(point) }) else {
-        return false
+        return ClickTarget(onSystemUI: false, ownerPID: nil)
     }
-    return top.layer >= systemUIWindowLayer
+    return ClickTarget(onSystemUI: top.layer >= systemUIWindowLayer, ownerPID: top.layer == 0 ? top.pid : nil)
 }
 
 /// The click that explains a focus event happening `now`, or nil when the
@@ -99,6 +116,18 @@ public func focusMatchesClick(frame: CGRect?, click: CGPoint) -> Bool {
     }
     let slack = FocusTiming.hitTolerance
     return frame.insetBy(dx: -slack, dy: -slack).contains(click)
+}
+
+/// WC-16: whether `click` explains the focus of `focusPID`'s window at
+/// `frame`. A click on one app's window that brings another app forward
+/// handed the focus off (a link opening the browser, "Open in..."): that
+/// app's focus stands wherever its window is. For the clicked app itself,
+/// or when the clicked app is unknown, the window must be under the click.
+public func clickExplainsFocus(_ click: MouseClick, focusPID: pid_t, frame: CGRect?) -> Bool {
+    if let owner = click.ownerPID, owner != focusPID {
+        return true
+    }
+    return focusMatchesClick(frame: frame, click: click.location)
 }
 
 /// Pure scheduling of focus adoption. Keyboard-driven events (no click)
