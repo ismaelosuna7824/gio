@@ -304,6 +304,22 @@ public func diagnosticChecklist(
     ]
 }
 
+/// DA-08: the checklist as plain lines for the report's `system.txt`
+/// (status, title, badge, summary). Details stay out: they hold paths.
+public func issueReportHealthLines(_ checks: [DiagnosticCheck]) -> [String] {
+    checks.map { check in
+        let status: String
+        switch check.status {
+        case .ok: status = "ok"
+        case .warning: status = "warning"
+        case .error: status = "error"
+        case .info: status = "info"
+        case .neutral: status = "off"
+        }
+        return "[\(status)] \(check.title): \(check.badge) — \(check.summary)"
+    }
+}
+
 /// TG-03: whether trackpad gestures run, and why not. TG-04: running
 /// gestures that macOS performs too are a warning, each with the System
 /// Settings path that changes it.

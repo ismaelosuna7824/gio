@@ -139,6 +139,18 @@ final class AdvancedPresentationTests: XCTestCase {
         )
     }
 
+    /// DA-08: the report's `system.txt` repeats the checklist, one line per
+    /// card (status, title, badge, summary; no details).
+    func testIssueReportHealthLinesRepeatTheChecklist() {
+        let lines = issueReportHealthLines(checklist(facts(ax: false)))
+        XCTAssertEqual(lines.count, 7)
+        XCTAssertEqual(
+            lines[0],
+            "[error] Permissions: Accessibility missing — Gio cannot move windows or hear shortcuts until Accessibility is granted."
+        )
+        XCTAssertEqual(lines[1], "[ok] Session: Running — Tiling is running and the gio command-line tool can connect.")
+    }
+
     private func facts(gestures: GestureSourceStatus, conflicts: [GestureConflict] = []) -> SessionFacts {
         SessionFacts(
             configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
