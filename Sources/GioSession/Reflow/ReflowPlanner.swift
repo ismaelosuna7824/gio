@@ -148,8 +148,11 @@ public final class ReflowPlanner: @unchecked Sendable {
         }
         let shown = Set(all.map(\.workspace))
         let windows = Dictionary(uniqueKeysWithValues: registry.managedWindows().map { ($0.id, $0) })
+        // FI-10: a window that yielded to its app is never written: not
+        // parked, not restored, not moved with its workspace.
+        _ = hiddenBook.reveal(windows.values.filter(\.isAppControlled).map(\.id))
         let hidden = manager.windows(outside: shown).filter {
-            windows[$0].map { !$0.isMinimized } ?? false
+            windows[$0].map { !$0.isMinimized && !$0.isAppControlled } ?? false
         }
         let connected = Set(all.map(\.id))
         var owners: [WindowID: DisplayID] = [:]
@@ -234,7 +237,7 @@ public final class ReflowPlanner: @unchecked Sendable {
                 }
             }
         }
-        let movable = current.keys.filter { windows[$0].map { !$0.isMinimized } ?? false }
+        let movable = current.keys.filter { windows[$0].map { !$0.isMinimized && !$0.isAppControlled } ?? false }
         var frames: [WindowID: CGRect] = [:]
         for id in movable {
             frames[id] = physical[id]
@@ -424,5 +427,12 @@ public final class ReflowPlanner: @unchecked Sendable {
                 context.storePhysicalFrame(id, frame)
             }
         }
+    }
+}
+
+private extension ManagedWindow {
+    /// FI-10: floating because its app kept restoring its own frame.
+    var isAppControlled: Bool {
+        floatReason == .appControlled
     }
 }

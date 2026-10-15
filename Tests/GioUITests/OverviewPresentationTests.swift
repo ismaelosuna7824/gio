@@ -8,6 +8,7 @@ final class OverviewPresentationTests: XCTestCase {
         XCTAssertEqual(windowStateBadge(.tiled), StateBadge(kind: .neutral, label: "Tiled", symbol: "rectangle.split.3x1"))
         XCTAssertEqual(windowStateBadge(.floating(.dialog)).label, "Floating · Dialog")
         XCTAssertEqual(windowStateBadge(.floating(.notResizable)).label, "Floating · Fixed size")
+        XCTAssertEqual(windowStateBadge(.floating(.appControlled)).label, "Floating · App-controlled")
         XCTAssertEqual(windowStateBadge(.floating(nil)).label, "Floating")
         XCTAssertEqual(windowStateBadge(.floating(.rule)).kind, .info)
         XCTAssertEqual(windowStateBadge(.minimized).label, "Minimized")

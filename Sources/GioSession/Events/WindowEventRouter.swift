@@ -60,6 +60,10 @@ public final class WindowEventRouter: @unchecked Sendable {
         public var console: (String) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
+        /// FI-10: when Gio last wrote the window (`WriteEchoGate.lastWrite`).
+        public var lastWrite: (WindowID) -> TimeInterval?
+        /// FI-10: a user drag never counts as the app snapping back.
+        public var isMouseDown: () -> Bool
 
         public init(
             makePort: @escaping (@escaping @Sendable (SystemWindowEvent) -> Void) -> EventPort,
@@ -77,7 +81,9 @@ public final class WindowEventRouter: @unchecked Sendable {
             invalidateTrust: @escaping (WindowID) -> Void, invalidateTileability: @escaping (WindowID) -> Void,
             title: @escaping (AXUIElement) -> String?, registry: @escaping () -> WindowRegistry,
             console: @escaping (String) -> Void, log: @escaping (LogLevel, String) -> Void,
-            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+            lastWrite: @escaping (WindowID) -> TimeInterval?,
+            isMouseDown: @escaping () -> Bool
         ) {
             self.makePort = makePort
             self.runningRegularPIDs = runningRegularPIDs
@@ -102,6 +108,8 @@ public final class WindowEventRouter: @unchecked Sendable {
             self.console = console
             self.log = log
             self.now = now
+            self.lastWrite = lastWrite
+            self.isMouseDown = isMouseDown
         }
     }
 
@@ -110,6 +118,8 @@ public final class WindowEventRouter: @unchecked Sendable {
     private let scheduler: SessionScheduler
     private var port: EventPort?
     private var book = ObservationBook()
+    /// FI-10: apps restoring their own frame right after Gio wrote it.
+    private var snapBacks = SnapBackBook()
 
     public init(context: Context, discovery: DiscoveryService, scheduler: SessionScheduler) {
         self.context = context
@@ -169,6 +179,11 @@ public final class WindowEventRouter: @unchecked Sendable {
     /// Subscribe a newly registered window to its own notifications.
     public func watch(window element: AXUIElement, pid: pid_t) {
         port?.watch(window: element, pid: pid)
+    }
+
+    /// FI-10: a purged or re-registered window starts a new snap-back count.
+    public func forgetSnapBacks(_ id: WindowID) {
+        snapBacks.forget(id)
     }
 
     // MARK: Events
@@ -236,12 +251,26 @@ public final class WindowEventRouter: @unchecked Sendable {
                 return
             }
             // Animation frames raise a burst of events: skip the AX read.
-            if context.isEchoSuppressed(known, context.now()) {
+            let now = context.now()
+            if context.isEchoSuppressed(known, now) {
                 return
             }
             if let observed = context.frame(known),
-               context.isEcho(known, observed, context.now())
+               context.isEcho(known, observed, now)
             {
+                return
+            }
+            let record = context.registry().find(known)
+            if record?.floatReason == .appControlled {
+                // FI-10: the app owns this frame now; nothing is written back.
+                context.updateDim()
+                return
+            }
+            let verdict = snapBacks.note(
+                known, at: now, lastWrite: context.lastWrite(known), dragging: context.isMouseDown()
+            )
+            if case .yield(let count) = verdict, let record {
+                yieldToApp(record, snapBacks: count)
                 return
             }
             // Not our echo: the window moved on its own (drag, app resize).
@@ -281,6 +310,23 @@ public final class WindowEventRouter: @unchecked Sendable {
         case .ignore:
             break
         }
+    }
+
+    /// FI-10: the app restored its own frame `snapBacks` times right after
+    /// Gio wrote it: it floats as `appControlled` (still a member of its
+    /// workspace) and no pass writes it again; one pass lets the neighbours
+    /// close its gap.
+    private func yieldToApp(_ record: ManagedWindow, snapBacks: Int) {
+        guard (try? context.registry().setFloating(.appControlled, for: record.id)) != nil else {
+            return
+        }
+        context.log(
+            .warn,
+            "window yields to app id=\(record.id.pid):\(record.id.elementID) app=\(record.application) snapBacks=\(snapBacks)"
+        )
+        context.invalidateTrust(record.id)
+        context.forgetZoom(record.id)
+        context.scheduleReflow(false)
     }
 
     /// Attach one launched app's observer, retrying with backoff while AX

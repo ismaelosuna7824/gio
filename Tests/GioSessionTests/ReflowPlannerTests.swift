@@ -526,6 +526,54 @@ final class ReflowPlannerTests: XCTestCase {
         XCTAssertTrue(Set(ids).isSubset(of: Set(switched.plans.last!.parked.keys)), "an inactive dwindle workspace parks")
     }
 
+    // MARK: Yield to the app (FI-10)
+
+    private func yieldToApp(_ id: WindowID, in world: ReflowWorld) {
+        XCTAssertNoThrow(try world.session.registry.setFloating(.appControlled, for: id))
+        world.modes[id] = .floating
+    }
+
+    /// A window the app keeps showing (an installer re-centring itself) is
+    /// no longer parked when its workspace is hidden, nor restored to a
+    /// remembered frame when it shows again, and neither layout tiles it.
+    func testAWindowThatYieldedToItsAppIsNeverParkedRestoredOrTiled() {
+        let world = ReflowWorld()
+        XCTAssertTrue(world.session.manager.setLayout(.dwindle))
+        let tiles = world.addColumns(2)
+        let floating = world.addColumns(1, pidBase: 300, mode: .floating)[0]
+        let harness = PlannerHarness(world: world)
+        let run = { harness.run(animating: false, settings: .init(), centering: .none, zoomTargets: self.identity).1 }
+        yieldToApp(tiles[0], in: world)
+        let shown = run().plans[0].visible
+        XCTAssertNil(shown[tiles[0]], "dwindle leaves it to the app")
+        XCTAssertNotNil(shown[tiles[1]])
+        world.session.manager.switchTo(2)
+        world.syncShown()
+        world.addColumns(1, pidBase: 200)
+        let hidden = run().plans.last!.parked
+        XCTAssertNil(hidden[tiles[0]], "the app keeps showing it: not parked again")
+        XCTAssertNotNil(hidden[tiles[1]])
+        XCTAssertNotNil(hidden[floating], "a floating window still parks and remembers its frame")
+        world.physicalFrames[floating] = hidden[floating]?.frame
+        yieldToApp(floating, in: world)
+        world.session.manager.switchTo(1)
+        world.syncShown()
+        XCTAssertNil(run().plans.last?.visible[floating], "no restore of a yielded window")
+        XCTAssertTrue(world.session.manager.currentWorkspace().columns.flatMap(\.windows).contains(floating))
+    }
+
+    func testAYieldedFloatingWindowDoesNotFollowItsWorkspaceToAnotherDisplay() {
+        let world = ReflowWorld(twoDisplays: true)
+        world.addColumns(1)
+        let floating = world.addColumns(1, pidBase: 300, mode: .floating)[0]
+        let harness = PlannerHarness(world: world)
+        harness.run(animating: false, settings: .init(), centering: .none, zoomTargets: identity)
+        yieldToApp(floating, in: world)
+        apply(.moveWorkspaceToMonitor(.right), in: world)
+        let (_, plan) = harness.run(animating: false, settings: .init(), centering: .none, zoomTargets: identity)
+        XCTAssertFalse(plan.plans.contains { $0.visible[floating] != nil || $0.parked[floating] != nil })
+    }
+
     // MARK: Multi-display (MM-01)
 
     /// Two displays; the right one switched from its first workspace (two

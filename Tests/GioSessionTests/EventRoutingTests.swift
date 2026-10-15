@@ -93,6 +93,9 @@ final class EventWorld: @unchecked Sendable {
     var logs: [(LogLevel, String)] = []
     var port: FakeEventPort?
     var portScript: [pid_t: [Bool]] = [:]
+    /// FI-10: when Gio last wrote each window (`WriteEchoGate.lastWrite`).
+    var lastWrites: [WindowID: TimeInterval] = [:]
+    var mouseDown = false
 
     func known(_ element: AXUIElement) -> WindowID? {
         handles.first { CFEqual($0.0, element) }?.1
@@ -191,7 +194,9 @@ final class EventWorld: @unchecked Sendable {
             registry: { self.session.registry },
             console: { self.console.append($0) },
             log: { self.logs.append(($0, $1)) },
-            now: now
+            now: now,
+            lastWrite: { self.lastWrites[$0] },
+            isMouseDown: { self.mouseDown }
         )
     }
 }
@@ -765,5 +770,72 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.registered.count, 1)
         send(.window(.windowCreated), element: stranger)
         XCTAssertEqual(world.registered.count, 2)
+    }
+
+    // MARK: Snap-back cap (FI-10)
+
+    /// Gio writes the window, the app restores its own frame `after` later.
+    private func snapBack(after delay: TimeInterval = 0.5) {
+        world.lastWrites[id] = scheduler.now
+        scheduler.advance(by: delay)
+        send(.window(.moved), element: element)
+    }
+
+    func testAnAppThatKeepsSnappingBackYieldsAndIsNoLongerFought() {
+        snapBack()
+        snapBack()
+        XCTAssertEqual(world.scheduledReflows, [false, false], "each snap-back is written back")
+        XCTAssertEqual(world.registered.first?.mode, .tiled)
+        snapBack()
+        XCTAssertEqual(world.registered.first?.mode, .floating)
+        XCTAssertEqual(world.registered.first?.floatReason, .appControlled)
+        XCTAssertEqual(world.scheduledReflows, [false, false, false], "one pass closes the gap")
+        let warnings = world.logs.filter { $0.0 == .warn && $0.1.hasPrefix("window yields to app") }
+        XCTAssertEqual(warnings.map(\.1), ["window yields to app id=7:\(id.elementID) app=Code snapBacks=3"])
+        XCTAssertTrue(world.session.manager.currentWorkspace().columns.flatMap(\.windows).contains(id), "still a member")
+
+        let holds = world.dragHolds
+        for _ in 0..<5 {
+            snapBack()
+        }
+        XCTAssertEqual(world.scheduledReflows.count, 3, "the app keeps its frame: no more passes")
+        XCTAssertEqual(world.dragHolds, holds)
+        XCTAssertEqual(world.logs.filter { $0.1.hasPrefix("window yields to app") }.count, 1, "warned once")
+        XCTAssertFalse(world.logs.contains { $0.1.contains("secret") })
+    }
+
+    func testTilingAYieldedWindowAgainStartsANewCount() throws {
+        for _ in 0..<3 {
+            snapBack()
+        }
+        XCTAssertEqual(try world.session.registry.toggleFloating(for: id), .tiled)
+        let before = world.scheduledReflows.count
+        snapBack()
+        snapBack()
+        XCTAssertEqual(world.registered.first?.mode, .tiled)
+        XCTAssertEqual(world.scheduledReflows.count, before + 2)
+        snapBack()
+        XCTAssertEqual(world.registered.first?.floatReason, .appControlled, "the fight came back")
+    }
+
+    func testAUserDragOrAnAppMoveLongAfterGiosWriteNeverYields() {
+        world.mouseDown = true
+        for _ in 0..<5 {
+            snapBack()
+        }
+        world.mouseDown = false
+        for _ in 0..<5 {
+            snapBack(after: 2)
+        }
+        XCTAssertEqual(world.registered.first?.mode, .tiled)
+        XCTAssertEqual(world.scheduledReflows.count, 10, "every move is still laid out again")
+    }
+
+    func testForgettingAWindowDropsItsSnapBacks() {
+        snapBack()
+        snapBack()
+        router.forgetSnapBacks(id)
+        snapBack()
+        XCTAssertEqual(world.registered.first?.mode, .tiled)
     }
 }

@@ -106,6 +106,7 @@ public enum WindowState: Equatable, Sendable {
             case .notResizable: return "Floating (not resizable)"
             case .rule: return "Floating (window rule)"
             case .manual: return "Floating (toggled)"
+            case .appControlled: return "Floating (app keeps its frame)"
             }
         }
     }

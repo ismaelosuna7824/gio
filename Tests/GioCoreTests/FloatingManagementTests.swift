@@ -115,6 +115,24 @@ final class FloatingManagementTests: XCTestCase {
         XCTAssertEqual(registry.find(window(1).id)?.floatReason, .rule)
     }
 
+    /// FI-10: a window that yielded to its app stays floating whatever the
+    /// probe says, until the user tiles it again (toggle-floating).
+    func testAWindowThatYieldedToItsAppIsNeverProbedBackIntoTheLayout() throws {
+        let registry = WindowRegistry()
+        try registry.register(window(1))
+        try registry.setFloating(.appControlled, for: window(1).id)
+        var cache = TileabilityCache()
+        var probed = false
+        let modes = reconcileTileability(registry: registry, cache: &cache) { _ in probed = true; return true }
+        XCTAssertFalse(probed)
+        XCTAssertEqual(modes[window(1).id], .floating)
+        var session = CommandSession()
+        try session.registry.register(registry.find(window(1).id)!)
+        XCTAssertTrue(dispatch(.listWindows, session: &session).contains("mode=floating reason=appControlled"))
+        XCTAssertEqual(try registry.toggleFloating(for: window(1).id), .tiled)
+        XCTAssertNil(registry.find(window(1).id)?.floatReason)
+    }
+
     func testNotResizableFloatPromotesBackWhenProbePasses() throws {
         let registry = WindowRegistry()
         try registry.register(window(1, mode: .floating, reason: .notResizable))

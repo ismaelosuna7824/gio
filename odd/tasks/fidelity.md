@@ -98,6 +98,32 @@ Review: UNAVAILABLE.
   RED: `swift build --build-tests` -> `value of type 'ReflowPlanner' has no member 'restoreSettled'`.
   GREEN: `swift test --filter ReflowPlannerTests` -> `Executed 25 tests, with 0 failures`.
   LIVE PENDING.
+- [x] FI-10 (commit pending) — Cap the app-vs-Gio frame fight (same report: a window flicking in and out
+  after an installer prompt; no logs). A managed window whose app keeps restoring its own frame
+  (re-centres, re-shows a parked window, refuses a position) was written back after every non-echo
+  `.frameChanged` (`WindowEventRouter` -> `invalidateTrust` -> `scheduleReflow`), every ~0.3 s forever;
+  a parked window on a hidden workspace flipped visible/parked forever. Decision: pure
+  `SnapBackBook` (GioCore, injected time) counts non-echo frame changes that come at most 1.5 s after
+  Gio's last write (`WriteEchoGate.lastWrite`, a dispatched write's latest landing) while no mouse
+  button is down (a user drag never counts); 3 within 10 s make the window yield: new
+  `FloatReason.appControlled`, mode floating, warn `window yields to app id= app= snapBacks=` once
+  (no title), one pass for the neighbours. Gio never writes it again: floating leaves the scrolling
+  and dwindle layouts, `ReflowPlanner` no longer parks it, restores its `HiddenWindowBook` frame or
+  relocates it (MM-03), and its later frame changes only refresh the dim. It stays a workspace member
+  (focus, overview, IPC). Toggle-floating tiles it again with a fresh count (the count resets at the
+  yield); purge and re-registration forget the count (`forgetSnapBacks` from the host). Labels:
+  overview "Floating (app keeps its frame)", badge "Floating · App-controlled", IPC
+  `reason=appControlled`. A change later than 1.5 s after Gio's write never counts (limit).
+  RED: `swift build --build-tests` -> `type 'FloatReason?' has no member 'appControlled'`, `value of
+  type 'WindowEventRouter' has no member 'forgetSnapBacks'`, extra `lastWrite`/`isMouseDown` context
+  arguments; with the planner change reverted the two new `ReflowPlannerTests` fail 3 assertions
+  (yielded window parked, restored, relocated).
+  GREEN: `swift test --filter "SnapBackBookTests|FloatingManagementTests|OverviewModelTests|
+  WindowEventPolicyTests|OverviewPresentationTests|WindowEventRouterTests|DiscoveryServiceTests|
+  ReflowPlannerTests|RichRuleArrivalTests|DeferredFollowTests|WindowOpenArrivalTests"` -> GioUITests
+  `Executed 11 tests, with 0 failures`, GioSessionTests `Executed 93 tests, with 0 failures`,
+  GioCoreTests `Executed 58 tests, with 0 failures`.
+  LIVE PENDING.
 
 ## Acceptance criteria
 - WhatsApp/Xcode no longer overlap neighbours; `failed=` stays 0 after the first learn pass.

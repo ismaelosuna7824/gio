@@ -97,6 +97,8 @@ public struct WriteEchoGate: Sendable {
 
     private struct Entry: Sendable {
         let frame: CGRect
+        /// FI-10: when the write landed (a dispatched one: its latest landing).
+        let writtenAt: TimeInterval
         /// Any event up to this time is an echo whatever the frame.
         let suppressedUntil: TimeInterval
     }
@@ -107,13 +109,13 @@ public struct WriteEchoGate: Sendable {
 
     public mutating func recordApplied(_ frames: [WindowID: CGRect], at time: TimeInterval) {
         for (id, frame) in frames {
-            entries[id] = Entry(frame: frame, suppressedUntil: time + Self.suppression)
+            entries[id] = Entry(frame: frame, writtenAt: time, suppressedUntil: time + Self.suppression)
         }
     }
 
     /// Single-window form for the per-tick path: no dictionary is built.
     public mutating func recordApplied(_ id: WindowID, frame: CGRect, at time: TimeInterval) {
-        entries[id] = Entry(frame: frame, suppressedUntil: time + Self.suppression)
+        entries[id] = Entry(frame: frame, writtenAt: time, suppressedUntil: time + Self.suppression)
     }
 
     /// SM-13: a write dispatched at `time` that lands on its app's lane at
@@ -123,11 +125,18 @@ public struct WriteEchoGate: Sendable {
     public mutating func recordDispatched(
         _ id: WindowID, frame: CGRect, at time: TimeInterval, landingWithin: TimeInterval
     ) {
-        entries[id] = Entry(frame: frame, suppressedUntil: time + landingWithin + Self.suppression)
+        entries[id] = Entry(
+            frame: frame, writtenAt: time + landingWithin, suppressedUntil: time + landingWithin + Self.suppression
+        )
     }
 
     public mutating func forget(_ id: WindowID) {
         entries.removeValue(forKey: id)
+    }
+
+    /// FI-10: when Gio last wrote `id` (nil: never, or forgotten).
+    public func lastWrite(of id: WindowID) -> TimeInterval? {
+        entries[id]?.writtenAt
     }
 
     /// Inside the suppression window after our own write to `id`: the event

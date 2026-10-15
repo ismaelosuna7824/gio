@@ -27,6 +27,7 @@ public func windowStateBadge(_ state: WindowState) -> StateBadge {
         case .notResizable: detail = "Fixed size"
         case .rule: detail = "Rule"
         case .manual: detail = "Toggled"
+        case .appControlled: detail = "App-controlled"
         case nil: detail = nil
         }
         return StateBadge(

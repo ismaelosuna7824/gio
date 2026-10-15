@@ -314,6 +314,8 @@ Retained AX handles are indexed by `CFHash(element)` (`HandleIndex`): `AXWindowA
 
 Gio's own writes raise moved and resized events. `WriteEchoGate` records every applied frame with the system uptime. An event for that window is ignored if it arrives within **0.35 s** of the write (the AX read is skipped entirely) or if the window's observed frame is within **2 pt** of the last applied frame. A write dispatched under a snapshot overlay (SM-13, `recordDispatched`) is suppressed until its latest possible landing plus 0.35 s; the flight's settle records it again once the lanes returned. Overlay flights do not gate events by pid (`dropsAsMotionEcho` covers only the AX motion's `animatingPids`), so the echo gate is the only guard there. Without this, write, event, reflow, write would loop.
 
+**Snap-back cap (FI-10).** A non-echo frame change is written back by the next pass, so an app that keeps restoring its own frame (an installer re-centring itself, an app re-showing a window Gio parked, one refusing a position) used to be fought every ~0.3 s forever. `WindowEventRouter` feeds every non-echo `.frameChanged` of a managed window to `SnapBackBook` (`GioCore/Window/SnapBackBook.swift`, pure) with Gio's last write to it (`WriteEchoGate.lastWrite`: the landing time, for a dispatched write its latest landing) and the mouse state. A change counts when it comes at most 1.5 s after that write and no mouse button is down (a user drag never counts); 3 counts within 10 s make the window yield: it floats as `FloatReason.appControlled` (warn `window yields to app id= app= snapBacks=`, once), keeps its workspace membership (focus, overview, IPC list it) and one pass lets its neighbours close the gap. No pass writes it again: floating leaves both the scrolling and the dwindle layout, `ReflowPlanner` neither parks it on a hidden workspace, nor restores a remembered frame (`HiddenWindowBook`), nor moves it with its workspace (MM-03), and its later frame changes only refresh the dim. Toggle-floating tiles it again with a fresh count; purge and re-registration forget the count. A change later than 1.5 s after Gio's write is the app's own and never counts.
+
 
 ### Snapshot pipeline (SM-03..SM-31)
 
@@ -473,7 +475,7 @@ stateDiagram-v2
         HiddenWorkspace --> OnScreen : workspace shown again
     }
 
-    Tiled --> Floating : toggle floating, probe says not resizable, or rule
+    Tiled --> Floating : toggle floating, probe says not resizable, rule, or the app keeps restoring its frame
     Floating --> Tiled : toggle floating, probe passes, or rule removed
     Tiled --> Fullscreen : fullscreen action
     Fullscreen --> Tiled : focus moves elsewhere or toggle again
@@ -492,7 +494,7 @@ stateDiagram-v2
 Details that the diagram compresses:
 
 - **Admission** (`classifyWindowAdmission`): role must be `AXWindow`; `AXSheet` and `AXPopover` are ignored; `AXDialog`/`AXSystemDialog` float as `dialog`; `AXFloatingWindow`/`AXSystemFloatingWindow` float as `floatingSubrole`; invalid frames are ignored; native fullscreen and minimized windows are `suspend` candidates; an unknown or empty subrole tiles if position and size are settable (Electron, Java and Qt windows), otherwise floats as `notResizable`.
-- **Floating is managed, not omitted.** Floating windows stay registered with a reason (`dialog`, `floatingSubrole`, `notResizable`, `rule`, `manual`), keep their own frame, and are visible in the Overview. Tileability is probed once per window and cached (`TileabilityCache`), invalidated on resize events.
+- **Floating is managed, not omitted.** Floating windows stay registered with a reason (`dialog`, `floatingSubrole`, `notResizable`, `rule`, `manual`, `appControlled`: the app kept restoring its own frame, see [Echo gate](#echo-gate)), keep their own frame, and are visible in the Overview. Tileability is probed once per window and cached (`TileabilityCache`), invalidated on resize events.
 - **Minimized** windows keep their column (position memory) but sit out of the layout; focus is handed to the nearest visible window (same column, then right, then left).
 - **Fullscreen** here is Gio's own layout mode, not a native macOS fullscreen Space: the window gets the display width and reaches the bottom edge but stops under the menu bar, all tiled windows park where their columns are, and leaving restores the previous mode and frame.
 - **Restored on exit**: `WindowReconciler.restoreOffscreen` (via `planRestore`) writes only windows that are not fully inside a display, cascading from the top-left of the visible frame in 32 pt steps (8 slots), keeping size (shrunk only if larger than the visible frame).

@@ -539,12 +539,14 @@ final class SessionHost: @unchecked Sendable {
                     tileability.invalidate(id)
                     minimumSizes.forget(id)
                     trustedFrames.invalidate(id)
+                    events.forgetSnapBacks(id)
                 },
                 forgetWindow: { [unowned self] id in
                     tileability.invalidate(id)
                     minimumSizes.forget(id)
                     echoGate.forget(id)
                     trustedFrames.invalidate(id)
+                    events.forgetSnapBacks(id)
                     renderVerifier.forget([id])
                     physicalFrames.removeValue(forKey: id)
                     nativeZoom.purge(id)
@@ -631,7 +633,9 @@ final class SessionHost: @unchecked Sendable {
                 title: { axTitle(of: $0) },
                 registry: { [unowned self] in session.registry },
                 console: { print($0) },
-                log: { GioLog.record($0, $1) }
+                log: { GioLog.record($0, $1) },
+                lastWrite: { [unowned self] in echoGate.lastWrite(of: $0) },
+                isMouseDown: { [unowned self] in probe.isMouseDown }
             ),
             discovery: discovery, scheduler: scheduler
         )

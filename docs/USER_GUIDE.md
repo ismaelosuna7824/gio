@@ -43,7 +43,7 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+C` | `center-column` | Scroll the view so the focused column is centered (clamped at the strip edges). |
 | `Ctrl+Alt+F` | `expand-column-to-available-width` | Make the focused column fill the space the other fully visible columns leave; the view scrolls so the group fills the display between the paddings. Nothing happens without room to grow. |
 | `Ctrl+Alt+C` | `center-visible-columns` | Scroll the view so the fully visible columns (and the focused one) are centered, clamped at the strip edges. |
-| `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. |
+| `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. A window whose app keeps putting it back where it wants (an installer re-centring itself) floats by itself after three such snap-backs and Gio stops moving it (Overview: **Floating · App-controlled**, log `window yields to app`); toggle it to tile it again. |
 | `Alt+Shift+R` | `switch-preset-window-height` | In a stacked column, cycle the focused window through `preset-window-heights` (first preset taller than now, wrapping); the other windows share the rest in their current proportions. |
 | `Alt+Shift+Minus` / `Alt+Shift+Equal` | `set-window-height-minus` / `set-window-height-plus` | Make the focused window 10% of the usable height shorter / taller. Every window of the column keeps at least 100 pt; a window alone in its column always fills it. |
 | `Ctrl+Alt+R` | `reset-window-height` | Give every window of the focused column an equal share of its height again. |

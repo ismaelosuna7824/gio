@@ -146,6 +146,21 @@ final class WindowEventPolicyTests: XCTestCase {
         XCTAssertFalse(gate.isEcho(id, observed: clamped, at: 10.2 + WriteEchoGate.suppression + 0.05))
     }
 
+    /// FI-10: when Gio last wrote the window (a dispatched write: its latest
+    /// landing), for the snap-back count.
+    func testTheLastWriteIsTheLatestLandingOfGiosWrite() {
+        var gate = WriteEchoGate()
+        XCTAssertNil(gate.lastWrite(of: id))
+        gate.recordDispatched(id, frame: frame, at: 10, landingWithin: 0.75)
+        XCTAssertEqual(gate.lastWrite(of: id), 10.75)
+        gate.recordApplied(id, frame: frame, at: 10.2)
+        XCTAssertEqual(gate.lastWrite(of: id), 10.2)
+        gate.recordApplied([id: frame], at: 12)
+        XCTAssertEqual(gate.lastWrite(of: id), 12)
+        gate.forget(id)
+        XCTAssertNil(gate.lastWrite(of: id))
+    }
+
     // MARK: Registration retry
 
     func testRegistrationRetryDelaysGrowThenStop() {

@@ -42,6 +42,7 @@ final class OverviewModelTests: XCTestCase {
         XCTAssertEqual(WindowState.floating(.notResizable).label, "Floating (not resizable)")
         XCTAssertEqual(WindowState.floating(.rule).label, "Floating (window rule)")
         XCTAssertEqual(WindowState.floating(.manual).label, "Floating (toggled)")
+        XCTAssertEqual(WindowState.floating(.appControlled).label, "Floating (app keeps its frame)")
         XCTAssertEqual(WindowState.floating(nil).label, "Floating")
         XCTAssertEqual(WindowState.fullscreen.label, "Fullscreen")
         XCTAssertEqual(WindowState.minimized.label, "Minimized")

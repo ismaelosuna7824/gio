@@ -9,6 +9,10 @@ public enum FloatReason: String, Equatable, Sendable {
     case rule
     /// Floated by the user (toggle-floating).
     case manual
+    /// FI-10: the app kept restoring its own frame after Gio wrote it
+    /// (`SnapBackBook`): Gio stopped writing it until the user tiles it
+    /// again (toggle-floating) or it is registered anew.
+    case appControlled
 }
 
 /// Why a window is not managed at all.
