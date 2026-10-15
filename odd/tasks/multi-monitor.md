@@ -733,7 +733,7 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   `testAJumpingWindowDoesNotFlyAcrossTheDisplay` asserted exactly that). GREEN: full `swift test`
   UI 310 (53 skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1970, 0 failures. LIVE
   PENDING: same recording scenario, no bare-desktop frame.
-- [x] MM-11 (commit below) — A write its busy app timed out is retried once. Evidence: screen
+- [x] MM-11 (`458d191`) — A write its busy app timed out is retried once. Evidence: screen
   recording of both displays (`screencapture -v -D1/-D2`, 2026-10-15 22:21:58Z) during the
   `move-window-to-display` / `move-*-to-monitor-*` workloads, plus the log. At 22:22:07.685Z
   `reconcile failure id=30453:10 app=Xcode kind=writeFailed(size,-25204)
