@@ -155,6 +155,8 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// that has not finished by then is reported as a miss and dropped.
     public func capture(_ request: SnapshotCaptureRequest) async -> SnapshotCaptureResult {
         let start = DispatchTime.now().uptimeNanoseconds
+        let signpost = GioSignpost.begin("capture")
+        defer { GioSignpost.end("capture", signpost) }
         let result: SnapshotCaptureResult
         if #available(macOS 14.0, *) {
             result = await captureSCK(request, start: start)

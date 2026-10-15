@@ -319,6 +319,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         currentlyFocused: WindowID?,
         trusted: TrustedFrames = TrustedFrames()
     ) -> ReconcileReport {
+        let signpost = GioSignpost.begin("reconcile")
+        defer { GioSignpost.end("reconcile", signpost) }
         var report = ReconcileReport()
         // An animation frame still being written would make its app look
         // busy and fail; let it land first, but only for the apps this pass
@@ -389,6 +391,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         currentlyFocused: WindowID?,
         trusted: TrustedFrames = TrustedFrames()
     ) -> DispatchedPass {
+        let signpost = GioSignpost.begin("dispatch")
+        defer { GioSignpost.end("dispatch", signpost) }
         let started = clock()
         var report = ReconcileReport()
         let pids = Set(frames.keys.map(\.pid)).union(parked.keys.map(\.pid))
