@@ -249,6 +249,25 @@ Window admission, observation and registration only. Out of scope: animation/per
   reveals and focuses as before, no floats at startup, nothing promoted. LIVE PENDING: an app
   whose window was admitted as a dialog and later reads as a standard window (not reproducible
   on demand).
+- [x] WC-16 (commit below) — A link clicked in one app reveals the app it opens (2026-10-15,
+  user report with screenshots: links in Slack and in a chat client "te lleva por detrás ... no
+  te lleva al navegador"). Log: `focus dropped source=activation id=1528:3 frame=1799,-1073
+  1784x1114 click=846,732 reason=focused window not under click` (Chrome parked on the
+  Browsers workspace; the click was on the other app's window). Cause: a mouse-driven
+  activation must have its focused window under the click (WC-09), which a hand-off to
+  another app never satisfies. Fix: the per-click WindowServer query (WC-13) now returns a
+  `ClickTarget` (system UI, and the pid of the layer-0 window hit, Gio's panels skipped;
+  `clickTarget(at:frontToBack:ownPID:)` replaces `clickIsOnSystemUI`), stored on
+  `MouseClick.ownerPID`; `clickExplainsFocus` accepts a focus of another app than the clicked
+  one and keeps the under-the-click rule for the clicked app or an unknown one. RED: compile
+  (`ClickTarget`, `clickTarget`, `clickExplainsFocus` missing). GREEN: FocusSettleTests 18,
+  FocusCoordinatorTests 39 (new `testALinkClickedInOneAppRevealsTheWindowOfTheAppItOpened`;
+  `testClickNotOnTheFocusedWindowIsReReadOnceThenDropped` now clicks the same app's window);
+  full suite UI 313 (53 skipped) / Session 516 / POC 7 / Mac 19 / MacOS 91 / Core 2018, 0
+  failures; Release build OK; `git diff --check` clean. No extra WindowServer query (the
+  WC-13 one per click now carries both answers). LIVE PENDING: a link clicked in Slack with
+  the browser on another workspace brings the browser forward (needs a real click; the
+  terminal cannot post mouse events).
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.

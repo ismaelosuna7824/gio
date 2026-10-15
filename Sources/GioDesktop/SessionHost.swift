@@ -675,7 +675,7 @@ final class SessionHost: @unchecked Sendable {
                 isVisibleInViewport: { [unowned self] in isVisibleInViewport($0) },
                 topWindowOwnerPID: { topWindowOwnerPID(atCocoa: $0) },
                 warpCursor: { warpCursor(toCocoa: $0) },
-                clickOnSystemUI: { clickIsOnSystemUI(atCocoa: $0, ownPID: ProcessInfo.processInfo.processIdentifier) },
+                clickTarget: { clickTarget(atCocoa: $0, ownPID: ProcessInfo.processInfo.processIdentifier) },
                 mouseFollowsFocus: { [unowned self] in session.config.behavior.mouseFollowsFocus },
                 centerMode: { [unowned self] in session.config.layout.centerFocusedColumn },
                 publishFocusRing: { [unowned self] in publishFocusRing() },

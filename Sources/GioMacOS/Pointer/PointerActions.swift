@@ -50,15 +50,15 @@ public func topWindowOwnerPID(atCocoa point: CGPoint) -> pid_t? {
     return nil
 }
 
-/// WC-13: whether a click at a Cocoa point landed on the Dock or the menu
-/// bar (`clickIsOnSystemUI` over the on-screen windows, front to back, in
-/// CoreGraphics global space). Gio's own panels are skipped there. One
-/// WindowServer query; false when it fails.
-public func clickIsOnSystemUI(atCocoa point: CGPoint, ownPID: pid_t) -> Bool {
+/// What a click at a Cocoa point landed on (`clickTarget` over the on-screen
+/// windows, front to back, in CoreGraphics global space): WC-13 the Dock or
+/// the menu bar, WC-16 the app whose window it hit. Gio's own panels are
+/// skipped there. One WindowServer query; nothing known when it fails.
+public func clickTarget(atCocoa point: CGPoint, ownPID: pid_t) -> ClickTarget {
     guard let primary = NSScreen.screens.first,
           let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
     else {
-        return false
+        return ClickTarget(onSystemUI: false, ownerPID: nil)
     }
     let windows: [PointWindow] = info.compactMap { entry in
         if let alpha = entry[kCGWindowAlpha as String] as? Double, alpha <= 0.01 {
@@ -77,5 +77,5 @@ public func clickIsOnSystemUI(atCocoa point: CGPoint, ownPID: pid_t) -> Bool {
         return PointWindow(pid: pid, layer: layer, bounds: rect)
     }
     let global = globalDisplayPoint(fromCocoa: point, primaryHeight: primary.frame.height)
-    return clickIsOnSystemUI(at: global, frontToBack: windows, ownPID: ownPID)
+    return clickTarget(at: global, frontToBack: windows, ownPID: ownPID)
 }
