@@ -741,6 +741,7 @@ final class SessionHost: @unchecked Sendable {
             toggleOverview: { [weak self] in
                 DispatchQueue.main.async { self?.onToggleOverview?() }
             },
+            applyAction: { [unowned self] in apply($0) },
             log: { GioLog.record($0, $1) }
         ))
         gestures = GestureController(context: .init(

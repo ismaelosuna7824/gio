@@ -437,6 +437,20 @@ final class MultiDisplayRepairTests: XCTestCase {
         XCTAssertTrue(cliUsage().contains("gio move-window-to-display N"))
     }
 
+    /// PF-AI: `gio action <name>` runs any bindable action by its config
+    /// name (`focus-monitor-left`, `move-column-to-monitor-right`, ...), so
+    /// monitor navigation can be scripted and measured like the hotkeys.
+    func testActionVerbParsesEveryConfigActionName() {
+        XCTAssertEqual(parseCLICommand(["action", "focus-monitor-left"]), .success(.action(.focusMonitor(.left))))
+        XCTAssertEqual(
+            parseCLICommand(["action", "frobnicate"]), .failure(.unknownAction("frobnicate"))
+        )
+        XCTAssertEqual(
+            parseCLICommand(["action"]), .failure(.missingArgument(name: "action name", command: "action"))
+        )
+        XCTAssertTrue(cliUsage().contains("gio action NAME"))
+    }
+
     func testMoveWindowToDisplayMovesTheFocusedWindowByDisplayNumber() {
         var session = CommandSession()
         session.manager.syncDisplays([Live.external, Live.builtIn], main: Live.builtIn)
