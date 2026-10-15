@@ -358,11 +358,12 @@ public func dwindleResetSplit(in workspace: Workspace, axis: DwindleOrientation,
 // MARK: - Layout-aware steps (scrolling or dwindle)
 
 /// DW-02: the in-workspace part of a directional focus for either layout:
-/// `moveFocus` on the strip, `dwindleFocus` on the tree.
+/// `moveFocus` on the strip (over `geometry`'s modes), `dwindleFocus` on
+/// the tree.
 public func focusNeighbour(
     in workspace: Workspace, direction: FocusDirection, geometry: @autoclosure () -> DwindleGeometry
 ) -> Workspace {
     workspace.layout == .dwindle
         ? dwindleFocus(in: workspace, direction: direction, geometry: geometry())
-        : moveFocus(in: workspace, direction: direction)
+        : moveFocus(in: workspace, direction: direction, modes: geometry().modes)
 }

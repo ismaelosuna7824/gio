@@ -142,6 +142,45 @@ Window admission, observation and registration only. Out of scope: animation/per
   the same frame stay two columns. [INFERENCE, to confirm live: macOS sends created and
   focused-window events for tabs, lists the new tab at creation time, keeps background tabs
   at the group frame when the front is written.]
+- [x] WC-12 — Keyboard focus skips non-tiled columns (2026-10-14, user report: focus
+  left/right needed several presses to reach or leave a window). Live state: workspace 1
+  had 13 columns but only 7 held tiled windows; the other 6 were Safari `mode=floating
+  reason=dialog` windows (84x77, off-screen at y=-17), one column each. Root cause: by
+  design a floating or minimized window keeps its own column in `Workspace.columns`;
+  layout, gestures, reveal and centering drop them through `tilingWorkspace`, but keyboard
+  navigation never filtered: `moveFocus` left/right was a bare `focusedColumn ± 1`,
+  `focusColumnFirst`/`focusColumnLast` took the strip ends, and `focusNeighbour` (CLI
+  `gio focus`, `focus-column-or-monitor-*`, `focus-window-or-workspace-*`) handed the strip
+  to `moveFocus` without modes, so each invisible column cost one keypress.
+  DONE (`<hash>`, route: delegated writer, 2+ non-trivial files across GioCore +
+  GioSession). Decision: `moveFocus(in:direction:modes:)`, `focusColumnFirst(in:modes:)`
+  and `focusColumnLast(in:modes:)` take a required mode map (no default, so no caller keeps
+  the bug silently) and skip every column whose windows are all non-tiled; the predicate is
+  `isTiled(_:modes:)`, extracted from `tilingWorkspace` (unknown ids count as tiled, so an
+  empty map is the old behaviour). Empty columns stay reachable; with no navigable column
+  that way the workspace comes back unchanged, so `focus-column-or-monitor-*` crosses to
+  the next display and a move from a float column lands on the nearest tiled one.
+  Vertical moves and dwindle are unchanged. Callers: `ActionApplier` passes
+  `context.modes()` (minimized mapped to non-tiled) to focus left/right/up/down,
+  first/last, and a `DwindleGeometry` with those modes to the scrolling
+  `focusColumnOrDisplay`; `focusNeighbour` uses `geometry().modes` (the dispatcher's
+  `CommandSession.dwindleGeometry` already carries the registry modes).
+  RED: `swift build --build-tests` compile failure (`extra argument 'modes' in call`,
+  `cannot find 'focusColumnFirst(in:modes:)' in scope`) after the new tests in
+  `FocusNavigationTests` (float/minimized skip, only floats ahead = no-op, from a float
+  column, empty columns, empty map), `ColumnNavigationTests` (first/last skip end floats),
+  `MoveEdgeTests` (a float column at the edge no longer blocks crossing displays) and
+  `ActionApplierTests` (focus left/right and `focus-column-or-monitor-left` use
+  `context.modes()`; focus actions now probe modes once).
+  GREEN: `swift test --filter "GioCoreTests.(FocusNavigationTests|ColumnNavigationTests|MoveEdgeTests|DwindleActionsTests)|GioSessionTests.ActionApplierTests"`
+  0 failures; full `swift test` `Executed 2890 tests, with 53 tests skipped and 0 failures`
+  (single `GioPackageTests.xctest`); per bundle via `--filter "^<Bundle>\."`: GioCoreTests
+  1978, GioSessionTests 481, GioUITests 310 (53 skipped), GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 95, all 0 failures; `swift build` OK; signed `xcodebuild` Gio scheme
+  `BUILD SUCCEEDED`; `git diff --check` clean.
+  LIVE PENDING: not verified on the live desktop; with the Safari dialog floats present,
+  one Alt+H/L per tiled column and `focus-column-or-monitor-*` crossing past a float at
+  the strip edge are still to confirm.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -180,3 +219,4 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: WC-09 hypothesis (stale focus) REFUTED by logs; real cause reveal geometry. WC-10 done. Next: live retest click.
 - 2026-09-29: LIVE PASS (user + log since last start: 53 focus adoptions, all `scroll=no scroll`, 0 `focus dropped`). PHASE 1 CLOSED. Next: phase 2 perf + animation in odd/tasks/motion.md.
 - 2026-10-14: WC-11 native tabs done (`8effe33`, on `main` after SM-31 and FI-09..FI-11). LIVE PENDING: TESTING.md row 1b.
+- 2026-10-14: WC-12 keyboard focus skips floating/minimized columns done (`<hash>`, route: delegated writer). LIVE PENDING.

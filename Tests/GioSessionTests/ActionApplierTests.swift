@@ -130,13 +130,17 @@ final class ActionApplierTests: XCTestCase {
         }
     }
 
-    func testOnlySizingAndCenterReadTheEngineAndOnlyTheVisibleSetProbesModes() {
+    func testOnlySizingAndCenterReadTheEngineAndOnlyTiledAwareActionsProbeModes() {
         let engineActions: [HotkeyAction] = [
             .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth, .centerColumn,
             .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight,
             .switchPresetColumnWidthBack, .expandColumnToAvailableWidth, .centerVisibleColumns
         ]
-        let modeActions: [HotkeyAction] = [.centerColumn, .expandColumnToAvailableWidth, .centerVisibleColumns]
+        let modeActions: [HotkeyAction] = [
+            .centerColumn, .expandColumnToAvailableWidth, .centerVisibleColumns,
+            .focusLeft, .focusRight, .focusUp, .focusDown, .focusColumnFirst, .focusColumnLast,
+            .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight
+        ]
         for action in Self.allActions {
             setUp()
             apply(action)
@@ -162,15 +166,15 @@ final class ActionApplierTests: XCTestCase {
             (HotkeyAction.focusLeft, FocusDirection.left), (.focusRight, .right), (.focusUp, .up), (.focusDown, .down)
         ] {
             setUp()
-            let expected = moveFocus(in: current, direction: direction)
+            let expected = moveFocus(in: current, direction: direction, modes: world.modes)
             apply(action)
             XCTAssertEqual(current, expected, "\(action)")
         }
         for (action, core) in [
-            (HotkeyAction.focusColumnFirst, focusColumnFirst(in:)), (.focusColumnLast, focusColumnLast(in:))
+            (HotkeyAction.focusColumnFirst, focusColumnFirst(in:modes:)), (.focusColumnLast, focusColumnLast(in:modes:))
         ] {
             setUp()
-            let expected = core(current)
+            let expected = core(current, world.modes)
             XCTAssertNotEqual(expected, current, "\(action)")
             apply(action)
             XCTAssertEqual(current, expected, "\(action)")
@@ -179,6 +183,26 @@ final class ActionApplierTests: XCTestCase {
         let before = world.session.manager
         apply(.focusLeft)
         XCTAssertEqual(world.session.manager, before)
+    }
+
+    func testHorizontalFocusSkipsColumnsTheModesCallNonTiled() {
+        world.focusColumn(2)
+        world.modes[ids[1]] = .floating
+        apply(.focusLeft)
+        XCTAssertEqual(current.focusedColumn, 0)
+        XCTAssertEqual(current.focusedWindow, ids[0])
+        apply(.focusRight)
+        XCTAssertEqual(current.focusedColumn, 2)
+        XCTAssertEqual(current.focusedWindow, ids[2])
+        XCTAssertEqual(modeCalls, 2)
+    }
+
+    func testFocusColumnOrMonitorSkipsColumnsTheModesCallNonTiled() {
+        world.focusColumn(2)
+        world.modes[ids[1]] = .floating
+        apply(.focusColumnOrMonitorLeft)
+        XCTAssertEqual(current.focusedColumn, 0)
+        XCTAssertEqual(current.focusedWindow, ids[0])
     }
 
     func testMoveColumnAndLegacyMoveMatchCore() {
