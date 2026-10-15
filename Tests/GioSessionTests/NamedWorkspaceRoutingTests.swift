@@ -119,30 +119,58 @@ final class NamedWorkspaceRoutingTests: XCTestCase {
         XCTAssertEqual(windows(in: "Code").map(\.pid), [7])
     }
 
+    private func scan(_ windows: [DiscoveredSystemWindow]) {
+        world.scan = SystemWindowDiscoveryResult(windows: windows, completePIDs: Set(windows.map(\.window.pid)))
+        world.running = Set(windows.map(\.window.pid))
+        discovery.enumerateAndPlace()
+    }
+
     /// Live 2026-10-15: Chrome's address-bar suggestions (a fixed-size popup
     /// re-created as the user types) matched the Chrome rule, and every one
     /// took the user to "Browsers": workspace switch, keyboard focus and
-    /// cursor on the other display, typing lost. A window discovery floats
-    /// (popup, dialog, panel) stays where the user is and never follows.
+    /// cursor on the other display, typing lost. A popup, dialog or panel of
+    /// an app that already has a window stays where the user is and never
+    /// follows.
     func testAPopupOfARoutedAppStaysWhereTheUserIsAndNeverFollows() {
         world.session.config.rules = [WindowRule(app: "Chrome", openOnWorkspace: "Chat", follow: .always)]
+        scan([discovered(pid: 7, app: "Chrome")])
         world.frontmost = 7
         let before = manager.currentID
         arrive(discovered(pid: 7, app: "Chrome", floatReason: .notResizable))
         XCTAssertEqual(manager.currentID, before, "the user stays put")
         XCTAssertTrue(world.follows.isEmpty)
-        XCTAssertEqual(windows(in: "Chat"), [])
+        XCTAssertEqual(windows(in: "Chat").count, 1, "only the real window")
         XCTAssertEqual(manager.currentWorkspace().columns.flatMap(\.windows).map(\.pid), [7])
-        XCTAssertEqual(world.registered.first?.floatReason, .notResizable)
+        XCTAssertEqual(world.registered.last?.floatReason, .notResizable)
     }
 
     func testARealWindowOfTheSameAppStillFollowsItsRule() {
         world.session.config.rules = [WindowRule(app: "Chrome", openOnWorkspace: "Chat", follow: .always)]
+        scan([discovered(pid: 7, app: "Chrome")])
         world.frontmost = 7
         arrive(discovered(pid: 7, app: "Chrome", floatReason: .notResizable))
         arrive(discovered(pid: 7, app: "Chrome"))
         XCTAssertEqual(manager.currentWorkspace().name, "Chat")
         XCTAssertEqual(world.follows.count, 1)
+    }
+
+    /// Live 2026-10-15: Music's main window reports a dialog subrole; NW-07
+    /// kept it off its "music" workspace, so that workspace looked empty and
+    /// Music floated behind the tiles of the current one. An app's only
+    /// window is the app: its rule places it, dialog or not.
+    func testAnAppWhoseOnlyWindowIsADialogStillOpensOnItsWorkspace() {
+        world.session.config.rules = [WindowRule(app: "Music", openOnWorkspace: "Chat", follow: .never)]
+        scan([discovered(pid: 9, app: "Music", floatReason: .dialog)])
+        XCTAssertEqual(windows(in: "Chat").map(\.pid), [9])
+        XCTAssertEqual(world.registered.first?.floatReason, .dialog)
+    }
+
+    func testAnAppsOnlyDialogArrivingLiveFollowsItsRule() {
+        world.session.config.rules = [WindowRule(app: "Music", openOnWorkspace: "Chat", follow: .always)]
+        world.frontmost = 9
+        arrive(discovered(pid: 9, app: "Music", floatReason: .dialog))
+        XCTAssertEqual(windows(in: "Chat").map(\.pid), [9])
+        XCTAssertEqual(manager.currentWorkspace().name, "Chat")
     }
 
     func testDisplaySyncPassesTheMainDisplay() {
