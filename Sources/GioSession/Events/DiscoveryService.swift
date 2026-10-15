@@ -677,6 +677,8 @@ public final class DiscoveryService: @unchecked Sendable {
             // and visible, never moved by the layout.
             window.mode = .floating
             window.floatReason = admitted
+            // MM-12: with its id, so a float that should have tiled is traceable.
+            context.log(.info, "window float id=\(id.pid):\(id.elementID) app=\(window.application) reason=\(admitted.rawValue)")
         }
         context.resetWindowState(id)
         if let member = tabSibling(of: candidate, id: id, frame: window.frame, listing: listing),

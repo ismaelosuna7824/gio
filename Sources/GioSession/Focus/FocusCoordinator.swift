@@ -61,6 +61,9 @@ public final class FocusCoordinator: @unchecked Sendable {
         /// WC-11: the focused window is a background native tab: it becomes
         /// its group's front tab and takes the slot. True when it switched.
         public var bringTabToFront: (WindowID) -> Bool
+        /// MM-12: the activated window is an admission float that now reads
+        /// as a normal window: it rejoined the grid (the caller reflows).
+        public var promoteAdmissionFloat: (WindowID, AXUIElement) -> Bool
 
         public init(
             isShuttingDown: @escaping () -> Bool, isMouseDown: @escaping () -> Bool,
@@ -86,7 +89,8 @@ public final class FocusCoordinator: @unchecked Sendable {
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             allowsWindowWork: @escaping () -> Bool = { true },
-            bringTabToFront: @escaping (WindowID) -> Bool = { _ in false }
+            bringTabToFront: @escaping (WindowID) -> Bool = { _ in false },
+            promoteAdmissionFloat: @escaping (WindowID, AXUIElement) -> Bool = { _, _ in false }
         ) {
             self.isShuttingDown = isShuttingDown
             self.isMouseDown = isMouseDown
@@ -116,6 +120,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.now = now
             self.allowsWindowWork = allowsWindowWork
             self.bringTabToFront = bringTabToFront
+            self.promoteAdmissionFloat = promoteAdmissionFloat
         }
     }
 
@@ -401,10 +406,13 @@ public final class FocusCoordinator: @unchecked Sendable {
             return
         }
         let switchedTab = context.bringTabToFront(id)
+        // MM-12: a window floated at admission that now reads as a normal
+        // window rejoins the grid; the reflow places it.
+        let promoted = context.promoteAdmissionFloat(id, element)
         // Trailing activation events of a focus Gio just moved must not undo it.
         if focusIntent.shouldIgnoreAdoption(of: id, now: context.now()) {
             context.log(.debug, "focus adopt ignored (superseded by keyboard intent) id=\(id.pid):\(id.elementID)")
-            if switchedTab {
+            if switchedTab || promoted {
                 context.reflowAll()
             }
             return
@@ -413,7 +421,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             return
         }
         adoptFocus(id, source: event.source)
-        if switchedTab || context.pendingScroll() != nil {
+        if switchedTab || promoted || context.pendingScroll() != nil {
             context.reflowAll()
         }
     }

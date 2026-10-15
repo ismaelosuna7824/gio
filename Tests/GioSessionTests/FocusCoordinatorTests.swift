@@ -32,6 +32,9 @@ final class FocusCoordinatorTests: XCTestCase {
         var revealCauses: [MotionCause] = []
         var windowWorkAllowed = true
         var logs: [(LogLevel, String)] = []
+        /// MM-12: windows whose fresh admission says tile (admission floats).
+        var promotable: Set<WindowID> = []
+        var promoted: [WindowID] = []
 
         func id(of element: AXUIElement) -> WindowID? {
             known.first { CFEqual($0.0, element) }?.1
@@ -107,7 +110,14 @@ final class FocusCoordinatorTests: XCTestCase {
                 },
                 log: { world.logs.append(($0, $1)) },
                 now: { scheduler.now },
-                allowsWindowWork: { world.windowWorkAllowed }
+                allowsWindowWork: { world.windowWorkAllowed },
+                promoteAdmissionFloat: { id, _ in
+                    guard world.promotable.contains(id) else {
+                        return false
+                    }
+                    world.promoted.append(id)
+                    return true
+                }
             ),
             scheduler: scheduler
         )
@@ -254,6 +264,32 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(focused, ids[0])
         XCTAssertEqual(world.reflows, 1)
         XCTAssertTrue(world.logs.contains { $0.1.contains("scroll=0->600") })
+    }
+
+    /// MM-12 live (2026-10-15): Music's main window was admitted as a dialog
+    /// at startup and floated, so it sat over and under the tiles at its own
+    /// frame until the app was quit; when it is activated and now reads as a
+    /// normal window it rejoins the grid, which needs a reflow to place it.
+    func testActivationPromotesAnAdmissionFloatThatNowReadsAsAWindowAndReflows() {
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+        world.promotable = [ids[1]]
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(world.promoted, [ids[1]])
+        XCTAssertEqual(focused, ids[1])
+        XCTAssertEqual(world.reflows, 1)
+    }
+
+    func testActivationOfAWindowThatStaysAsItIsDoesNotReflow() {
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(world.promoted, [])
+        XCTAssertEqual(world.reflows, 0)
     }
 
     private func moveToHiddenWorkspace(_ index: Int) {

@@ -223,6 +223,32 @@ Window admission, observation and registration only. Out of scope: animation/per
   bundles 0 failures (UI 312/53 skipped, Session 487, POC 7, Mac 19, MacOS 98, Core 1976);
   signed build OK; `git diff --check` clean. LIVE PASS (2026-10-15): relaunch with WhatsApp
   parked left logged `parked clamped id=13396:7` at startup and the user saw no strip.
+- [x] WC-15 (commit below) — An admission float that now reads as a window rejoins the grid on
+  activation (2026-10-15, user report: "quedaban ventanas detrás de otras ... parecía que era
+  music el de atrás"; they had to quit and reopen Music). Evidence: a WindowServer overlap probe
+  sampling every ~60 ms during the cross-monitor workload found one Music window at CG
+  `(16,55,1784,1114)` over and under the tiles of the Code workspace for 40 of 48 steps; the log
+  had `discovery exclude pid=96011 app=Music float(dialog)` at every relaunch from 22:37 to
+  23:00Z, `96011:14` tiled at 22:48 and written to its own floating frame `(16,0,1784,1114)` at
+  23:02, and `focus adopt ... column=0 unplaced`. After quitting and reopening, Music's new
+  window was admitted as a tile. Admission is decided once at registration, so a window that
+  reported `AXDialog` then floated for the session. Not confirmed: why Music reported a dialog
+  (no Accessibility grant for the terminal; the process was gone). Live, a floating Music hides
+  correctly across workspaces and moves with `move-column-to-monitor-*` (floats over the
+  other display's tile), so the moves are not the defect. Fix: `promotesAdmissionFloat`
+  (Core: floating with an admission reason and a fresh admission of `.tile`; rule, manual and
+  app-controlled floats never), `currentWindowAdmission(of:pid:)` (GioMacOS, never Gio's pid),
+  `FocusCoordinator.Context.promoteAdmissionFloat` called on every resolved activation and
+  followed by a reflow, `SessionHost.promoteAdmissionFloat` (reads AX only for admission
+  floats; `registry.setMode(.tiled)`, `tileability.invalidate`, log `window promoted id=...
+  from=dialog`). The startup float log moved from `discovery exclude pid=` (no window) to
+  `window float id=pid:element app=... reason=...` at registration. RED: compile
+  (`promotesAdmissionFloat`, `promoteAdmissionFloat:` missing). GREEN: all bundles 0 failures
+  (UI 312/53 skipped, Session 515, POC 7, Mac 19, MacOS 88, Core 2000); Release build OK;
+  `git diff --check` clean. Live (Release relaunch 23:20Z): activating Music, Slack, Postman
+  reveals and focuses as before, no floats at startup, nothing promoted. LIVE PENDING: an app
+  whose window was admitted as a dialog and later reads as a standard window (not reproducible
+  on demand).
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
