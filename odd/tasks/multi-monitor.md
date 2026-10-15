@@ -656,7 +656,7 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   AeroSpace documents public AX misbehaving when windows change display under separate Spaces].
 
 ### Task
-- [x] MM-07 (commit pending) — Diagnostics, no behaviour change: after each `ws=missing`,
+- [x] MM-07 (`2d93178`) — Diagnostics, no behaviour change: after each `ws=missing`,
   `render missing detail id= entries=N [(x,y,w,h) on=Y|n display=i|none] ...` (every layer-0
   window of the app in the complete CG list, on-screen flag, display by largest overlap; first 6),
   and `spaces separate=true|false` at session start. Files: `GioCore/Reconciliation/
