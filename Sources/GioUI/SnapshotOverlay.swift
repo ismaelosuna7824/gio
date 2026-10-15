@@ -541,12 +541,13 @@ final class SnapshotOverlay {
 
     /// Retarget flying layers (from where they are now, carrying their
     /// velocity) and add layers for windows that joined. Layers still primed
-    /// only change their target. SM-32: each shows the image of its new size
+    /// only change their target and, TG-07, take the starting velocity given
+    /// in `velocities`. SM-32: each shows the image of its new size
     /// at once (`images`; without one, its closest image). Returns the longest
     /// settle time of the tracks started here (0 while primed).
     func retarget(
-        targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adding items: [SnapshotOverlayItem],
-        holes: [CGRect], decorations: OverlayDecorations, now: CFTimeInterval
+        targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], velocities: [WindowID: CGPoint],
+        adding items: [SnapshotOverlayItem], holes: [CGRect], decorations: OverlayDecorations, now: CFTimeInterval
     ) -> TimeInterval {
         var settle = 0.0
         CATransaction.begin()
@@ -567,6 +568,9 @@ final class SnapshotOverlay {
                 settle = max(settle, start(layers, at: now))
             } else {
                 layers.track.end = end
+                if let velocity = velocities[id] {
+                    layers.track.velocity = overlayLayerVelocity(origin: velocity, flipped: root.isFlipped)
+                }
                 layers.show(images[id])
             }
         }
@@ -577,6 +581,20 @@ final class SnapshotOverlay {
         }
         CATransaction.commit()
         return settle
+    }
+
+    func track(_ frames: [WindowID: CGRect]) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for (id, frame) in frames {
+            guard let layers = windows[id], layers.startedAt == nil else {
+                continue
+            }
+            let geometry = overlayLayerGeometry(frame: frame, in: area.panelFrame, flipped: root.isFlipped)
+            layers.track.start = geometry
+            layers.apply(geometry)
+        }
+        CATransaction.commit()
     }
 
     /// SM-30: fresh images of resized layers' landing sizes: each layer
@@ -825,7 +843,8 @@ public final class SnapshotOverlayController {
     /// images of the retargeted layers' new sizes (SM-27).
     public func retarget(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
-        adding flights: [SnapshotDisplayFlight], holes: [CGRect], decorations: OverlayDecorations
+        velocities: [WindowID: CGPoint], adding flights: [SnapshotDisplayFlight], holes: [CGRect],
+        decorations: OverlayDecorations
     ) {
         self.token = token
         armWatchdog()
@@ -840,7 +859,8 @@ public final class SnapshotOverlayController {
             settle = max(
                 settle,
                 overlay.retarget(
-                    targets: mine, images: images, adding: added, holes: holes, decorations: decorations, now: now
+                    targets: mine, images: images, velocities: velocities, adding: added, holes: holes,
+                    decorations: decorations, now: now
                 )
             )
         }
@@ -852,6 +872,20 @@ public final class SnapshotOverlayController {
                 frameLink.retargeted(on: overlay.frameView, refreshRate: overlay.refreshRate, at: now)
             }
             scheduleDeadline(deadline.retarget(now: ProcessInfo.processInfo.systemUptime, settle: settle))
+        }
+    }
+
+    public func track(token: Int, frames: [WindowID: CGRect]) {
+        guard token == self.token, !active.isEmpty, !flying else {
+            return
+        }
+        armWatchdog()
+        for key in active.sorted() {
+            guard let overlay = overlays[key] else {
+                continue
+            }
+            let mine = frames.filter { overlay.ids.contains($0.key) }
+            overlay.track(mine)
         }
     }
 

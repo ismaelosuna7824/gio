@@ -63,9 +63,11 @@ public protocol OverlayPort: AnyObject {
     /// for each retargeted layer, the image of its new size when cached
     /// (the layer shows it at once, SM-32; without one, its closest image).
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
     )
+    func trackFlight(token: Int, frames: [WindowID: CGRect])
     /// Remove the overlay at once.
     func endFlight()
     /// SM-30: fresh images of resized layers' landing sizes, captured
@@ -235,6 +237,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
     private var startFaces: [WindowID: SnapshotFace<CGImage>] = [:]
     private var resizeModes: [WindowID: SnapshotResizeMode] = [:]
     private var fresh = SnapshotFreshTracker()
+    private var gestureLost: (() -> Void)?
+    private var heldFrames: [WindowID: CGRect] = [:]
+    private var layerFrames: [WindowID: CGRect] = [:]
+    private var flyAfterPass = false
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -322,7 +328,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// now (the real windows' one write under a primed overlay). `.priming`:
     /// the caller defers that pass with `deferPass`.
     public func drive(
-        animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: [WindowID: JumpPath] = [:]
+        animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: [WindowID: JumpPath] = [:],
+        release: GestureRelease? = nil
     ) -> SnapshotDrive {
         let screens = context.displayFrames()
         var targets: [WindowID: CGRect] = [:]
@@ -338,9 +345,17 @@ public final class SnapshotFlightController: @unchecked Sendable {
         var velocities: [WindowID: CGPoint] = [:]
         for animation in animations {
             starts[animation.id] = animation.from
-            if animation.velocity != .zero {
+            let heldLayer = layerFrames[animation.id] != nil
+            if animation.velocity != .zero, !heldLayer {
                 velocities[animation.id] = animation.velocity
             }
+        }
+        if let release {
+            let layerStarts = starts.merging(layerFrames) { _, layer in layer }
+            let settling = gestureSettleVelocities(
+                windows: release.windows, velocity: release.velocity, from: layerStarts, to: targets
+            )
+            velocities.merge(settling) { _, released in released }
         }
         // MM-04 / MM-10: a far-side park (or a return from one) never flies
         // across the display: its layer slides out by (or in from) the shared
@@ -374,6 +389,12 @@ public final class SnapshotFlightController: @unchecked Sendable {
             return true
         }
         if isActive {
+            if gestureLost != nil {
+                gestureLost = nil
+                layerFrames = [:]
+                flyAfterPass = primingToken == nil
+                startedAt = now
+            }
             // SM-14: a retarget during the hold flies on; the hold is over.
             handoff.cancel()
             origins.merge(starts) { joined, _ in joined }
@@ -405,8 +426,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 }
             }
             let token = gate.retarget()
+            let retargetVelocities = velocities.filter { plan.retargets[$0.key] != nil }
             overlay.retargetFlight(
-                token: token, targets: plan.retargets, images: faces,
+                token: token, targets: plan.retargets, images: faces, velocities: retargetVelocities,
                 adds: makeFlights(plan.adds, images: images, velocities: velocities, now: now),
                 holes: holes, decorations: context.decorations(targets)
             )
@@ -479,10 +501,80 @@ public final class SnapshotFlightController: @unchecked Sendable {
         pending = (writes, fallback)
     }
 
+    public func holdGesture(
+        frames: [WindowID: CGRect], display: CGRect, spring: SpringParameters, lost: @escaping () -> Void
+    ) -> GestureTransport {
+        let now = context.now()
+        let index = context.displayFrames().firstIndex(of: display)
+        let cache = cache
+        let backdropReady = index != nil && cache.backdrop(for: display) != nil
+        var images: [WindowID: SnapshotCacheUse<CGImage>] = [:]
+        let transport = planGestureTransport(
+            windows: Set(frames.keys), rendererUsable: cache.rendererUsable(), backdropReady: backdropReady,
+            hasImage: { id in
+                guard let use = cache.flightImage(id, startFrame: frames[id], targetFrame: frames[id], at: now) else {
+                    return false
+                }
+                images[id] = use
+                return true
+            },
+            undrawn: cache.undrawnWindows
+        )
+        context.log(.info, gestureTransportLine(transport))
+        guard case .overlay(let layers) = transport, let index else {
+            end()
+            if case .accessibility(.cacheMiss, _) = transport {
+                cache.schedule(delay: 0.05)
+            }
+            return transport
+        }
+        finishRunningFlight()
+        imageSizes = [:]
+        backgrounds = [:]
+        startFaces = [:]
+        resizeModes = [:]
+        let items = layers.compactMap { id in
+            frames[id].map { SnapshotFlightItem(id: id, from: $0, to: $0, displayIndex: index) }
+        }
+        let flights = makeFlights(items, images: images, now: now)
+        let held = Set(items.map(\.id))
+        let token = gate.begin()
+        ids = held
+        windows = held
+        displays = [index]
+        setHoles([])
+        startedAt = now
+        cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: held, now: now)
+        origins = frames
+        targets = frames
+        primingToken = token
+        pending = nil
+        gestureLost = lost
+        layerFrames = frames
+        overlay.beginFlight(
+            token: token, spring: spring, flights: flights, holes: holes, decorations: context.decorations(frames)
+        )
+        return transport
+    }
+
+    public func trackGesture(_ frames: [WindowID: CGRect]) {
+        guard gestureLost != nil else {
+            return
+        }
+        layerFrames.merge(frames) { _, latest in latest }
+        guard primingToken == nil else {
+            heldFrames.merge(frames) { _, latest in latest }
+            return
+        }
+        overlay.trackFlight(token: gate.currentToken, frames: frames)
+    }
+
     /// Main reports the prime of flight `token`: the overlay is on screen
     /// with every layer at its start frame (`ok`), or could not be shown.
     /// Then, in this order, the real windows are written and the layers
     /// fly; on failure the pass runs through AX with no write done yet.
+    /// TG-07: a gesture hold instead takes the frames tracked meanwhile and
+    /// waits for the release; a failed prime hands the gesture back.
     /// A reflow request that arrived while priming (a key press) survives
     /// the writes, which stop the AX motion and reset the coalescer: it is
     /// put back after them so the merged retarget flies to the newest layout.
@@ -496,6 +588,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             pending = nil
             guard ok else {
                 context.log(.info, snapshotFallbackLine(reason: .primeFailed, count: ids.count))
+                let lost = gestureLost
                 gate.abort()
                 clear()
                 overlay.endFlight()
@@ -503,6 +596,14 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 // The ring was hidden for the prime; the AX motion shows it
                 // at the start frame like any AX pass.
                 context.publishIndicators()
+                lost?()
+                return
+            }
+            if !heldFrames.isEmpty {
+                overlay.trackFlight(token: gate.currentToken, frames: heldFrames)
+                heldFrames = [:]
+            }
+            guard gestureLost == nil else {
                 return
             }
             let retarget = context.takeCoalescedReflow()
@@ -524,6 +625,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// The final exact pass under the overlay is done; the flight settles
     /// once its layers landed too.
     public func passSettled() {
+        if flyAfterPass {
+            flyAfterPass = false
+            overlay.flyFlight(token: gate.currentToken)
+        }
         if gate.passSettled(gate.currentToken) {
             settle()
         }
@@ -579,6 +684,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             }
             context.log(reason.logLevel, snapshotAbortLine(reason: reason))
             let pass = takePending()
+            let lost = gestureLost
             handoff.cancel()
             gate.abort()
             clear()
@@ -587,6 +693,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             context.scheduleRenderCheck()
             cache.schedule()
             pass?.fallback()
+            lost?()
         }
     }
 
@@ -606,12 +713,25 @@ public final class SnapshotFlightController: @unchecked Sendable {
             return
         }
         _ = takePending()
+        let lost = context.isShuttingDown() ? nil : gestureLost
         handoff.cancel()
         gate.abort()
         context.collectWrites()
         clear()
         overlay.endFlight()
         context.publishIndicators()
+        lost?()
+    }
+
+    private func finishRunningFlight() {
+        guard isActive else {
+            return
+        }
+        _ = takePending()
+        handoff.cancel()
+        gate.abort()
+        context.collectWrites()
+        clear()
     }
 
     /// Layers landed and the real windows' writes were dispatched: their
@@ -835,6 +955,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
         startFaces = [:]
         resizeModes = [:]
         fresh.removeAll()
+        gestureLost = nil
+        heldFrames = [:]
+        layerFrames = [:]
+        flyAfterPass = false
     }
 
     private func setHoles(_ next: [SnapshotHole]) {

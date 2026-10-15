@@ -36,6 +36,11 @@ final class GestureControllerTests: XCTestCase {
         var unverified: [WindowID] = []
         var ringPublishes = 0
         var logs: [String] = []
+        var transport = GestureTransport.accessibility(reason: .renderer, missing: [])
+        var holds: [(frames: [WindowID: CGRect], display: CGRect)] = []
+        var tracks: [[WindowID: CGRect]] = []
+        var lost: (() -> Void)?
+        var now: TimeInterval = 0
         let sink = Sink()
     }
 
@@ -69,6 +74,12 @@ final class GestureControllerTests: XCTestCase {
             sink: { world.sink },
             updateManager: { body in body(&world.manager) },
             beginTracking: { world.calls.append("begin") },
+            holdOverlay: { frames, display, lost in
+                world.holds.append((frames, display))
+                world.lost = lost
+                return world.transport
+            },
+            trackOverlay: { world.tracks.append($0) },
             recordSampled: { id, frame, _ in
                 world.sampled[id] = frame
                 world.physical[id] = frame
@@ -81,7 +92,7 @@ final class GestureControllerTests: XCTestCase {
             perform: { world.actions.append($0) },
             toggleOverview: { world.overviews += 1 },
             log: { _, line in world.logs.append(line) },
-            now: { 0 }
+            now: { world.now }
         ))
     }
 
@@ -193,5 +204,102 @@ final class GestureControllerTests: XCTestCase {
         controller.deliver([frame(0, fingers: 3, x: 0.5)])
         controller.deliver([frame(0.01, fingers: 3, x: 0.5)])
         XCTAssertEqual(world.logs.filter { $0.hasPrefix("gestures first contact frame") }.count, 1)
+    }
+
+    // MARK: TG-07 the overlay under the fingers
+
+    private var strip: [WindowID] {
+        [id(1), id(2), id(3), id(4)]
+    }
+
+    func testUnderTheOverlayTheFingersMoveTheLayersAndNoWindowIsWritten() throws {
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 1))
+        XCTAssertEqual(world.holds.count, 1)
+        let hold = try XCTUnwrap(world.holds.first)
+        XCTAssertEqual(hold.display, viewport)
+        XCTAssertEqual(Set(hold.frames.keys), Set(strip), "visible and parked columns alike")
+        XCTAssertEqual(hold.frames[id(1)]?.minX, 8, "held where the windows are")
+        let tracked = try XCTUnwrap(world.tracks.last)
+        XCTAssertEqual(try XCTUnwrap(tracked[id(1)]).minX, -42, accuracy: 1e-6, "layers are not rounded to whole points")
+        XCTAssertEqual(try XCTUnwrap(tracked[id(2)]).minX, 566, accuracy: 1e-6)
+        XCTAssertTrue(world.sink.laneWrites.isEmpty, "nothing reaches Accessibility while the fingers move")
+        XCTAssertTrue(world.sampled.isEmpty, "no physical frame claims a write that did not happen")
+        XCTAssertTrue(world.unverified.isEmpty)
+        XCTAssertEqual(controller.animatingPids, [])
+        XCTAssertEqual(world.ringPublishes, 0, "the overlay draws the ring with its layer")
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll begin") && $0.hasSuffix("transport=overlay") })
+    }
+
+    func testTheAccessibilityPumpIsTheFallbackTransport() {
+        controller.deliver(swipeLeft(steps: 1))
+        XCTAssertEqual(world.holds.count, 1, "the overlay is asked first")
+        XCTAssertTrue(world.tracks.isEmpty)
+        XCTAssertEqual(world.sampled[id(1)]?.minX, -42)
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll begin") && $0.hasSuffix("transport=ax") })
+    }
+
+    func testAReleaseUnderTheOverlayCommitsStateAndHandsTheVelocityToTheSettle() throws {
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 6) + [frame(0.07, fingers: 2, x: 0.2)])
+        let release = try XCTUnwrap(world.releases.first)
+        XCTAssertEqual(release.velocity, -4285.7, accuracy: 0.1)
+        XCTAssertEqual(release.windows, Set(strip))
+        XCTAssertEqual(world.manager.currentWorkspace().viewportOffset, 1440)
+        let last = try XCTUnwrap(world.tracks.last?[id(1)])
+        XCTAssertEqual(last.minX, -292, accuracy: 1e-6, "the settle starts from the layers' last frames")
+        XCTAssertTrue(world.sink.laneWrites.isEmpty)
+        XCTAssertFalse(controller.isTracking)
+    }
+
+    func testALostOverlayHandsTheScrollToThePumpAtTheCurrentOffset() {
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 2))
+        let tracked = world.tracks.count
+        XCTAssertTrue(world.sink.laneWrites.isEmpty)
+
+        world.lost?()
+        XCTAssertEqual(world.sampled[id(1)]?.minX, -92, "from the offset the fingers reached")
+        XCTAssertEqual(controller.animatingPids, [10])
+        XCTAssertTrue(world.logs.contains("gesture scroll transport=ax reason=overlay-lost"))
+
+        controller.deliver([frame(0.03, fingers: 3, x: 0.35)])
+        XCTAssertEqual(world.sampled[id(1)]?.minX, -142)
+        XCTAssertEqual(world.tracks.count, tracked, "the overlay is not fed any more")
+    }
+
+    func testALostOverlayWithAButtonDownAbandonsTheScroll() {
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 1))
+        world.mouseDown = true
+        world.lost?()
+        XCTAssertEqual(world.abandons, [.mouse])
+        XCTAssertTrue(world.sink.laneWrites.isEmpty)
+        XCTAssertFalse(controller.isTracking)
+    }
+
+    func testTheLossOfAnEarlierScrollsOverlayChangesNothing() {
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 1) + [frame(0.02, fingers: 0, x: 0)])
+        let stale = world.lost
+        controller.deliver((0...1).map { frame(1 + Double($0) * 0.01, fingers: 3, x: 0.5 - Double($0) * 0.05) })
+        XCTAssertEqual(world.holds.count, 2)
+        stale?()
+        XCTAssertTrue(world.sink.laneWrites.isEmpty)
+        XCTAssertTrue(controller.isTracking)
+    }
+
+    func testRestingFingersKeepTheOverlayAlive() {
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 1))
+        let tracked = world.tracks.count
+        world.now = gestureOverlayKeepAlive / 2
+        controller.deliver([frame(0.3, fingers: 3, x: 0.45)])
+        XCTAssertEqual(world.tracks.count, tracked, "nothing moved, nothing sent")
+        world.now = gestureOverlayKeepAlive
+        controller.deliver([frame(0.6, fingers: 3, x: 0.45)])
+        XCTAssertEqual(world.tracks.count, tracked + 1)
+        XCTAssertEqual(world.tracks.last, [:], "an empty update only re-arms the overlay's watchdog")
+        XCTAssertTrue(controller.isTracking)
     }
 }

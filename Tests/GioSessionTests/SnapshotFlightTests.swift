@@ -6,15 +6,16 @@ import XCTest
 @testable import GioSession
 
 /// Records every call in order (`prime:N`, `fly:N`, `retarget:N`, `end`,
-/// `fresh:N`, `fade`); the tests append `writes`, `fallback` and `publish`
-/// to the same list.
+/// `fresh:N`, `fade`, `track:N`); the tests append `writes`, `fallback` and
+/// `publish` to the same list.
 final class FakeOverlay: OverlayPort, @unchecked Sendable {
     var events: [String] = []
     var begins: [(token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations)] = []
     var retargets: [(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations
     )] = []
+    var tracks: [(token: Int, frames: [WindowID: CGRect])] = []
     var flies: [Int] = []
     var ends = 0
     var freshens: [(token: Int, faces: [WindowID: SnapshotFace<CGImage>])] = []
@@ -34,11 +35,17 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     }
 
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        decorations: OverlayDecorations
     ) {
         events.append("retarget:\(token)")
-        retargets.append((token, targets, images, adds, holes, decorations))
+        retargets.append((token, targets, images, velocities, adds, holes, decorations))
+    }
+
+    func trackFlight(token: Int, frames: [WindowID: CGRect]) {
+        events.append("track:\(token)")
+        tracks.append((token, frames))
     }
 
     func endFlight() {
@@ -83,6 +90,7 @@ final class SnapshotFlightTests: XCTestCase {
         var freshAnswers: [@Sendable (SnapshotFreshRead<CGImage>?) -> Void] = []
         /// SM-31: the on-screen WindowServer windows the cache judges misses by.
         var serverWindows: [ServerWindow] = []
+        var gestureLosses = 0
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -1182,5 +1190,170 @@ final class SnapshotFlightTests: XCTestCase {
         flight.primed(1, ok: true)
         scheduler.runPending()
         XCTAssertEqual(overlay.events, ["prime:1", "writes", "fly:1"], "the one instant pass under the overlay, then the fly")
+    }
+
+    // MARK: TG-07 the fingers hold the overlay
+
+    @discardableResult
+    private func hold() -> GestureTransport {
+        let world = world!
+        return flight.holdGesture(frames: [idA: a, idB: b], display: SessionFixture.screen, spring: .niri) {
+            world.gestureLosses += 1
+        }
+    }
+
+    private func holdAndPrime() {
+        refresh([idA: a, idB: b])
+        XCTAssertEqual(hold(), .overlay(layers: [idA, idB]))
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+    }
+
+    func testAGestureHoldPrimesEveryStripWindowWhereItIsAndNeverFlies() {
+        refresh([idA: a, idB: b])
+        XCTAssertEqual(hold(), .overlay(layers: [idA, idB]))
+        XCTAssertTrue(flight.isActive)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(Set(items.map(\.id)), [idA, idB])
+        XCTAssertTrue(items.allSatisfy { $0.from == $0.to }, "held, not flying anywhere")
+        XCTAssertTrue(world.logs.contains { $0.1 == "gesture scroll transport=overlay layers=2" })
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1"], "no write and no fly while the fingers hold it")
+        XCTAssertTrue(flight.isActive)
+    }
+
+    func testFramesTrackedBeforeThePrimeLandWhenItDoes() {
+        refresh([idA: a, idB: b])
+        hold()
+        let moved = a.offsetBy(dx: -50, dy: 0)
+        let further = a.offsetBy(dx: -80, dy: 0)
+        let neighbour = b.offsetBy(dx: -50, dy: 0)
+        flight.trackGesture([idA: moved, idB: neighbour])
+        flight.trackGesture([idA: further])
+        XCTAssertEqual(overlay.events, ["prime:1"], "kept until the overlay is up")
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1", "track:1"])
+        XCTAssertEqual(overlay.tracks.last?.frames, [idA: further, idB: neighbour], "only the latest frame of each window")
+        flight.trackGesture([idA: a])
+        XCTAssertEqual(overlay.events, ["prime:1", "track:1", "track:1"], "straight to the overlay once primed")
+    }
+
+    func testReleasingAHoldRetargetsWithTheReleaseVelocityAndFliesAfterTheInstantPass() {
+        holdAndPrime()
+        flight.trackGesture([idA: a.offsetBy(dx: -300, dy: 0), idB: b.offsetBy(dx: -300, dy: 0)])
+        let (animation, plan) = slide(idA, from: a, by: -820)
+        let release = GestureRelease(windows: [idA, idB], velocity: -2400, focusChanged: false)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri, release: release), .flying)
+        let velocity = CGPoint(x: -2400, y: 0)
+        XCTAssertEqual(overlay.retargets.first?.targets, [idA: animation.to, idB: b])
+        XCTAssertEqual(
+            overlay.retargets.first?.velocities, [idA: velocity, idB: velocity],
+            "every held layer that still moves, the one without an animation too"
+        )
+        XCTAssertEqual(overlay.events, ["prime:1", "track:1", "retarget:2"], "no fly before the real windows' pass")
+        overlay.events.append("writes")
+        flight.passSettled()
+        XCTAssertEqual(overlay.events.suffix(2), ["writes", "fly:2"])
+        flight.passSettled()
+        XCTAssertEqual(overlay.flies, [2], "one fly")
+        flight.layersFinished(2)
+        scheduler.runPending()
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("snapshot flight layers=2") })
+        XCTAssertEqual(world.gestureLosses, 0, "a released hold is not lost")
+    }
+
+    func testAReleaseBeforeThePrimeFliesOnceThePrimeLands() {
+        refresh([idA: a, idB: b])
+        hold()
+        flight.trackGesture([idA: a.offsetBy(dx: -40, dy: 0)])
+        let (slid, plan) = slide(idA, from: a, by: -820)
+        let animation = slid.springing(.niri, velocity: CGPoint(x: -300, y: 0))
+        let release = GestureRelease(windows: [idA, idB], velocity: -900, focusChanged: false)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri, release: release), .priming)
+        XCTAssertEqual(
+            overlay.retargets.first?.velocities, [idA: CGPoint(x: -900, y: 0)],
+            "the release's velocity, not the real window's animation; the layer at its target keeps still"
+        )
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1", "retarget:2", "track:2", "writes", "fly:2"])
+        XCTAssertEqual(overlay.tracks.first?.frames, [idA: a.offsetBy(dx: -40, dy: 0)])
+    }
+
+    func testAnAbandonedHoldFliesBackToStateWithoutVelocity() {
+        holdAndPrime()
+        flight.trackGesture([idA: a.offsetBy(dx: -120, dy: 0), idB: b.offsetBy(dx: -120, dy: 0)])
+        XCTAssertEqual(flight.drive(animations: [], plans: [ParkingPlan(visible: fixture.physicalFrames)], spring: .niri), .flying)
+        XCTAssertEqual(overlay.retargets.first?.targets, [idA: a, idB: b])
+        XCTAssertEqual(overlay.retargets.first?.velocities, [:])
+        flight.passSettled()
+        XCTAssertEqual(overlay.events.last, "fly:2")
+    }
+
+    func testAFailedPrimeHandsTheGestureBackToThePump() {
+        refresh([idA: a, idB: b])
+        hold()
+        flight.trackGesture([idA: a.offsetBy(dx: -40, dy: 0)])
+        flight.primed(1, ok: false)
+        scheduler.runPending()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.gestureLosses, 1)
+        XCTAssertEqual(overlay.events, ["prime:1", "end", "publish"])
+        XCTAssertTrue(world.logs.contains { $0.1 == "snapshot fallback reason=prime-failed ids=2" })
+    }
+
+    func testAnAbortedOrEndedHoldHandsTheGestureBackToThePump() {
+        holdAndPrime()
+        flight.aborted(.watchdog)
+        scheduler.runPending()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.gestureLosses, 1)
+
+        hold()
+        flight.end()
+        XCTAssertEqual(world.gestureLosses, 2)
+        flight.end()
+        XCTAssertEqual(world.gestureLosses, 2, "reported once")
+    }
+
+    func testShuttingDownDoesNotHandTheGestureBack() {
+        holdAndPrime()
+        world.shuttingDown = true
+        flight.end()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.gestureLosses, 0, "nothing may move the windows while they are restored")
+    }
+
+    func testAMissingImageKeepsTheGestureOnThePump() {
+        refresh([idA: a])
+        XCTAssertEqual(hold(), .accessibility(reason: .cacheMiss, missing: [idB]))
+        XCTAssertTrue(overlay.begins.isEmpty)
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(world.logs.contains { $0.1 == "gesture scroll transport=ax reason=cache-miss missing=1" })
+    }
+
+    func testThePumpEndsARunningFlightAsBefore() {
+        beginAndPrime()
+        world.rendererAvailable = false
+        XCTAssertEqual(hold(), .accessibility(reason: .renderer, missing: []))
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(overlay.ends, 1)
+    }
+
+    func testAHoldTakesOverARunningFlightWithoutTakingTheOverlayDown() {
+        beginAndPrime()
+        let before = overlay.events.count
+        XCTAssertEqual(hold(), .overlay(layers: [idA, idB]))
+        XCTAssertEqual(
+            Array(overlay.events.dropFirst(before)), ["collect", "prime:3"],
+            "the running flight's writes are folded; the new prime replaces its layers in the same hop"
+        )
+        XCTAssertEqual(overlay.ends, 0)
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertTrue(flight.isActive, "the old flight's landing does not settle the hold")
     }
 }
