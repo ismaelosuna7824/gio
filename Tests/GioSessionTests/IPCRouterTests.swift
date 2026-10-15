@@ -44,6 +44,7 @@ final class IPCRouterTests: XCTestCase {
             mainAfter: { delay, block in world.mainBlocks.append((delay, block)) },
             restart: { world.restarts += 1 },
             toggleOverview: { world.calls.append("toggleOverview") },
+            applyAction: { world.calls.append("apply \($0)") },
             log: { _, line in world.logs.append(line) }
         ))
     }
@@ -92,6 +93,15 @@ final class IPCRouterTests: XCTestCase {
         XCTAssertTrue(world.intents.isEmpty, "opening the panel moves no focus")
     }
 
+    /// PF-AI: an action runs exactly like its hotkey (the host's action
+    /// path carries its own focus intent and reflow).
+    func testActionsRunThroughTheHotkeyPath() {
+        let response = makeRouter().handle(["action", "focus-monitor-right"])
+        XCTAssertTrue(response.ok)
+        XCTAssertEqual(world.calls, ["dispatch", "apply focusMonitor(GioCore.FocusDirection.right)", "publishBar"])
+        XCTAssertTrue(world.intents.isEmpty)
+    }
+
     func testFocusCommandsCarryIntentWithThePreviousFocusAndReflow() {
         let previous = world.focused
         let router = makeRouter()
@@ -114,7 +124,8 @@ final class IPCRouterTests: XCTestCase {
                 return IPCResponse(ok: true, output: "")
             },
             applyReloadedConfig: {}, requestFocusIntent: { world.intents.append(($0, $1)) },
-            reflow: {}, publishBar: {}, mainAfter: { _, _ in }, restart: {}, toggleOverview: {}, log: { _, _ in }
+            reflow: {}, publishBar: {}, mainAfter: { _, _ in }, restart: {}, toggleOverview: {}, applyAction: { _ in },
+            log: { _, _ in }
         ))
         router.handle(["focus", "right"])
         XCTAssertEqual(world.intents.first?.1, before)

@@ -203,6 +203,9 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
     case .toggleOverview:
         // The panel is the app's; `IPCRouter` hands the toggle to it.
         return "overview toggled"
+    case .action(let action):
+        // PF-AI: the session runs it on its hotkey path (`IPCRouter`).
+        return "action \(action)"
     case .moveWindowToDisplay(let number):
         guard let display = session.manager.display(numbered: number) else {
             return "no display \(number)"

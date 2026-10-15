@@ -236,6 +236,7 @@ func describeAction(_ command: CLICommand) -> String {
     case .toggleOverview: return "overview"
     case .moveWindowToDisplay(let number): return "move-window-to-display \(number)"
     case .setLayout(let kind): return "layout \(kind?.rawValue ?? "toggle")"
+    case .action(let action): return "action \(action)"
     }
 }
 

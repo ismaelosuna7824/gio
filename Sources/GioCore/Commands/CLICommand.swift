@@ -31,6 +31,9 @@ public enum CLICommand: Equatable, Sendable {
     /// DW-04 `gio layout toggle|scrolling|dwindle`: the current workspace's
     /// layout (nil toggles).
     case setLayout(WorkspaceLayoutKind?)
+    /// PF-AI `gio action NAME`: any bindable action by its config name
+    /// (`parseActionName`), run like its hotkey.
+    case action(HotkeyAction)
 }
 
 public enum CLICommandError: Error, Equatable, Sendable {
@@ -39,6 +42,7 @@ public enum CLICommandError: Error, Equatable, Sendable {
     case missingArgument(name: String, command: String)
     case invalidWorkspace(String)
     case invalidLevel(String)
+    case unknownAction(String)
 }
 
 public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandError> {
@@ -116,6 +120,14 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
             return .failure(.missingArgument(name: "display number", command: verb))
         }
         return .success(.moveWindowToDisplay(number))
+    case "action":
+        guard args.count > 1 else {
+            return .failure(.missingArgument(name: "action name", command: verb))
+        }
+        guard let action = parseActionName(args[1]) else {
+            return .failure(.unknownAction(args[1]))
+        }
+        return .success(.action(action))
     case "help", "--help", "-h":
         return .success(.help)
     default:
@@ -138,6 +150,7 @@ public func cliUsage() -> String {
       gio layout info|toggle|scrolling|dwindle
       gio overview
       gio move-window-to-display N
+      gio action NAME   (any keybinding action, e.g. focus-monitor-left)
       gio status
       gio setup
       gio update [--install]
