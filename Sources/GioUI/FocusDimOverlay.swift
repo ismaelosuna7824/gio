@@ -99,6 +99,7 @@ public final class FocusDimController {
                 fadeOut(keys: gone, reduceMotion: reduceMotion)
             }
             visible = shown
+            pruneStalePanels(keeping: shown.union(gone))
             GioLog.record(.debug, next.logLine)
         }
     }
@@ -149,6 +150,18 @@ public final class FocusDimController {
                     entry.panel.orderOut(nil)
                 }
             }
+        }
+    }
+
+    /// PF-Z: panels are keyed by display frame, so every resolution or
+    /// arrangement change made new display-sized panels and kept the old
+    /// ones (ordered out, never closed) for the rest of the session. Panels
+    /// of frames no screen has any more are closed, unless shown or fading.
+    private func pruneStalePanels(keeping busy: Set<String>) {
+        let live = Set(NSScreen.screens.map { NSStringFromRect($0.frame) })
+        for (key, entry) in panels where !live.contains(key) && !busy.contains(key) {
+            entry.panel.close()
+            panels.removeValue(forKey: key)
         }
     }
 

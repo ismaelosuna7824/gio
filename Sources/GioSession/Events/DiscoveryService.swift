@@ -849,6 +849,11 @@ public final class DiscoveryService: @unchecked Sendable {
         guard !dead.isEmpty else {
             return
         }
+        // PF-Z: a missed terminate leaves the app's write lane, name and
+        // EnhancedUI state with the reconciler otherwise.
+        for pid in Set(dead.map(\.pid)) {
+            context.forgetApp(pid)
+        }
         purge(dead)
     }
 

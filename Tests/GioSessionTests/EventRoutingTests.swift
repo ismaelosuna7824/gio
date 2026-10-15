@@ -387,6 +387,9 @@ final class DiscoveryServiceTests: XCTestCase {
         world.running = []
         discovery.enumerateAndPlace()
         XCTAssertTrue(world.registered.isEmpty)
+        // PF-Z: a missed terminate must not leave the app's write lane,
+        // name and EnhancedUI state behind for the rest of the session.
+        XCTAssertEqual(world.forgottenApps, [7])
     }
 
     func testRulesAndAdmissionDecideTheMode() {
