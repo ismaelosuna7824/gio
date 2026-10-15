@@ -2106,9 +2106,13 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// Tap thread (PF-AB).
     private func recordClick(at location: CGPoint) {
-        // Clicks must hit real windows: an overlay in the air comes down now.
-        _ = overlayAbortForMouseDown?()
+        // Clicks must hit real windows: an overlay in the air comes down
+        // (on main; its panels ignore the mouse, so the click is not held).
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.overlayAbortForMouseDown?()
+        }
         // A click is the user choosing the focus: drop any pending keyboard intent.
         focus.recordClick(at: location)
     }
@@ -2116,7 +2120,7 @@ final class SessionHost: @unchecked Sendable {
     private func startTap() {
         let observeMouseMoved = focus.focusFollowsMouse
         // Only subscribed while focus-follows-mouse is on: otherwise every
-        // mouse move would cost a main-thread callback.
+        // mouse move would cost a tap callback.
         var moveHandler: (@Sendable (CGPoint) -> Void)?
         if observeMouseMoved {
             moveHandler = { [weak self] location in
@@ -2144,8 +2148,9 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// SM-09: typing changes the focused window's image. Runs in the tap
-    /// callback on main for every key; only the first key per half second
-    /// hops to the session queue (`typingLock` guards the timestamp).
+    /// callback (tap thread, PF-AB) for every key; only the first key per
+    /// half second hops to the session queue (`typingLock` guards the
+    /// timestamp).
     private func noteTyping() {
         let now = ProcessInfo.processInfo.systemUptime
         typingLock.lock()

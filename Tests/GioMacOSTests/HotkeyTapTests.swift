@@ -73,3 +73,16 @@ final class HotkeyKeyTableTests: XCTestCase {
         XCTAssertNil(hotkeyKeyName(forKeyCode: 10))
     }
 }
+
+/// PF-AB: the tap runs on its own thread, so a click's location comes from
+/// the event (global display space, top-left origin) instead of the
+/// main-thread `NSEvent.mouseLocation`, in the Cocoa space window frames use.
+final class TapLocationTests: XCTestCase {
+    func testAClickIsReportedInCocoaCoordinates() throws {
+        let event = try XCTUnwrap(CGEvent(
+            mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: CGPoint(x: 300, y: 200),
+            mouseButton: .left
+        ))
+        XCTAssertEqual(tapCocoaLocation(of: event, primaryHeight: 1000), CGPoint(x: 300, y: 800))
+    }
+}

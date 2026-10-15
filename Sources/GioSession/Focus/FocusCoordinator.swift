@@ -174,7 +174,7 @@ public final class FocusCoordinator: @unchecked Sendable {
         }
     }
 
-    /// Main thread (tap): a mouse-down. A click is the user choosing the
+    /// Tap thread (PF-AB): a mouse-down. A click is the user choosing the
     /// focus: any pending keyboard intent is dropped on the session queue.
     public func recordClick(at location: CGPoint) {
         clickLock.lock()
@@ -185,7 +185,7 @@ public final class FocusCoordinator: @unchecked Sendable {
         }
     }
 
-    /// Main thread (tap). Hands the latest pointer location to the session
+    /// Tap thread (PF-AB). Hands the latest pointer location to the session
     /// queue, coalesced to one look per 30 ms.
     public func pointerMoved(_ location: CGPoint) {
         hoverLock.lock()
