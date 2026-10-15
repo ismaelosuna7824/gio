@@ -94,6 +94,17 @@ public func parkAll(
     }
 }
 
+/// WC-14: `target`'s parked frame for a window of `size` (the size the app
+/// kept, which can differ from the frame's): anchored like the target, so a
+/// window hanging off the left side or below the display still leaves only
+/// the sliver inside it. Right and top anchors do not depend on the size.
+public func parkedFrame(_ target: ParkedTarget, size: CGSize) -> CGRect {
+    let display = target.display
+    let x = target.frame.minX < display.minX ? display.minX - size.width + parkingSliver : target.frame.minX
+    let y = target.frame.minY < display.minY ? display.minY - size.height + parkingSliver : target.frame.minY
+    return CGRect(x: x, y: y, width: size.width, height: size.height)
+}
+
 private func parkedTarget(
     for frame: CGRect, preferLeft: Bool, display: CGRect, otherDisplays: [CGRect]
 ) -> ParkedTarget {

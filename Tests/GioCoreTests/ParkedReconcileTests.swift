@@ -86,15 +86,20 @@ final class ParkedReconcileTests: XCTestCase {
         XCTAssertTrue(report.parked.isEmpty)
     }
 
-    func testSizeChangeIsNotAcceptedAsParked() {
+    /// WC-14 (supersedes "a size change is not accepted as parked"): an app
+    /// that keeps another size is parked by the size it kept; a strip of
+    /// its own size on the intended side is a park, not a failure.
+    func testAWindowThatKeepsAnotherSizeIsParkedByThatSize() {
         let actuator = ClampingActuator()
         actuator.frames = [id(1): CGRect(x: 1799, y: 8, width: 500, height: 984)]
         let park = target(CGRect(x: 1799, y: 8, width: 700, height: 984), .right)
-        actuator.landing = { _ in CGRect(x: 1799, y: 8, width: 500, height: 984) }
+        actuator.landing = { CGRect(x: $0.minX, y: 8, width: 500, height: 984) }
         let report = WindowReconciler(actuator: actuator).reconcile(
             frames: [:], parked: [id(1): park], focused: nil, currentlyFocused: nil
         )
-        XCTAssertEqual(report.failed, [id(1)])
+        XCTAssertEqual(report.parked, [id(1)])
+        XCTAssertTrue(report.failed.isEmpty)
+        XCTAssertEqual(actuator.frames[id(1)]?.minX, 1799)
     }
 
     func testWrongSideIsNotAcceptedAsParked() {

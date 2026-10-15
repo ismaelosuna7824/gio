@@ -296,4 +296,47 @@ final class MinimumSizeTests: XCTestCase {
         XCTAssertEqual(actuator.sets, writesBefore)
         XCTAssertTrue(book.learn(from: third, placement: .instant(nil)).isEmpty)
     }
+
+    /// WC-14: live (2026-10-15, startup): WhatsApp refuses to be narrower than
+    /// 970 pt, its column is 888, and the left parking frame put it at
+    /// x = -887 for 888 pt, so 83 pt of it stayed on screen over the first
+    /// visible column. A left-parked window is placed by its landed width.
+    func testAWindowParkedOnTheLeftAtItsClampedWidthKeepsOnlyTheSliver() throws {
+        let actuator = ClampingActuator()
+        actuator.minimums = [id(1): CGSize(width: 970, height: 0)]
+        actuator.frames = [id(1): CGRect(x: 100, y: 8, width: 970, height: 1114)]
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let target = ParkedTarget(
+            frame: CGRect(x: display.minX - 888 + parkingSliver, y: 8, width: 888, height: 1114),
+            edge: .left, display: display
+        )
+
+        let report = reconciler.reconcile(frames: [:], parked: [id(1): target], focused: nil, currentlyFocused: nil)
+
+        let landed = try XCTUnwrap(actuator.frames[id(1)])
+        XCTAssertEqual(landed.width, 970)
+        XCTAssertEqual(landed.maxX, display.minX + parkingSliver, accuracy: 0.5)
+        XCTAssertEqual(report.parked, [id(1)])
+        XCTAssertTrue(report.failed.isEmpty)
+    }
+
+    /// WC-14: the right edge parks by the left side of the window, whatever
+    /// width it lands at: nothing to refit, no extra write.
+    func testAWindowParkedOnTheRightAtItsClampedWidthNeedsNoRefit() throws {
+        let actuator = ClampingActuator()
+        actuator.minimums = [id(1): CGSize(width: 970, height: 0)]
+        actuator.frames = [id(1): CGRect(x: 100, y: 8, width: 970, height: 1114)]
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let target = ParkedTarget(
+            frame: CGRect(x: display.maxX - parkingSliver, y: 8, width: 888, height: 1114), edge: .right, display: display
+        )
+
+        let report = reconciler.reconcile(frames: [:], parked: [id(1): target], focused: nil, currentlyFocused: nil)
+
+        XCTAssertEqual(actuator.frames[id(1)]?.minX, display.maxX - parkingSliver)
+        XCTAssertEqual(actuator.sets, 1)
+        XCTAssertEqual(report.parked, [id(1)])
+    }
 }
