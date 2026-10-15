@@ -753,7 +753,7 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   window on the external display (`x=-1108`); frozen 1.3 s, the single retry timed out too and
   TextEdit stayed on the built-in display (`x=8`) while Gio placed it on the external one; the
   queued write is not applied on resume, so without a write the window stays.
-- [x] MM-11b (commit below) — Retries back off (`TransientWriteRetry.delays` 0.5, 1, 2 s, then
+- [x] MM-11b (`0f99c6f`, `08b9125`) — Retries back off (`TransientWriteRetry.delays` 0.5, 1, 2 s, then
   stop; a successful write restarts them) and no minimum is learned from a screen-constrained
   landing. The same live trials showed the column width growing 32 pt per crossing (1068, 1100,
   1132, 1164, 1196): each landing kept its top at y=1130 (the built-in display's visible top;
