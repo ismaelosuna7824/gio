@@ -810,6 +810,12 @@ public final class DiscoveryService: @unchecked Sendable {
         context.windowRegistered(timing)
     }
 
+    /// PF-W: a re-check is armed for this window, so a title change is
+    /// read at once (otherwise the router coalesces title reads).
+    public func awaitsTitle(_ id: WindowID) -> Bool {
+        titleRechecks.isArmed(id, now: context.now())
+    }
+
     /// WR-01: a registered window's title changed (the record already holds
     /// it). An arrival registered untitled is re-checked once, when its
     /// title first becomes non-empty within `TitleRecheckBook.window`: a

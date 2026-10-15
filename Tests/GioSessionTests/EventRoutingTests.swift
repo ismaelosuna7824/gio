@@ -89,6 +89,7 @@ final class EventWorld: @unchecked Sendable {
     var frameReads: [WindowID] = []
     var tileabilityInvalidated: [WindowID] = []
     var titles: [pid_t: String] = [:]
+    var titleReads = 0
     var console: [String] = []
     var logs: [(LogLevel, String)] = []
     var port: FakeEventPort?
@@ -196,7 +197,10 @@ final class EventWorld: @unchecked Sendable {
             isEcho: { id, _, _ in self.echoes.contains(id) },
             invalidateTrust: { self.trustInvalidated.append($0) },
             invalidateTileability: { self.tileabilityInvalidated.append($0) },
-            title: { _ in self.titles.values.first },
+            title: { _ in
+                self.titleReads += 1
+                return self.titles.values.first
+            },
             registry: { self.session.registry },
             console: { self.console.append($0) },
             log: { self.logs.append(($0, $1)) },
@@ -778,10 +782,27 @@ final class WindowEventRouterTests: XCTestCase {
     func testTitleUpdatesTheRecordWithoutLoggingIt() {
         world.titles[7] = "new secret"
         send(.window(.titleChanged), element: element)
+        scheduler.advance(by: WindowEventRouter.titleCoalesce)
 
         XCTAssertEqual(world.registered.first?.title, "new secret")
         XCTAssertFalse(world.logs.contains { $0.1.contains("secret") })
         XCTAssertFalse(world.console.contains { $0.contains("secret") })
+    }
+
+    /// PF-W: terminals and pages retitle themselves several times a second
+    /// (spinners, counters), all day. Each change was one AX read into the
+    /// app; now a window's title is read at most once per `titleCoalesce`,
+    /// with the value it has then.
+    func testTitleChangesAreReadOncePerCoalesceWindowWithTheLatestValue() {
+        for step in 0..<10 {
+            world.titles[7] = "secret \(step)"
+            send(.window(.titleChanged), element: element)
+            scheduler.advance(by: 0.1)
+        }
+        XCTAssertEqual(world.titleReads, 1)
+        XCTAssertEqual(world.registered.first?.title, "secret 9")
+        scheduler.advance(by: 10)
+        XCTAssertEqual(world.titleReads, 1, "nothing pending once read")
     }
 
     func testFocusedWindowChangeRequestsAdoption() {

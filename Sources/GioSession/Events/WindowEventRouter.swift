@@ -139,6 +139,10 @@ public final class WindowEventRouter: @unchecked Sendable {
     private var lateChecks: Set<WindowID> = []
     /// FI-11: the re-check runs this long after the echo window ended.
     static let lateCheckMargin: TimeInterval = 0.05
+    /// PF-W: windows with a title read pending, and the element to read.
+    private var pendingTitles: [WindowID: AXUIElement] = [:]
+    /// PF-W: a window's title is read at most this often.
+    public static let titleCoalesce: TimeInterval = 1
 
     public init(context: Context, discovery: DiscoveryService, scheduler: SessionScheduler) {
         self.context = context
@@ -327,20 +331,49 @@ public final class WindowEventRouter: @unchecked Sendable {
                 context.reflowAll()
             }
         case .updateTitle:
-            let registry = context.registry()
-            if let known, let element, let title = context.title(element), !title.isEmpty,
-               var record = registry.find(known)
-            {
-                record.title = title
-                try? registry.update(record)
-                discovery.titleChanged(known)
+            guard let known, let element else {
+                return
             }
+            noteTitleChanged(known, element: element)
         case .adoptFocus:
             context.requestFocusAdoption(.focusChanged, pid, element)
         case .resync:
             context.scheduleReflow(true)
         case .ignore:
             break
+        }
+    }
+
+    /// PF-W: at most one title read per window per `titleCoalesce`, with
+    /// the latest element, so an app retitling itself several times a
+    /// second (spinners, counters) costs one AX read a second, not one per
+    /// change. A window whose rule re-check waits for its title is read at
+    /// once.
+    private func noteTitleChanged(_ id: WindowID, element: AXUIElement) {
+        if discovery.awaitsTitle(id) {
+            pendingTitles.removeValue(forKey: id)
+            readTitle(id, element: element)
+            return
+        }
+        let scheduled = pendingTitles[id] != nil
+        pendingTitles[id] = element
+        guard !scheduled else {
+            return
+        }
+        scheduler.asyncAfter(Self.titleCoalesce) { [weak self] in
+            guard let self, let element = pendingTitles.removeValue(forKey: id) else {
+                return
+            }
+            readTitle(id, element: element)
+        }
+    }
+
+    private func readTitle(_ id: WindowID, element: AXUIElement) {
+        let registry = context.registry()
+        if let title = context.title(element), !title.isEmpty, var record = registry.find(id) {
+            record.title = title
+            try? registry.update(record)
+            discovery.titleChanged(id)
         }
     }
 

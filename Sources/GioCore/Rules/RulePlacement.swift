@@ -99,6 +99,11 @@ public struct TitleRecheckBook: Sendable {
         return now - armedAt <= Self.window
     }
 
+    /// PF-W: armed and inside the window (its title is wanted right away).
+    public func isArmed(_ id: WindowID, now: TimeInterval) -> Bool {
+        armed[id].map { now - $0 <= Self.window } ?? false
+    }
+
     public mutating func forget(_ id: WindowID) {
         armed.removeValue(forKey: id)
     }
