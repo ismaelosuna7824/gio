@@ -1284,8 +1284,17 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   overlay's opacity keyframes and progress plumbing; `SnapshotResizeMode.crossfade` → `.swap` (log
   `mode=swap`). SM-30's fresh face still fades in (same size, 100 ms). RED: `OverlayResizeTests` compile
   failure (`cannot find 'OverlayFaces'`, `no member 'swap'`); GREEN snapshot suites (OverlayResize, cache,
-  fresh, refresher, flight). LIVE PENDING: `Alt+F` back and forth on Postman/Code, no double image; first
-  maximize (no cached size) unchanged (`mode=fill`).
+  fresh, refresher, flight). Live (second recording, 2026-10-15 07:54, build with `mode=swap` in the log): no
+  frame mixes two layouts any more; the blink left is SM-33.
+- [x] SM-33 (commit pending, branch `fix/johan-spaces-safari`) — Blink still seen after SM-32. The second
+  recording (variable frame rate, 676 frames in 15.9 s) scanned frame by frame for outliers (a frame that
+  differs from both neighbours while they match each other): the two strong ones (t=3.433 s, t=12.983 s) are
+  the same thing: at the hand-off of an `Alt+F` back the focus ring around Postman is gone for one frame
+  (present the frame before and after). `WindowLayers.fadeOut` hid the overlay's ring copy at once ("the live
+  ring above replaces this one"), but the live ring panel is shown by a later main-queue hop
+  (`focus ring shown` at the hand-off). Now the ring copy fades out with shadow, image and dim over the 120 ms
+  hand-off, at the frame the live ring takes. Not unit-tested (the overlay's CALayers are private, main-thread
+  only; no overlay test harness). LIVE PENDING: `Alt+F` back on a ringed window, the ring never blinks.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.

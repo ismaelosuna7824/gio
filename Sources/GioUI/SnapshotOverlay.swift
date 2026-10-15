@@ -249,11 +249,13 @@ private final class WindowLayers {
         top.add(animation, forKey: "gio.opacity")
     }
 
-    /// SM-30: the soft hand-off: shadow, image and dim fade out over the
-    /// real window from `now` (eased); the live ring above replaces this one.
+    /// SM-30: the soft hand-off: shadow, image, dim and ring fade out over
+    /// the real window from `now` (eased). SM-33: the ring fades too instead
+    /// of hiding at once: the live ring is shown by a later main-queue hop,
+    /// and hiding this one first left the window without a ring for a frame
+    /// (a blink at every Alt+F back). Both rings sit on the same frame.
     func fadeOut(duration: TimeInterval, now: CFTimeInterval) {
-        ring.isHidden = true
-        for layer in [shadow, clip, dim] {
+        for layer in [shadow, clip, dim, ring] {
             let animation = CABasicAnimation(keyPath: "opacity")
             animation.fromValue = layer.opacity
             animation.toValue = 0
