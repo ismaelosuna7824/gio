@@ -203,6 +203,26 @@ Window admission, observation and registration only. Out of scope: animation/per
   Dock clicks each logged `focus click on system UI`, then `focus adopt source=activation ...
   changed=true scroll=...` (same workspace, strip scrolled) or `focus reveal id=1528:1
   workspace=2 source=activation` / `id=17415:4 workspace=1` (other workspace).
+- [x] WC-14 (`c941b20`) — A window is parked by the size its app kept (2026-10-15, user report
+  with screenshot: "la primera vez que lo lancé no ajustó bien el tiling, se ve una ventana y
+  se quita hasta que empiezo a mover"). The screenshot showed ~80 pt of WhatsApp over the left
+  edge of the first visible Code column. WindowServer (throwaway `CGWindowListCopyWindowInfo`
+  probe): WhatsApp is 970 pt wide while every column is 888 (`frameMismatch requested=(8,8,888,
+  1114) actual=(8,8,970,1114)`), and the left park is `display.minX - frame.width + 1` with the
+  column's 888, so x = -887 left 970 - 888 + 1 = 83 pt on screen. Parked writes are not
+  verified, so nothing noticed; it seemed to go away once the user moved because the Code
+  window was raised over the strip. Decision: a parked write that changed the size reads
+  where it landed (one AX read, only then); a landing that does not park is parked again by
+  the kept size (`parkedFrame(_:size:)`, pure: left side by its own width, below by its own
+  height, right and top anchors unchanged) and counts as `parked clamped`, not a failure.
+  Contract change: `ParkedReconcileTests.testSizeChangeIsNotAcceptedAsParked` became
+  `testAWindowThatKeepsAnotherSizeIsParkedByThatSize` (a strip of the kept size on the
+  intended side is a park). RED: `MinimumSizeTests.testAWindowParkedOnTheLeftAtItsClampedWidthKeepsOnlyTheSliver`
+  (`83.0` is not equal to `1.0`, the live 83 pt) and
+  `testAWindowParkedOnTheRightAtItsClampedWidthNeedsNoRefit` (reported failed). GREEN: all
+  bundles 0 failures (UI 312/53 skipped, Session 487, POC 7, Mac 19, MacOS 98, Core 1976);
+  signed build OK; `git diff --check` clean. LIVE PASS (2026-10-15): relaunch with WhatsApp
+  parked left logged `parked clamped id=13396:7` at startup and the user saw no strip.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -244,3 +264,4 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-10-14: WC-12 keyboard focus skips floating/minimized columns done (`19bddce`, route: delegated writer). LIVE PENDING.
 - 2026-10-15: WC-13 Dock click reveals the app's workspace done (`f43daad`, branch
   `fix/dock-click-reveal`). LIVE PASS.
+- 2026-10-15: WC-14 park by the size the app kept done (`c941b20`, same branch). LIVE PASS.
