@@ -71,6 +71,24 @@ public func planDisplayLayout(
             workspace.viewportOffset = revealed
         }
     }
+    // MM-08: a column across an edge another display shares is parked off
+    // the display (MM-04), which leaves its part of this display empty. When
+    // the focused column can sit flush against that edge instead, the cut
+    // moves to a free edge, where a column peeks as on a single display.
+    // Centering (this pass's request or the configured mode) keeps its offset.
+    if engine.config.centerFocusedColumn == .never, centering.mode == .never,
+       let shifted = straddleFreeOffset(
+           workspace: workspace, layout: layout, viewport: viewport, edgeMargin: engine.config.padding,
+           otherDisplays: otherDisplays
+       ),
+       let relaid = try? layoutKeepingFullscreenSize(
+           workspace: { var scrolled = workspace; scrolled.viewportOffset = shifted; return scrolled }(),
+           modes: modes, layoutModes: layoutModes, engine: engine, viewport: viewport, display: display
+       )
+    {
+        layout = relaid
+        workspace.viewportOffset = relaid.viewportOffset
+    }
     let focusedColumn = workspace.focusedWindow.flatMap { focused in
         workspace.columns.first { $0.windows.contains(focused) }
     }
@@ -209,6 +227,63 @@ public func revealOffset(
             .ensureVisible(range: reveal, contentWidth: layout.contentWidth).offset
     }
     return target == layout.viewportOffset ? nil : target
+}
+
+/// MM-08: a viewport offset that keeps the focused column fully visible and
+/// leaves fewer columns across an edge `viewport` shares with another
+/// display than `layout`'s own offset does (those columns park, leaving their
+/// part of the display empty). Candidates: the focused column flush with
+/// either side (inside `edgeMargin`, clamped to the strip); the fewest
+/// stranded columns wins, then the smallest scroll. Nil when nothing is
+/// stranded or no candidate does better.
+public func straddleFreeOffset(
+    workspace: Workspace, layout: LayoutResult, viewport: CGRect, edgeMargin: CGFloat,
+    otherDisplays: [CGRect]
+) -> CGFloat? {
+    guard !otherDisplays.isEmpty,
+          let focused = workspace.focusedWindow,
+          let column = workspace.columns.first(where: { $0.windows.contains(focused) })
+    else {
+        return nil
+    }
+    let current = layout.viewportOffset
+    let toContent = current - viewport.minX
+    guard let range = contentRange(of: column, in: layout, toContent: toContent) else {
+        return nil
+    }
+    let others = workspace.columns.filter { $0.id != column.id }.map { other in
+        other.windows.compactMap { layout.frames[$0] }
+    }
+    func stranded(at offset: CGFloat) -> Int {
+        let dx = current - offset
+        return others.filter { frames in
+            frames.contains { frame in
+                let moved = frame.offsetBy(dx: dx, dy: 0)
+                return moved.intersects(viewport) && otherDisplays.contains { $0.intersects(moved) }
+            }
+        }.count
+    }
+    let now = stranded(at: current)
+    guard now > 0 else {
+        return nil
+    }
+    let maxOffset = max(0, layout.contentWidth - viewport.width)
+    let fits = range.upperBound - range.lowerBound + 2 * edgeMargin <= viewport.width
+    let raw = fits
+        ? [range.lowerBound - edgeMargin, range.upperBound + edgeMargin - viewport.width]
+        : [range.lowerBound]
+    let shown: (CGFloat) -> Bool = { offset in
+        range.upperBound - range.lowerBound > viewport.width
+            || (range.lowerBound >= offset && range.upperBound <= offset + viewport.width)
+    }
+    let best = raw.map { min(max($0, 0), maxOffset) }
+        .filter { $0 != current && shown($0) }
+        .map { (offset: $0, stranded: stranded(at: $0)) }
+        .min { ($0.stranded, abs($0.offset - current)) < ($1.stranded, abs($1.offset - current)) }
+    guard let best, best.stranded < now else {
+        return nil
+    }
+    return best.offset
 }
 
 private func contentRange(of column: Column, in layout: LayoutResult, toContent: CGFloat) -> Range<CGFloat>? {

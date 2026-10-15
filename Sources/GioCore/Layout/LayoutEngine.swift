@@ -23,6 +23,11 @@ public struct LayoutConfig: Equatable, Sendable {
     public var alwaysCenterSingleColumn: Bool
     /// DW-01 `[dwindle]`: split ratio and shape bias of dwindle workspaces.
     public var dwindle: DwindleSettings
+    /// Niri `center-focused-column` as configured. Keyboard focus changes
+    /// center through `CenterRequest`; MM-08 only moves a strip off a
+    /// shared display edge when this is `.never` (a centered strip keeps
+    /// its offset on passive passes).
+    public var centerFocusedColumn: CenterFocusedColumnMode
 
     public init(
         padding: CGFloat = 8,
@@ -33,7 +38,8 @@ public struct LayoutConfig: Equatable, Sendable {
         fullscreenGap: CGFloat = 0,
         maximizeSingleWindow: Bool = false,
         alwaysCenterSingleColumn: Bool = false,
-        dwindle: DwindleSettings = DwindleSettings()
+        dwindle: DwindleSettings = DwindleSettings(),
+        centerFocusedColumn: CenterFocusedColumnMode = .never
     ) {
         self.padding = padding
         self.gap = gap
@@ -44,6 +50,7 @@ public struct LayoutConfig: Equatable, Sendable {
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
         self.dwindle = dwindle
+        self.centerFocusedColumn = centerFocusedColumn
     }
 }
 

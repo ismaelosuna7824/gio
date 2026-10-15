@@ -264,7 +264,8 @@ public struct GioConfig: Sendable {
             alwaysCenterSingleColumn: layout.alwaysCenterSingleColumn,
             dwindle: DwindleSettings(
                 splitRatio: dwindle.defaultSplitRatio, splitWidthMultiplier: dwindle.splitWidthMultiplier
-            )
+            ),
+            centerFocusedColumn: layout.centerFocusedColumn
         )
     }
 

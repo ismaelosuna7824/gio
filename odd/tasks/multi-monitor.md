@@ -669,9 +669,27 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   "RenderVerifierTests|RenderVerificationTests|RenderConservativeTests"` → GioSessionTests 14,
   GioCoreTests 46, 0 failures; full `swift test` UI 310 (53 skipped) / Session 477 / POC 7 /
   Mac 19 / MacOS 95 / Core 1962, 0 failures; signed `xcodebuild` BUILD SUCCEEDED.
-- [ ] MM-08 — The fix, once a two-display repro logs `render missing detail`: whether the
-  missing window is off screen at its target (`on=n`, a Space/WindowServer state), drawn at its
-  parking spot, or on the other display decides it.
+- [x] MM-08 (commit pending) — No empty side at a shared edge. Report (2026-10-14, screenshot at
+  20:08 local, session 03:08Z with the MM-07 build, `spaces separate=true`): WhatsApp (learned
+  970 pt) flush right on the laptop at x 822, the rest of the laptop desktop and Gio's own window
+  only; "siento que aún pasa" plus flicker while moving. That session logged no `render
+  mismatch` at all: the empty side is not a WindowServer fault but MM-04 by design. The minimal
+  reveal put WhatsApp at 822..1792; its left neighbour at -74..814 crossed the edge the external
+  display shares, so `planParking` parked it far side (right sliver, jump) and 814 pt stayed
+  empty. Every Alt+H/L that brings such a neighbour in or out teleports it between its tile and
+  the far-side park [INFERENCE: the flicker; no recording]. Read-only probe at 03:10:32Z
+  (`/tmp/gio-probe/ws`): every laptop window except the focused Tern at the right sliver
+  `x=1799`, `on=Y`, 0 % shown. Fix: `straddleFreeOffset` (pure, `DisplayReflowPlanner.swift`)
+  after the reveal tries the focused column flush with either side and keeps the one stranding
+  fewer columns; skipped when centering (`LayoutConfig.centerFocusedColumn`, new, from
+  `makeLayoutConfig`, or a centering request). RED (`swift test --filter
+  MultiDisplayRepairTests`, after a compile RED on `centerFocusedColumn`): `Executed 18 tests,
+  with 4 failures`: WhatsApp at 822 instead of 8, no right peek; the mirrored external strip at
+  1408 instead of flush right 2152. The first full run also failed 3 `FarSideParkingMotionTests`
+  (a centering request with config `never`): the pass's request now also skips the shift.
+  GREEN: full `swift test` UI 310 (53 skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 /
+  Core 1966, 0 failures. LIVE PENDING: external on the left, `Alt+L` across the strip, no empty
+  band; `render missing detail` still wanted if a column is missing although its tile is shown.
 
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;

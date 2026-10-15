@@ -182,6 +182,88 @@ final class MultiDisplayRepairTests: XCTestCase {
         XCTAssertNotNil(planned.plan.parked[id(1)])
     }
 
+    // MARK: Empty columns at a shared edge (MM-08)
+
+    /// The live strip of 2026-10-14 (screenshot): 888 pt columns, WhatsApp's
+    /// learned 970, focus moved right onto it.
+    private func liveStrip(focus: Int, offset: CGFloat) -> Workspace {
+        var strip = workspace(columns: 5, focus: focus, spec: .points(888))
+        strip.columns[3].widthSpec = .points(970)
+        strip.viewportOffset = offset
+        return strip
+    }
+
+    func testAFocusedColumnNeverLeavesAnEmptyGapAtTheSharedEdge() throws {
+        // Minimal reveal: WhatsApp flush right at 822, its left neighbour at
+        // -74..814 straddles the external and parks: 814 pt of empty screen
+        // (the screenshot). Flush left instead, the right neighbour peeks over
+        // the free right edge.
+        let planned = try planDisplayLayout(
+            workspace: liveStrip(focus: 3, offset: 896), modes: [:], engine: engine,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        assertConfined(planned, display: Live.builtInFrame, other: Live.externalFrame, "built-in")
+        XCTAssertEqual(planned.plan.visible[id(3)]?.minX, 8)
+        XCTAssertEqual(planned.plan.visible[id(4)]?.minX, 986, "the right neighbour peeks over the free edge")
+        XCTAssertNotNil(planned.plan.parked[id(2)])
+        // Stable: the next (passive) pass keeps the offset.
+        let again = try planDisplayLayout(
+            workspace: planned.workspace, modes: [:], engine: engine,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        XCTAssertEqual(again.workspace.viewportOffset, planned.workspace.viewportOffset)
+        XCTAssertEqual(again.plan, planned.plan)
+    }
+
+    func testOnOneDisplayTheMinimalRevealStaysWithItsLeftPeek() throws {
+        let planned = try planDisplayLayout(
+            workspace: liveStrip(focus: 3, offset: 896), modes: [:], engine: engine,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: []
+        )
+        XCTAssertEqual(planned.plan.visible[id(3)]?.minX, 822)
+        XCTAssertEqual(planned.plan.visible[id(2)]?.minX, -74)
+    }
+
+    func testAStripRightOfItsSharedEdgeAlignsTheFocusedColumnRight() throws {
+        // The external: the built-in shares its right edge. Moving left onto
+        // column 1, the minimal reveal leaves column 2 across that edge;
+        // flush right, column 0 peeks over the free left edge instead.
+        let external = CGRect(x: 0, y: 0, width: 2160, height: 1410)
+        let builtIn = CGRect(x: 2160, y: 0, width: 1800, height: 1169)
+        var strip = workspace(columns: 4, focus: 1, spec: .points(1400))
+        strip.viewportOffset = 2816
+        let planned = try planDisplayLayout(
+            workspace: strip, modes: [:], engine: engine,
+            viewport: external, display: external, otherDisplays: [builtIn]
+        )
+        assertConfined(planned, display: external, other: builtIn, "external")
+        XCTAssertEqual(planned.plan.visible[id(1)]?.maxX, 2152)
+        XCTAssertNotNil(planned.plan.visible[id(0)], "the left neighbour peeks over the free edge")
+        XCTAssertNotNil(planned.plan.parked[id(2)])
+    }
+
+    func testCenteringModesKeepTheirOffset() throws {
+        let parsed = try parseGioConfig("[layout]\ncenter-focused-column = \"always\"\n").get().0
+        XCTAssertEqual(parsed.makeLayoutConfig().centerFocusedColumn, .always)
+        XCTAssertEqual(GioConfig().makeLayoutConfig().centerFocusedColumn, .never)
+        let config = LayoutConfig(padding: 8, gap: 8, centerFocusedColumn: .always)
+        let centered = ScrollableLayoutEngine(config: config)
+        let request = CenterRequest(mode: .always, previouslyFocused: id(2))
+        let planned = try planDisplayLayout(
+            workspace: liveStrip(focus: 3, offset: 896), modes: [:], engine: centered,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame],
+            centering: request
+        )
+        let frame = try XCTUnwrap(planned.plan.visible[id(3)])
+        XCTAssertEqual(frame.midX, Live.builtInVisible.midX, accuracy: 1)
+        // A passive pass (no centering request) leaves the centered strip alone.
+        let passive = try planDisplayLayout(
+            workspace: planned.workspace, modes: [:], engine: centered,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        XCTAssertEqual(passive.workspace.viewportOffset, planned.workspace.viewportOffset)
+    }
+
     // MARK: Display numbers
 
     func testDisplayNumbersPutThePrimaryFirstThenPositionOrder() {
