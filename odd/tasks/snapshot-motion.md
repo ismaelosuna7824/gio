@@ -1270,7 +1270,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   followed by scrolls: no picture that flies and vanishes; note `snapshot evict` and `window vanished scan` lines,
   and which miss (if any) Cmd+H windows log: the capture matches against every WindowServer window of the app
   (`.optionAll`), so a hidden app's windows may still match and not read `unmatched` [INFERENCE, unverified].
-- [x] SM-32 (commit pending, branch `fix/johan-spaces-safari`) — `Alt+F` blinks (live 2026-10-15, a 120 fps
+- [x] SM-32 (`a96a8be`, branch `fix/johan-spaces-safari`) — `Alt+F` blinks (live 2026-10-15, a 120 fps
   screen recording of repeated `Alt+F` on Postman, the log shows `snapshot resize ... mode=crossfade`,
   `handoff ... painted=1 resized=1 fade=120`). Frames sampled at 50 fps through one maximize: two frames
   (~40 ms) at the start of the resize show the narrow and the maximized layouts on top of each other (SM-27's

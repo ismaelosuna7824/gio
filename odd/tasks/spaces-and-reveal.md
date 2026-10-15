@@ -107,7 +107,7 @@ native review (which reviews commits) is not run.
   failures; signed build OK; diff --check clean. LIVE PENDING. Open: whether Spotlight/
   Raycast also toggle the Space or fail elsewhere (needs `[logging] level = "debug"`);
   returning from a real other Desktop adopts whatever app macOS puts in front.
-- [ ] SR-06 (commit pending, branch `fix/johan-spaces-safari`) — Report (johan, 2026-10-14): two apps sent to
+- [ ] SR-06 (`f765ffd`, branch `fix/johan-spaces-safari`) — Report (johan, 2026-10-14): two apps sent to
   Desktop 2, then brought back to Desktop 1 (Gio's Space), stayed behind the tiled windows and could not be
   reached; opening them from Raycast moved them to a workspace 2. Code reading (no log yet): discovery
   lists AX windows of the active Space only and nothing announces a window that changed Space, so windows
