@@ -166,7 +166,7 @@ critical or high issue; every finding below was checked against the code before 
   two failures, more than three failed cases, or no failed case (build error, crash) fail. Smoke: a fake
   `swift` that fails one case then passes it exits 0 with the warning; one that fails to compile exits 1.
   CI run 38689662595 green (no retry needed).
-- [ ] RL-12 (`bb2049b`, notes range in the follow-up commit) — Automatic releases (user, 2026-10-15): `dev` is
+- [x] RL-12 (`bb2049b`, notes range in the follow-up commit) — Automatic releases (user, 2026-10-15): `dev` is
   the default branch; every merge to `main` releases and bumps the version; an action picks the bump (patch,
   minor, major). Prepare Release (`prepare-release.yml`, dispatch on `dev`, input `bump`) opens or updates the
   PR `dev` → `main` titled `Release v<next>` with the label `release:<bump>` and a body listing the commits
@@ -185,8 +185,17 @@ critical or high issue; every finding below was checked against the code before 
   [`release:patch`]; minor retitled it `Release v0.2.0` [`release:minor`], patch back to `v0.1.1`. The PR's
   CI missed three more lane timing budgets on the runner (fixed in `eecc436`: bound = the 0.3 s wait it guards
   against, motion release 10 ms inside the 0.1 s grace, 200 ms overlapping writes against a 1.0 s bound); then
-  CI green and PR #7 `mergeStateStatus=CLEAN`. LIVE PENDING: the first merge to `main` (release.yml's version
-  job, tag creation, notes from the PR).
+  CI green and PR #7 `mergeStateStatus=CLEAN`. Live: the user merged PR #7; Release run 38692522722 (version,
+  test, build, publish) green; `v0.1.1` tagged on the merge commit `eac0398`, assets `Gio-0.1.1.dmg`,
+  `.sha256`, `Gio.dmg`; the public API's `releases/latest` is `v0.1.1` and `latest/download/Gio.dmg` redirects
+  to its asset. The notes carried the PR's instructions (trimmed by hand on the release, fixed by RL-13).
+- [ ] RL-13 (commit pending) — The user asked whether all those runs cost Actions minutes. Standard GitHub-hosted
+  runners are free for public repositories (GitHub Docs, Actions billing); the earlier private-repo runs did
+  count. Still one run per commit now: CI no longer runs on pushes to `main` (release.yml tests the merge) and
+  skips pull-request runs from this repository's own branches (the branch push already tested that commit; a
+  skipped job passes the required check); fork PRs still run. Prepare Release writes `<!-- release notes -->`
+  after its instructions and publish keeps only what follows (CRLF-safe awk, whole body as fallback).
+  `actionlint` clean; awk checked on a CRLF sample. LIVE PENDING: the next release PR and push to `dev`.
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or
