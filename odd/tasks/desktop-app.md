@@ -127,6 +127,39 @@ necesidad de modificar el config.toml").
   (TESTING.md 10b): recording while the tap runs (a bound combo must reach the recorder, not
   fire), the recorder sheet getting key focus, resume after Cmd+Tab and window close, and the
   live reload of a rebound key and of the log level.
+- [ ] DA-08 (`e4c41ac`) — Report a Problem (user decision 2026-10-15: no token, no server; Gio
+  builds a zip, reveals it in Finder and opens a prefilled GitHub issue the user drags it
+  into; `config.toml` only when a checkbox is ticked, off by default). Diagnostics gains a
+  **Report a Problem** card before Command Line: **What happened?** (required), optional
+  **Title** (default: first line, 80 chars), **Include my config file**, **Create Report…**
+  and a status line. Decisions (pure, Core `Commands/IssueReport.swift`):
+  `makeIssueReportPlan` picks the copies (`gio.log`, `gio.log.1` when present, `config.toml`
+  only when asked and present; nothing else from home), writes `system.txt` (version via
+  `gioVersion`, macOS, architecture, Accessibility, each display's size/scale/refresh, and
+  the checklist lines from `issueReportHealthLines`, GioUI) and `description.txt`, names
+  `gio-report-yyyyMMdd-HHmmss`, and builds
+  `https://github.com/<defaultUpdateRepository>/issues/new?title&body&labels=bug` with
+  unreserved-only percent-encoding (`URLQueryItem` leaves `+`, which GitHub reads as a
+  space). Body: What happened, System, the last 20 `[WARN]`/`[ERROR]` lines fenced, and
+  "Logs: drag `<zip>` here.". Cap 7000 characters: drop the oldest warnings, then cut the
+  description (binary search) with a note pointing to `description.txt`. Adapters:
+  `GioMacOS/System/IssueReportBundle.swift` (stage in temp, `ditto -c -k --keepParent`
+  into the destination, folder removed; display facts), `GioUI/IssueReporter.swift`
+  (gathers facts, writes off the main thread into `~/Downloads`, then
+  `activateFileViewerSelecting` + `NSWorkspace.open`; logs `issue report saved name=...`,
+  no titles), `GioTextEditor` in `SettingsControls.swift`, the card in `DiagnosticsView`.
+  Evidence: RED `swift build --build-tests` failed (`cannot find 'makeIssueReportPlan'`,
+  `'IssueReportInput'`, `'recentWarningLines'`, `'issueReportBody'` ...), then for
+  `writeIssueReportBundle` (GioMacOSTests) and `issueReportHealthLines` (GioUITests); GREEN:
+  IssueReportTests 17, IssueReportBundleTests 2 (temp folders, never `~/Downloads`), the
+  health-lines test. Full `swift test` 2026-10-15: GioUITests 313 (53 skipped),
+  GioSessionTests 515, GioPOCTests 7, GioMacTests 19, GioMacOSTests 90, GioCoreTests 2017,
+  0 failures; `git diff --check` clean. Example link: 3018 characters for a two-line
+  description with 20 warnings. Visual check: opt-in Diagnostics snapshot inspected (card
+  matches the other sections), then deleted. Signed Release build (`xcodebuild ... -configuration
+  Release`) BUILD SUCCEEDED. Not pushed. LIVE PENDING
+  (TESTING.md 10c): Finder reveal, the browser issue page with the prefilled fields, and
+  GitHub accepting the dragged zip.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
@@ -170,3 +203,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-10-08: DA-07 code-complete (editable Shortcuts with recorder and `"none"` unbind, Log
   file level picker). Uncommitted. Next: signed build and live check 10b.
 - 2026-10-08: DA-07 committed as `d84ca62` and pushed to `main`. LIVE PENDING: check 10b.
+- 2026-10-15: DA-08 (Report a Problem) committed as `e4c41ac`. LIVE PENDING: check 10c.
