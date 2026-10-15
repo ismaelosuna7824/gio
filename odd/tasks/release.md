@@ -385,7 +385,7 @@ Hardening tasks (security review findings, see RL-05..RL-08 for the release side
   URL, otherwise the anonymous browser URL (`updateAssetRequest`); every redirect drops `Authorization` unless
   the new request is allowed (`updateRedirectRequest`), in the download delegate and in the release-list
   session (`URLSession.updateSession` now has an `UpdateTokenRedirectPolicy` delegate).
-- [x] UP-18 (commit pending) — Token support removed: the repository is public since 2026-10 (RL-10), so the
+- [x] UP-18 (`cfb58e2`) — Token support removed: the repository is public since 2026-10 (RL-10), so the
   updater asks GitHub anonymously. Removed the Diagnostics > Updates token row (**Include beta versions** is the
   card's last row now), `UpdateController.hasToken/saveToken/clearToken`, `UpdateDependencies.tokens`,
   `UpdateTokenStoring`/`KeychainTokenStore`/`KeychainCalls`, the Authorization header and token parameter of
