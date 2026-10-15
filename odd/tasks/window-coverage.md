@@ -152,7 +152,7 @@ Window admission, observation and registration only. Out of scope: animation/per
   `focusColumnFirst`/`focusColumnLast` took the strip ends, and `focusNeighbour` (CLI
   `gio focus`, `focus-column-or-monitor-*`, `focus-window-or-workspace-*`) handed the strip
   to `moveFocus` without modes, so each invisible column cost one keypress.
-  DONE (`<hash>`, route: delegated writer, 2+ non-trivial files across GioCore +
+  DONE (`19bddce`, route: delegated writer, 2+ non-trivial files across GioCore +
   GioSession). Decision: `moveFocus(in:direction:modes:)`, `focusColumnFirst(in:modes:)`
   and `focusColumnLast(in:modes:)` take a required mode map (no default, so no caller keeps
   the bug silently) and skip every column whose windows are all non-tiled; the predicate is
@@ -219,4 +219,4 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: WC-09 hypothesis (stale focus) REFUTED by logs; real cause reveal geometry. WC-10 done. Next: live retest click.
 - 2026-09-29: LIVE PASS (user + log since last start: 53 focus adoptions, all `scroll=no scroll`, 0 `focus dropped`). PHASE 1 CLOSED. Next: phase 2 perf + animation in odd/tasks/motion.md.
 - 2026-10-14: WC-11 native tabs done (`8effe33`, on `main` after SM-31 and FI-09..FI-11). LIVE PENDING: TESTING.md row 1b.
-- 2026-10-14: WC-12 keyboard focus skips floating/minimized columns done (`<hash>`, route: delegated writer). LIVE PENDING.
+- 2026-10-14: WC-12 keyboard focus skips floating/minimized columns done (`19bddce`, route: delegated writer). LIVE PENDING.
