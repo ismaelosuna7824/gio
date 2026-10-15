@@ -430,3 +430,7 @@ read for the snap and focus rules.
 - 2026-10-15: TG-06 committed `974ece7` on `fix/gesture-scroll-overlay` (settle on the overlay
   with the release velocity); TG-07 committed `0699e0f` on the same branch (tracking on the
   overlay). Not pushed; LIVE PENDING (TESTING.md 15i (c), (l), (m), (n)).
+- 2026-10-15: TG-07 review fixes committed `58800c4` (mid-air takeover from the drawn layers,
+  instant-settle refusal, `endHold` writes before the overlay comes down); RDD off, `gentle-ai
+  review assess` tier high, so an independent reviewer ran (no blocker, two priority-2 findings,
+  both fixed). Not pushed; LIVE PENDING.
