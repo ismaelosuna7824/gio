@@ -43,6 +43,9 @@ public final class FocusCoordinator: @unchecked Sendable {
         /// The pid owning the topmost on-screen window at a point.
         public var topWindowOwnerPID: (CGPoint) -> pid_t?
         public var warpCursor: (CGPoint) -> Void
+        /// WC-13: the click at this point landed on the Dock or the menu bar
+        /// (one WindowServer query, `clickIsOnSystemUI`).
+        public var clickOnSystemUI: (CGPoint) -> Bool
         public var mouseFollowsFocus: () -> Bool
         public var centerMode: () -> CenterFocusedColumnMode
         public var publishFocusRing: () -> Void
@@ -74,6 +77,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             isVisibleInViewport: @escaping (WindowID) -> Bool?,
             topWindowOwnerPID: @escaping (CGPoint) -> pid_t?,
             warpCursor: @escaping (CGPoint) -> Void,
+            clickOnSystemUI: @escaping (CGPoint) -> Bool = { _ in false },
             mouseFollowsFocus: @escaping () -> Bool,
             centerMode: @escaping () -> CenterFocusedColumnMode,
             publishFocusRing: @escaping () -> Void, reflowAll: @escaping () -> Void,
@@ -101,6 +105,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.isVisibleInViewport = isVisibleInViewport
             self.topWindowOwnerPID = topWindowOwnerPID
             self.warpCursor = warpCursor
+            self.clickOnSystemUI = clickOnSystemUI
             self.mouseFollowsFocus = mouseFollowsFocus
             self.centerMode = centerMode
             self.publishFocusRing = publishFocusRing
@@ -176,12 +181,27 @@ public final class FocusCoordinator: @unchecked Sendable {
 
     /// Tap thread (PF-AB): a mouse-down. A click is the user choosing the
     /// focus: any pending keyboard intent is dropped on the session queue.
+    /// WC-13: there, before the activation it causes arrives, the click is
+    /// marked when it landed on the Dock or the menu bar (no window click).
     public func recordClick(at location: CGPoint) {
+        let click = MouseClick(location: location, time: context.now())
         clickLock.lock()
-        tappedClick = MouseClick(location: location, time: context.now())
+        tappedClick = click
         clickLock.unlock()
         scheduler.async { [weak self] in
-            self?.focusIntent.cancel()
+            guard let self else {
+                return
+            }
+            focusIntent.cancel()
+            guard context.clickOnSystemUI(location) else {
+                return
+            }
+            clickLock.lock()
+            if tappedClick == click {
+                tappedClick?.onSystemUI = true
+            }
+            clickLock.unlock()
+            context.log(.debug, "focus click on system UI x=\(Int(location.x)) y=\(Int(location.y))")
         }
     }
 
