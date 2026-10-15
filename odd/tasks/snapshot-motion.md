@@ -1295,7 +1295,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   (`focus ring shown` at the hand-off). Now the ring copy fades out with shadow, image and dim over the 120 ms
   hand-off, at the frame the live ring takes. Not unit-tested (the overlay's CALayers are private, main-thread
   only; no overlay test harness). Live (third recording, 07:59, build with it): no frame without the ring.
-- [x] SM-34 (commit pending, branch `fix/johan-spaces-safari`) — "Aún pasa" (third recording, 07:59:40, 747
+- [x] SM-34 (`0a66ec6`, branch `fix/johan-spaces-safari`) — "Aún pasa" (third recording, 07:59:40, 747
   frames VFR, the running Gio's GioUI.o built 07:59:15). The single-frame scan found no outlier any more;
   every frame of one maximize and one un-maximize viewed: the maximize swaps cleanly; the un-maximize's first
   frame shows the narrow image at the left and a flat dark fill across the rest of the still-wide frame, which
