@@ -822,6 +822,8 @@ final class SessionHost: @unchecked Sendable {
         ) else {
             return "another Gio instance is running"
         }
+        // PF-AF: before any discovery or observer touches another app.
+        applyGlobalAXMessagingTimeout()
         let (config, configMessages) = loadGioConfig()
         session.config = config
         GioLog.minimumLevel = config.logging.level
