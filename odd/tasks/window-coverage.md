@@ -249,7 +249,7 @@ Window admission, observation and registration only. Out of scope: animation/per
   reveals and focuses as before, no floats at startup, nothing promoted. LIVE PENDING: an app
   whose window was admitted as a dialog and later reads as a standard window (not reproducible
   on demand).
-- [x] WC-16 (commit below) — A link clicked in one app reveals the app it opens (2026-10-15,
+- [x] WC-16 (`1c947c8`) — A link clicked in one app reveals the app it opens (2026-10-15,
   user report with screenshots: links in Slack and in a chat client "te lleva por detrás ... no
   te lleva al navegador"). Log: `focus dropped source=activation id=1528:3 frame=1799,-1073
   1784x1114 click=846,732 reason=focused window not under click` (Chrome parked on the
