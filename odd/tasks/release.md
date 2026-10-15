@@ -182,8 +182,11 @@ critical or high issue; every finding below was checked against the code before 
   `test-and-build` required, no force push or deletion, no bypass). RED: `scripts/test-release-version.sh` 6
   new bump cases failed; GREEN 19/19. `actionlint` (`.github/actionlint.yaml` for the `xcode-27` label) clean;
   jq selectors checked on sample API JSON. Live: Prepare Release patch opened PR #7 `Release v0.1.1`
-  [`release:patch`]; minor retitled it `Release v0.2.0` [`release:minor`], patch back to `v0.1.1`. LIVE
-  PENDING: the first merge to `main` (release.yml's version job, tag creation, notes from the PR).
+  [`release:patch`]; minor retitled it `Release v0.2.0` [`release:minor`], patch back to `v0.1.1`. The PR's
+  CI missed three more lane timing budgets on the runner (fixed in `eecc436`: bound = the 0.3 s wait it guards
+  against, motion release 10 ms inside the 0.1 s grace, 200 ms overlapping writes against a 1.0 s bound); then
+  CI green and PR #7 `mergeStateStatus=CLEAN`. LIVE PENDING: the first merge to `main` (release.yml's version
+  job, tag creation, notes from the PR).
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or
