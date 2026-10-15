@@ -109,6 +109,13 @@ final class WriteLaneTests: XCTestCase {
         }
     }
 
+    /// For apps that are slow but well under the stall: a 1 s stall keeps
+    /// that margin on a loaded CI runner, where 0.25 s against a 0.15-0.2 s
+    /// write timed lanes out. Tests of the stall itself keep 0.25 s.
+    private func patientReconciler(_ actuator: SlowActuator) -> WindowReconciler<SlowActuator> {
+        WindowReconciler(actuator: actuator, concurrency: .concurrent(stallTimeout: 1))
+    }
+
     private func seeded(_ ids: [WindowID], delays: [pid_t: TimeInterval] = [:]) -> SlowActuator {
         let actuator = SlowActuator()
         actuator.writeDelay = delays
@@ -235,9 +242,9 @@ final class WriteLaneTests: XCTestCase {
 
     func testADispatchedPassReturnsWithoutWaitingForASlowAppAndCollectSeesEveryOutcome() {
         let fast = id(1, pid: 10), slow = id(1, pid: 30)
-        // Slow but under the 0.25 s stall timeout: collect waits for it.
+        // Slow but under the stall timeout: collect waits for it.
         let actuator = seeded([fast, slow], delays: [30: 0.2])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let started = Date()
         let pass = reconciler.dispatch(frames: [fast: target, slow: target], focused: nil, currentlyFocused: nil)
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.1, "the caller never waits for the slow app")
@@ -253,11 +260,10 @@ final class WriteLaneTests: XCTestCase {
 
     func testCollectStillSeesAFailedWriteOfASlowApp() {
         let fast = id(1, pid: 10), refusing = id(1, pid: 20)
-        // Slow (longer than the dispatch's 0.1 s bound) but well under the
-        // 0.25 s stall timeout, so a loaded CI runner still sees the refusal.
+        // Slow (longer than the dispatch's 0.1 s bound) but under the stall.
         let actuator = seeded([fast, refusing], delays: [20: 0.15])
         actuator.failing = [refusing]
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let started = Date()
         let pass = reconciler.dispatch(frames: [fast: target, refusing: target], focused: nil, currentlyFocused: nil)
         XCTAssertLessThan(Date().timeIntervalSince(started), 0.1)
@@ -272,7 +278,7 @@ final class WriteLaneTests: XCTestCase {
     func testDispatchedFocusRunsOnTheAppsLaneAfterTheWindowsOwnWrite() {
         let other = id(1, pid: 10), focused = id(1, pid: 30)
         let actuator = seeded([other, focused], delays: [30: 0.2])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let started = Date()
         let pass = reconciler.dispatch(
             frames: [other: target, focused: target], focused: focused, currentlyFocused: nil
@@ -290,7 +296,7 @@ final class WriteLaneTests: XCTestCase {
         let first = id(1, pid: 30), second = id(2, pid: 30)
         let newer = CGRect(x: 600, y: 0, width: 400, height: 300)
         let actuator = seeded([first, second], delays: [30: 0.15])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let older = reconciler.dispatch(frames: [first: target, second: target], focused: nil, currentlyFocused: nil)
         let latest = reconciler.dispatch(frames: [second: newer], focused: nil, currentlyFocused: nil)
         let olderReport = reconciler.collect(older)
@@ -305,7 +311,7 @@ final class WriteLaneTests: XCTestCase {
     func testAnOlderFocusNeverLandsAfterANewerOne() {
         let slow = id(1, pid: 30), fast = id(1, pid: 10)
         let actuator = seeded([slow, fast], delays: [30: 0.2])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let older = reconciler.dispatch(frames: [slow: target], focused: slow, currentlyFocused: nil)
         let latest = reconciler.dispatch(frames: [fast: target], focused: fast, currentlyFocused: nil)
         let olderReport = reconciler.collect(older)
@@ -320,7 +326,7 @@ final class WriteLaneTests: XCTestCase {
         let first = id(1, pid: 30), focused = id(2, pid: 30)
         let newer = CGRect(x: 600, y: 0, width: 400, height: 300)
         let actuator = seeded([first, focused], delays: [30: 0.15])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         let older = reconciler.dispatch(
             frames: [first: target, focused: target], focused: focused, currentlyFocused: nil
         )
@@ -334,7 +340,7 @@ final class WriteLaneTests: XCTestCase {
     func testADispatchedPassWaitsOnTheLaneForAMotionWriteInsteadOfDeferring() {
         let window = id(1, pid: 30)
         let actuator = seeded([window], delays: [30: 0.15])
-        let reconciler = WindowReconciler(actuator: actuator)
+        let reconciler = patientReconciler(actuator)
         XCTAssertTrue(reconciler.submitMotion(pid: 30, writes: [MotionWrite(id: window, from: stale, to: stale.offsetBy(dx: 50, dy: 0))]))
         let started = Date()
         let pass = reconciler.dispatch(frames: [window: target], focused: nil, currentlyFocused: nil)
