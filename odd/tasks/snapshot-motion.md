@@ -1286,7 +1286,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   failure (`cannot find 'OverlayFaces'`, `no member 'swap'`); GREEN snapshot suites (OverlayResize, cache,
   fresh, refresher, flight). Live (second recording, 2026-10-15 07:54, build with `mode=swap` in the log): no
   frame mixes two layouts any more; the blink left is SM-33.
-- [x] SM-33 (commit pending, branch `fix/johan-spaces-safari`) — Blink still seen after SM-32. The second
+- [x] SM-33 (`0e868b9`, branch `fix/johan-spaces-safari`) — Blink still seen after SM-32. The second
   recording (variable frame rate, 676 frames in 15.9 s) scanned frame by frame for outliers (a frame that
   differs from both neighbours while they match each other): the two strong ones (t=3.433 s, t=12.983 s) are
   the same thing: at the hand-off of an `Alt+F` back the focus ring around Postman is gone for one frame
