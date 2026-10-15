@@ -1,0 +1,106 @@
+name: Prepare Release
+
+# Opens (or updates) the release pull request dev -> main for the chosen bump:
+# patch (0.1.0 -> 0.1.1), minor (-> 0.2.0) or major (-> 1.0.0). The pull
+# request carries the bump as its release:<bump> label, its title shows the
+# version it will publish, and its body (the release notes, editable before the
+# merge) lists dev's commits since the latest release. Merging it is the release:
+# release.yml computes the version again at merge time from the latest tag and
+# the label, so a stale title never publishes a wrong version.
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "How the version grows"
+        required: true
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+
+concurrency:
+  group: prepare-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pull-request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Only from dev
+        if: github.ref != 'refs/heads/dev'
+        run: |
+          echo "::error::Run Prepare Release on the dev branch"
+          exit 1
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Next version
+        id: version
+        env:
+          BUMP: ${{ inputs.bump }}
+        run: |
+          git fetch --no-tags origin main
+          latest="$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          # The same computation as the merge to main (release.yml), as a preview.
+          EVENT_NAME=push REF_NAME=main LATEST_TAG="$latest" HEAD_TAGS="" \
+            GITHUB_OUTPUT="$GITHUB_OUTPUT" scripts/release-version.sh
+          {
+            echo "latest=${latest:-none}"
+            echo "count=$(git rev-list --count --no-merges origin/main..HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUMP: ${{ inputs.bump }}
+          TAG: ${{ steps.version.outputs.tag }}
+          LATEST: ${{ steps.version.outputs.latest }}
+          COUNT: ${{ steps.version.outputs.count }}
+        run: |
+          if [ "$COUNT" -eq 0 ]; then
+            echo "::error::dev has no commits that main does not have; nothing to release"
+            exit 1
+          fi
+          repo="$GITHUB_REPOSITORY"
+          for kind in patch minor major; do
+            gh label create "release:$kind" --repo "$repo" --force \
+              --color 7FD6B6 --description "Merging to main publishes a $kind release"
+          done
+          body="$RUNNER_TEMP/body.md"
+          {
+            echo "Merging this pull request publishes **Gio $TAG** ($BUMP bump from $LATEST)."
+            echo "This text becomes the release notes: edit it before merging. Merge with **Create a merge commit**."
+            echo
+            echo "## Changes"
+            echo
+            # Since the latest release (commits merged to main after it count
+            # too), else everything dev adds to main.
+            if [ "$LATEST" != "none" ]; then
+              git log --no-merges --reverse --format='- %s' "$LATEST..HEAD"
+            else
+              git log --no-merges --reverse --format='- %s' origin/main..HEAD
+            fi
+          } > "$body"
+          title="Release $TAG"
+          pr="$(gh pr list --repo "$repo" --base main --head dev --state open --json number --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            gh pr create --repo "$repo" --base main --head dev --title "$title" --body-file "$body" --label "release:$BUMP"
+          else
+            for kind in patch minor major; do
+              if [ "$kind" != "$BUMP" ]; then
+                gh pr edit "$pr" --repo "$repo" --remove-label "release:$kind" || true
+              fi
+            done
+            gh pr edit "$pr" --repo "$repo" --title "$title" --body-file "$body" --add-label "release:$BUMP"
+            echo "Updated pull request #$pr"
+          fi

@@ -1,0 +1,4 @@
+self-hosted-runner:
+  # GitHub-hosted Xcode 27 image (public preview label; see ci.yml).
+  labels:
+    - xcode-27

@@ -116,6 +116,10 @@ A *user-configurable* per-app rule is different: extend `WindowRule` / `RuleOutc
 - [ ] Docs updated (template comment, USER_GUIDE, feature document with task ID, commit hash and evidence).
 - [ ] Conventional Commit message, no co-author or AI trailer, stage files by explicit path.
 
+## Branches and releases
+
+`dev` is the default branch: work and pull requests target it. `main` is protected and only takes the release pull request from `dev` (opened by **Actions > Prepare Release** with a patch, minor or major bump); every merge to `main` publishes a signed release. See [`RELEASING.md`](RELEASING.md).
+
 ## Continuous integration
 
 `.github/workflows/ci.yml` runs on every push (any branch) and pull request, on the GitHub-hosted `xcode-27` runner image (arm64, macOS 27) with its newest stable Xcode: the app is developed with Xcode 27, older toolchains (`macos-15`'s Xcode 16.4) do not compile the sources and cannot build the Icon Composer app icon. It prints the toolchain, restores the `.build` cache (keyed on `Package.swift` and `Package.resolved`), runs the tests with `scripts/swift-test-ci.sh`, then builds the `Gio` app target **unsigned** into its own derived data. The script (also the release workflow's test step) runs `swift test` serially: the reconciler and motion-lane tests time real thread work against 0.1-0.3 s budgets. A failed case runs once more on its own; passing then is a **warning** annotation on the run (a timing budget missed on a loaded runner: look at it), failing twice, more than three failed cases or a build error or crash fails the step. Do not add a test that only passes thanks to the retry.
