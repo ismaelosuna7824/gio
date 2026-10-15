@@ -283,6 +283,56 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   fix; a per-window floor would trade freshness of the flight image), the multitouch callback
   (frames are already gated by finger count in the mailbox), SwiftUI work (only while Gio's
   window is open; `pollWhileVisible` stops with it).
+- PF-U..PF-AB (2026-10-15, follow-up; user: older builds left running for hours made the Mac
+  slow and hot, "it must work very well and consume very little"). Four read-only audits
+  (input, Accessibility traffic, capture and compositing, timers and growth) plus
+  measurements. Gio does no periodic work at rest (the only timer is the 30 s tap watchdog);
+  memory is flat (footprint 65-67 MB after 50 min and after 9 h). What was fixed:
+  - PF-U: Gio observed itself. While its main window is open Gio is `.regular`, and the
+    router attached an AX observer to its own pid on activation, launch and observer sync
+    (rule 4: AX on in-process elements runs AppKit on the calling thread) and subscribed to
+    its own overlay panels. The router now never attaches `ownPID`.
+  - PF-V: the typing capture did not debounce. A hop reaches the session at most every
+    0.5 s and each reset a 0.6 s wait, so steady typing still captured the focused window
+    every second or two (log: 318 typing runs in 79 min, half of all captured pixels). Now
+    a typing capture waits for a 1.5 s pause (`snapshotTypingQuiet`) and never comes sooner
+    than 5 s after the window's newest image (`snapshotTypingFloor`). Trade-off: only the
+    outgoing window of a flight right after typing can show content up to 5 s old, for the
+    length of the slide. Focus-dwell and settle ages are unchanged (image freshness).
+  - PF-W: every `kAXTitleChanged` was one AX read into the app, all day for terminals and
+    pages that retitle themselves (spinners, counters). Reads are coalesced per window to
+    one per second (`WindowEventRouter.titleCoalesce`) with the latest value; a window whose
+    rule re-check waits for its first title is read at once.
+  - PF-X: `CGPreflightScreenCaptureAccess` is an IPC to tccd: ~8 ms wall per call (throwaway
+    benchmark: 7.9-9.1 ms, 0.07 ms of own CPU). The session asked it several times per typing
+    hop and per capture run. `ScreenRecordingPermissionCache` answers for 10 s; the facts the
+    UI polls and the Diagnostics capture refresh it. A revoke reaches the snapshot path
+    within 10 s. `AXIsProcessTrusted` measured 16 us per call: left alone.
+  - PF-Y: the IPC accept loop retried every failure at once; a lasting one (EMFILE, ENFILE,
+    ENOBUFS) would spin a thread at full CPU for the rest of the session. Other failures now
+    wait 100 ms (`ipcAcceptRetryDelay`).
+  - PF-Z: a full scan that reaped a dead app (missed terminate) kept its reconciler state
+    (write lane queue, name, EnhancedUI); every display resolution or arrangement change kept
+    a display-sized dim panel alive. Both are released.
+  - PF-AA: with focus-follows-mouse (off by default), every pointer move over a managed window
+    copied the whole on-screen window list (~33 a second) and resting in the focused window
+    re-armed a no-op hover check every ~110 ms. The lookup now runs only when another
+    managed window is under the pointer (`hoverNeedsLookup`).
+  - PF-AB: the active event tap's source was on the main run loop, so every keystroke and
+    click of every app waited for Gio's main thread (overlay frames, AX callbacks with the
+    default 6 s messaging timeout, SwiftUI); a hitch there was input lag for the whole Mac.
+    The tap runs on its own user-interactive thread; locations come from the event
+    (`tapCocoaLocation`), the overlay abort on a click hops to main.
+  Measured and not changed: the focus dim/ring panels. Throwaway experiment (a 1000x700
+  panel repainting at 60 fps, WindowServer CPU averaged with `top` over 18 s per phase):
+  none 49.1 / display-sized dim panel 45.1 / none 43.5 / window-sized ring panel 47.2 /
+  none 41.1 / four edge panels 38.1 / none 35.3 %: the panels are inside the noise, so they
+  were not redesigned. Not done (low or niche, from the audits): `AXEnhancedUserInterface`
+  toggling per write batch (only for apps another tool switched it on; no log line in the
+  user's sessions), O(N^2) reads for native tab groups, the 30 s settle soft age, a global
+  AX messaging timeout, the multitouch callback allocation (36-169 samples per 90-150 s).
+  Daily-use note: `[logging] level = "debug"` costs CPU itself (`LogFileSink.drain` 171
+  samples in the 150 s live run); the default is `info`.
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -581,6 +631,39 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   colour conversion (`vImageConvert_AnyToAny`) 580 -> 2, launcher scan 442 -> 0; footprint
   67 MB with no reclaimable "Malloc Large" left (was ~140 MB). The baseline had Settings open,
   so the overall CPU figure is not like for like; the per-function samples are.
+- [x] PF-U (`7b57923`) — The router never attaches an AX observer to Gio's own pid. RED:
+  `WindowEventRouterTests.testOwnPidIsNeverObserved` (attach calls contained the own pid).
+- [x] PF-V (`4f179c9`) — Typing captures after a 1.5 s pause, at most every 5 s per window.
+  RED (compile): `SnapshotCacheTests.testTypingCaptureWaitsForAPauseAndTheFloor` and
+  `SnapshotCacheRefresherTests.testTypingCapturesTheFocusedWindowOnlyAfterAPauseAndAtMostOncePerFloor`
+  ("cannot find 'snapshotTypingCaptureDelay'"); four refresher tests now wait
+  `snapshotTypingFloor` instead of 0.6 s. Docs: ARCHITECTURE (cache freshness, diagram).
+- [x] PF-W (`1606bc3`) — Title reads coalesced to one per window per second. RED (compile):
+  `WindowEventRouterTests.testTitleChangesAreReadOncePerCoalesceWindowWithTheLatestValue`;
+  the title re-check tests (`RichRuleArrivalTests`) still pass unchanged (read at once).
+- [x] PF-X (`f125bbc`) — `ScreenRecordingPermissionCache` (GioMacOS) for the snapshot path.
+  RED (compile): `ScreenRecordingPermissionCacheTests` (ttl boundary, refresh).
+- [x] PF-Y (`6afb219`) — IPC accept backs off on lasting errors. RED (compile):
+  `IPCTests.testAcceptFailuresBackOffUnlessTransient`.
+- [x] PF-Z (`20c96c9`) — Reaped apps forgotten by the reconciler; dim panels of gone displays
+  closed. RED: `DiscoveryServiceTests.testDeadPidsAreReapedOnFullScansOnly` (forgotten apps
+  empty). The dim panel pruning is UI (`FocusDimController`, no unit tests): not observed live.
+- [x] PF-AA (`e9a0390`) — Hover lookups only over another managed window. RED:
+  `FocusCoordinatorTests.testMovingInsideTheFocusedWindowAsksTheWindowServerNothing` (20
+  lookups, expected 0).
+- [x] PF-AB (`2c7dc72`) — Event tap on its own thread. RED (compile):
+  `TapLocationTests.testAClickIsReportedInCocoaCoordinates`. Thread lifecycle is adapter
+  code without unit tests; observed live (below).
+  GREEN (all of PF-U..PF-AB): `swift test` all bundles 0 failures: UI 312 (53 skipped),
+  Session 484, POC 7, Mac 19, MacOS 98, Core 1965; signed `xcodebuild` BUILD SUCCEEDED;
+  `git diff --check` clean. Live (Debug build, 150 s of the user's heaviest use: 357 hotkeys,
+  typing, clicks, launcher, overview, trackpad): the user reports keyboard and clicks normal;
+  no `tap re-enabled` line; 0 samples in `CGPreflightScreenCaptureAccess`, 55 in
+  `snapshotDrawSamples`; captures by reason: typing 4, settle 11, focus 6, size 8,
+  overview 3; Gio CPU 8.78 s (5.9 % of a core, proportional to the actions: reflows,
+  overlay retargets, focus); footprint 66 MB. NOT verified live: PF-Z panel pruning (needs a
+  display change), PF-AA (focus-follows-mouse is off in the user's config), PF-U (open
+  Gio's window, then check no AX observer for Gio's pid; no log line exists for it).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -621,3 +704,7 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
 - 2026-10-15: PF-T (resource use: sampling without colour conversion, launcher icons drawn only
   when new or changed) committed on `fix/johan-spaces-safari`; all bundles green, signed build
   succeeded, measured live (Decisions and Tasks, PF-T).
+- 2026-10-15: PF-U..PF-AB (own-pid observer, typing capture pause and floor, title read
+  coalescing, permission cache, IPC backoff, reaped-app and dim-panel release, hover lookups,
+  tap thread) committed on `fix/johan-spaces-safari`; all bundles green, signed build
+  succeeded, live run normal (Tasks, PF-AB).
