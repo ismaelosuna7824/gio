@@ -223,7 +223,7 @@ public func diagnosticChecklist(
             badge: "Granted",
             summary: facts.screenRecordingGranted
                 ? "Accessibility and Screen Recording are granted."
-                : "Accessibility is granted. Screen Recording is only needed by the snapshot renderer.",
+                : "Accessibility is granted. Screen Recording is still needed for smooth motion; relaunch Gio after granting it.",
             details: permissionDetails
         )
     }

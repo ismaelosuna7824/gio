@@ -220,7 +220,7 @@ struct OverviewDashboard: View {
                     symbol: "record.circle", tint: .pink, title: "Screen Recording",
                     why: facts.screenRecordingGranted
                         ? "Powers smooth snapshot animations."
-                        : "Optional. Enables smooth snapshot animations; relaunch Gio after granting.",
+                        : "Required for smooth motion. Relaunch Gio after granting it.",
                     granted: facts.screenRecordingGranted, action: ("Request Access…", requestScreenRecording),
                     missingKind: .warning, missingLabel: "Off"
                 )

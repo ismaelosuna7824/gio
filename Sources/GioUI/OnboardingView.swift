@@ -255,10 +255,10 @@ struct OnboardingContent: View {
     private var screenRecording: some View {
         permissionStep(
             icon: SectionIcon(symbol: "record.circle", tint: .pink, size: 64),
-            title: "Screen Recording (Optional)",
-            why: "Only the experimental snapshot renderer needs it: it animates captured images of your windows, then places them once. Gio records nothing and saves nothing. Skip this unless you want to try it.",
+            title: "Screen Recording (Required)",
+            why: "Gio's smooth motion needs it: Gio slides captured images of your windows, so every app moves at the same speed, even slow ones, and the overview shows live thumbnails. Without it windows still tile, but they stutter as they move. The images stay in memory; nothing is recorded or saved. macOS applies this permission only after Gio relaunches.",
             phase: screenRecordingStepPhase(granted: screenRecordingGranted, requested: screenRecordingRequested),
-            idleText: "Not granted. Open System Settings to turn it on, or skip this step.",
+            idleText: "Not granted. Turn Gio on in System Settings, then relaunch Gio.",
             showsProgress: false,
             grantedText: "Screen Recording is on.",
             button: "Open System Settings", action: requestScreenRecording

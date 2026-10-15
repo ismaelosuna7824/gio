@@ -33,7 +33,7 @@ See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 | Toolchain | Xcode with Swift 6 (`swift-tools-version: 6.0`). The `Gio` target builds in Swift 6 mode. |
 | Architecture | The Xcode `Gio` target is `arm64` only. |
 | Permission | **Accessibility** for the process that runs Gio (System Settings > Privacy & Security > Accessibility). Without it Gio cannot move windows or hear shortcuts. |
-| Recommended permission | **Screen Recording**, for the default snapshot renderer, the overview thumbnails and the optional close ghost (macOS 14 or later). Gio works without it; see below. |
+| Permission for smooth motion | **Screen Recording**, required by the default snapshot renderer, the overview thumbnails and the optional close ghost (macOS 14 or later); relaunch Gio after granting it. Without it Gio still tiles, but windows stutter as they move; see below. |
 | SIP | Stays enabled. |
 
 ### Why Screen Recording
