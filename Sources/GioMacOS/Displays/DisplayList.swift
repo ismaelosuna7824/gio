@@ -3,6 +3,14 @@ import CoreGraphics
 import Foundation
 import GioCore
 
+/// System Settings > Desktop & Dock > "Displays have separate Spaces"
+/// (`com.apple.spaces` `spans-displays`, absent = on, the macOS default).
+/// Log only: with it on, a window macOS moves to another display also moves
+/// to that display's Space (AeroSpace documents misbehaviour there).
+public func displaysHaveSeparateSpaces() -> Bool {
+    !(UserDefaults(suiteName: "com.apple.spaces")?.bool(forKey: "spans-displays") ?? false)
+}
+
 /// Live display snapshot for the manager: Cocoa frame plus visible frame,
 /// keyed by the plan's `DisplayID`. Read fresh on every topology event —
 /// never cached across connect/disconnect/resolution changes. Live-only

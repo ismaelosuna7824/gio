@@ -31,6 +31,8 @@ public final class RenderVerifier: @unchecked Sendable {
         public var appName: (pid_t) -> String
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
+        /// Every WindowServer window of one app, on screen or not (diagnostics).
+        public var serverWindowStates: (pid_t) -> [ServerWindowState]
 
         public init(
             isShuttingDown: @escaping () -> Bool, isMotionActive: @escaping () -> Bool,
@@ -40,7 +42,8 @@ public final class RenderVerifier: @unchecked Sendable {
             nudge: @escaping ([WindowID: [CGRect]]) -> [WindowID],
             recordEcho: @escaping (WindowID, CGRect, TimeInterval) -> Void,
             appName: @escaping (pid_t) -> String, log: @escaping (LogLevel, String) -> Void,
-            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+            serverWindowStates: @escaping (pid_t) -> [ServerWindowState] = { _ in [] }
         ) {
             self.isShuttingDown = isShuttingDown
             self.isMotionActive = isMotionActive
@@ -55,6 +58,7 @@ public final class RenderVerifier: @unchecked Sendable {
             self.appName = appName
             self.log = log
             self.now = now
+            self.serverWindowStates = serverWindowStates
         }
     }
 
@@ -149,10 +153,21 @@ public final class RenderVerifier: @unchecked Sendable {
             return
         }
         for mismatch in mismatches {
+            let level = book.mismatchLevel(for: mismatch.id)
             context.log(
-                book.mismatchLevel(for: mismatch.id),
+                level,
                 renderMismatchLine(id: mismatch.id, app: context.appName(mismatch.id.pid), ax: mismatch.ax, ws: mismatch.ws)
             )
+            // The on-screen list has nothing of it: where does the server keep it?
+            if mismatch.ws == nil {
+                context.log(
+                    level,
+                    renderMissingDetailLine(
+                        id: mismatch.id, entries: context.serverWindowStates(mismatch.id.pid),
+                        displays: context.viewports()
+                    )
+                )
+            }
         }
         // Corrective nudge through the reconciler, once per window per settle.
         let viewports = context.viewports()

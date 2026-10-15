@@ -145,6 +145,38 @@ final class RenderVerificationTests: XCTestCase {
         )
     }
 
+    /// Two displays (2026-10-14): columns empty while AX reported the windows at their
+    /// targets. The detail names every WindowServer entry of the app, on screen or not,
+    /// and the display (1-based, by largest overlap) each one sits on.
+    func testMissingDetailNamesEveryEntryOfTheAppAndItsDisplay() {
+        let laptop = CGRect(x: 0, y: 0, width: 1800, height: 1130)
+        let external = CGRect(x: -2160, y: -224, width: 2160, height: 1410)
+        let line = renderMissingDetailLine(
+            id: id(7, 3),
+            entries: [
+                ServerWindowState(bounds: CGRect(x: 904, y: 8, width: 888, height: 1114), isOnScreen: false),
+                ServerWindowState(bounds: CGRect(x: -1500, y: 100, width: 888, height: 1114), isOnScreen: true),
+                ServerWindowState(bounds: CGRect(x: 1900, y: -1300, width: 888, height: 1114), isOnScreen: true),
+            ],
+            displays: [laptop, external]
+        )
+        XCTAssertEqual(
+            line,
+            "render missing detail id=7:3 entries=3 [(904,8,888,1114) on=n display=1]"
+                + " [(-1500,100,888,1114) on=Y display=2] [(1900,-1300,888,1114) on=Y display=none]"
+        )
+    }
+
+    func testMissingDetailKeepsTheFirstSixEntries() {
+        let entries = (0..<8).map {
+            ServerWindowState(bounds: CGRect(x: $0 * 10, y: 0, width: 100, height: 100), isOnScreen: true)
+        }
+        let line = renderMissingDetailLine(id: id(7, 3), entries: entries, displays: [])
+        XCTAssertTrue(line.hasPrefix("render missing detail id=7:3 entries=8 "))
+        XCTAssertEqual(line.components(separatedBy: "[(").count - 1, 6)
+        XCTAssertTrue(line.hasSuffix(" more=2"))
+    }
+
     // MARK: Mismatch decision
 
     func testTwoPointsOfDriftIsNotAMismatch() {

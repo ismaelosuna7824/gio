@@ -630,6 +630,49 @@ read for behaviour (GPL-2.0); no code taken. Non-goals: Dwindle, gestures, SkyLi
   outer edge (nothing), then turn on Settings > Focus > Displays > **Move columns across
   displays at the edge** and repeat with `Alt+Shift+H/L` and `gio move right`.
 
+## MM-07 — Empty columns with two displays: diagnostics first
+
+### Report (2026-10-14, Spanish, screenshot lost)
+"Tenía un segundo monitor conectado, algunas veces sólo se veía una sola columna y no las
+demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores que con uno."
+
+### Evidence (log, session 2026-10-15T01:08Z..01:10Z, this Mac)
+- Displays: index 1 id 3 `(-2160,-224,2160,1440)` scale 1, left of and taller than the laptop;
+  index 2 id 1 `(0,0,1800,1169)` primary. Every tiled window was on the laptop (7 columns); the
+  external display showed workspace 7 (one Chrome window, floating `notResizable`).
+- Five `render mismatch ... ws=missing` in two minutes, every one a window coming into a
+  laptop column from parking (bottom-right corner of a hidden workspace or the right sliver):
+  Chrome 1528:1 `(8,8)` and 1528:2 `(904,8)` after `focus reveal ... workspace=2`; OrbStack
+  `(904,8)` after `focus reveal ... workspace=1`; WhatsApp `(904,8)` and Slack `(986,8)` after
+  three-finger strip scrolls (`renderer=ax`). Position and size nudges all `fixed=false`.
+  `ws=missing` means the on-screen list has no same-size entry of the app anywhere and nothing
+  of it covering 30% of the column: the WindowServer does not draw the window at all although AX
+  reports it at its target (the empty columns of the report).
+- The single-display sessions of 2026-10-12 (hours) logged two such mismatches in total.
+- With the external display on the laptop's left, `planParking` / `hiddenTarget` can never park
+  left (it would straddle), so every laptop window parks on the right sliver or the
+  bottom-right corner [code-proven]. "Displays have separate Spaces" is on (`spans-displays`
+  absent). Why macOS stops drawing a window moved back from there is not known [INFERENCE:
+  AeroSpace documents public AX misbehaving when windows change display under separate Spaces].
+
+### Task
+- [x] MM-07 (commit pending) — Diagnostics, no behaviour change: after each `ws=missing`,
+  `render missing detail id= entries=N [(x,y,w,h) on=Y|n display=i|none] ...` (every layer-0
+  window of the app in the complete CG list, on-screen flag, display by largest overlap; first 6),
+  and `spaces separate=true|false` at session start. Files: `GioCore/Reconciliation/
+  RenderVerification.swift` (`ServerWindowState`, `renderMissingDetailLine`),
+  `GioMacOS/Accessibility/WindowServerSnapshot.swift` (`windowServerWindowStates`),
+  `GioMacOS/Displays/DisplayList.swift` (`displaysHaveSeparateSpaces`),
+  `GioSession/RenderVerifier.swift`, `GioDesktop/SessionHost.swift`, `docs/ARCHITECTURE.md`.
+  RED: `swift build --build-tests` → `cannot find 'renderMissingDetailLine' in scope`,
+  `cannot find 'ServerWindowState' in scope`. GREEN: `swift test --filter
+  "RenderVerifierTests|RenderVerificationTests|RenderConservativeTests"` → GioSessionTests 14,
+  GioCoreTests 46, 0 failures; full `swift test` UI 310 (53 skipped) / Session 477 / POC 7 /
+  Mac 19 / MacOS 95 / Core 1962, 0 failures; signed `xcodebuild` BUILD SUCCEEDED.
+- [ ] MM-08 — The fix, once a two-display repro logs `render missing detail`: whether the
+  missing window is off screen at its target (`on=n`, a Space/WindowServer state), drawn at its
+  parking spot, or on the other display decides it.
+
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;
   live check pending.

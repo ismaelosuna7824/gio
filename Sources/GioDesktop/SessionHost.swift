@@ -304,7 +304,8 @@ final class SessionHost: @unchecked Sendable {
                 nudge: { [unowned self] in reconciler?.nudge(steps: $0) ?? [] },
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 appName: { [unowned self] in appName($0) },
-                log: { GioLog.record($0, $1) }
+                log: { GioLog.record($0, $1) },
+                serverWindowStates: { [unowned self] in windowServerWindowStates(pid: $0, displayHeight: primaryHeight()) }
             ),
             scheduler: scheduler
         )
@@ -832,6 +833,7 @@ final class SessionHost: @unchecked Sendable {
         }
         self.server = server
         GioLog.record(.info, "session started")
+        GioLog.record(.info, "spaces separate=\(displaysHaveSeparateSpaces())")
         guardian = spawnGuardian()
         queue.sync {
             self.initialSync()

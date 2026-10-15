@@ -18,6 +18,8 @@ final class RenderVerifierTests: XCTestCase {
         var nudgeWrites = true
         var echoes: [(WindowID, CGRect)] = []
         var logs: [(LogLevel, String)] = []
+        var states: [pid_t: [ServerWindowState]] = [:]
+        var stateQueries: [pid_t] = []
     }
 
     private var world: World!
@@ -52,7 +54,11 @@ final class RenderVerifierTests: XCTestCase {
                 },
                 recordEcho: { id, frame, _ in world.echoes.append((id, frame)) },
                 appName: { probe.applicationLabel($0) },
-                log: { level, line in world.logs.append((level, line)) }
+                log: { level, line in world.logs.append((level, line)) },
+                serverWindowStates: { pid in
+                    world.stateQueries.append(pid)
+                    return world.states[pid] ?? []
+                }
             ),
             scheduler: scheduler
         )
@@ -202,6 +208,32 @@ final class RenderVerifierTests: XCTestCase {
         scheduler.advance(by: 0.15)
         let levels = world.logs.filter { $0.1.hasPrefix("render mismatch") }.map(\.0)
         XCTAssertEqual(levels, [.warn, .debug])
+    }
+
+    /// Two displays (2026-10-14): a window missing from the on-screen list
+    /// logs where the WindowServer has every window of its app, at the
+    /// mismatch's level.
+    func testMissingWindowLogsWhereTheServerHasItsApp() {
+        world.nudgeWrites = false
+        world.states[7] = [ServerWindowState(bounds: target, isOnScreen: false)]
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.15)
+        let detail = world.logs.first { $0.1.hasPrefix("render missing detail") }
+        XCTAssertEqual(detail?.0, .warn)
+        XCTAssertEqual(detail?.1, "render missing detail id=7:1 entries=1 [(100,100,800,600) on=n display=1]")
+        XCTAssertEqual(world.stateQueries, [7])
+    }
+
+    func testAWindowDrawnElsewhereLogsNoMissingDetail() {
+        world.nudgeWrites = false
+        probe.serverWindows = [ServerWindow(pid: 7, bounds: target.offsetBy(dx: 300, dy: 0))]
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.15)
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("render mismatch") })
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("render missing detail") })
+        XCTAssertTrue(world.stateQueries.isEmpty)
     }
 
     func testSettledFramesOnlyRecordedForCandidates() {

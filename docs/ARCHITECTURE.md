@@ -384,6 +384,8 @@ SM-02c: `.optionOnScreenOnly` only lists windows that are on screen, so a visibl
 
 Conservative verdict (`evaluateRender`, pure): windows less than 50% on a display (peek/edge columns) are skipped (`render unmatched ... reason=offscreenTarget`). `ws=missing` is reported only when the pid has no on-screen layer-0 entry covering at least 30% of the expected frame; ambiguous candidates (`reason=ambiguous`) and unmatched-but-overlapping windows (`reason=overlapsOther`) are unknown and never nudged. The frames compared are the settled ones the reconciler accepted (learned minimum sizes). `render unmatched id= app= reason= candidates=N` is a debug line. A size nudge that ends `fixed=false` marks the window render-unverifiable (`render unverifiable`, debug, once): it is not checked or nudged again until it is re-registered (new id) or purged.
 
+Diagnostics for `ws=missing` (2026-10-14, two displays: columns stayed empty while AX reported the windows at their targets): right after the mismatch line, at its level, `render missing detail id= entries=N [(x,y,w,h) on=Y|n display=i|none] ...` lists every layer-0 window of the app in the WindowServer's complete list (`windowServerWindowStates`, other Spaces and off-screen included; first 6, then `more=N`), its on-screen flag and the display it overlaps most (1-based in `display index=` order). The session also logs `spaces separate=true|false` at start ("Displays have separate Spaces"). Log only; nothing acts on them.
+
 Bounds (`RenderCheckBook`): at most one position nudge and one size nudge per window per settle, never a loop; any new reflow or motion cancels a pending check; the check also skips while a motion is in flight or a mouse button is down. It never blocks main or hotkeys.
 
 ### Focus settle

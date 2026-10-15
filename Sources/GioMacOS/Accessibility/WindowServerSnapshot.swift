@@ -31,6 +31,29 @@ func parseWindowServerEntries(_ entries: [[String: Any]], displayHeight: CGFloat
     }
 }
 
+/// Diagnostics for `render missing detail`: every layer-0 window of `pid`
+/// in the complete list (other Spaces and off-screen included) with Cocoa
+/// bounds and the WindowServer's on-screen flag. Public API, no titles read.
+public func windowServerWindowStates(pid: pid_t, displayHeight: CGFloat) -> [ServerWindowState] {
+    let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+    guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return []
+    }
+    return raw.compactMap { entry in
+        guard let owner = entry[kCGWindowOwnerPID as String] as? Int, pid_t(owner) == pid,
+              let layer = entry[kCGWindowLayer as String] as? Int, layer == 0,
+              let dictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: dictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return ServerWindowState(
+            bounds: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight),
+            isOnScreen: entry[kCGWindowIsOnscreen as String] as? Bool ?? false
+        )
+    }
+}
+
 /// SM-02: every layer-0 window of `pids` with its `CGWindowID` (the same id
 /// as `SCWindow.windowID`) and Cocoa bounds. Off-screen and other-Space
 /// windows are included so parked windows can be matched too. Public API,

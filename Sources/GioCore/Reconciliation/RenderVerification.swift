@@ -18,6 +18,19 @@ public struct ServerWindow: Equatable, Sendable {
     }
 }
 
+/// One window of an app in the WindowServer's complete list (on screen or
+/// not), Cocoa coordinates. Diagnostics only: where a window the on-screen
+/// list lacks really is. Titles are never read.
+public struct ServerWindowState: Equatable, Sendable {
+    public let bounds: CGRect
+    public let isOnScreen: Bool
+
+    public init(bounds: CGRect, isOnScreen: Bool) {
+        self.bounds = bounds
+        self.isOnScreen = isOnScreen
+    }
+}
+
 /// WindowServer bounds are global with a top-left origin (like AX); the
 /// engine speaks Cocoa. Same flip as `AXVerticalFlip`, kept here so Core
 /// stays free of the adapter. The flip is its own inverse.
@@ -328,4 +341,26 @@ public func renderUnmatchedLine(id: WindowID, app: String, reason: UnmatchedReas
 
 public func renderUnverifiableLine(id: WindowID, app: String) -> String {
     "render unverifiable id=\(id.pid):\(id.elementID) app=\(app) reason=nudgeNotFixed"
+}
+
+/// Entries a missing-window detail lists; the rest are counted.
+public let renderMissingDetailLimit = 6
+
+/// Two displays (2026-10-14: columns empty while AX reported the windows at
+/// their targets): after `render mismatch ... ws=missing`, every entry of the
+/// app in the WindowServer's complete list, on screen or not, and the
+/// display it overlaps most (1-based in `displays` order; `none` off every
+/// display). Ids and frames only.
+public func renderMissingDetailLine(id: WindowID, entries: [ServerWindowState], displays: [CGRect]) -> String {
+    var line = "render missing detail id=\(id.pid):\(id.elementID) entries=\(entries.count)"
+    for entry in entries.prefix(renderMissingDetailLimit) {
+        let overlaps = displays.map { area($0.intersection(entry.bounds)) }
+        let best = overlaps.indices.max { overlaps[$0] < overlaps[$1] }
+        let display = best.flatMap { overlaps[$0] > 0 ? "\($0 + 1)" : nil } ?? "none"
+        line += " [\(formatFrame(entry.bounds)) on=\(entry.isOnScreen ? "Y" : "n") display=\(display)]"
+    }
+    if entries.count > renderMissingDetailLimit {
+        line += " more=\(entries.count - renderMissingDetailLimit)"
+    }
+    return line
 }
