@@ -86,7 +86,7 @@ Review: UNAVAILABLE.
   39/1134 all 0 failures (parent re-ran); signed build OK. LIVE PENDING.
   Same live round PASSED: startup instant (3x), config edit+reload from app, native zoom 14/14
   `corrected verified=true`, quit restore 3x + guardian clean exit.
-- [x] FI-09 (commit pending) — Floating restore memory released after one settled attempt (user
+- [x] FI-09 (`a0f466e`) — Floating restore memory released after one settled attempt (user
   2026-10-14: a window kept appearing and disappearing after an installer prompt was dismissed; no
   logs). `planInactiveWorkspaces` returned a floating window's `HiddenWindowBook` frame in
   `plan.visible` until its physical frame matched within 1 pt; a restore that did not land (a dialog
@@ -98,7 +98,7 @@ Review: UNAVAILABLE.
   RED: `swift build --build-tests` -> `value of type 'ReflowPlanner' has no member 'restoreSettled'`.
   GREEN: `swift test --filter ReflowPlannerTests` -> `Executed 25 tests, with 0 failures`.
   LIVE PENDING.
-- [x] FI-10 (commit pending) — Cap the app-vs-Gio frame fight (same report: a window flicking in and out
+- [x] FI-10 (`248ef8a`) — Cap the app-vs-Gio frame fight (same report: a window flicking in and out
   after an installer prompt; no logs). A managed window whose app keeps restoring its own frame
   (re-centres, re-shows a parked window, refuses a position) was written back after every non-echo
   `.frameChanged` (`WindowEventRouter` -> `invalidateTrust` -> `scheduleReflow`), every ~0.3 s forever;
@@ -124,7 +124,7 @@ Review: UNAVAILABLE.
   `Executed 11 tests, with 0 failures`, GioSessionTests `Executed 93 tests, with 0 failures`,
   GioCoreTests `Executed 58 tests, with 0 failures`.
   LIVE PENDING.
-- [x] FI-11 (commit pending) — Re-check a late size clamp hidden by echo suppression (user 2026-10-14:
+- [x] FI-11 (`a0e265d`) — Re-check a late size clamp hidden by echo suppression (user 2026-10-14:
   tiled windows overlap; no logs). An app applying its minimum after Gio's immediate read-back passed
   the write check, was trusted at the requested frame, and its resize event landed inside the
   `WriteEchoGate` window and was dropped: no `frameMismatch`, no FI-02 learning, overlap until an
@@ -170,3 +170,8 @@ Review: UNAVAILABLE.
 - 2026-09-29: document created. Next: FI-01..FI-03.
 - 2026-09-29: FI-01..FI-03 done, pushed. Next: user live check.
 - 2026-09-29: live: shortcuts dead all session (tap disabled, never re-enabled). FI-04 done, pushed.
+- 2026-10-14: FI-09..FI-11 done (user report, no logs; worktree branch, cherry-picked onto `main` with
+  SM-31 and WC-11). Integrated `swift test`: GioUITests 310 (53 skipped), GioSessionTests 475,
+  GioPOCTests 7, GioMacTests 19, GioMacOSTests 95, GioCoreTests 1960, all 0 failures; signed
+  `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. Not pushed. Next: live check (installer or
+  re-centring dialog: `window yields to app`, `min size learned ... late=true`).

@@ -1211,7 +1211,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   and every `fresh=none ... last=`), `snapshot fresh capture ... ok=true`, ` fade=120` only on resizes; no new
   `anim done` hitches from the mid-flight captures.
 
-- [x] SM-31 (commit pending) — A window that is gone or that macOS no longer draws never flies its cached image.
+- [x] SM-31 (`14c684c`) — A window that is gone or that macOS no longer draws never flies its cached image.
   Report (2026-10-14, Spanish, no logs): after an app installer/prompt was dismissed, "aparecía y desaparecía como
   flicks". Code reading (no live repro): a registered tiled window drops its image only when purged, minimized,
   gone from the registry, or frameless past 180 s (`prune`); an image of its current size flies at any age (SM-24)
