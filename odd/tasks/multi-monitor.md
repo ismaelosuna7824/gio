@@ -669,7 +669,7 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   "RenderVerifierTests|RenderVerificationTests|RenderConservativeTests"` → GioSessionTests 14,
   GioCoreTests 46, 0 failures; full `swift test` UI 310 (53 skipped) / Session 477 / POC 7 /
   Mac 19 / MacOS 95 / Core 1962, 0 failures; signed `xcodebuild` BUILD SUCCEEDED.
-- [x] MM-08 (commit pending) — No empty side at a shared edge. Report (2026-10-14, screenshot at
+- [x] MM-08 (`30c1bb0`) — No empty side at a shared edge. Report (2026-10-14, screenshot at
   20:08 local, session 03:08Z with the MM-07 build, `spaces separate=true`): WhatsApp (learned
   970 pt) flush right on the laptop at x 822, the rest of the laptop desktop and Gio's own window
   only; "siento que aún pasa" plus flicker while moving. That session logged no `render
