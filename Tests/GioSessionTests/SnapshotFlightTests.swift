@@ -1195,11 +1195,65 @@ final class SnapshotFlightTests: XCTestCase {
     // MARK: TG-07 the fingers hold the overlay
 
     @discardableResult
-    private func hold() -> GestureTransport {
+    private func hold(_ frames: [WindowID: CGRect]? = nil, animates: Bool = true) -> GestureTransport {
         let world = world!
-        return flight.holdGesture(frames: [idA: a, idB: b], display: SessionFixture.screen, spring: .niri) {
+        let held = frames ?? [idA: a, idB: b]
+        return flight.holdGesture(
+            frames: held, display: SessionFixture.screen, spring: .niri, animates: animates
+        ) {
             world.gestureLosses += 1
         }
+    }
+
+    func testASwipeCatchingASettlingFlightStartsFromTheSampledMidFlightFrames() throws {
+        refresh([idA: a, idB: b])
+        let (slid, plan) = slide(idA, from: a, by: -820)
+        let release = slid.springing(.niri, velocity: CGPoint(x: -2400, y: 0))
+        XCTAssertEqual(flight.drive(animations: [release], plans: [plan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        scheduler.advance(by: 0.1)
+
+        let drawn = flight.drawnFrames()
+        let track = FlightTrack(
+            start: overlayLayerGeometry(frame: a, in: .zero, flipped: false),
+            end: overlayLayerGeometry(frame: slid.to, in: .zero, flipped: false),
+            velocity: overlayLayerVelocity(origin: CGPoint(x: -2400, y: 0), flipped: false)
+        )
+        let expected = track.state(at: 0.1, spring: .niri).geometry
+        let sampled = try XCTUnwrap(drawn[idA])
+        XCTAssertEqual(sampled.midX, expected.position.x, accuracy: 1e-6, "where the layer is drawn now")
+        XCTAssertGreaterThan(sampled.minX, slid.to.minX + 50, "not the landed frame the real window was written to")
+        XCTAssertEqual(drawn[idB], b)
+
+        XCTAssertEqual(hold(drawn), .overlay(layers: [idA, idB]))
+        let held = overlay.begins.last?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(held.first { $0.id == idA }?.from, sampled, "the hold takes the layers over mid-air")
+        let reheld = try XCTUnwrap(flight.drawnFrames()[idA])
+        XCTAssertEqual(reheld.minX, sampled.minX, accuracy: 1e-6, "held where it was taken over")
+    }
+
+    func testNoFlightDrawsNothing() {
+        XCTAssertTrue(flight.drawnFrames().isEmpty)
+    }
+
+    func testAnInstantSettleKeepsTheGestureOnThePump() {
+        refresh([idA: a, idB: b])
+        XCTAssertEqual(hold(animates: false), .accessibility(reason: .instantSettle, missing: []))
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(overlay.begins.isEmpty)
+    }
+
+    func testAHoldThatCannotFlyWritesTheWindowsBeforeTheOverlayComesDown() {
+        holdAndPrime()
+        XCTAssertTrue(flight.isHoldingGesture)
+        let overlay = overlay!
+        flight.endHold { overlay.events.append("writes") }
+        XCTAssertEqual(Array(overlay.events.suffix(4)), ["writes", "collect", "end", "publish"])
+        XCTAssertFalse(flight.isActive)
+        XCTAssertFalse(flight.isHoldingGesture)
+        XCTAssertEqual(world.gestureLosses, 0, "a released hold is not lost")
     }
 
     private func holdAndPrime() {

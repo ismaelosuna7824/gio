@@ -11,7 +11,7 @@ final class GestureTransportTests: XCTestCase {
 
     func testEveryStripWindowWithAnImageAndABackdropRidesTheOverlay() {
         let transport = planGestureTransport(
-            windows: strip, rendererUsable: true, backdropReady: true, hasImage: { _ in true }
+            windows: strip, rendererUsable: true, settleAnimates: true, backdropReady: true, hasImage: { _ in true }
         )
         XCTAssertEqual(transport, .overlay(layers: [id(1), id(2), id(3), id(4)]))
         XCTAssertEqual(gestureTransportLine(transport), "gesture scroll transport=overlay layers=4")
@@ -19,15 +19,23 @@ final class GestureTransportTests: XCTestCase {
 
     func testTheAXRendererKeepsThePump() {
         let transport = planGestureTransport(
-            windows: strip, rendererUsable: false, backdropReady: true, hasImage: { _ in true }
+            windows: strip, rendererUsable: false, settleAnimates: true, backdropReady: true, hasImage: { _ in true }
         )
         XCTAssertEqual(transport, .accessibility(reason: .renderer, missing: []))
         XCTAssertEqual(gestureTransportLine(transport), "gesture scroll transport=ax reason=renderer-ax")
     }
 
+    func testAnInstantSettleKeepsThePumpSoTheReleaseNeverEndsTheOverlayBeforeItsWrites() {
+        let transport = planGestureTransport(
+            windows: strip, rendererUsable: true, settleAnimates: false, backdropReady: true, hasImage: { _ in true }
+        )
+        XCTAssertEqual(transport, .accessibility(reason: .instantSettle, missing: []))
+        XCTAssertEqual(gestureTransportLine(transport), "gesture scroll transport=ax reason=instant-settle")
+    }
+
     func testADisplayWithoutABackdropKeepsThePump() {
         let transport = planGestureTransport(
-            windows: strip, rendererUsable: true, backdropReady: false, hasImage: { _ in true }
+            windows: strip, rendererUsable: true, settleAnimates: true, backdropReady: false, hasImage: { _ in true }
         )
         XCTAssertEqual(transport, .accessibility(reason: .noBackdrop, missing: []))
     }
@@ -35,7 +43,8 @@ final class GestureTransportTests: XCTestCase {
     func testAParkedColumnWithoutAnImageKeepsThePumpBecauseItMayScrollIntoView() {
         let parked: Set<WindowID> = [id(3), id(4)]
         let transport = planGestureTransport(
-            windows: strip, rendererUsable: true, backdropReady: true, hasImage: { !parked.contains($0) }
+            windows: strip, rendererUsable: true, settleAnimates: true, backdropReady: true,
+            hasImage: { !parked.contains($0) }
         )
         XCTAssertEqual(transport, .accessibility(reason: .cacheMiss, missing: [id(3), id(4)]))
         XCTAssertEqual(
@@ -46,7 +55,8 @@ final class GestureTransportTests: XCTestCase {
 
     func testAnUndrawnWindowNeedsNoImageAndGetsNoLayer() {
         let transport = planGestureTransport(
-            windows: strip, rendererUsable: true, backdropReady: true, hasImage: { $0 != self.id(2) },
+            windows: strip, rendererUsable: true, settleAnimates: true, backdropReady: true,
+            hasImage: { $0 != self.id(2) },
             undrawn: [id(2)]
         )
         XCTAssertEqual(transport, .overlay(layers: [id(1), id(3), id(4)]))
@@ -54,7 +64,8 @@ final class GestureTransportTests: XCTestCase {
 
     func testAStripOfUndrawnWindowsHasNothingToShow() {
         let transport = planGestureTransport(
-            windows: [id(1)], rendererUsable: true, backdropReady: true, hasImage: { _ in false }, undrawn: [id(1)]
+            windows: [id(1)], rendererUsable: true, settleAnimates: true, backdropReady: true, hasImage: { _ in false },
+            undrawn: [id(1)]
         )
         XCTAssertEqual(transport, .accessibility(reason: .nothingToShow, missing: []))
     }

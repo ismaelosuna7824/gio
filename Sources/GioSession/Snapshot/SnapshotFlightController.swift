@@ -239,7 +239,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
     private var fresh = SnapshotFreshTracker()
     private var gestureLost: (() -> Void)?
     private var heldFrames: [WindowID: CGRect] = [:]
-    private var layerFrames: [WindowID: CGRect] = [:]
+    private var layerModel = FlightLayerModel(spring: .niri)
     private var flyAfterPass = false
 
     public init(
@@ -256,6 +256,17 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// wait, and a key press retargets.
     public var isActive: Bool {
         gate.isActive || handoff.isHolding
+    }
+
+    public var isHoldingGesture: Bool {
+        gestureLost != nil
+    }
+
+    public func drawnFrames() -> [WindowID: CGRect] {
+        guard isActive else {
+            return [:]
+        }
+        return layerModel.frames(at: context.now())
     }
 
     /// Windows flying (or added to) the current flight.
@@ -302,6 +313,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             }
             cache.flies(item.id, use, at: now)
             imageSizes[item.id] = use.entry.frame.size
+            layerModel.add(item.id, from: item.from, to: item.to, velocity: velocities[item.id] ?? .zero, at: now)
             backgrounds[item.id] = use.target?.fill ?? use.entry.fill
             startFaces[item.id] = use.entry.face
             resizeModes[item.id] = use.resize
@@ -345,13 +357,14 @@ public final class SnapshotFlightController: @unchecked Sendable {
         var velocities: [WindowID: CGPoint] = [:]
         for animation in animations {
             starts[animation.id] = animation.from
-            let heldLayer = layerFrames[animation.id] != nil
+            let heldLayer = isHoldingGesture && ids.contains(animation.id)
             if animation.velocity != .zero, !heldLayer {
                 velocities[animation.id] = animation.velocity
             }
         }
         if let release {
-            let layerStarts = starts.merging(layerFrames) { _, layer in layer }
+            let trackedLayers = isHoldingGesture ? layerModel.frames(at: context.now()) : [:]
+            let layerStarts = starts.merging(trackedLayers) { _, layer in layer }
             let settling = gestureSettleVelocities(
                 windows: release.windows, velocity: release.velocity, from: layerStarts, to: targets
             )
@@ -391,7 +404,6 @@ public final class SnapshotFlightController: @unchecked Sendable {
         if isActive {
             if gestureLost != nil {
                 gestureLost = nil
-                layerFrames = [:]
                 flyAfterPass = primingToken == nil
                 startedAt = now
             }
@@ -427,6 +439,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             }
             let token = gate.retarget()
             let retargetVelocities = velocities.filter { plan.retargets[$0.key] != nil }
+            layerModel.retarget(plan.retargets, velocities: retargetVelocities, at: now)
             overlay.retargetFlight(
                 token: token, targets: plan.retargets, images: faces, velocities: retargetVelocities,
                 adds: makeFlights(plan.adds, images: images, velocities: velocities, now: now),
@@ -463,6 +476,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             backgrounds = [:]
             startFaces = [:]
             resizeModes = [:]
+            layerModel.reset(spring: spring)
             let flights = makeFlights(items, holes: holes, images: images, velocities: velocities, now: now)
             guard !flights.isEmpty else {
                 return .ax
@@ -502,7 +516,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
     }
 
     public func holdGesture(
-        frames: [WindowID: CGRect], display: CGRect, spring: SpringParameters, lost: @escaping () -> Void
+        frames: [WindowID: CGRect], display: CGRect, spring: SpringParameters, animates: Bool,
+        lost: @escaping () -> Void
     ) -> GestureTransport {
         let now = context.now()
         let index = context.displayFrames().firstIndex(of: display)
@@ -510,7 +525,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
         let backdropReady = index != nil && cache.backdrop(for: display) != nil
         var images: [WindowID: SnapshotCacheUse<CGImage>] = [:]
         let transport = planGestureTransport(
-            windows: Set(frames.keys), rendererUsable: cache.rendererUsable(), backdropReady: backdropReady,
+            windows: Set(frames.keys), rendererUsable: cache.rendererUsable(), settleAnimates: animates,
+            backdropReady: backdropReady,
             hasImage: { id in
                 guard let use = cache.flightImage(id, startFrame: frames[id], targetFrame: frames[id], at: now) else {
                     return false
@@ -533,6 +549,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         backgrounds = [:]
         startFaces = [:]
         resizeModes = [:]
+        layerModel.reset(spring: spring)
         let items = layers.compactMap { id in
             frames[id].map { SnapshotFlightItem(id: id, from: $0, to: $0, displayIndex: index) }
         }
@@ -550,18 +567,24 @@ public final class SnapshotFlightController: @unchecked Sendable {
         primingToken = token
         pending = nil
         gestureLost = lost
-        layerFrames = frames
+        heldFrames = [:]
         overlay.beginFlight(
             token: token, spring: spring, flights: flights, holes: holes, decorations: context.decorations(frames)
         )
         return transport
     }
 
+    public func endHold(after writes: () -> Void) {
+        gestureLost = nil
+        writes()
+        end()
+    }
+
     public func trackGesture(_ frames: [WindowID: CGRect]) {
         guard gestureLost != nil else {
             return
         }
-        layerFrames.merge(frames) { _, latest in latest }
+        layerModel.track(frames)
         guard primingToken == nil else {
             heldFrames.merge(frames) { _, latest in latest }
             return
@@ -610,6 +633,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             pass?.writes()
             if gate.isActive {
                 overlay.flyFlight(token: gate.currentToken)
+                layerModel.fly(at: context.now())
                 if pass != nil {
                     // SM-30: the resized windows were just written.
                     followFresh(snapshotResizedWindows(starts: origins, targets: targets).intersection(ids))
@@ -628,6 +652,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         if flyAfterPass {
             flyAfterPass = false
             overlay.flyFlight(token: gate.currentToken)
+            layerModel.fly(at: context.now())
         }
         if gate.passSettled(gate.currentToken) {
             settle()
@@ -957,7 +982,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         fresh.removeAll()
         gestureLost = nil
         heldFrames = [:]
-        layerFrames = [:]
+        layerModel.removeAll()
         flyAfterPass = false
     }
 

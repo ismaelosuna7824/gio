@@ -41,6 +41,7 @@ final class GestureControllerTests: XCTestCase {
         var tracks: [[WindowID: CGRect]] = []
         var lost: (() -> Void)?
         var now: TimeInterval = 0
+        var drawn: [WindowID: CGRect] = [:]
         let sink = Sink()
     }
 
@@ -80,6 +81,7 @@ final class GestureControllerTests: XCTestCase {
                 return world.transport
             },
             trackOverlay: { world.tracks.append($0) },
+            overlayFrames: { world.drawn },
             recordSampled: { id, frame, _ in
                 world.sampled[id] = frame
                 world.physical[id] = frame
@@ -237,6 +239,23 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertTrue(world.tracks.isEmpty)
         XCTAssertEqual(world.sampled[id(1)]?.minX, -42)
         XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll begin") && $0.hasSuffix("transport=ax") })
+    }
+
+    func testASwipeCatchingAnOverlayFlightStartsWhereItsLayersAreDrawn() throws {
+        world.drawn = world.physical.mapValues { $0.offsetBy(dx: -300, dy: 0) }
+        world.transport = .overlay(layers: strip)
+        controller.deliver(swipeLeft(steps: 1))
+        let hold = try XCTUnwrap(world.holds.first)
+        XCTAssertEqual(hold.frames[id(1)]?.minX, -292, "held where the running layers are, not where the windows landed")
+        let tracked = try XCTUnwrap(world.tracks.last?[id(1)])
+        XCTAssertEqual(tracked.minX, -342, accuracy: 1e-6, "the offset continues from what is drawn")
+    }
+
+    func testThePumpStartsFromTheRealWindowsWhileTheOffsetFollowsTheDrawnStrip() {
+        world.drawn = world.physical.mapValues { $0.offsetBy(dx: -300, dy: 0) }
+        controller.deliver(swipeLeft(steps: 1))
+        XCTAssertEqual(world.sampled[id(1)]?.minX, -342, "written: the real window is still at its landing")
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll begin") && $0.contains("offset=300") })
     }
 
     func testAReleaseUnderTheOverlayCommitsStateAndHandsTheVelocityToTheSettle() throws {

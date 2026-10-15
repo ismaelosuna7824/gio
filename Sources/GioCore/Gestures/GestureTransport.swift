@@ -5,6 +5,7 @@ public let gestureOverlayKeepAlive: TimeInterval = 0.5
 
 public enum GestureOverlayRefusal: String, Equatable, Sendable {
     case renderer = "renderer-ax"
+    case instantSettle = "instant-settle"
     case noBackdrop = "no-backdrop"
     case cacheMiss = "cache-miss"
     case nothingToShow = "nothing-to-show"
@@ -17,11 +18,14 @@ public enum GestureTransport: Equatable, Sendable {
 }
 
 public func planGestureTransport(
-    windows: Set<WindowID>, rendererUsable: Bool, backdropReady: Bool, hasImage: (WindowID) -> Bool,
-    undrawn: Set<WindowID> = []
+    windows: Set<WindowID>, rendererUsable: Bool, settleAnimates: Bool, backdropReady: Bool,
+    hasImage: (WindowID) -> Bool, undrawn: Set<WindowID> = []
 ) -> GestureTransport {
     guard rendererUsable else {
         return .accessibility(reason: .renderer, missing: [])
+    }
+    guard settleAnimates else {
+        return .accessibility(reason: .instantSettle, missing: [])
     }
     guard backdropReady else {
         return .accessibility(reason: .noBackdrop, missing: [])

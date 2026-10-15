@@ -757,12 +757,15 @@ final class SessionHost: @unchecked Sendable {
                 focusDim.update()
             },
             holdOverlay: { [unowned self] frames, display, lost in
-                let spring = session.config.animations.resolved(MotionCause.viewScroll.kind).spring
-                let transport = overlayFlight.holdGesture(frames: frames, display: display, spring: spring, lost: lost)
+                let settle = session.config.animations.resolved(MotionCause.viewScroll.kind)
+                let transport = overlayFlight.holdGesture(
+                    frames: frames, display: display, spring: settle.spring, animates: settle.isActive, lost: lost
+                )
                 publishFocusRing()
                 return transport
             },
             trackOverlay: { [unowned self] in overlayFlight.trackGesture($0) },
+            overlayFrames: { [unowned self] in overlayFlight.drawnFrames() },
             recordSampled: { [unowned self] id, frame, now in
                 physicalFrames[id] = frame
                 echoGate.recordApplied(id, frame: frame, at: now)
@@ -1699,6 +1702,13 @@ final class SessionHost: @unchecked Sendable {
                 )
                 return
             }
+        }
+        let heldGestureCannotFly = !snapshotFlight && overlayFlight.isHoldingGesture
+        if heldGestureCannotFly {
+            overlayFlight.endHold {
+                instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: false, placement: placement, reconciler: reconciler)
+            }
+            return
         }
         if !snapshotFlight {
             overlayFlight.end()
