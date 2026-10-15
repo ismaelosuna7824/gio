@@ -697,6 +697,20 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   instead of 8, no Postman at 904` (2 failures), with MM-08 `Executed 19 tests, with 0
   failures`. Limit: when the focused column is the strip's last one there is nothing to show on
   the free side, the offset is clamped and the parked neighbour still leaves its side empty.
+- [x] MM-09 (commit pending) — The strip's end fills the display. Report (2026-10-14 20:23 and
+  20:30 local, MM-08 build PID 72468, screenshots): Xcode, the last column, flush right at 904
+  after Zed maximized (1784 pt); Zed parked, the left half empty: MM-08's limit. Log 20:23:55Z:
+  columns Tern, Postman, WhatsApp, Slack, OrbStack, Zed, Xcode. User decision (chat): "¿y si
+  expandes la última? como la regla ... si está sola en la pantalla se expanda". Fix:
+  `layoutFillingFocusedColumn` (pure, `DisplayReflowPlanner.swift`), after MM-08 and with the
+  same gating plus `maximize-single-window` (default on), lays the focused column out at
+  `.proportion(1)` on a copy, reveals it, keeps it only when it strands fewer columns
+  (`strandedColumnCount`, extracted from `straddleFreeOffset`). The stored width stays. RED
+  (`swift test --filter MultiDisplayRepairTests`): `Executed 21 tests, with 1 failure`, Xcode
+  `(904, 8, 888, 1114)` instead of `(8, 8, 1784, 1114)`. GREEN: full `swift test` UI 310 (53
+  skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1969, 0 failures. Cost: entering
+  and leaving such a column resizes it (888 <-> 1784). LIVE PENDING: Zed maximized, Alt+L onto
+  Xcode with the external on the left.
 
 ## Progress
 - 2026-10-07: MM-01, MM-02 and MM-03 (review fixes) implemented and verified automatically;

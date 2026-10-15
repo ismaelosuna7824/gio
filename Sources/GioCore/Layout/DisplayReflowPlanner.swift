@@ -76,7 +76,8 @@ public func planDisplayLayout(
     // the focused column can sit flush against that edge instead, the cut
     // moves to a free edge, where a column peeks as on a single display.
     // Centering (this pass's request or the configured mode) keeps its offset.
-    if engine.config.centerFocusedColumn == .never, centering.mode == .never,
+    let avoidsStranding = engine.config.centerFocusedColumn == .never && centering.mode == .never
+    if avoidsStranding,
        let shifted = straddleFreeOffset(
            workspace: workspace, layout: layout, viewport: viewport, edgeMargin: engine.config.padding,
            otherDisplays: otherDisplays
@@ -88,6 +89,19 @@ public func planDisplayLayout(
     {
         layout = relaid
         workspace.viewportOffset = relaid.viewportOffset
+    }
+    // MM-09: no offset helped (the focused column ends the strip and its
+    // neighbour is wider than the room beside it). With maximize-single-window
+    // the focused column fills the display for this layout, like a lone
+    // window; its stored width is untouched.
+    if avoidsStranding, engine.config.maximizeSingleWindow,
+       let filled = layoutFillingFocusedColumn(
+           workspace: workspace, layout: layout, modes: modes, layoutModes: layoutModes, engine: engine,
+           viewport: viewport, display: display, otherDisplays: otherDisplays
+       )
+    {
+        layout = filled
+        workspace.viewportOffset = filled.viewportOffset
     }
     let focusedColumn = workspace.focusedWindow.flatMap { focused in
         workspace.columns.first { $0.windows.contains(focused) }
@@ -251,17 +265,11 @@ public func straddleFreeOffset(
     guard let range = contentRange(of: column, in: layout, toContent: toContent) else {
         return nil
     }
-    let others = workspace.columns.filter { $0.id != column.id }.map { other in
-        other.windows.compactMap { layout.frames[$0] }
-    }
     func stranded(at offset: CGFloat) -> Int {
-        let dx = current - offset
-        return others.filter { frames in
-            frames.contains { frame in
-                let moved = frame.offsetBy(dx: dx, dy: 0)
-                return moved.intersects(viewport) && otherDisplays.contains { $0.intersects(moved) }
-            }
-        }.count
+        strandedColumnCount(
+            workspace: workspace, layout: layout, viewport: viewport, otherDisplays: otherDisplays,
+            shift: current - offset
+        )
     }
     let now = stranded(at: current)
     guard now > 0 else {
@@ -284,6 +292,70 @@ public func straddleFreeOffset(
         return nil
     }
     return best.offset
+}
+
+/// MM-08: the columns other than the focused one that `layout`, moved by
+/// `shift` points, leaves on the viewport and across an edge it shares with
+/// another display (MM-04 parks them, leaving their part empty).
+func strandedColumnCount(
+    workspace: Workspace, layout: LayoutResult, viewport: CGRect, otherDisplays: [CGRect], shift: CGFloat = 0
+) -> Int {
+    guard !otherDisplays.isEmpty else {
+        return 0
+    }
+    let focused = workspace.focusedWindow
+    return workspace.columns.filter { column in
+        !column.windows.contains { $0 == focused } && column.windows.contains { id in
+            guard let frame = layout.frames[id]?.offsetBy(dx: shift, dy: 0) else {
+                return false
+            }
+            return frame.intersects(viewport) && otherDisplays.contains { $0.intersects(frame) }
+        }
+    }.count
+}
+
+/// MM-09: the layout with the focused column at the full strip width
+/// (`maximize-single-window`'s width) and revealed, when that strands fewer
+/// columns than `layout`; nil otherwise. The returned workspace state is the
+/// caller's: the column's stored width never changes.
+private func layoutFillingFocusedColumn(
+    workspace: Workspace, layout: LayoutResult, modes: [WindowID: WindowMode],
+    layoutModes: [WindowID: WindowMode], engine: ScrollableLayoutEngine, viewport: CGRect, display: CGRect,
+    otherDisplays: [CGRect]
+) -> LayoutResult? {
+    let before = strandedColumnCount(
+        workspace: workspace, layout: layout, viewport: viewport, otherDisplays: otherDisplays
+    )
+    guard before > 0, let focused = workspace.focusedWindow,
+          let index = workspace.columns.firstIndex(where: { $0.windows.contains(focused) })
+    else {
+        return nil
+    }
+    var widened = workspace
+    widened.columns[index].widthSpec = .proportion(1)
+    widened.viewportOffset = layout.viewportOffset
+    guard var filled = try? layoutKeepingFullscreenSize(
+        workspace: widened, modes: modes, layoutModes: layoutModes, engine: engine, viewport: viewport,
+        display: display
+    ) else {
+        return nil
+    }
+    if let revealed = revealOffset(
+        workspace: widened, layout: filled, viewport: viewport, edgeMargin: engine.config.padding
+    ) {
+        widened.viewportOffset = revealed
+        guard let relaid = try? layoutKeepingFullscreenSize(
+            workspace: widened, modes: modes, layoutModes: layoutModes, engine: engine, viewport: viewport,
+            display: display
+        ) else {
+            return nil
+        }
+        filled = relaid
+    }
+    let after = strandedColumnCount(
+        workspace: widened, layout: filled, viewport: viewport, otherDisplays: otherDisplays
+    )
+    return after < before ? filled : nil
 }
 
 private func contentRange(of column: Column, in layout: LayoutResult, toContent: CGFloat) -> Range<CGFloat>? {

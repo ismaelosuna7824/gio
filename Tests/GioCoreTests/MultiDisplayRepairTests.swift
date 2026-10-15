@@ -242,6 +242,61 @@ final class MultiDisplayRepairTests: XCTestCase {
         XCTAssertNotNil(planned.plan.parked[id(0)])
     }
 
+    /// Live 2026-10-14 20:23 / 20:30 (screenshots): Zed maximized (1784 pt), then
+    /// Xcode, the strip's last column. No offset keeps Zed off the shared edge:
+    /// Xcode at 904, Zed parked, the left half empty. With
+    /// `maximize-single-window` the focused column then fills the display for
+    /// this layout (its stored width untouched), like a lone window.
+    private func stripEnd(focus: Int = 3) -> Workspace {
+        var strip = workspace(columns: 4, focus: focus, spec: .points(888))
+        strip.columns[2].widthSpec = .points(1784)
+        strip.viewportOffset = 896
+        return strip
+    }
+
+    private let filling = ScrollableLayoutEngine(config: LayoutConfig(padding: 8, gap: 8, maximizeSingleWindow: true))
+
+    func testTheLastColumnFillsTheDisplayWhenItsNeighbourCannotPeek() throws {
+        let planned = try planDisplayLayout(
+            workspace: stripEnd(), modes: [:], engine: filling,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        assertConfined(planned, display: Live.builtInFrame, other: Live.externalFrame, "built-in")
+        XCTAssertEqual(planned.plan.visible[id(3)], CGRect(x: 8, y: 8, width: 1784, height: 1114))
+        XCTAssertNotNil(planned.plan.parked[id(2)])
+        XCTAssertEqual(planned.workspace.columns[3].widthSpec, .points(888), "the stored width is kept")
+        let again = try planDisplayLayout(
+            workspace: planned.workspace, modes: [:], engine: filling,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        XCTAssertEqual(again.plan, planned.plan, "a passive pass keeps it")
+        // Back onto Zed: Xcode returns to its own width.
+        var back = planned.workspace
+        back.focusedColumn = 2
+        back.focusedWindow = id(2)
+        let left = try planDisplayLayout(
+            workspace: back, modes: [:], engine: filling,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        XCTAssertEqual(left.plan.visible[id(2)]?.width, 1784)
+        let xcode = left.plan.visible[id(3)] ?? left.plan.parked[id(3)]?.frame
+        XCTAssertEqual(xcode?.width, 888)
+    }
+
+    func testWithoutMaximizeSingleWindowOrASecondDisplayTheLastColumnKeepsItsWidth() throws {
+        let off = try planDisplayLayout(
+            workspace: stripEnd(), modes: [:], engine: engine,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: [Live.externalFrame]
+        )
+        XCTAssertEqual(off.plan.visible[id(3)]?.width, 888)
+        let single = try planDisplayLayout(
+            workspace: stripEnd(), modes: [:], engine: filling,
+            viewport: Live.builtInVisible, display: Live.builtInFrame, otherDisplays: []
+        )
+        XCTAssertEqual(single.plan.visible[id(3)]?.minX, 904)
+        XCTAssertEqual(single.plan.visible[id(2)]?.maxX, 896, "one display: Zed peeks")
+    }
+
     func testAStripRightOfItsSharedEdgeAlignsTheFocusedColumnRight() throws {
         // The external: the built-in shares its right edge. Moving left onto
         // column 1, the minimal reveal leaves column 2 across that edge;
