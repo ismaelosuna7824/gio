@@ -75,6 +75,23 @@ final class MinimumSizeTests: XCTestCase {
         ))
     }
 
+    /// MM-11 live (TextEdit sent to the external display five times): each
+    /// landing kept the top at the built-in display's visible top (height
+    /// 1394 -> 1130) and came back 32 pt wider; learning that width made the
+    /// column 32 pt wider on every move (1068, 1100, 1132, 1164, 1196). A
+    /// window that landed smaller in the other dimension was constrained to
+    /// a screen, which says nothing about its minimum size.
+    func testGrowthWhileTheOtherDimensionShrankIsAScreenConstraintNotLearned() {
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: -1076, y: -216, width: 1068, height: 1394),
+            actual: CGRect(x: -1076, y: 0, width: 1100, height: 1130)
+        ))
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 440, height: 784),
+            actual: CGRect(x: 8, y: 8, width: 360, height: 900)
+        ))
+    }
+
     // MARK: Book
 
     func testBookKeepsMaximumAndReportsChange() {
