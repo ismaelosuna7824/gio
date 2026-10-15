@@ -447,6 +447,9 @@ final class SnapshotOverlay {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = false
+        // PF-AH: the captures' colour space, so layer contents need no
+        // conversion at commit (the WindowServer matches the panel on the GPU).
+        panel.colorSpace = NSColorSpace(cgColorSpace: CGColorSpace(name: snapshotColorSpaceName as CFString)!)
         panel.ignoresMouseEvents = true
         panel.level = Self.level
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]

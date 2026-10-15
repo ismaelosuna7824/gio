@@ -823,6 +823,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         configuration.width = pixels.width
         configuration.height = pixels.height
         configuration.showsCursor = false
+        configuration.colorSpaceName = snapshotColorSpaceName as CFString
         configuration.capturesShadowsOnly = false
         configuration.ignoreShadowsSingleWindow = true
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
@@ -838,6 +839,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         configuration.width = pixels.width
         configuration.height = pixels.height
         configuration.showsCursor = false
+        configuration.colorSpaceName = snapshotColorSpaceName as CFString
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 }

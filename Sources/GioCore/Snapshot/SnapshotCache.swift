@@ -5,6 +5,14 @@ import Foundation
 // the image so Core stays free of platform image types; the session stores
 // CGImages. Session queue only, no locking.
 
+/// PF-AH: every capture comes back in this one colour space, the one the
+/// overlay panels are drawn in, so Core Animation never converts an image on
+/// the main thread at commit. A window captured on one display and flown on
+/// another (another colour profile) cost ~23 ms of CMS conversion per image
+/// per flight there; the WindowServer now matches the panel to each display
+/// on the GPU instead.
+public let snapshotColorSpaceName = CGColorSpace.displayP3 as String
+
 public struct SnapshotCacheEntry<Image> {
     public let image: Image
     /// Frame the window had when captured (Cocoa).
