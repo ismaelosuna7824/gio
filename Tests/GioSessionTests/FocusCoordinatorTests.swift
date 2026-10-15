@@ -22,6 +22,7 @@ final class FocusCoordinatorTests: XCTestCase {
         var scroll: (from: CGFloat, to: CGFloat)?
         var topPID: pid_t?
         var topLookups = 0
+        var clickOnSystemUI = false
         var warps: [CGPoint] = []
         var mouseFollowsFocus = true
         var centerMode = CenterFocusedColumnMode.never
@@ -93,6 +94,7 @@ final class FocusCoordinatorTests: XCTestCase {
                     return world.topPID
                 },
                 warpCursor: { world.warps.append($0) },
+                clickOnSystemUI: { _ in world.clickOnSystemUI },
                 mouseFollowsFocus: { world.mouseFollowsFocus },
                 centerMode: { world.centerMode },
                 publishFocusRing: { world.ringPublishes += 1 },
@@ -275,6 +277,30 @@ final class FocusCoordinatorTests: XCTestCase {
         })
         let settle = focus.takeSettleFocus(parked: [])
         XCTAssertNil(settle.target)
+    }
+
+    /// WC-13: live (2026-10-15, auto-hidden Dock): clicking an app in the
+    /// Dock activated it, but the click was inside the usable area (the
+    /// Dock hides), so it counted as a window click and the parked window
+    /// on another workspace was dropped (`focused window not under click`).
+    /// A click on the Dock or the menu bar (the frontmost window under it,
+    /// Gio's own aside, is above the normal layers) explains no focus: the
+    /// activation reveals the app's window on its workspace.
+    func testADockClickRevealsTheActivatedAppsWindowOnItsWorkspace() {
+        moveToHiddenWorkspace(2)
+        world.clickOnSystemUI = true
+        focus.recordClick(at: CGPoint(x: 900, y: 40))
+        scheduler.runPending()
+        XCTAssertNil(focus.currentClick(), "the Dock is not a window")
+
+        world.frontmost = 2
+        world.focusedElements[2] = element(2)
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+        scheduler.advance(by: 1)
+
+        XCTAssertEqual(fixture.session.manager.current, 2)
+        XCTAssertEqual(focused, ids[2])
+        XCTAssertTrue(world.logs.contains { $0.1 == "focus reveal id=2:3 workspace=2 source=activation" })
     }
 
     func testRevealOnAnotherDisplaysShownWorkspaceIsNotAWorkspaceSwitch() {

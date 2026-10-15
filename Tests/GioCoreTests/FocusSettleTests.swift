@@ -48,6 +48,35 @@ final class FocusSettleTests: XCTestCase {
         XCTAssertNil(windowAreaClick(nil, visibleAreas: visible))
     }
 
+    /// WC-13: an auto-hidden Dock (or the menu bar while a fullscreen-like
+    /// area reaches it) sits inside the usable area: a click marked as
+    /// landing on system UI is not a window click either.
+    func testAClickOnSystemUIInsideTheVisibleAreaIsNotAWindowClick() {
+        let visible = [CGRect(x: 0, y: 0, width: 1000, height: 800)]
+        let dock = MouseClick(location: CGPoint(x: 500, y: 20), time: 1, onSystemUI: true)
+        XCTAssertNil(windowAreaClick(dock, visibleAreas: visible))
+    }
+
+    /// WC-13: the frontmost window under the click decides, Gio's own
+    /// click-through panels (ring, dim, overlay) aside: the Dock (layer 20)
+    /// and above (menu bar, status items, menus) are system UI; app windows
+    /// (0), app panels below the Dock and the desktop (negative) are not.
+    func testSystemUIIsTheDockLayerAndAboveSkippingGiosOwnPanels() {
+        let point = CGPoint(x: 100, y: 100)
+        let box = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let gio: pid_t = 99
+        func onSystemUI(_ windows: [PointWindow]) -> Bool {
+            clickIsOnSystemUI(at: point, frontToBack: windows, ownPID: gio)
+        }
+        XCTAssertTrue(onSystemUI([PointWindow(pid: 5, layer: 20, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]))
+        XCTAssertTrue(onSystemUI([PointWindow(pid: 5, layer: 25, bounds: box)]))
+        XCTAssertFalse(onSystemUI([PointWindow(pid: gio, layer: 3, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]))
+        XCTAssertFalse(onSystemUI([PointWindow(pid: 7, layer: 3, bounds: box)]), "an app's floating panel")
+        XCTAssertFalse(onSystemUI([PointWindow(pid: 8, layer: -2_147_483_603, bounds: box)]), "the desktop")
+        XCTAssertFalse(onSystemUI([PointWindow(pid: 5, layer: 20, bounds: CGRect(x: 300, y: 0, width: 10, height: 10))]))
+        XCTAssertFalse(onSystemUI([]))
+    }
+
     // MARK: Click validation
 
     func testFocusedWindowContainingTheClickMatches() {
