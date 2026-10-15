@@ -158,6 +158,14 @@ critical or high issue; every finding below was checked against the code before 
   checksum; the DMG's signature verifies; the app inside verifies (`--deep --strict`), `flags=0x10000(runtime)`,
   team `2CAK428VHF`, version 0.1.0, `GioUpdateRepository` `ismaelosuna7824/gio`, `Gio_GioUI.bundle` present.
   LIVE PENDING: Gatekeeper's Open Anyway, permissions and the first in-app update (needs a later release).
+- [x] RL-11 (`7a4c8a8`, `94bc596`, `90099f7`) — After RL-09 the hosted runner still missed real-time budgets
+  now and then (`WriteLaneTests` 0.15/0.12 s writes past the 0.25 s stall; `MotionLaneTests` final pass 0.257 s
+  against a 0.25 s bound). Lane tests that are not about the stall use a 1 s stall (`patientReconciler`); the
+  stall, claim-wait and landing-bound tests keep 0.25 s. `scripts/swift-test-ci.sh` (ci.yml and release.yml's
+  test job): serial `swift test`, each failed case retried once alone, a pass on retry is a `::warning::`;
+  two failures, more than three failed cases, or no failed case (build error, crash) fail. Smoke: a fake
+  `swift` that fails one case then passes it exits 0 with the warning; one that fails to compile exits 1.
+  CI run 38689662595 green (no retry needed).
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or
