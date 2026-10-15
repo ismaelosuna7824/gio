@@ -26,23 +26,39 @@ final class ColumnNavigationTests: XCTestCase {
     // MARK: Focus first / last
 
     func testFocusFirstAndLastColumnKeepEachColumnsFocusedWindow() {
-        let first = focusColumnFirst(in: workspace())
+        let first = focusColumnFirst(in: workspace(), modes: [:])
         XCTAssertEqual(first.focusedColumn, 0)
         XCTAssertEqual(first.focusedWindow, id(1))
         XCTAssertEqual(first.columns, workspace().columns, "focus never moves windows")
-        let last = focusColumnLast(in: workspace())
+        let last = focusColumnLast(in: workspace(), modes: [:])
         XCTAssertEqual(last.focusedColumn, 2)
         XCTAssertEqual(last.focusedWindow, id(4))
-        let back = focusColumnLast(in: focusColumnFirst(in: workspace(focusedColumn: 2)))
+        let firstFromLast = focusColumnFirst(in: workspace(focusedColumn: 2), modes: [:])
+        let back = focusColumnLast(in: firstFromLast, modes: [:])
         XCTAssertEqual(back.focusedWindow, id(4))
     }
 
     func testFocusFirstAndLastAtTheEdgeOrEmptyAreNoOps() {
-        XCTAssertEqual(focusColumnFirst(in: workspace(focusedColumn: 0)), workspace(focusedColumn: 0))
-        XCTAssertEqual(focusColumnLast(in: workspace(focusedColumn: 2)), workspace(focusedColumn: 2))
+        XCTAssertEqual(focusColumnFirst(in: workspace(focusedColumn: 0), modes: [:]), workspace(focusedColumn: 0))
+        XCTAssertEqual(focusColumnLast(in: workspace(focusedColumn: 2), modes: [:]), workspace(focusedColumn: 2))
         let empty = Workspace(id: WorkspaceID(1))
-        XCTAssertEqual(focusColumnFirst(in: empty), empty)
-        XCTAssertEqual(focusColumnLast(in: empty), empty)
+        XCTAssertEqual(focusColumnFirst(in: empty, modes: [:]), empty)
+        XCTAssertEqual(focusColumnLast(in: empty, modes: [:]), empty)
+    }
+
+    func testFocusFirstAndLastSkipFloatingColumnsAtTheEnds() {
+        var strip = workspace()
+        strip.columns.insert(Column(id: ColumnID(8), width: 84, windows: [id(8)]), at: 0)
+        strip.columns.append(Column(id: ColumnID(9), width: 84, windows: [id(9)]))
+        strip.focusedColumn = 2
+        let modes: [WindowID: WindowMode] = [id(8): .floating, id(9): .floating]
+        let first = focusColumnFirst(in: strip, modes: modes)
+        XCTAssertEqual(first.focusedColumn, 1)
+        XCTAssertEqual(first.focusedWindow, id(1))
+        let last = focusColumnLast(in: strip, modes: modes)
+        XCTAssertEqual(last.focusedColumn, 3)
+        XCTAssertEqual(last.focusedWindow, id(4))
+        XCTAssertEqual(focusColumnLast(in: last, modes: modes), last)
     }
 
     // MARK: Move column to first / last

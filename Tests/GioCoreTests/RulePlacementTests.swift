@@ -31,18 +31,25 @@ final class RulePlacementTests: XCTestCase {
 
     // MARK: Popups and dialogs
 
-    func testAWindowDiscoveryFloatedIgnoresTheRulesPlacementButARuleFloatKeepsIt() {
+    func testAPopupOfAnOpenAppIgnoresTheRulesPlacementButTheAppsOnlyWindowKeepsIt() {
         let routed = RuleOutcome(workspace: 2, openOnWorkspace: "Browsers", follow: .always, display: 2)
         for reason in [FloatReason.dialog, .floatingSubrole, .notResizable] {
-            let placement = arrivalPlacement(routed, admissionFloat: reason)
+            let placement = arrivalPlacement(routed, admissionFloat: reason, appHasOtherWindows: true)
             XCTAssertNil(placement.workspace, "\(reason)")
             XCTAssertNil(placement.openOnWorkspace, "\(reason)")
             XCTAssertNil(placement.display, "\(reason)")
+            XCTAssertEqual(
+                arrivalPlacement(routed, admissionFloat: reason, appHasOtherWindows: false), routed,
+                "\(reason): the app's only window is the app"
+            )
         }
-        XCTAssertEqual(arrivalPlacement(routed, admissionFloat: nil), routed)
+        XCTAssertEqual(arrivalPlacement(routed, admissionFloat: nil, appHasOtherWindows: true), routed)
         var ruleFloat = routed
         ruleFloat.mode = .floating
-        XCTAssertEqual(arrivalPlacement(ruleFloat, admissionFloat: .notResizable), ruleFloat, "the rule asked for it")
+        XCTAssertEqual(
+            arrivalPlacement(ruleFloat, admissionFloat: .notResizable, appHasOtherWindows: true), ruleFloat,
+            "the rule asked for it"
+        )
     }
 
     func testOpenMaximizedIsTheMaximizeToggleState() {

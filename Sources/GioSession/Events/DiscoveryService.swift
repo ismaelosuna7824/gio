@@ -717,9 +717,13 @@ public final class DiscoveryService: @unchecked Sendable {
         }
         // NW-02/NW-06: only a live, visible arrival routed to a named
         // workspace may take the user there; WR-04: never one that must
-        // not take focus. A popup or dialog discovery floated is never
-        // routed (`arrivalPlacement`): it opens where the user is.
-        let routing = arrivalPlacement(outcome, admissionFloat: candidate.floatReason)
+        // not take focus. A popup or dialog of an app that already has a
+        // window is never routed (`arrivalPlacement`): it opens where the
+        // user is. An app's only window, dialog or not, follows its rule.
+        let routing = arrivalPlacement(
+            outcome, admissionFloat: candidate.floatReason,
+            appHasOtherWindows: context.registry().managedWindows().contains { $0.pid == id.pid && $0.id != id }
+        )
         let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused
             && routing.openOnWorkspace != nil
             ? decideArrivalFollow(

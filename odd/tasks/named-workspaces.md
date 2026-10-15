@@ -85,6 +85,18 @@ LIVE PENDING (persistence across restart, routing + follow, picker scan, real NS
   `RulePlacementTests.testAWindowDiscoveryFloatedIgnores...` guard the boundary. GREEN; bundles UI 310 (53
   skipped) / Session 479 / POC 7 / Mac 19 / MacOS 95 / Core 1971, 0 failures. LIVE PENDING: type in Chrome's
   address bar on the external display.
+- [x] NW-08 (`fdf06a8`) — Live (2026-10-15, after NW-07): the "music" workspace looked empty and Music
+  floated behind the tiles of "Code". `gio status`: `music` 0 windows, `floatingWindows` = Music `91010:12`
+  reason `dialog`; log: `discovery exclude pid=91010 app=Music float(dialog)` at the startup scan (its only
+  window, so Music's main window reports a dialog subrole; [INFERENCE] from the log, the AX subrole was not
+  read live). NW-07 kept every admission float off its rule's workspace. Fix: `arrivalPlacement` takes
+  `appHasOtherWindows` (another managed window of the same pid): only a popup/dialog of an app that already
+  has a window stays where the user is; an app's only window follows its rule, dialog or not (registration
+  and title re-check). RED: `NamedWorkspaceRoutingTests.testAnAppWhoseOnlyWindowIsADialogStillOpensOn...`
+  and `testAnAppsOnlyDialogArrivingLiveFollowsItsRule` failed (not routed); the Chrome popup tests now open
+  Chrome's real window first (scan) and still pass; Core test covers both sides of the boundary. GREEN;
+  bundles UI 310 (53 skipped) / Session 481 / POC 7 / Mac 19 / MacOS 95 / Core 1971, 0 failures. LIVE
+  PENDING: restart Gio, Music lands on "music".
 
 ## Acceptance criteria
 - Creating a workspace + assigning an app in the app persists in config.toml and survives restart;

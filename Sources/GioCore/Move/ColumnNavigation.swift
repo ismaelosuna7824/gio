@@ -1,18 +1,22 @@
 import Foundation
 
 /// NC-09 niri `focus-column-first`: focus the leftmost column (its own
-/// focused window). Already there or no columns: a no-op.
-public func focusColumnFirst(in workspace: Workspace) -> Workspace {
-    focusColumn(at: 0, in: workspace)
+/// focused window). WC-12: the leftmost column `moveFocus` could reach,
+/// skipping non-tiled columns under `modes`. Already there or no columns:
+/// a no-op.
+public func focusColumnFirst(in workspace: Workspace, modes: [WindowID: WindowMode]) -> Workspace {
+    let first = workspace.columns.firstIndex { isNavigable($0, modes: modes) }
+    return focusColumn(at: first, in: workspace)
 }
 
 /// NC-09 niri `focus-column-last`.
-public func focusColumnLast(in workspace: Workspace) -> Workspace {
-    focusColumn(at: workspace.columns.count - 1, in: workspace)
+public func focusColumnLast(in workspace: Workspace, modes: [WindowID: WindowMode]) -> Workspace {
+    let last = workspace.columns.lastIndex { isNavigable($0, modes: modes) }
+    return focusColumn(at: last, in: workspace)
 }
 
-private func focusColumn(at index: Int, in workspace: Workspace) -> Workspace {
-    guard index >= 0, index < workspace.columns.count, index != workspace.focusedColumn else {
+private func focusColumn(at index: Int?, in workspace: Workspace) -> Workspace {
+    guard let index, index != workspace.focusedColumn else {
         return workspace
     }
     var next = workspace

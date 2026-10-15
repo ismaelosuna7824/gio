@@ -94,6 +94,10 @@ public protocol LayoutEngine {
     func calculate(workspace: Workspace, viewport: CGRect) throws -> LayoutResult
 }
 
+public func isTiled(_ window: WindowID, modes: [WindowID: WindowMode]) -> Bool {
+    modes[window, default: .tiled] == .tiled
+}
+
 /// Plan §17: floating and fullscreen windows never enter the strip. Filter
 /// columns to tiled members (unknown IDs count as tiled — workspace
 /// membership implies a managed window), dropping emptied columns so the
@@ -106,7 +110,7 @@ public func tilingWorkspace(
     var filtered = workspace
     filtered.columns = workspace.columns.compactMap { column in
         var kept = column
-        kept.windows = column.windows.filter { modes[$0, default: .tiled] == .tiled }
+        kept.windows = column.windows.filter { isTiled($0, modes: modes) }
         return kept.windows.isEmpty ? nil : kept
     }
     if filtered.columns.isEmpty {

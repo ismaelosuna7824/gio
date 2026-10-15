@@ -14,6 +14,10 @@ public enum FocusDirection: Equatable, Sendable {
 /// the focused column (`K` previous, `J` next). Each column remembers its
 /// own focused window, so leaving and returning restores it.
 ///
+/// WC-12: horizontal moves skip columns whose windows are all non-tiled
+/// under `modes` (floating, fullscreen, minimized); empty columns stay
+/// reachable. Unknown IDs count as tiled, so an empty map skips nothing.
+///
 /// Missing targets are NO-OP: the workspace is returned unchanged. Callers
 /// detect that with `==`. Out-of-range indices are also NO-OP — focus never
 /// invents a position.
@@ -21,25 +25,24 @@ public enum FocusDirection: Equatable, Sendable {
 /// Pipeline note (plan §11): after a change the caller runs `ensureVisible`
 /// (Viewport), then Layout, then the Reconciler. That composition lands in
 /// the 0.1 assembly (RW-09); this unit only moves focus.
-public func moveFocus(in workspace: Workspace, direction: FocusDirection) -> Workspace {
+public func moveFocus(
+    in workspace: Workspace, direction: FocusDirection, modes: [WindowID: WindowMode]
+) -> Workspace {
+    guard workspace.columns.indices.contains(workspace.focusedColumn) else {
+        return workspace
+    }
     var next = workspace
     switch direction {
-    case .left:
-        guard next.focusedColumn > 0, next.focusedColumn - 1 < next.columns.count else {
+    case .left, .right:
+        let ahead = direction == .left
+            ? Array(workspace.columns.indices[..<workspace.focusedColumn].reversed())
+            : Array(workspace.columns.indices[(workspace.focusedColumn + 1)...])
+        guard let target = ahead.first(where: { isNavigable(workspace.columns[$0], modes: modes) }) else {
             return workspace
         }
-        next.focusedColumn -= 1
-        next.focusedWindow = next.columns[next.focusedColumn].focusedWindowID
-    case .right:
-        guard next.focusedColumn >= 0, next.focusedColumn + 1 < next.columns.count else {
-            return workspace
-        }
-        next.focusedColumn += 1
-        next.focusedWindow = next.columns[next.focusedColumn].focusedWindowID
+        next.focusedColumn = target
+        next.focusedWindow = next.columns[target].focusedWindowID
     case .up, .down:
-        guard next.focusedColumn >= 0, next.focusedColumn < next.columns.count else {
-            return workspace
-        }
         var column = next.columns[next.focusedColumn]
         let delta = direction == .up ? -1 : 1
         let target = column.focusedWindowIndex + delta
@@ -51,4 +54,8 @@ public func moveFocus(in workspace: Workspace, direction: FocusDirection) -> Wor
         next.focusedWindow = column.focusedWindowID
     }
     return next
+}
+
+func isNavigable(_ column: Column, modes: [WindowID: WindowMode]) -> Bool {
+    column.windows.isEmpty || column.windows.contains { isTiled($0, modes: modes) }
 }
