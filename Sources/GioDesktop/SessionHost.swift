@@ -225,6 +225,10 @@ final class SessionHost: @unchecked Sendable {
         space = SpaceCoordinator(context: .init(
             reflowAll: { [unowned self] in reflowAll() },
             discardPendingAdoptions: { [unowned self] in focus.discardPendingAdoptions() },
+            rescan: { [unowned self] in
+                discovery.enumerateAndPlace()
+                events.syncObservers()
+            },
             adoptFrontmostFocus: { [unowned self] in
                 guard let pid = probe.frontmostPID else {
                     return
