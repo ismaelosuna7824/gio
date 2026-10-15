@@ -57,6 +57,39 @@ final class IssueReportBundleTests: XCTestCase {
         )
     }
 
+    /// Live smoke (real log): `ditto -c -k` stored a `._name` AppleDouble
+    /// entry (extended attributes) next to every file; `unzip` on the
+    /// receiving side shows them as extra files.
+    func testTheZipHoldsOnlyThePlannedFilesWithoutMetadataEntries() throws {
+        let logs = root.appendingPathComponent("logs")
+        let destination = root.appendingPathComponent("Downloads")
+        try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+        let log = logs.appendingPathComponent("gio.log")
+        try "x\n".write(to: log, atomically: true, encoding: .utf8)
+        let input = IssueReportInput(
+            title: "", description: "x", includeConfig: false,
+            system: IssueReportSystem(
+                version: "1", macOS: "15", architecture: "arm64", displays: [], accessibilityTrusted: true, healthLines: []
+            ),
+            logPath: log.path, configPath: logs.appendingPathComponent("config.toml").path,
+            logText: "", date: Date(timeIntervalSince1970: 0)
+        )
+        let plan = makeIssueReportPlan(input, fileExists: { FileManager.default.fileExists(atPath: $0) })
+        let zip = try writeIssueReportBundle(plan, in: destination)
+
+        let list = Process()
+        let pipe = Pipe()
+        list.executableURL = URL(fileURLWithPath: "/usr/bin/zipinfo")
+        list.arguments = ["-1", zip.path]
+        list.standardOutput = pipe
+        try list.run()
+        list.waitUntilExit()
+        let entries = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+            .split(separator: "\n").filter { !$0.hasSuffix("/") }.map { String($0.split(separator: "/").last ?? "") }
+        XCTAssertEqual(entries.sorted(), ["description.txt", "gio.log", "system.txt"])
+    }
+
     func testAMissingDestinationFailsWithoutLeavingAFolder() {
         let input = IssueReportInput(
             title: "", description: "x", includeConfig: false,
