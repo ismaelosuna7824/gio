@@ -5,7 +5,8 @@ import SwiftUI
 
 /// DD-05 first-run onboarding, presented as a sheet on the main window: a
 /// welcome, Accessibility (required, with live status from the existing
-/// permission polling), optional Screen Recording, and the keys to know.
+/// permission polling), Screen Recording, and the keys to know with the
+/// Open at Login switch (DA-06).
 
 /// Remembers that onboarding was finished. Injected so tests never write
 /// the user's defaults.
@@ -102,6 +103,7 @@ extension EnvironmentValues {
 /// The live sheet: polls permissions through the model while on screen.
 struct OnboardingSheet: View {
     @ObservedObject var model: DesktopModel
+    @StateObject private var loginItem = LoginItemModel(service: SystemLoginItem())
     let startStep: OnboardingStep
     let onFinish: () -> Void
     let onLater: () -> Void
@@ -113,6 +115,7 @@ struct OnboardingSheet: View {
             screenRecordingGranted: model.snapshot.facts?.screenRecordingGranted ?? false,
             screenRecordingRequested: model.screenRecordingRequested,
             step: startStep,
+            loginItem: loginItem.presentation,
             onFinish: onFinish, onLater: onLater,
             requestAccessibility: {
                 _ = requestAXPermission()
@@ -127,10 +130,18 @@ struct OnboardingSheet: View {
             relaunch: {
                 onPrepareRelaunch()
                 model.relaunch()
-            }
+            },
+            setLoginItem: { loginItem.set($0) },
+            openLoginItems: { loginItem.openSystemSettings() }
         )
-        .onAppear { model.refresh() }
-        .pollWhileVisible(model, every: 1) { model.refresh() }
+        .onAppear {
+            model.refresh()
+            loginItem.refresh()
+        }
+        .pollWhileVisible(model, every: 1) {
+            model.refresh()
+            loginItem.refresh()
+        }
     }
 }
 
@@ -146,29 +157,37 @@ struct OnboardingContent: View {
     let accessibilityGranted: Bool
     let screenRecordingGranted: Bool
     let screenRecordingRequested: Bool
+    /// DA-06: the Open at Login row on the last step; nil hides it.
+    let loginItem: LoginItemPresentation?
     var onFinish: () -> Void = {}
     var onLater: () -> Void = {}
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
     var relaunch: () -> Void = {}
+    var setLoginItem: (Bool) -> Void = { _ in }
+    var openLoginItems: () -> Void = {}
     @State private var state: OnboardingState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingRequested: Bool = false,
-        step: OnboardingStep = .welcome,
+        step: OnboardingStep = .welcome, loginItem: LoginItemPresentation? = nil,
         onFinish: @escaping () -> Void = {}, onLater: @escaping () -> Void = {},
         requestAccessibility: @escaping () -> Void = {}, requestScreenRecording: @escaping () -> Void = {},
-        relaunch: @escaping () -> Void = {}
+        relaunch: @escaping () -> Void = {},
+        setLoginItem: @escaping (Bool) -> Void = { _ in }, openLoginItems: @escaping () -> Void = {}
     ) {
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
         self.screenRecordingRequested = screenRecordingRequested
+        self.loginItem = loginItem
         self.relaunch = relaunch
         self.onFinish = onFinish
         self.onLater = onLater
         self.requestAccessibility = requestAccessibility
         self.requestScreenRecording = requestScreenRecording
+        self.setLoginItem = setLoginItem
+        self.openLoginItems = openLoginItems
         _state = State(initialValue: OnboardingState(
             accessibilityGranted: accessibilityGranted, screenRecordingGranted: screenRecordingGranted, step: step
         ))
@@ -347,6 +366,13 @@ struct OnboardingContent: View {
                                 }
                             }
                         }
+                    }
+                }
+            }
+            if let loginItem {
+                SectionCard {
+                    CardRow(divider: false) {
+                        LoginItemRow(item: loginItem, setEnabled: setLoginItem, openLoginItems: openLoginItems)
                     }
                 }
             }

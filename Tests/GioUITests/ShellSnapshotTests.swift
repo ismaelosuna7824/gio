@@ -15,9 +15,11 @@ final class ShellSnapshotTests: XCTestCase {
             .environment(\.gioAccent, FocusRingSectionConfig.defaultColor)
     }
 
-    private func onboarding(_ name: String, step: OnboardingStep, ax: Bool, sr: Bool = false) throws {
+    private func onboarding(
+        _ name: String, step: OnboardingStep, ax: Bool, sr: Bool = false, loginItem: LoginItemPresentation? = nil
+    ) throws {
         try SnapshotHarness.render(name, size: CGSize(width: 560, height: 520)) {
-            page(OnboardingContent(accessibilityGranted: ax, screenRecordingGranted: sr, step: step))
+            page(OnboardingContent(accessibilityGranted: ax, screenRecordingGranted: sr, step: step, loginItem: loginItem))
         }
     }
 
@@ -38,7 +40,10 @@ final class ShellSnapshotTests: XCTestCase {
     }
 
     func testOnboardingKeys() throws {
-        try onboarding("dd05-onboarding-keys", step: .keys, ax: true, sr: true)
+        try onboarding(
+            "dd05-onboarding-keys", step: .keys, ax: true, sr: true,
+            loginItem: loginItemPresentation(status: .disabled, error: nil)
+        )
     }
 
     func testStatusGlyphs() throws {

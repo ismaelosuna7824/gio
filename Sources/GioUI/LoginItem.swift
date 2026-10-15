@@ -1,5 +1,6 @@
 import Foundation
 import GioCore
+import SwiftUI
 
 /// DA-06: what the Open at Login row shows for a login item state.
 public struct LoginItemPresentation: Equatable, Sendable {
@@ -83,5 +84,33 @@ public final class LoginItemModel: ObservableObject {
 
     public func openSystemSettings() {
         service.openSystemSettings()
+    }
+}
+
+/// The Open at Login row (Overview, last onboarding step): the switch and,
+/// while macOS waits for approval, a shortcut to Login Items.
+struct LoginItemRow: View {
+    let item: LoginItemPresentation
+    let setEnabled: (Bool) -> Void
+    let openLoginItems: () -> Void
+
+    var body: some View {
+        HStack(spacing: GioSpacing.s) {
+            SectionIcon(symbol: "power", tint: .green, size: 26)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Open at Login").font(GioFont.body)
+                Text(item.caption)
+                    .font(GioFont.caption)
+                    .foregroundStyle(GioColor.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: GioSpacing.xs)
+            if item.showsApprove {
+                Button("Open Login Items…", action: openLoginItems)
+                    .controlSize(.small)
+            }
+            GioSwitch(title: "Open at Login", isOn: Binding(get: { item.isOn }, set: setEnabled))
+                .disabled(!item.isEnabled)
+        }
     }
 }

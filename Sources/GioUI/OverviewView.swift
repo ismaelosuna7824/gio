@@ -227,7 +227,7 @@ struct OverviewDashboard: View {
             }
             if let loginItem {
                 CardRow {
-                    loginItemRow(loginItem)
+                    LoginItemRow(item: loginItem, setEnabled: setLoginItem, openLoginItems: openLoginItems)
                 }
             }
             // TG-04: Gio's trackpad swipes that macOS performs too.
@@ -304,26 +304,6 @@ struct OverviewDashboard: View {
                 Button(action.0, action: action.1)
                     .controlSize(.small)
             }
-        }
-    }
-
-    private func loginItemRow(_ item: LoginItemPresentation) -> some View {
-        HStack(spacing: GioSpacing.s) {
-            SectionIcon(symbol: "power", tint: .green, size: 26)
-            VStack(alignment: .leading, spacing: 1) {
-                Text("Open at Login").font(GioFont.body)
-                Text(item.caption)
-                    .font(GioFont.caption)
-                    .foregroundStyle(GioColor.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: GioSpacing.xs)
-            if item.showsApprove {
-                Button("Open Login Items…", action: openLoginItems)
-                    .controlSize(.small)
-            }
-            GioSwitch(title: "Open at Login", isOn: Binding(get: { item.isOn }, set: setLoginItem))
-                .disabled(!item.isEnabled)
         }
     }
 
