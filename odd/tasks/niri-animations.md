@@ -40,7 +40,7 @@ las animaciones". Refactor live-validated ("parece que va bien").
   `[animations.window-close]`, `[animations.window-resize]` each with `enabled`, `curve`, spring
   params / duration, inheriting the global `[animations]` defaults; Animations settings UI with an
   expandable per-animation list and preview.
-- [x] NA-05 (commit pending, branch `fix/johan-spaces-safari`) — Resizes instant by default (user, 2026-10-15,
+- [x] NA-05 (`31ff787`, branch `fix/johan-spaces-safari`) — Resizes instant by default (user, 2026-10-15,
   after SM-32..SM-34 and three 120 fps recordings of `Alt+F` on Postman: no flashing frame left, the content
   jump from one layout to the other is inherent to animating a size change with window images; tried
   `[animations.window-resize] enabled = false` in the user's config live, "me parece mejor", default but
