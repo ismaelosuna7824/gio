@@ -129,6 +129,23 @@ critical or high issue; every finding below was checked against the code before 
 - [ ] RL-08 (`e564c8d`, finding 7 `GIO-REL-DISPATCH-INPUT-VALIDATION`) — the version step moved to
   `scripts/release-version.sh`: whole-string bash `[[ =~ ]]`, the tag must be `v<version>`, unknown events
   refused, `::error::` messages never contain the input. `scripts/test-release-version.sh` (12 cases).
+- [x] RL-09 (`f804a21`, `c7cec18`, `9077836`) — CI had never passed (31 failures, 1 cancelled, oldest
+  2026-09-30): `macos-15`'s default Xcode 16.4 / Swift 6.1 does not compile the sources (NSWindow main-actor
+  isolation in `ManagedSpaceMonitor`, a type-check timeout in `KeyNames`) and cannot build the Icon Composer
+  icon, so no release could have run either. CI and release.yml's macOS jobs now run on the `xcode-27` image
+  (arm64, macOS 27; Xcode 27.2, Swift 6.4 on the runner) with its newest stable `Xcode_<version>.app` (or the
+  default), cache key `spm-xcode27-`. CI runs `swift test` serially like release.yml: under `--parallel`
+  three timing tests failed on the runner (fixed: `MotionWriteTests` gates the in-flight write instead of a
+  50 ms sleep; `LauncherPanelAnimationTests` targets a frame inside the main screen, AppKit had moved a panel
+  taller than the runner's virtual screen; `WriteLaneTests` slow app 0.15 s under the 0.25 s stall). Publish
+  also uploads `Gio.dmg` (same file, fixed name) so `releases/latest/download/Gio.dmg` is a stable download
+  link (landing `d21f1b5`); the updater still reads only `Gio-<version>.dmg` + `.sha256`. User decision
+  (2026-10-15): make `ismaelosuna7824/gio` public so the landing download and the updater work without a
+  token (history scanned for tokens/keys/p12 before: none). Evidence: CI run 38686821669 green (UI 310 (53
+  skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1970, unsigned app build OK); local `swift test
+  --parallel` 2878 tests exit 0; local release dry run (Release, Hardened Runtime, Apple Development, team
+  `2CAK428VHF`, `MARKETING_VERSION=0.1.0-rc.1`) BUILD SUCCEEDED and `make-dmg.sh` wrote and verified
+  `Gio-0.1.0-rc.1.dmg`. Not run: release.yml on GitHub (needs the `release` environment and secrets).
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or
