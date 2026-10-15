@@ -223,7 +223,7 @@ Window admission, observation and registration only. Out of scope: animation/per
   bundles 0 failures (UI 312/53 skipped, Session 487, POC 7, Mac 19, MacOS 98, Core 1976);
   signed build OK; `git diff --check` clean. LIVE PASS (2026-10-15): relaunch with WhatsApp
   parked left logged `parked clamped id=13396:7` at startup and the user saw no strip.
-- [x] WC-15 (commit below) — An admission float that now reads as a window rejoins the grid on
+- [x] WC-15 (`a03d47d`) — An admission float that now reads as a window rejoins the grid on
   activation (2026-10-15, user report: "quedaban ventanas detrás de otras ... parecía que era
   music el de atrás"; they had to quit and reopen Music). Evidence: a WindowServer overlap probe
   sampling every ~60 ms during the cross-monitor workload found one Music window at CG
@@ -291,3 +291,5 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-10-15: WC-13 Dock click reveals the app's workspace done (`f43daad`, branch
   `fix/dock-click-reveal`). LIVE PASS.
 - 2026-10-15: WC-14 park by the size the app kept done (`c941b20`, same branch). LIVE PASS.
+- 2026-10-15: WC-15 admission floats rejoin the grid on activation done (`a03d47d`, branch
+  `perf/measured-pass`). LIVE PENDING (needs an app that reports a dialog, then a window).
