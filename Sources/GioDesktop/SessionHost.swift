@@ -146,6 +146,9 @@ final class SessionHost: @unchecked Sendable {
     private var trackpadPreferencesRead: TimeInterval?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
+    /// PF-X: the Screen Recording check is an IPC to tccd (~8 ms); hot
+    /// paths answer from this cache, the polled facts refresh it.
+    private let screenRecording = ScreenRecordingPermissionCache()
     /// SM-04: pre-captured window images (refreshed once after each settle,
     /// no periodic timer) and the running overlay flight.
     private var snapshotRefresher: SnapshotCacheRefresher!
@@ -281,7 +284,7 @@ final class SessionHost: @unchecked Sendable {
             configMessages: { [unowned self] in configCoordinator.messages },
             engine: { [unowned self] in engine() },
             tileableModes: { [unowned self] in tileableModes() },
-            screenRecordingGranted: { hasScreenRecordingPermission() },
+            screenRecordingGranted: { [unowned self] in screenRecording.refresh() },
             accessibilityGranted: { hasAXPermission() },
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
@@ -324,11 +327,11 @@ final class SessionHost: @unchecked Sendable {
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
-                            config: session.config.animations, permission: hasScreenRecordingPermission()
+                            config: session.config.animations, permission: screenRecording.granted()
                         ) == .snapshot
                 },
                 ghostCacheWanted: { [unowned self] in
-                    SnapshotCapturer.isSupported && closeGhostEnabled() && hasScreenRecordingPermission()
+                    SnapshotCapturer.isSupported && closeGhostEnabled() && screenRecording.granted()
                 },
                 captureScreens: { [unowned self] in displayParameters.captureScreens },
                 capture: { [snapshotCapturer] request, done in
@@ -933,7 +936,7 @@ final class SessionHost: @unchecked Sendable {
             guard let self else {
                 return
             }
-            guard hasScreenRecordingPermission() else {
+            guard screenRecording.refresh() else {
                 DispatchQueue.main.async { completion("Screen Recording is missing: grant it first.") }
                 return
             }
@@ -1047,7 +1050,7 @@ final class SessionHost: @unchecked Sendable {
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
         queue.async { [weak self] in
-            guard let self, SnapshotCapturer.isSupported, hasScreenRecordingPermission() else {
+            guard let self, SnapshotCapturer.isSupported, screenRecording.granted() else {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
