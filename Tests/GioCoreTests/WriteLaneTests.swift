@@ -253,7 +253,9 @@ final class WriteLaneTests: XCTestCase {
 
     func testCollectStillSeesAFailedWriteOfASlowApp() {
         let fast = id(1, pid: 10), refusing = id(1, pid: 20)
-        let actuator = seeded([fast, refusing], delays: [20: 0.2])
+        // Slow (longer than the dispatch's 0.1 s bound) but well under the
+        // 0.25 s stall timeout, so a loaded CI runner still sees the refusal.
+        let actuator = seeded([fast, refusing], delays: [20: 0.15])
         actuator.failing = [refusing]
         let reconciler = WindowReconciler(actuator: actuator)
         let started = Date()
