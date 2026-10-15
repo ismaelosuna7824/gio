@@ -711,7 +711,7 @@ demás y hacía raro lo de solaparse; creo que ocurre mucho más con 2 monitores
   skipped) / Session 477 / POC 7 / Mac 19 / MacOS 95 / Core 1969, 0 failures. Cost: entering
   and leaving such a column resizes it (888 <-> 1784). LIVE PENDING: Zed maximized, Alt+L onto
   Xcode with the external on the left.
-- [x] MM-10 (commit pending) — Columns leaving by the shared edge slide out instead of vanishing.
+- [x] MM-10 (`a865752`) — Columns leaving by the shared edge slide out instead of vanishing.
   Report (2026-10-14 20:59 local): "parpadea ... cuando me muevo lento y llego a WhatsApp, y a
   veces en otras pantallas". Evidence: screen recording 03:59:34Z-03:59:59Z (3600x2338, VFR, ~60
   fps, start aligned to the first focusRight at 36.694Z, t≈1.75 s) and the log. Every Alt+L from
