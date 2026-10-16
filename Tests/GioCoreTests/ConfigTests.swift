@@ -176,6 +176,19 @@ final class ConfigTests: XCTestCase {
         )
     }
 
+    func testTheLayoutFormWritesTheNewWindowPosition() throws {
+        var form = LayoutSettingsForm(config: LayoutSectionConfig(newWindowPosition: .start))
+        XCTAssertEqual(form.newWindowPosition, .start)
+        form.newWindowPosition = .leftOfFocused
+        XCTAssertTrue(
+            form.edits.contains(.set(table: "layout", key: "new-window-position", value: .string("left-of-focused")))
+        )
+        guard case .success(let patched) = patchGioConfig("", edits: form.edits) else {
+            return XCTFail("patch failed")
+        }
+        XCTAssertEqual(patched.config.layout.newWindowPosition, .leftOfFocused)
+    }
+
     func testMissingFileIsSilentDefaults() {
         let (config, messages) = loadGioConfig(at: "/nonexistent/gio-test-config.toml")
         XCTAssertEqual(config.layout.gaps, 8)

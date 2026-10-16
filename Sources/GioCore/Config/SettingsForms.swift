@@ -34,6 +34,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     /// NC-08: `preset-window-heights`, the same comma-separated text.
     public var presetHeightsText: String
     public var centerFocusedColumn: CenterFocusedColumnMode
+    /// `[layout] new-window-position`.
+    public var newWindowPosition: NewWindowPosition
     public var maximizeSingleWindow: Bool
     /// NC-13 `always-center-single-column`.
     public var alwaysCenterSingleColumn: Bool
@@ -57,6 +59,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         presetsText = Self.text(config.presetColumnWidths)
         presetHeightsText = Self.text(config.presetWindowHeights)
         centerFocusedColumn = config.centerFocusedColumn
+        newWindowPosition = config.newWindowPosition
         maximizeSingleWindow = config.maximizeSingleWindow
         alwaysCenterSingleColumn = config.alwaysCenterSingleColumn
         defaultLayout = config.defaultLayout
@@ -123,6 +126,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
                 : .set(table: "layout", key: "fullscreen-gap", value: .number(fullscreenGap)),
             .set(table: "layout", key: "default-column-width", value: .number(widthValue)),
             .set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue)),
+            .set(table: "layout", key: "new-window-position", value: .string(newWindowPosition.rawValue)),
             .set(table: "layout", key: "maximize-single-window", value: .bool(maximizeSingleWindow)),
             .set(table: "layout", key: "always-center-single-column", value: .bool(alwaysCenterSingleColumn)),
             .set(
