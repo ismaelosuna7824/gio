@@ -355,7 +355,7 @@ read for the snap and focus rules.
   delegated, same branch. Commit `0699e0f`. LIVE PENDING (TESTING.md 15i (n)).
 - [x] TG-08 — A workspace or overview swipe needs a deliberate vertical stroke: twice as
   vertical as horizontal and `swipe-distance` (0.15) of travel; `swipe-distance` key, Settings
-  slider, `distance=` in the swipe log. LIVE PENDING (three-finger scrolls and swipes).
+  slider, `distance=` in the swipe log. Commit `5c53bf4`. LIVE PENDING (three-finger scrolls and swipes).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -463,3 +463,5 @@ read for the snap and focus rules.
   instant-settle refusal, `endHold` writes before the overlay comes down); RDD off, `gentle-ai
   review assess` tier high, so an independent reviewer ran (no blocker, two priority-2 findings,
   both fixed). Not pushed; LIVE PENDING.
+- 2026-10-16: TG-08 committed `5c53bf4` on `feat/app-polish` (deliberate vertical swipe,
+  `swipe-distance`). Not pushed; LIVE PENDING.
