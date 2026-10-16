@@ -358,6 +358,14 @@ func applyLayoutKey(
                 "line \(line): layout.center-focused-column expects \"never\", \"always\" or \"on-overflow\""
             )
         }
+    case "new-window-position":
+        if case .string(let text) = value, let position = NewWindowPosition(rawValue: text) {
+            config.layout.newWindowPosition = position
+        } else {
+            errors.append(
+                "line \(line): layout.new-window-position expects \"end\", \"start\", \"right-of-focused\" or \"left-of-focused\""
+            )
+        }
     case "maximize-single-window":
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
             config.layout.maximizeSingleWindow = $0

@@ -147,6 +147,35 @@ final class ConfigTests: XCTestCase {
         XCTAssertEqual(warnings, ["line 2: unknown behavior key 'skylight', ignored"])
     }
 
+    func testNewWindowPositionDefaultsToEnd() throws {
+        XCTAssertEqual(LayoutSectionConfig().newWindowPosition, .end)
+        let (config, _) = try parseGioConfig("[layout]\ngaps = 8\n").get()
+        XCTAssertEqual(config.layout.newWindowPosition, .end)
+    }
+
+    func testNewWindowPositionParsesEachValue() throws {
+        let values: [(String, NewWindowPosition)] = [
+            ("end", .end), ("start", .start), ("right-of-focused", .rightOfFocused), ("left-of-focused", .leftOfFocused),
+        ]
+        for (text, position) in values {
+            let (config, warnings) = try parseGioConfig("[layout]\nnew-window-position = \"\(text)\"\n").get()
+            XCTAssertEqual(config.layout.newWindowPosition, position)
+            XCTAssertTrue(warnings.isEmpty)
+        }
+    }
+
+    func testUnknownNewWindowPositionIsRejectedWithAMessage() {
+        guard case .failure(let errors) = parseGioConfig("[layout]\nnew-window-position = \"middle\"\n") else {
+            return XCTFail("expected a validation error")
+        }
+        XCTAssertEqual(
+            errors.messages,
+            [
+                "line 2: layout.new-window-position expects \"end\", \"start\", \"right-of-focused\" or \"left-of-focused\"",
+            ]
+        )
+    }
+
     func testMissingFileIsSilentDefaults() {
         let (config, messages) = loadGioConfig(at: "/nonexistent/gio-test-config.toml")
         XCTAssertEqual(config.layout.gaps, 8)
