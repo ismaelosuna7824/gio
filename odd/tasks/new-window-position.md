@@ -44,14 +44,14 @@ WP-01..WP-03 below. Not in scope: a per-rule override (`[[window-rules]]`), dwin
 - [x] **WP-01 Core:** `NewWindowPosition`, `LayoutSectionConfig.newWindowPosition`, parser
   (`[layout] new-window-position`, error on unknown value), config template, positioned
   `appendArrivalColumn`/`placeArrival`/`applyTitleRecheck` with tests (each position, focus shift,
-  empty strip, dwindle unchanged, parse/invalid/default). Commit `99f7ba5`. Route: delegated
+  empty strip, dwindle unchanged, parse/invalid/default). Commit `efc8a6c`. Route: delegated
   (writer trigger).
 - [x] **WP-02 Session:** `DiscoveryService` passes the configured position for live arrivals and
-  dragged-out tabs, `end` for the startup/rescan scan; session tests. Commit `781d6d0`.
+  dragged-out tabs, `end` for the startup/rescan scan; session tests. Commit `341eb65`.
   Route: delegated (writer trigger).
 - [x] **WP-03 Settings and docs:** Settings > Layout picker ("New windows open"), its config edit,
   `docs/USER_GUIDE.md` `[layout]` row and Settings row, `docs/TESTING.md` live-pending line.
-  Commit `65e4719`. Route: delegated (writer trigger).
+  Commit `ac1b60f`. Route: delegated (writer trigger).
 
 ## Checks
 `swift test` (every bundle, 0 failures), signed `xcodebuild` (GioUI changes), `git diff --check`.
@@ -62,7 +62,7 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
 
 ## Progress
 - 2026-10-15: document created; WP-01..WP-03 pending.
-- 2026-10-15 WP-01 `99f7ba5` `feat(layout): choose where new windows open (WP-01)`: RED
+- 2026-10-15 WP-01 `efc8a6c` `feat(layout): choose where new windows open (WP-01)`: RED
   `swift build --build-tests` failed to compile (`cannot find 'NewWindowPosition' in scope`,
   `extra argument 'position' in call`, no member `newWindowPosition`). GREEN: 6 new
   `RulePlacementTests` (each value with focus taken and kept, empty strip, a rule's other
@@ -71,18 +71,21 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
   test-setup ordering bug in the title re-check test, fixed before commit). The position
   index lives in `NewWindowPosition.insertionIndex`; a non-focusing arrival shifts `focusedColumn`
   only when inserted at or before it in a non-empty strip, so `end` stays byte for byte.
-- 2026-10-15 WP-02 `781d6d0` `feat(session): open live arrivals at the configured position (WP-02)`:
+- 2026-10-15 WP-02 `341eb65` `feat(session): open live arrivals at the configured position (WP-02)`:
   `DiscoveryService.Context.newWindowPosition` (default `{ .end }`), wired in `SessionHost` to
   `session.config.layout.newWindowPosition` (read at each arrival) and in the test `EventWorld`.
   RED: with `DiscoveryService.swift` at HEAD the build failed (`extra argument 'newWindowPosition'
   in call`). GREEN: `NewWindowPositionArrivalTests` (live arrival with `right-of-focused` lands
   right of the focused column; a full scan still appends) 2/2; `swift test`: 2975 executed,
   0 failures (53 skipped).
-- 2026-10-15 WP-03 `65e4719` `feat(settings): pick where new windows open (WP-03)`:
+- 2026-10-15 WP-03 `ac1b60f` `feat(settings): pick where new windows open (WP-03)`:
   `LayoutSettingsForm.newWindowPosition` and its edit; the picker sits in Settings > Layout >
   Column Width (the center-focused-column picker lives in the Focus section's Scrolling card, which
   edits `FocusSectionDraft`, not the layout form). RED: with `SettingsForms.swift` at HEAD the build
   failed (the picker's options did not resolve). GREEN: `swift test`: GioPackageTests 2976
   executed, 0 failures (53 skipped); signed `xcodebuild` (scheme Gio): BUILD SUCCEEDED;
   `git diff --check` clean. Live behavior not verified (TESTING.md live-pending line).
+- 2026-10-16: the commits had been rebased onto `7794db1` (hashes above are the rebased ones);
+  moved off `dev` to `feat/new-window-position` (cut from up-to-date `origin/dev`), `dev` reset
+  to `origin/dev`. Not pushed.
 - Next: live check per `docs/TESTING.md` (New window position).
