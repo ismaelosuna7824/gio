@@ -71,7 +71,13 @@ struct GioSegmented<Value: Hashable>: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: width)
+            // AppKit's segmented control never shrinks below (nor stretches
+            // to) the proposed width: in a fixed 300 pt frame the Rules
+            // editor's Mode picker (346 pt) ran past the card's edge. It
+            // keeps its own width, trailing in at least `width`.
+            .fixedSize()
+            .frame(minWidth: width, alignment: .trailing)
+            .fixedSize()
             .accessibilityLabel(title)
         }
     }
