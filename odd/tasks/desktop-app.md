@@ -164,6 +164,38 @@ necesidad de modificar el config.toml").
   `testTheZipHoldsOnlyThePlannedFilesWithoutMetadataEntries` (`._description.txt`, `._gio.log`,
   `._system.txt` listed by `zipinfo -1`), GREEN 3/3. LIVE PENDING (TESTING.md 10c): Finder
   reveal, the browser issue page with the prefilled fields, and GitHub accepting the dragged zip.
+- [x] DA-09 (commit below) — Segmented controls keep their own width (2026-10-16, user screenshot:
+  the Rules editor's Mode picker "Any / Tiled / Floating / Fullscreen" ran past the card's right
+  edge). Evidence (throwaway offscreen test, live AppKit control): `NSSegmentedControl` reports
+  346 pt and neither shrinks to nor stretches to SwiftUI's proposal, so in `frame(width: 300)` it
+  overflowed by 46 pt. `GioSegmented` (live branch) now uses `.fixedSize()` +
+  `.frame(minWidth: width, alignment: .trailing)` + `.fixedSize()`: at least `width`, never
+  narrower than the control, trailing. Verified by rendering the live `RuleEditor` to PNG: the
+  picker ends inside the card; the Layout page's preview picker too. No unit test (layout of an
+  AppKit control; AGENTS.md: views have none).
+- [x] DA-10 (commit below) — Section switches build only what is on screen (2026-10-16, user: "se
+  siente un poco lento en cambiar entre tabs"). Measured (throwaway offscreen test, optimized
+  build, `NSHostingView` create + layout + display per page, median of 5) before -> after:
+  Shortcuts 196 -> 59 ms, Focus 63 -> 38, Layout 58 -> 39, Animations 56 -> 41, Overview 41 -> 25,
+  Diagnostics 43 -> 24, Logs 57 -> 52, Workspaces 14, Rules 10. `GioPage` lays a scrolling page out
+  in a `LazyVStack` (cards are built as they scroll in; static snapshot pages keep the `VStack`),
+  and Shortcuts' category cards are a `LazyVStack` of their own (sampled: ~120 AppKit buttons plus
+  tooltips built eagerly). Tried and reverted: keeping visited pages mounted in a `ZStack`
+  (opacity + `disabled`): a repeat switch still cost 33-180 ms and every refresh 27 ms instead of
+  6, so it was slower. Live pages rendered to PNG (Layout, Shortcuts) look unchanged.
+- [x] DA-11 (commit below) — The first-run setup covers the whole display (2026-10-16, user: "un
+  setup más bonito, tal vez pantalla completa así como lo hace el macOS ... bonito y
+  minimalista"). `SetupCoverController` (GioUI) shows `OnboardingSheet` in a borderless window
+  over the main window's display, above the menu bar and the Dock while Gio is active, dropping
+  to the normal level when the user goes to System Settings to grant a permission (and back when
+  Gio is active again), fading in and out, re-fitting on screen changes; Gio never manages its own
+  windows. `OnboardingContent` restyled for it: mint and pink glows on the page color, 52 pt
+  welcome title with a 190 pt mascot, 36 pt step titles, capsule buttons (`SetupButtonStyle`),
+  Back bottom left, the dots centered, Continue bottom right. Steps, state and permission logic
+  unchanged. Snapshots at 1512 x 982 (light and dark) reviewed. Live (Release, 2026-10-16,
+  `GioOnboardingCompleted` set false, relaunch, `screencapture`): the setup covers the built-in
+  display including the menu bar and the Dock; the flag was restored and Gio relaunched. LIVE
+  PENDING: going through the steps by hand, System Settings showing above it.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
