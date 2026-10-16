@@ -238,11 +238,11 @@ Trackpad swipes (see [Trackpad gestures](#trackpad-gestures)). Unlike the other 
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `scroll` | bool | `true` | A horizontal swipe scrolls the strip of the display under the pointer: it follows the fingers, and on release it springs to a column edge with the speed of the swipe. |
+| `scroll` | bool | `false` | A horizontal swipe scrolls the strip of the display under the pointer: it follows the fingers, and on release it springs to a column edge with the speed of the swipe. |
 | `scroll-fingers` | number | `3` | Fingers for the scroll: `3`, `4` or `5`. Two fingers are the system's own scrolling and are not offered. |
 | `scroll-sensitivity` | number | `1.0` | Strip travel for a swipe across the whole trackpad, in screen widths. Clamped to `0.1...5.0` with a warning. |
 | `natural` | bool | `true` | Content follows the fingers, like macOS natural scrolling: swipe left to see the columns on the right, swipe up to go to the workspace below. `false` inverts the scroll and the workspace swipe. |
-| `workspace-swipe` | bool | `true` | A vertical swipe switches to the workspace above or below, one per swipe (`focus-workspace-up` / `-down`). |
+| `workspace-swipe` | bool | `false` | A vertical swipe switches to the workspace above or below, one per swipe (`focus-workspace-up` / `-down`). |
 | `workspace-fingers` | number | `3` | Fingers for the workspace swipe: `3`, `4` or `5`. May equal `scroll-fingers` (the direction tells them apart). |
 | `overview` | bool | `false` | A swipe up opens or closes the workspace overview (like `Alt+O`). Off by default because macOS Mission Control already uses a four-finger swipe up. |
 | `overview-fingers` | number | `4` | Fingers for the overview swipe: `3`, `4` or `5`. Must differ from `workspace-fingers` while both are on (both swipe vertically): otherwise the overview is turned off with a warning. |
@@ -431,9 +431,9 @@ The panel shows the stack as it was when it opened; floating windows are not dra
 
 ## Trackpad gestures
 
-Gio reads the fingers on the built-in trackpad and on Magic Trackpads (see [Private APIs](../README.md#private-apis)) and turns swipes into strip and workspace moves. Keys are in [`[gestures]`](#gestures); Settings, Focus, **Trackpad Gestures** edits them.
+Gio reads the fingers on the built-in trackpad and on Magic Trackpads (see [Private APIs](../README.md#private-apis)) and turns swipes into strip and workspace moves. Every gesture is **off by default**: turn the ones you want on in Settings, Focus, **Trackpad Gestures** (or [`[gestures]`](#gestures)), and move macOS's own three-finger swipes out of the way first (below).
 
-| Swipe (defaults) | Effect |
+| Swipe (once turned on) | Effect |
 | --- | --- |
 | Three fingers left or right | The strip of the display under the pointer follows the fingers, columns coming into view as they arrive. Lift: the strip keeps the swipe's speed, springs to the nearest column edge (a fast swipe travels further, never past the first or last column) and the column it lands on takes the focus: the furthest one fully visible in the direction you swiped, as in niri. Its window is raised like after `Alt+L`, without moving the pointer. |
 | Three fingers up or down | One workspace down or up per swipe (`natural = true`: up shows the workspace below), like `focus-workspace-down` / `-up`. |
