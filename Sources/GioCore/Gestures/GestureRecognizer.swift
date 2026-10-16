@@ -108,13 +108,13 @@ public enum SwipeDirection: String, Equatable, Sendable {
 /// TG-01: what the recognizer reports. Horizontal swipes are continuous
 /// (began, changed by the centroid's x travel since the last event, ended
 /// with the release velocity, or cancelled); vertical swipes are discrete,
-/// one per touch-down.
+/// one per touch-down, carrying the vertical travel (TG-08) when they fired.
 public enum TrackpadGestureEvent: Equatable, Sendable {
     case scrollBegan(fingers: Int)
     case scrollChanged(dx: Double)
     case scrollEnded(velocity: Double)
     case scrollCancelled
-    case verticalSwipe(fingers: Int, direction: SwipeDirection)
+    case verticalSwipe(fingers: Int, direction: SwipeDirection, distance: Double)
 }
 
 /// TG-01: which finger counts carry a gesture on each axis.
@@ -122,15 +122,26 @@ public struct GestureRecognizerSettings: Equatable, Sendable {
     /// Centroid travel (normalized trackpad units, about 3 mm on a laptop
     /// trackpad) before a gesture commits to an axis.
     public static let defaultCommitDistance = 0.03
+    /// TG-08: vertical travel, as a fraction of the trackpad height, before
+    /// a vertical swipe fires.
+    public static let defaultSwipeDistance = 0.15
+    /// TG-08: a vertical swipe stays at least this many times more vertical
+    /// than horizontal (|dy| >= 2 |dx|); anything flatter is a diagonal.
+    public static let verticalDominance = 2.0
 
     public var horizontalFingers: Int?
     public var verticalFingers: Set<Int>
     public var commitDistance: Double
+    public var swipeDistance: Double
 
-    public init(horizontalFingers: Int?, verticalFingers: Set<Int>, commitDistance: Double = defaultCommitDistance) {
+    public init(
+        horizontalFingers: Int?, verticalFingers: Set<Int>,
+        commitDistance: Double = defaultCommitDistance, swipeDistance: Double = defaultSwipeDistance
+    ) {
         self.horizontalFingers = horizontalFingers
         self.verticalFingers = verticalFingers
         self.commitDistance = commitDistance
+        self.swipeDistance = swipeDistance
     }
 
     /// The fewest fingers any gesture needs (0: none enabled).
@@ -149,8 +160,13 @@ public struct GestureRecognizerSettings: Equatable, Sendable {
 ///   reached (the centroid jump of a landing finger is not movement).
 /// - Before the commit distance, any count change restarts recognition.
 /// - At the commit distance the axis locks (the larger component wins):
-///   horizontal with the scroll count scrolls, vertical with a vertical count
-///   emits one swipe; an axis without a gesture consumes the touch-down.
+///   horizontal with the scroll count scrolls; an axis without a gesture
+///   consumes the touch-down.
+/// - TG-08: vertical with a vertical count must be clearly vertical
+///   (|dy| >= `verticalDominance` |dx|), then waits: one swipe fires at the
+///   frame the vertical travel from the touch-down reaches `swipeDistance`.
+///   Turning diagonal or a finger count change while waiting consumes the
+///   touch-down without an event; lifting short of the distance does nothing.
 /// - While scrolling, an extra finger cancels (the gesture is abandoned) and
 ///   lifting a finger ends it with the release velocity.
 /// - A consumed touch-down is released once fewer fingers than any gesture
@@ -159,6 +175,7 @@ public struct GestureRecognizer: Sendable {
     private enum Phase: Sendable {
         case idle
         case tracking(fingers: Int, origin: CGPoint, time: TimeInterval)
+        case swiping(fingers: Int, origin: CGPoint)
         case scrolling(fingers: Int, lastX: Double, position: Double)
         case consumed
     }
@@ -183,6 +200,13 @@ public struct GestureRecognizer: Sendable {
                 return []
             }
             return commit(fingers: fingers, origin: origin, originTime: time, frame: frame)
+        case .swiping(let fingers, let origin):
+            guard count == fingers else {
+                phase = .consumed
+                release(count)
+                return []
+            }
+            return swipe(fingers: fingers, origin: origin, frame: frame)
         case .scrolling(let fingers, let lastX, let position):
             if count == fingers {
                 let x = Double(frame.centroid.x)
@@ -241,10 +265,28 @@ public struct GestureRecognizer: Sendable {
             phase = .scrolling(fingers: fingers, lastX: Double(centroid.x), position: dx)
             return [.scrollBegan(fingers: fingers), .scrollChanged(dx: dx)]
         }
-        phase = .consumed
-        guard settings.verticalFingers.contains(fingers) else {
+        guard settings.verticalFingers.contains(fingers),
+              abs(dy) >= GestureRecognizerSettings.verticalDominance * abs(dx)
+        else {
+            phase = .consumed
             return []
         }
-        return [.verticalSwipe(fingers: fingers, direction: dy > 0 ? .up : .down)]
+        phase = .swiping(fingers: fingers, origin: origin)
+        return swipe(fingers: fingers, origin: origin, frame: frame)
+    }
+
+    /// TG-08: waits for the vertical travel to reach the swipe distance.
+    private mutating func swipe(fingers: Int, origin: CGPoint, frame: TouchFrame) -> [TrackpadGestureEvent] {
+        let dx = Double(frame.centroid.x - origin.x)
+        let dy = Double(frame.centroid.y - origin.y)
+        if abs(dx) > abs(dy) / GestureRecognizerSettings.verticalDominance {
+            phase = .consumed
+            return []
+        }
+        guard abs(dy) >= settings.swipeDistance else {
+            return []
+        }
+        phase = .consumed
+        return [.verticalSwipe(fingers: fingers, direction: dy > 0 ? .up : .down, distance: abs(dy))]
     }
 }

@@ -246,6 +246,7 @@ Trackpad swipes (see [Trackpad gestures](#trackpad-gestures)). Unlike the other 
 | `workspace-fingers` | number | `3` | Fingers for the workspace swipe: `3`, `4` or `5`. May equal `scroll-fingers` (the direction tells them apart). |
 | `overview` | bool | `false` | A swipe up opens or closes the workspace overview (like `Alt+O`). Off by default because macOS Mission Control already uses a four-finger swipe up. |
 | `overview-fingers` | number | `4` | Fingers for the overview swipe: `3`, `4` or `5`. Must differ from `workspace-fingers` while both are on (both swipe vertically): otherwise the overview is turned off with a warning. |
+| `swipe-distance` | number | `0.15` | How far the fingers travel up or down before a workspace swipe or the overview fires, as a fraction of the trackpad height. Clamped to `0.05...0.5` with a warning. A vertical swipe needs a clear upward or downward stroke (at least twice as vertical as horizontal): resting fingers, the start of a three-finger scroll or a diagonal never switch workspace. |
 
 ### Custom key bindings
 

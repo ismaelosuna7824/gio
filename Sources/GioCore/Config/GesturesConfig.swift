@@ -9,6 +9,8 @@ import Foundation
 public struct GesturesSectionConfig: Equatable, Sendable {
     public static let fingerRange = 3...5
     public static let sensitivityRange = 0.1...5.0
+    /// TG-08: `swipe-distance`, a fraction of the trackpad height.
+    public static let swipeDistanceRange = 0.05...0.5
 
     /// Horizontal swipe scrolls the strip, following the fingers.
     public var scroll: Bool
@@ -24,10 +26,14 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     /// Swipe up opens or closes the workspace overview.
     public var overview: Bool
     public var overviewFingers: Int
+    /// TG-08: vertical travel (fraction of the trackpad height) before a
+    /// workspace swipe or the overview fires.
+    public var swipeDistance: Double
 
     public init(
         scroll: Bool = true, scrollFingers: Int = 3, scrollSensitivity: Double = 1.0, natural: Bool = true,
-        workspaceSwipe: Bool = true, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4
+        workspaceSwipe: Bool = true, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4,
+        swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance
     ) {
         self.scroll = scroll
         self.scrollFingers = scrollFingers
@@ -37,6 +43,7 @@ public struct GesturesSectionConfig: Equatable, Sendable {
         self.workspaceFingers = workspaceFingers
         self.overview = overview
         self.overviewFingers = overviewFingers
+        self.swipeDistance = swipeDistance
     }
 
     public var anyEnabled: Bool {
@@ -56,7 +63,9 @@ public struct GesturesSectionConfig: Equatable, Sendable {
         if overview {
             vertical.insert(overviewFingers)
         }
-        return GestureRecognizerSettings(horizontalFingers: scroll ? scrollFingers : nil, verticalFingers: vertical)
+        return GestureRecognizerSettings(
+            horizontalFingers: scroll ? scrollFingers : nil, verticalFingers: vertical, swipeDistance: swipeDistance
+        )
     }
 }
 
@@ -79,16 +88,10 @@ func applyGesturesKey(
         }
         set(Int(number))
     }
-    switch key {
-    case "scroll":
-        flag(defaults.scroll) { config.gestures.scroll = $0 }
-    case "scroll-fingers":
-        fingers(defaults.scrollFingers) { config.gestures.scrollFingers = $0 }
-    case "scroll-sensitivity":
-        let range = GesturesSectionConfig.sensitivityRange
+    func number(_ range: ClosedRange<Double>, _ fallback: Double, _ set: (Double) -> Void) {
         guard let number = value.number, number.isFinite else {
             warnings.append(
-                "line \(line): gestures.\(key) expects a number from \(range.lowerBound) to \(range.upperBound), using \(defaults.scrollSensitivity)"
+                "line \(line): gestures.\(key) expects a number from \(range.lowerBound) to \(range.upperBound), using \(fallback)"
             )
             return
         }
@@ -98,7 +101,21 @@ func applyGesturesKey(
                 "line \(line): gestures.\(key) clamped to \(clamped) (valid \(range.lowerBound)-\(range.upperBound))"
             )
         }
-        config.gestures.scrollSensitivity = clamped
+        set(clamped)
+    }
+    switch key {
+    case "scroll":
+        flag(defaults.scroll) { config.gestures.scroll = $0 }
+    case "scroll-fingers":
+        fingers(defaults.scrollFingers) { config.gestures.scrollFingers = $0 }
+    case "scroll-sensitivity":
+        number(GesturesSectionConfig.sensitivityRange, defaults.scrollSensitivity) {
+            config.gestures.scrollSensitivity = $0
+        }
+    case "swipe-distance":
+        number(GesturesSectionConfig.swipeDistanceRange, defaults.swipeDistance) {
+            config.gestures.swipeDistance = $0
+        }
     case "natural":
         flag(defaults.natural) { config.gestures.natural = $0 }
     case "workspace-swipe":
@@ -137,6 +154,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
     public var workspaceFingers: Int
     public var overview: Bool
     public var overviewFingers: Int
+    public var swipeDistance: Double
 
     public init(config: GesturesSectionConfig) {
         scroll = config.scroll
@@ -147,13 +165,14 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         workspaceFingers = config.workspaceFingers
         overview = config.overview
         overviewFingers = config.overviewFingers
+        swipeDistance = config.swipeDistance
     }
 
     var section: GesturesSectionConfig {
         GesturesSectionConfig(
             scroll: scroll, scrollFingers: scrollFingers, scrollSensitivity: scrollSensitivity, natural: natural,
             workspaceSwipe: workspaceSwipe, workspaceFingers: workspaceFingers,
-            overview: overview, overviewFingers: overviewFingers
+            overview: overview, overviewFingers: overviewFingers, swipeDistance: swipeDistance
         )
     }
 
@@ -162,6 +181,9 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         let range = GesturesSectionConfig.sensitivityRange
         if !(scrollSensitivity.isFinite && range.contains(scrollSensitivity)) {
             found.append("Sensitivity must be \(range.lowerBound) to \(range.upperBound).")
+        }
+        if !(swipeDistance.isFinite && GesturesSectionConfig.swipeDistanceRange.contains(swipeDistance)) {
+            found.append("Swipe distance must be 5% to 50% of the trackpad height.")
         }
         let fingers = GesturesSectionConfig.fingerRange
         if ![scrollFingers, workspaceFingers, overviewFingers].allSatisfy(fingers.contains) {
@@ -176,6 +198,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
     public var edits: [ConfigEdit] {
         // Two decimals keep the slider's value readable in config.toml.
         let sensitivity = (scrollSensitivity * 100).rounded() / 100
+        let distance = (swipeDistance * 100).rounded() / 100
         return [
             .set(table: "gestures", key: "scroll", value: .bool(scroll)),
             .set(table: "gestures", key: "scroll-fingers", value: .int(scrollFingers)),
@@ -185,6 +208,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
             .set(table: "gestures", key: "workspace-fingers", value: .int(workspaceFingers)),
             .set(table: "gestures", key: "overview", value: .bool(overview)),
             .set(table: "gestures", key: "overview-fingers", value: .int(overviewFingers)),
+            .set(table: "gestures", key: "swipe-distance", value: .number(distance)),
         ]
     }
 }

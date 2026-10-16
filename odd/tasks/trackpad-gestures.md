@@ -309,6 +309,22 @@ read for the snap and focus rules.
   an instant placement) runs the instant pass first, with the overlay up, and ends the overlay
   after (`SnapshotFlightController.endHold(after:)`); the velocity is lost there, the pass is
   instant anyway.
+- TG-08 deliberate vertical swipe (2026-10-16 user report: "a veces de la nada cambia de
+  workspace", too sensitive; config `scroll-fingers = 3`, `workspace-fingers = 3`; log bursts
+  `gesture swipe fingers=3 direction=up action=focusWorkspaceDown` about every second). Cause:
+  the axis locked at the 0.03 commit distance (about 3 mm) and a vertical lock emitted the
+  swipe at once, so 3 mm of slightly-more-vertical drift (resting fingers, the start of a
+  three-finger scroll, a diagonal) switched workspace. Decision: at the lock a vertical
+  candidate with a vertical count proceeds only if |dy| >= `verticalDominance` (2.0) |dx|,
+  else the touch-down is consumed; it then waits (phase `swiping`) and emits one
+  `verticalSwipe(fingers:direction:distance:)` at the frame the vertical travel from the
+  touch-down reaches `swipeDistance` (`[gestures] swipe-distance`, default 0.15 of the
+  trackpad height, clamped 0.05-0.5), then consumes. While waiting, |dx| > |dy| / 2 (turned
+  diagonal) or a finger count change consumes with no event; lifting short of the distance does
+  nothing. Horizontal scrolling is unchanged. The swipe log carries `distance=` (two decimals).
+  Settings: "Swipe distance" slider (percent) in the Trackpad Gestures card, finger rows
+  labelled per gesture ("Fingers to scroll", "Fingers to switch workspaces", "Fingers for the
+  overview").
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -337,6 +353,9 @@ read for the snap and focus rules.
   frames, the real windows are written once at the release; the AX pump stays the fallback
   (renderer `ax`, no Screen Recording, a missing image or backdrop, a failed prime). Route:
   delegated, same branch. Commit `0699e0f`. LIVE PENDING (TESTING.md 15i (n)).
+- [x] TG-08 — A workspace or overview swipe needs a deliberate vertical stroke: twice as
+  vertical as horizontal and `swipe-distance` (0.15) of travel; `swipe-distance` key, Settings
+  slider, `distance=` in the swipe log. LIVE PENDING (three-finger scrolls and swipes).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -418,6 +437,16 @@ read for the snap and focus rules.
   GestureControllerTests 18 (+2), 0 failures. Full `swift test`: GioPackageTests.xctest 2933 tests, 53 skipped, 0 failures.
   Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD SUCCEEDED; `git diff --check` clean.
   LIVE PENDING: TESTING.md 15i (n) (two quick flicks; animation off).
+- TG-08: RED `swift build --build-tests` failed (`tuple pattern has the wrong length for tuple
+  type '(Int, SwipeDirection)'`, `type 'GestureRecognizerSettings' has no member
+  'defaultSwipeDistance'` / `'verticalDominance'`); after the Core change the session test still
+  expecting a swipe at 0.1 of travel failed (`XCTAssertEqual failed: ("[]") is not equal to
+  ("[GioCore.HotkeyAction.focusWorkspaceDown]")`) and was moved to the new contract. GREEN
+  GestureRecognizerTests 21 (+6), GesturesConfigTests 11 (+1), GestureControllerTests 18,
+  0 failures. Full `swift test`: GioCoreTests 2025, GioSessionTests 516, GioUITests 317
+  (53 skipped), GioMacOSTests 91, GioMacTests 19, GioPOCTests 7, 0 failures. Signed
+  `xcodebuild` (`Gio` scheme, Release, arm64): BUILD SUCCEEDED. LIVE PENDING: the user tries
+  three-finger scrolls (no workspace change) and deliberate three-finger swipes up and down.
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,

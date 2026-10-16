@@ -190,13 +190,17 @@ public final class GestureController: @unchecked Sendable {
             if scroll != nil {
                 abandon(.cancelled)
             }
-        case .verticalSwipe(let count, let direction):
+        case .verticalSwipe(let count, let direction, let distance):
+            let travelled = String(format: "%.2f", distance)
             if settings.workspaceSwipe, count == settings.workspaceFingers {
                 let action = workspaceSwipeAction(direction, natural: settings.natural)
-                context.log(.info, "gesture swipe fingers=\(count) direction=\(direction.rawValue) action=\(action)")
+                context.log(
+                    .info,
+                    "gesture swipe fingers=\(count) direction=\(direction.rawValue) distance=\(travelled) action=\(action)"
+                )
                 context.perform(action)
             } else if settings.overview, count == settings.overviewFingers, direction == .up {
-                context.log(.info, "gesture swipe fingers=\(count) direction=up action=toggle-overview")
+                context.log(.info, "gesture swipe fingers=\(count) direction=up distance=\(travelled) action=toggle-overview")
                 context.toggleOverview()
             }
         }

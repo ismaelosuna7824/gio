@@ -162,6 +162,9 @@ public func defaultConfigTemplate() -> String {
     # uses four fingers up unless moved). Not on workspace-fingers.
     overview = false
     overview-fingers = 4
+    # How far a vertical swipe travels before it fires, as a fraction of the
+    # trackpad height (0.05-0.5). It must be a clear up or down stroke.
+    swipe-distance = 0.15
 
     [keybindings]
     "Alt+H" = "focus-left"

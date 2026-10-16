@@ -175,7 +175,7 @@ struct FocusSettingsView: View {
             }
             if draft.current.gestures.scroll {
                 CardRow {
-                    SegmentedRow("Fingers", selection: current.gestures.scrollFingers, options: Self.fingerOptions, width: 150)
+                    SegmentedRow("Fingers to scroll", selection: current.gestures.scrollFingers, options: Self.fingerOptions, width: 150)
                 }
                 CardRow {
                     SliderRow(
@@ -200,20 +200,30 @@ struct FocusSettingsView: View {
             }
             if draft.current.gestures.workspaceSwipe {
                 CardRow {
-                    SegmentedRow("Fingers", selection: current.gestures.workspaceFingers, options: Self.fingerOptions, width: 150)
+                    SegmentedRow("Fingers to switch workspaces", selection: current.gestures.workspaceFingers, options: Self.fingerOptions, width: 150)
                 }
             }
-            CardRow(divider: draft.current.gestures.overview) {
+            CardRow {
                 ToggleRow(
                     "Workspace overview", caption: "Swipe up to open or close it.",
                     isOn: current.gestures.overview
                 )
             }
             if draft.current.gestures.overview {
-                CardRow(divider: false) {
-                    SegmentedRow("Fingers", selection: current.gestures.overviewFingers, options: Self.fingerOptions, width: 150)
+                CardRow {
+                    SegmentedRow("Fingers for the overview", selection: current.gestures.overviewFingers, options: Self.fingerOptions, width: 150)
                 }
             }
+            // TG-08: a vertical swipe fires only after this much travel.
+            CardRow(divider: false) {
+                SliderRow(
+                    "Swipe distance",
+                    caption: "How far the fingers must travel up or down before Gio switches workspace or opens the overview. Shorter is quicker; longer avoids accidental switches.",
+                    value: current.gestures.swipeDistance, in: GesturesSectionConfig.swipeDistanceRange,
+                    step: 0.01, format: { String(format: "%.0f%%", $0 * 100) }
+                )
+            }
+            .disabled(!draft.current.gestures.workspaceSwipe && !draft.current.gestures.overview)
             ForEach(draft.current.gestures.problems, id: \.self) { problem in
                 InlineProblem(problem).padding(.horizontal, GioSpacing.m - 2).padding(.bottom, GioSpacing.s - 2)
             }
