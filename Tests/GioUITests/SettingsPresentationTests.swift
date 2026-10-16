@@ -341,6 +341,7 @@ final class SettingsPresentationTests: XCTestCase {
     /// TG-02: gesture problems block Apply like any other field.
     func testFocusDraftCountsGestureProblems() {
         var draft = FocusSectionDraft(config: GioConfig())
+        draft.gestures.workspaceSwipe = true
         draft.gestures.overview = true
         draft.gestures.overviewFingers = draft.gestures.workspaceFingers
         XCTAssertEqual(draft.problems, draft.gestures.problems)

@@ -12,13 +12,14 @@ final class GestureConflictTests: XCTestCase {
     ]
 
     private func detect(
-        _ config: GesturesSectionConfig = GesturesSectionConfig(), trackpad: [String: Int], bluetooth: [String: Int] = [:],
+        _ config: GesturesSectionConfig = GesturesSectionConfig(scroll: true, workspaceSwipe: true),
+        trackpad: [String: Int], bluetooth: [String: Int] = [:],
         dock: [String: Int] = [:]
     ) -> [GestureConflict] {
         detectGestureConflicts(config, preferences: TrackpadSystemPreferences(trackpad: trackpad, bluetoothTrackpad: bluetooth, dock: dock))
     }
 
-    func testMacOSDefaultsCollideWithGiosDefaults() {
+    func testMacOSDefaultsCollideWithThreeFingerScrollAndWorkspaceSwipe() {
         XCTAssertEqual(detect(trackpad: [:]), [
             GestureConflict(gesture: .scroll, fingers: 3, system: .fullScreenSwipe),
             GestureConflict(gesture: .workspaceSwipe, fingers: 3, system: .missionControl),

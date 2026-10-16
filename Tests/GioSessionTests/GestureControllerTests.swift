@@ -22,7 +22,8 @@ final class GestureControllerTests: XCTestCase {
     }
 
     private final class World: @unchecked Sendable {
-        var settings = GesturesSectionConfig()
+        /// Gestures are off by default (TG-09); these tests exercise them.
+        var settings = GesturesSectionConfig(scroll: true, workspaceSwipe: true)
         var mouseDown = false
         var manager = WorkspaceManager()
         var hasSurface = true

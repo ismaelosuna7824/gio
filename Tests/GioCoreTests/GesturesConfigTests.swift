@@ -10,18 +10,22 @@ final class GesturesConfigTests: XCTestCase {
         try parseGioConfig(text).get()
     }
 
+    /// TG-09 (user, 2026-10-16: "desactívalo por defecto"): no trackpad
+    /// gesture runs until the user turns it on; three-finger swipes are
+    /// macOS's own by default and an unexpected workspace switch is worse
+    /// than a gesture to discover in Settings.
     func testDefaults() {
         let gestures = GioConfig().gestures
-        XCTAssertTrue(gestures.scroll)
+        XCTAssertFalse(gestures.scroll)
         XCTAssertEqual(gestures.scrollFingers, 3)
         XCTAssertEqual(gestures.scrollSensitivity, 1.0)
-        XCTAssertTrue(gestures.natural)
-        XCTAssertTrue(gestures.workspaceSwipe)
+        XCTAssertTrue(gestures.natural, "a direction, not a gesture: right once a gesture is turned on")
+        XCTAssertFalse(gestures.workspaceSwipe)
         XCTAssertEqual(gestures.workspaceFingers, 3)
         XCTAssertFalse(gestures.overview, "macOS uses four-finger swipe up for Mission Control by default")
         XCTAssertEqual(gestures.overviewFingers, 4)
         XCTAssertEqual(gestures.swipeDistance, 0.15)
-        XCTAssertTrue(gestures.anyEnabled)
+        XCTAssertFalse(gestures.anyEnabled, "the trackpad is not even opened")
     }
 
     func testEveryKeyParses() throws {
@@ -60,7 +64,7 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(config.layout.gaps, 12, "the rest of the file still applies")
         XCTAssertEqual(config.gestures, GesturesSectionConfig())
         XCTAssertEqual(warnings, [
-            "line 4: gestures.scroll expects true or false, using true",
+            "line 4: gestures.scroll expects true or false, using false",
             "line 5: gestures.scroll-fingers expects 3, 4 or 5 fingers, using 3",
             "line 6: gestures.workspace-fingers expects 3, 4 or 5 fingers, using 3",
             "line 7: gestures.overview-fingers expects 3, 4 or 5 fingers, using 4",
@@ -91,6 +95,7 @@ final class GesturesConfigTests: XCTestCase {
     func testWorkspaceSwipeAndOverviewCannotShareTheirFingers() throws {
         let (config, warnings) = try parse("""
         [gestures]
+        workspace-swipe = true
         workspace-fingers = 4
         overview = true
         """)
@@ -111,7 +116,7 @@ final class GesturesConfigTests: XCTestCase {
     }
 
     func testRecognizerSettingsFollowTheConfig() {
-        var gestures = GesturesSectionConfig()
+        var gestures = GesturesSectionConfig(scroll: true, workspaceSwipe: true)
         XCTAssertEqual(gestures.recognizerSettings, GestureRecognizerSettings(horizontalFingers: 3, verticalFingers: [3]))
         gestures.overview = true
         XCTAssertEqual(gestures.recognizerSettings.verticalFingers, [3, 4])
@@ -141,7 +146,7 @@ final class GesturesConfigTests: XCTestCase {
         # keep this
         scroll = true # inline
         """
-        var form = GesturesSettingsForm(config: GesturesSectionConfig())
+        var form = GesturesSettingsForm(config: GesturesSectionConfig(scroll: true, workspaceSwipe: true))
         form.scroll = false
         form.scrollFingers = 4
         form.scrollSensitivity = 1.25
@@ -163,7 +168,7 @@ final class GesturesConfigTests: XCTestCase {
     }
 
     func testSettingsFormRejectsConflictsAndBadSensitivity() {
-        var form = GesturesSettingsForm(config: GesturesSectionConfig())
+        var form = GesturesSettingsForm(config: GesturesSectionConfig(scroll: true, workspaceSwipe: true))
         form.overview = true
         form.overviewFingers = 3
         form.scrollSensitivity = 0

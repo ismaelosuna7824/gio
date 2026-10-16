@@ -31,8 +31,8 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     public var swipeDistance: Double
 
     public init(
-        scroll: Bool = true, scrollFingers: Int = 3, scrollSensitivity: Double = 1.0, natural: Bool = true,
-        workspaceSwipe: Bool = true, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4,
+        scroll: Bool = false, scrollFingers: Int = 3, scrollSensitivity: Double = 1.0, natural: Bool = true,
+        workspaceSwipe: Bool = false, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4,
         swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance
     ) {
         self.scroll = scroll
