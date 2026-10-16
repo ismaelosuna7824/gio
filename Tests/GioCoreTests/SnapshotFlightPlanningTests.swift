@@ -215,7 +215,67 @@ final class SnapshotFlightPlanningTests: XCTestCase {
     }
 
     func testHolesLine() {
-        XCTAssertEqual(snapshotHolesLine(count: 3), "snapshot holes ids=3")
+        XCTAssertEqual(snapshotHolesLine(count: 3, entries: 1), "snapshot holes ids=3 entries=1")
+    }
+
+    // MARK: WP-04 entry holes
+
+    /// A window opening in this pass without an image is an entry hole: it
+    /// cuts the image layers too, so the neighbour it displaces slides out
+    /// from under it instead of covering it.
+    func testAnOpeningWindowWithoutAnImageIsAnEntryHole() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(100), id(2): win(100)], targets: [id(1): win(500), id(2): win(100)],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, opening: [id(2)]
+        )
+        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        XCTAssertEqual(items.map(\.id), [id(1)])
+        XCTAssertEqual(holes, [SnapshotHole(id: id(2), frame: win(100), displayIndex: 0, entry: true)])
+    }
+
+    func testAWindowThatIsNotOpeningStaysAnOrdinaryHole() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(0), id(2): win(400), id(3): win(700)],
+            targets: [id(1): win(-300), id(2): win(100), id(3): win(700)],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, opening: [id(3)]
+        )
+        guard case .snapshot(_, let holes) = decision else { return XCTFail("\(decision)") }
+        XCTAssertEqual(holes, [
+            SnapshotHole(id: id(2), frame: win(100), displayIndex: 0),
+            SnapshotHole(id: id(3), frame: win(700), displayIndex: 0, entry: true),
+        ])
+    }
+
+    func testAnUndrawnOpeningWindowHasNoHole() {
+        let decision = planSnapshotFlight(
+            starts: [id(1): win(100), id(2): win(100)], targets: [id(1): win(500), id(2): win(100)],
+            displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, undrawn: [id(2)],
+            opening: [id(2)]
+        )
+        guard case .snapshot(_, let holes) = decision else { return XCTFail("\(decision)") }
+        XCTAssertEqual(holes, [])
+    }
+
+    func testARetargetKeepsTheEntryHoleUntilTheWindowHasALayer() {
+        let targets = [id(1): win(600), id(2): win(100)]
+        XCTAssertEqual(
+            snapshotHoles(layered: [id(1)], targets: targets, displays: [display], activeDisplays: [0], opening: [id(2)]),
+            [SnapshotHole(id: id(2), frame: win(100), displayIndex: 0, entry: true)]
+        )
+        XCTAssertEqual(
+            snapshotHoles(
+                layered: [id(1), id(2)], targets: targets, displays: [display], activeDisplays: [0], opening: [id(2)]
+            ),
+            []
+        )
+    }
+
+    func testOverlayHolesCutTheImagesOnlyAtEntryHoles() {
+        let holes = OverlayHoles(holes: [id(1): win(100), id(2): win(500)], entries: [id(2)])
+        XCTAssertEqual(holes.backdrop, [win(100), win(500)])
+        XCTAssertEqual(holes.images, [win(500)])
+        XCTAssertEqual(OverlayHoles(holes: [id(1): win(100)], entries: []).images, [])
+        XCTAssertEqual(OverlayHoles(), OverlayHoles(holes: [:], entries: []))
     }
 
     // MARK: SM-31 undrawn windows

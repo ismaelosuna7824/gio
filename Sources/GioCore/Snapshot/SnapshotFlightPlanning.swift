@@ -12,7 +12,9 @@ import Foundation
 // an `undrawn` window (its AX element vanished, or a capture found no
 // WindowServer window for it on screen) has nothing to show: no layer, no
 // hole, never a miss; a motion that moves only undrawn windows moves
-// nothing visible.
+// nothing visible. WP-04: the hole of a window opening in this pass is an
+// entry hole: it cuts the image layers too, so the neighbours it displaces
+// slide out from under the real window instead of covering it.
 
 public enum SnapshotFallbackReason: String, Equatable, Sendable {
     case cacheMiss = "cache-miss"
@@ -38,16 +40,19 @@ public struct SnapshotFlightItem: Equatable, Sendable {
 
 /// SM-16: a window that flies without a layer and is visible at its target
 /// on an overlaid display: the backdrop is cut at `frame` (its target) so
-/// the real window shows through.
+/// the real window shows through. WP-04: an `entry` hole (a window opening
+/// in this pass) cuts the image layers as well.
 public struct SnapshotHole: Equatable, Sendable {
     public let id: WindowID
     public let frame: CGRect
     public let displayIndex: Int
+    public let entry: Bool
 
-    public init(id: WindowID, frame: CGRect, displayIndex: Int) {
+    public init(id: WindowID, frame: CGRect, displayIndex: Int, entry: Bool = false) {
         self.id = id
         self.frame = frame
         self.displayIndex = displayIndex
+        self.entry = entry
     }
 }
 
@@ -81,11 +86,12 @@ private func moves(_ a: CGRect, _ b: CGRect) -> Bool {
 /// this pass ends with (visible and parked alike), Cocoa coordinates.
 /// MM-10: `pinnedDisplays` puts a window's layer on that display's overlay
 /// whatever its frames overlap (a layer sliding out by an edge another
-/// display shares; its own overlay clips it there).
+/// display shares; its own overlay clips it there). WP-04: `opening` are the
+/// windows opening in this pass (NA-02 entries); their holes are entry holes.
 public func planSnapshotFlight(
     starts: [WindowID: CGRect], targets: [WindowID: CGRect], displays: [CGRect],
     hasImage: (WindowID) -> Bool, backdropReady: (Int) -> Bool, undrawn: Set<WindowID> = [],
-    pinnedDisplays: [WindowID: Int] = [:]
+    pinnedDisplays: [WindowID: Int] = [:], opening: Set<WindowID> = []
 ) -> SnapshotFlightDecision {
     var entries: [SnapshotFlightItem] = []
     for id in targets.keys.sorted() where !undrawn.contains(id) {
@@ -118,7 +124,7 @@ public func planSnapshotFlight(
     }
     let holes = snapshotHoles(
         layered: Set(items.map(\.id)), targets: targets, displays: displays, activeDisplays: animatedDisplays,
-        undrawn: undrawn
+        undrawn: undrawn, opening: opening
     )
     return .snapshot(items: items, holes: holes)
 }
@@ -128,10 +134,11 @@ public func planSnapshotFlight(
 /// 1 pt sliver included) and windows on displays without an overlay have no
 /// hole, nor (SM-31) undrawn ones. Recomputed on every retarget with the
 /// latest targets: a window that got a layer loses its hole, one uncovered
-/// at the retarget gains one.
+/// at the retarget gains one. WP-04: the holes of `opening` windows are
+/// entry holes.
 public func snapshotHoles(
     layered: Set<WindowID>, targets: [WindowID: CGRect], displays: [CGRect], activeDisplays: Set<Int>,
-    undrawn: Set<WindowID> = []
+    undrawn: Set<WindowID> = [], opening: Set<WindowID> = []
 ) -> [SnapshotHole] {
     targets.keys.sorted().compactMap { id in
         let frame = targets[id]!
@@ -141,13 +148,14 @@ public func snapshotHoles(
         else {
             return nil
         }
-        return SnapshotHole(id: id, frame: frame, displayIndex: index)
+        return SnapshotHole(id: id, frame: frame, displayIndex: index, entry: opening.contains(id))
     }
 }
 
-/// `snapshot holes ids=N` (debug): windows shown through the backdrop.
-public func snapshotHolesLine(count: Int) -> String {
-    "snapshot holes ids=\(count)"
+/// `snapshot holes ids=N entries=E` (debug): windows shown through the
+/// backdrop, E of them (WP-04) through the image layers too.
+public func snapshotHolesLine(count: Int, entries: Int) -> String {
+    "snapshot holes ids=\(count) entries=\(entries)"
 }
 
 public struct SnapshotRetargetPlan: Equatable, Sendable {

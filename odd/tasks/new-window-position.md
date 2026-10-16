@@ -52,6 +52,17 @@ WP-01..WP-03 below. Not in scope: a per-rule override (`[[window-rules]]`), dwin
 - [x] **WP-03 Settings and docs:** Settings > Layout picker ("New windows open"), its config edit,
   `docs/USER_GUIDE.md` `[layout]` row and Settings row, `docs/TESTING.md` live-pending line.
   Commit `ac1b60f`. Route: delegated (writer trigger).
+- [x] **WP-04 Open lag mid-strip (live report 2026-10-16):** with `right-of-focused`, a new
+  window is visible in its tile only ~400–560 ms after registration although its frame is written
+  at +5–32 ms. Cause (log 19:18–19:19Z, Notes 32798:14/32892:15/33263:16): the insert moves a
+  neighbour that has a cached image, so the pass is a snapshot flight; the new window has no
+  image yet and becomes a hole (`planSnapshotFlight`), and holes only cut the backdrop
+  (`SnapshotOverlay.cut`), so the neighbour's image layer starts over the new slot and covers the
+  already placed window until it slides off (`anim done duration=362/393ms`, `snapshot holes
+  ids=1`). Fix: the hole of a window opening in this pass also cuts through the image layers, for
+  the whole flight and its retargets, so the new window shows at once and the neighbours slide out
+  from under it. Undrawn windows keep no hole (SM-31); the paint check on holes stays. Route:
+  delegated (writer trigger).
 
 ## Checks
 `swift test` (every bundle, 0 failures), signed `xcodebuild` (GioUI changes), `git diff --check`.
@@ -88,4 +99,23 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
 - 2026-10-16: the commits had been rebased onto `7794db1` (hashes above are the rebased ones);
   moved off `dev` to `feat/new-window-position` (cut from up-to-date `origin/dev`), `dev` reset
   to `origin/dev`. Not pushed.
-- Next: live check per `docs/TESTING.md` (New window position).
+- 2026-10-16 WP-04 `fix(snapshot): show an opening window above the images it displaces (WP-04)`:
+  `SnapshotHole.entry`; `planSnapshotFlight`/`snapshotHoles(opening:)` mark the hole of a window
+  opening in the pass (NA-02 entry) as an entry hole; `SnapshotFlightController.drive(entries:)`
+  (`SessionHost` passes `pass.entries`) keeps the flight's opening set across retargets (a window
+  that gains a layer loses its hole as before) and hands `entryHoles` to `OverlayPort`;
+  `OverlayHoles` (GioCore, `backdrop` = every hole, `images` = entry holes, sorted by id) reaches
+  `SnapshotOverlay`, whose window layers now hang in one container (`windowLayer`) masked with
+  `overlayBackdropMask` at the entry holes; the backdrop mask is unchanged. Undrawn windows keep
+  no hole; the paint check on holes is unchanged. Debug `snapshot holes ids=N entries=E`.
+  RED: `swift build --build-tests` failed to compile (`cannot find 'OverlayHoles' in scope`,
+  `extra argument 'opening'/'entry'/'entries' in call`, `FakeOverlay` does not conform to
+  `OverlayPort`). GREEN: 5 new `SnapshotFlightPlanningTests` (opening imageless window is an entry
+  hole, non-opening stays ordinary, undrawn opening window has no hole, retarget keeps then drops
+  the entry hole, `OverlayHoles` split) and 3 new `SnapshotFlightTests` (entry hole from the prime
+  and paint-checked, kept on a retarget, undrawn opening window has none); `swift test`: 2991
+  executed, 0 failures (53 skipped); signed `xcodebuild` (scheme Gio): BUILD SUCCEEDED;
+  `git diff --check` clean. Not unit-tested (compile-checked): the `CALayer` container and its
+  mask. Live behavior not verified (TESTING.md live-pending line). Route: delegated (writer
+  trigger).
+- Next: live check per `docs/TESTING.md` (New window position, New window lag mid-strip).
