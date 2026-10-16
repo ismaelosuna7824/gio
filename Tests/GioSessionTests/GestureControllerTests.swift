@@ -187,17 +187,23 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(world.calls, [])
     }
 
+    /// TG-08: a vertical swipe fires once its travel reaches the swipe
+    /// distance (0.15 of the trackpad height by default); the log carries it.
     func testVerticalSwipesSwitchWorkspacesAndToggleTheOverview() {
         controller.deliver([frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.4), frame(0.02, fingers: 0, x: 0)])
+        XCTAssertEqual(world.actions, [], "short of the swipe distance")
+        controller.deliver([frame(0.03, fingers: 3, x: 0.5, y: 0.3), frame(0.04, fingers: 3, x: 0.5, y: 0.4),
+                            frame(0.05, fingers: 3, x: 0.5, y: 0.5), frame(0.06, fingers: 0, x: 0)])
         XCTAssertEqual(world.actions, [.focusWorkspaceDown], "natural: swiping up shows the workspace below")
+        XCTAssertTrue(world.logs.contains { $0.contains("gesture swipe fingers=3 direction=up distance=0.20 action=") })
         world.settings.natural = false
-        controller.deliver([frame(0.1, fingers: 3, x: 0.5, y: 0.3), frame(0.11, fingers: 3, x: 0.5, y: 0.4), frame(0.12, fingers: 0, x: 0)])
+        controller.deliver([frame(0.1, fingers: 3, x: 0.5, y: 0.3), frame(0.11, fingers: 3, x: 0.5, y: 0.5), frame(0.12, fingers: 0, x: 0)])
         XCTAssertEqual(world.actions.last, .focusWorkspaceUp)
 
         world.settings.overview = true
-        controller.deliver([frame(0.2, fingers: 4, x: 0.5, y: 0.3), frame(0.21, fingers: 4, x: 0.5, y: 0.4), frame(0.22, fingers: 0, x: 0)])
+        controller.deliver([frame(0.2, fingers: 4, x: 0.5, y: 0.3), frame(0.21, fingers: 4, x: 0.5, y: 0.5), frame(0.22, fingers: 0, x: 0)])
         XCTAssertEqual(world.overviews, 1)
-        controller.deliver([frame(0.3, fingers: 4, x: 0.5, y: 0.4), frame(0.31, fingers: 4, x: 0.5, y: 0.3), frame(0.32, fingers: 0, x: 0)])
+        controller.deliver([frame(0.3, fingers: 4, x: 0.5, y: 0.5), frame(0.31, fingers: 4, x: 0.5, y: 0.3), frame(0.32, fingers: 0, x: 0)])
         XCTAssertEqual(world.overviews, 1, "only a swipe up toggles the overview")
         XCTAssertEqual(world.actions.count, 2)
     }
