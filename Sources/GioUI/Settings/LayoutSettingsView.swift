@@ -115,12 +115,25 @@ struct LayoutSettingsView: View {
                     isOn: form.maximizeSingleWindow
                 )
             }
-            CardRow(divider: false) {
+            CardRow {
                 ToggleRow(
                     "Center a lone column",
                     caption: "A workspace with a single column shows it in the middle instead of at the left edge.",
                     isOn: form.alwaysCenterSingleColumn
                 )
+            }
+            CardRow(divider: false) {
+                SettingRow("New windows open", caption: "Where a newly opened window's column lands in the strip.") {
+                    GioPopup(
+                        title: "New windows open", selection: form.newWindowPosition,
+                        options: [
+                            (.end, "At the end"), (.start, "At the start"),
+                            (.rightOfFocused, "Right of the focused column"),
+                            (.leftOfFocused, "Left of the focused column"),
+                        ],
+                        width: 220
+                    )
+                }
             }
             problems(matching: ["Default width", "Preset widths"])
         }
