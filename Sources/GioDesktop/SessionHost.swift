@@ -622,7 +622,8 @@ final class SessionHost: @unchecked Sendable {
                 log: { GioLog.record($0, $1) },
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 listedWindows: { axWindowElements(pid: $0) },
-                windowFrame: { [unowned self] in try? actuator?.frame(of: $0) }
+                windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
+                newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition }
             ),
             scheduler: scheduler
         )
