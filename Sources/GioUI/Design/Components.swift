@@ -405,7 +405,9 @@ public struct GioPage<Content: View, Accessory: View>: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxHeight: .infinity, alignment: .top)
             } else {
-                ScrollView { column }
+                // Lazy: a card is built when it scrolls into view. Building
+                // every card on a section switch took 40-200 ms per page.
+                ScrollView { pageLayout(LazyVStack(alignment: .leading, spacing: GioSpacing.xl) { header; content }) }
             }
         }
         .background(GioColor.page)
@@ -414,28 +416,33 @@ public struct GioPage<Content: View, Accessory: View>: View {
     }
 
     private var column: some View {
-        VStack(alignment: .leading, spacing: GioSpacing.xl) {
-            HStack(alignment: .firstTextBaseline, spacing: GioSpacing.m) {
-                VStack(alignment: .leading, spacing: GioSpacing.xxs) {
-                    HStack(alignment: .center, spacing: GioSpacing.s - 2) {
-                        if let section {
-                            SectionNumberPill(section)
-                        }
-                        Text(title).font(GioFont.pageTitle).foregroundStyle(GioColor.primaryText)
+        pageLayout(VStack(alignment: .leading, spacing: GioSpacing.xl) { header; content })
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: GioSpacing.m) {
+            VStack(alignment: .leading, spacing: GioSpacing.xxs) {
+                HStack(alignment: .center, spacing: GioSpacing.s - 2) {
+                    if let section {
+                        SectionNumberPill(section)
                     }
-                    if let subtitle {
-                        Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
-                    }
+                    Text(title).font(GioFont.pageTitle).foregroundStyle(GioColor.primaryText)
                 }
-                Spacer(minLength: 0)
-                accessory
+                if let subtitle {
+                    Text(subtitle).font(GioFont.callout).foregroundStyle(GioColor.secondaryText)
+                }
             }
-            content
+            Spacer(minLength: 0)
+            accessory
         }
-        .padding(.horizontal, GioSpacing.xl)
-        .padding(.vertical, GioSpacing.l)
-        .frame(maxWidth: 860, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: .top)
+    }
+
+    private func pageLayout(_ stack: some View) -> some View {
+        stack
+            .padding(.horizontal, GioSpacing.xl)
+            .padding(.vertical, GioSpacing.l)
+            .frame(maxWidth: 860, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .top)
     }
 }
 
