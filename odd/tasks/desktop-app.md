@@ -196,6 +196,17 @@ necesidad de modificar el config.toml").
   `GioOnboardingCompleted` set false, relaunch, `screencapture`): the setup covers the built-in
   display including the menu bar and the Dock; the flag was restored and Gio relaunched. LIVE
   PENDING: going through the steps by hand, System Settings showing above it.
+- [x] DA-12 (commit below) — The Logs page's title bar matches the other pages (2026-10-16, user
+  screenshots: Logs' title bar gray, Rules' the page's navy). Cause: Logs is the only
+  `GioPage(scrolls: false)`; with no scroll view at the top edge AppKit draws the unified
+  toolbar's own backdrop. Reproduced with a throwaway test rendering the real window chrome
+  (`NSHostingController` with `.title, .toolbars` bridging, unified toolbar, full-size content)
+  over Logs and Rules. Tried without effect: `.toolbarBackground(.hidden, for: .windowToolbar)`
+  and the page color ignoring the safe area. Fix: a pinned page sits in a `ScrollView` exactly
+  as tall as the page (`GeometryReader`), so it never scrolls (measured: document 534 pt + top
+  inset 66 = frame 600) while the log list inside still does (document 7800 pt in a 305 pt
+  clip); `scrollDisabled` was rejected because it also froze the inner list. Re-rendered: the
+  Logs title bar is the page color like Rules. LIVE PENDING: the real window.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,

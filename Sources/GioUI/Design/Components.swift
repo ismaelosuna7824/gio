@@ -399,7 +399,16 @@ public struct GioPage<Content: View, Accessory: View>: View {
     public var body: some View {
         Group {
             if !scrolls {
-                column.frame(maxHeight: .infinity, alignment: .top)
+                // In a scroll view exactly as tall as the page, so it never
+                // scrolls: AppKit draws the toolbar's gray backdrop over a
+                // page without one at the top edge (Logs looked unlike every
+                // other page). Not `scrollDisabled`: it would also freeze the
+                // page's own scrolling list.
+                GeometryReader { proxy in
+                    ScrollView {
+                        column.frame(height: proxy.size.height, alignment: .top)
+                    }
+                }
             } else if isStatic {
                 column
                     .fixedSize(horizontal: false, vertical: true)
