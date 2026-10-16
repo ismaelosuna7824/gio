@@ -161,7 +161,8 @@ final class EventWorld: @unchecked Sendable {
                 self.closing.append((ids, ids.allSatisfy { self.session.registry.find($0) != nil }))
             },
             followArrival: { self.follows.append($0) },
-            log: { self.logs.append(($0, $1)) }
+            log: { self.logs.append(($0, $1)) },
+            newWindowPosition: { self.session.config.layout.newWindowPosition }
         )
     }
 

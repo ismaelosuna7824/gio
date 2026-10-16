@@ -85,6 +85,8 @@ public final class DiscoveryService: @unchecked Sendable {
         /// WC-11: a registered window's current AX frame (Cocoa), nil when
         /// unreadable.
         public var windowFrame: (WindowID) -> CGRect?
+        /// `[layout] new-window-position`, read at each live arrival.
+        public var newWindowPosition: () -> NewWindowPosition
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -115,11 +117,13 @@ public final class DiscoveryService: @unchecked Sendable {
             log: @escaping (LogLevel, String) -> Void,
             allowsWindowWork: @escaping () -> Bool = { true },
             listedWindows: @escaping (pid_t) -> [AXUIElement]? = { _ in nil },
-            windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil }
+            windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil },
+            newWindowPosition: @escaping () -> NewWindowPosition = { .end }
         ) {
             self.allowsWindowWork = allowsWindowWork
             self.listedWindows = listedWindows
             self.windowFrame = windowFrame
+            self.newWindowPosition = newWindowPosition
             self.followArrival = followArrival
             self.discoverAttempt = discoverAttempt
             self.now = now
@@ -471,8 +475,9 @@ public final class DiscoveryService: @unchecked Sendable {
                 context.rules(), app: window.application, bundleID: window.bundleID, title: window.title
             )
             let takesFocus = arrivalTakesFocus(outcome, mode: window.mode, minimized: window.isMinimized)
+            let position = context.newWindowPosition()
             context.updateManager { manager in
-                placeArrival(id, outcome: outcome, takesFocus: takesFocus, manager: &manager)
+                placeArrival(id, outcome: outcome, takesFocus: takesFocus, position: position, manager: &manager)
             }
         }
         context.invalidateTrust(id)
@@ -738,6 +743,7 @@ public final class DiscoveryService: @unchecked Sendable {
         var pending: PendingArrivalFollow?
         var destinationShown = false
         var workspaceLabel = ""
+        let position: NewWindowPosition = mayFollow ? context.newWindowPosition() : .end
         context.updateManager { manager in
             let display = placement.flatMap { displayFor(frame: window.frame, displays: $0) }
             // A floating arrival (a dialog, or a transient popup such as
@@ -748,7 +754,7 @@ public final class DiscoveryService: @unchecked Sendable {
             let destID = placeArrival(
                 id, outcome: routing,
                 takesFocus: arrivalTakesFocus(outcome, mode: window.mode, minimized: minimized),
-                onDisplay: display, manager: &manager
+                onDisplay: display, position: position, manager: &manager
             )
             destinationShown = manager.activeIDs.contains(destID)
             workspaceLabel = manager.workspace(id: destID)?.name
@@ -831,8 +837,9 @@ public final class DiscoveryService: @unchecked Sendable {
             return
         }
         let registry = context.registry()
+        let position = context.newWindowPosition()
         context.updateManager { manager in
-            applyTitleRecheck(id, outcome: outcome, registry: registry, manager: &manager)
+            applyTitleRecheck(id, outcome: outcome, registry: registry, position: position, manager: &manager)
         }
         context.log(.info, "window rule recheck id=\(id.pid):\(id.elementID) reason=titleArrived")
         context.reflowAll()
