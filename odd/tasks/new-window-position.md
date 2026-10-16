@@ -62,7 +62,7 @@ WP-01..WP-03 below. Not in scope: a per-rule override (`[[window-rules]]`), dwin
   ids=1`). Fix: the hole of a window opening in this pass also cuts through the image layers, for
   the whole flight and its retargets, so the new window shows at once and the neighbours slide out
   from under it. Undrawn windows keep no hole (SM-31); the paint check on holes stays. Route:
-  delegated (writer trigger).
+  delegated (writer trigger). Commit `da1766c`.
 
 ## Checks
 `swift test` (every bundle, 0 failures), signed `xcodebuild` (GioUI changes), `git diff --check`.
@@ -99,7 +99,7 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
 - 2026-10-16: the commits had been rebased onto `7794db1` (hashes above are the rebased ones);
   moved off `dev` to `feat/new-window-position` (cut from up-to-date `origin/dev`), `dev` reset
   to `origin/dev`. Not pushed.
-- 2026-10-16 WP-04 `fix(snapshot): show an opening window above the images it displaces (WP-04)`:
+- 2026-10-16 WP-04 `da1766c` `fix(snapshot): show an opening window above the images it displaces (WP-04)`:
   `SnapshotHole.entry`; `planSnapshotFlight`/`snapshotHoles(opening:)` mark the hole of a window
   opening in the pass (NA-02 entry) as an entry hole; `SnapshotFlightController.drive(entries:)`
   (`SessionHost` passes `pass.entries`) keeps the flight's opening set across retargets (a window
