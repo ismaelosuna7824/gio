@@ -356,6 +356,16 @@ read for the snap and focus rules.
 - [x] TG-08 — A workspace or overview swipe needs a deliberate vertical stroke: twice as
   vertical as horizontal and `swipe-distance` (0.15) of travel; `swipe-distance` key, Settings
   slider, `distance=` in the swipe log. Commit `5c53bf4`. LIVE PENDING (three-finger scrolls and swipes).
+- [x] TG-09 (`2ddd6f2`) — Every gesture is off by default (user, 2026-10-16: "desactívalo por
+  defecto", with a screenshot of the Trackpad Gestures card all off). `GesturesSectionConfig`
+  defaults `scroll` and `workspace-swipe` to false (`overview` was already off; `natural` stays
+  true: a direction, right once a gesture is on), so a default config never opens the trackpad
+  (`anyEnabled` false) and macOS's own three-finger swipes are untouched. Template and
+  USER_GUIDE say so; a config that sets them keeps them. RED
+  `GesturesConfigTests.testDefaults` (3 failures: `scroll`, `workspaceSwipe`, `anyEnabled`);
+  fixtures that exercise gestures now turn them on explicitly (GestureControllerTests,
+  GestureConflictTests, GesturesConfigTests, SettingsPresentationTests). GREEN: Core 2025,
+  Session 516, UI 313 (53 skipped), MacOS 91, Mac 19, POC 7, 0 failures.
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
