@@ -98,7 +98,7 @@ public struct GioMainView: View {
         .tint(GioColor.accent)
         .environment(\.updateController, updates)
         .environment(\.onboardingPresenter, onboarding)
-        .sheet(isPresented: $onboarding.isPresented) {
+        .setupCover(isPresented: onboarding.isPresented) {
             OnboardingSheet(
                 model: model, startStep: onboarding.startStep,
                 onFinish: { onboarding.finish() }, onLater: { onboarding.later() },
