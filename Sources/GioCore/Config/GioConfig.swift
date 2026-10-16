@@ -33,6 +33,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// DW-03 `default-layout`: the layout new workspaces start with;
     /// consumed by `WorkspaceManager.applyLayoutDefaults`.
     public var defaultLayout: WorkspaceLayoutKind
+    /// `new-window-position`: where a live arrival's column lands in a
+    /// scrolling strip; consumed by `placeArrival` through `DiscoveryService`.
+    public var newWindowPosition: NewWindowPosition
 
     public init(
         gaps: CGFloat = 8,
@@ -45,7 +48,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         maximizeSingleWindow: Bool = true,
         presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights,
         alwaysCenterSingleColumn: Bool = false,
-        defaultLayout: WorkspaceLayoutKind = .scrolling
+        defaultLayout: WorkspaceLayoutKind = .scrolling,
+        newWindowPosition: NewWindowPosition = .end
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -58,6 +62,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
         self.defaultLayout = defaultLayout
+        self.newWindowPosition = newWindowPosition
     }
 }
 

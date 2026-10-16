@@ -43,34 +43,43 @@ func shapeArrivalColumn(_ column: inout Column, outcome: RuleOutcome) {
     }
 }
 
-func appendArrivalColumn(_ id: WindowID, outcome: RuleOutcome, to workspace: inout Workspace, focus: Bool) {
+func appendArrivalColumn(
+    _ id: WindowID, outcome: RuleOutcome, to workspace: inout Workspace, focus: Bool,
+    position: NewWindowPosition = .end
+) {
     var column = Column(
         id: ColumnID((workspace.columns.map(\.id.rawValue).max() ?? 0) + 1),
         width: 0, windows: [id]
     )
     column.focusedWindowIndex = 0
     shapeArrivalColumn(&column, outcome: outcome)
-    workspace.columns.append(column)
+    let effectivePosition = workspace.layout == .dwindle ? .end : position
+    let previousCount = workspace.columns.count
+    let index = effectivePosition.insertionIndex(columnCount: previousCount, focusedColumn: workspace.focusedColumn)
+    let shiftsFocusedColumn = index <= workspace.focusedColumn && workspace.focusedColumn < previousCount
+    workspace.columns.insert(column, at: index)
     if focus {
-        workspace.focusedColumn = workspace.columns.count - 1
+        workspace.focusedColumn = index
         workspace.focusedWindow = id
+    } else if shiftsFocusedColumn {
+        workspace.focusedColumn += 1
     }
 }
 
-/// Put an arriving window in a new last column of its destination
-/// (`arrivalDestination`), shaped by the rule. `takesFocus` makes it the
-/// destination's focused window; the focused display never changes here
-/// (following is the caller's decision). Returns the destination.
+/// Put an arriving window in a new column of its destination
+/// (`arrivalDestination`) at `position`, shaped by the rule. `takesFocus`
+/// makes it the destination's focused window; the focused display never
+/// changes here (following is the caller's decision). Returns the destination.
 @discardableResult
 public func placeArrival(
     _ id: WindowID, outcome: RuleOutcome, takesFocus: Bool, onDisplay display: DisplayID? = nil,
-    manager: inout WorkspaceManager
+    position: NewWindowPosition = .end, manager: inout WorkspaceManager
 ) -> WorkspaceID {
     let destID = manager.arrivalDestination(outcome, onDisplay: display)
     guard var dest = manager.workspace(id: destID) else {
         return destID
     }
-    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: takesFocus)
+    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: takesFocus, position: position)
     manager.update(dest)
     return destID
 }
@@ -131,7 +140,8 @@ public func titleRecheckOutcome(_ rules: [WindowRule], window: ManagedWindow) ->
 /// current workspace and the strip's focused window stay unless the window
 /// itself leaves (its workspace's focus then falls to a neighbour).
 public func applyTitleRecheck(
-    _ id: WindowID, outcome: RuleOutcome, registry: WindowRegistry, manager: inout WorkspaceManager
+    _ id: WindowID, outcome: RuleOutcome, registry: WindowRegistry, position: NewWindowPosition = .end,
+    manager: inout WorkspaceManager
 ) {
     if var record = registry.find(id) {
         record.widthLimits = outcome.widthLimits
@@ -170,6 +180,6 @@ public func applyTitleRecheck(
     guard var dest = manager.workspace(id: manager.ruleDestination(placement) ?? destID) else {
         return
     }
-    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: false)
+    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: false, position: position)
     manager.update(dest)
 }

@@ -19,6 +19,10 @@ public func defaultConfigTemplate() -> String {
     # column on every keyboard focus change, "on-overflow" centers only when it
     # does not fit next to the previously focused column.
     center-focused-column = "never"
+    # Where a new window's column opens in the strip: "end", "start",
+    # "right-of-focused" or "left-of-focused" (the focused column of the
+    # workspace it opens on). Windows found at startup keep their order.
+    new-window-position = "end"
     # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
     preset-column-widths = [0.33333, 0.5, 0.66667]
     # Heights Alt+Shift+R cycles the focused window of a stacked column
