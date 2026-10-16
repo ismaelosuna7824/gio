@@ -196,7 +196,7 @@ necesidad de modificar el config.toml").
   `GioOnboardingCompleted` set false, relaunch, `screencapture`): the setup covers the built-in
   display including the menu bar and the Dock; the flag was restored and Gio relaunched. LIVE
   PENDING: going through the steps by hand, System Settings showing above it.
-- [x] DA-12 (commit below) — The Logs page's title bar matches the other pages (2026-10-16, user
+- [x] DA-12 (`c1e3cb7`) — The Logs page's title bar matches the other pages (2026-10-16, user
   screenshots: Logs' title bar gray, Rules' the page's navy). Cause: Logs is the only
   `GioPage(scrolls: false)`; with no scroll view at the top edge AppKit draws the unified
   toolbar's own backdrop. Reproduced with a throwaway test rendering the real window chrome
