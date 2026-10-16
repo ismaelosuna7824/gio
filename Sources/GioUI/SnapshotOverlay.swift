@@ -30,7 +30,11 @@ import QuartzCore
 // picture: the backdrop layer (fill included) is masked by an even-odd
 // `CAShapeLayer` (display minus the holes, `overlayBackdropMask`), set at
 // begin and on retarget only. The root layer is clear, so a hole is
-// transparent down to the real window under the panel.
+// transparent down to the real window under the panel. WP-04: the window
+// layers hang in one container (`windowLayer`) above the backdrop, masked the
+// same way at the entry holes only (`OverlayHoles.images`, windows opening
+// in this pass), so a neighbour's image slides out from under the new
+// window; at the other holes the images still draw above.
 //
 // SM-30: a resized window's fresh image of its landing size, captured
 // mid-flight, fades in on top of its layer (`freshen`, 100 ms, timed). At
@@ -428,6 +432,8 @@ final class SnapshotOverlay {
     private let root: OverlayRootView
     private let backdrop = CALayer()
     private let backdropMask = CAShapeLayer()
+    private let windowLayer = CALayer()
+    private let windowMask = CAShapeLayer()
     private var windows: [WindowID: WindowLayers] = [:]
     var spring: SpringParameters
 
@@ -475,7 +481,13 @@ final class SnapshotOverlay {
         backdropMask.fillRule = .evenOdd
         backdropMask.fillColor = NSColor.black.cgColor
         backdropMask.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
+        windowLayer.frame = root.bounds
+        windowLayer.actions = ["bounds": NSNull(), "position": NSNull(), "mask": NSNull(), "sublayers": NSNull()]
+        windowMask.fillRule = .evenOdd
+        windowMask.fillColor = NSColor.black.cgColor
+        windowMask.actions = ["path": NSNull(), "bounds": NSNull(), "position": NSNull()]
         root.layer?.addSublayer(backdrop)
+        root.layer?.addSublayer(windowLayer)
         panel.contentView = root
     }
 
@@ -499,7 +511,7 @@ final class SnapshotOverlay {
     /// panel on screen and its first frame committed to the render server.
     /// False when the panel did not make it to the screen.
     func begin(
-        usable: CGRect, backdrop image: CGImage, items: [SnapshotOverlayItem], holes: [CGRect],
+        usable: CGRect, backdrop image: CGImage, items: [SnapshotOverlayItem], holes: OverlayHoles,
         decorations: OverlayDecorations
     ) -> Bool {
         area = OverlayArea(display: displayFrame, usable: usable)
@@ -509,6 +521,7 @@ final class SnapshotOverlay {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         backdrop.frame = root.bounds
+        windowLayer.frame = root.bounds
         backdrop.contentsScale = scale
         backdrop.isHidden = false
         backdrop.contents = image
@@ -550,7 +563,7 @@ final class SnapshotOverlay {
     /// settle time of the tracks started here (0 while primed).
     func retarget(
         targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], velocities: [WindowID: CGPoint],
-        adding items: [SnapshotOverlayItem], holes: [CGRect], decorations: OverlayDecorations, now: CFTimeInterval
+        adding items: [SnapshotOverlayItem], holes: OverlayHoles, decorations: OverlayDecorations, now: CFTimeInterval
     ) -> TimeInterval {
         var settle = 0.0
         CATransaction.begin()
@@ -640,6 +653,7 @@ final class SnapshotOverlay {
         removeAllLayers()
         backdrop.contents = nil
         backdrop.mask = nil
+        windowLayer.mask = nil
     }
 
     func close() {
@@ -649,16 +663,22 @@ final class SnapshotOverlay {
 
     // MARK: Layers
 
-    /// SM-16: the backdrop shows everything but `holes` (Cocoa global
-    /// frames; the ones off this display are ignored). No holes: no mask.
-    private func cut(_ holes: [CGRect]) {
+    /// SM-16: the backdrop shows everything but `holes.backdrop`, WP-04: the
+    /// window layers everything but `holes.images` (Cocoa global frames; the
+    /// ones off this display are ignored). No holes: no mask.
+    private func cut(_ holes: OverlayHoles) {
+        cut(backdrop, with: backdropMask, at: holes.backdrop)
+        cut(windowLayer, with: windowMask, at: holes.images)
+    }
+
+    private func cut(_ layer: CALayer, with mask: CAShapeLayer, at holes: [CGRect]) {
         guard let path = overlayBackdropMask(holes: holes, in: area.panelFrame, flipped: root.isFlipped) else {
-            backdrop.mask = nil
+            layer.mask = nil
             return
         }
-        backdropMask.frame = backdrop.bounds
-        backdropMask.path = path
-        backdrop.mask = backdropMask
+        mask.frame = layer.bounds
+        mask.path = path
+        layer.mask = mask
     }
 
     @discardableResult
@@ -673,7 +693,7 @@ final class SnapshotOverlay {
             )
         )
         layers.show(item.target)
-        layers.all.forEach { root.layer?.addSublayer($0) }
+        layers.all.forEach { windowLayer.addSublayer($0) }
         windows[item.id] = layers
         return layers
     }
@@ -798,7 +818,7 @@ public final class SnapshotOverlayController {
     /// real write.
     @discardableResult
     public func begin(
-        token: Int, spring: SpringParameters, flights: [SnapshotDisplayFlight], holes: [CGRect],
+        token: Int, spring: SpringParameters, flights: [SnapshotDisplayFlight], holes: OverlayHoles,
         decorations: OverlayDecorations
     ) -> Bool {
         self.spring = spring
@@ -842,11 +862,11 @@ public final class SnapshotOverlayController {
     }
 
     /// Retarget layers and add new ones for the same flight `token`;
-    /// `holes` replaces every backdrop's holes (SM-16); `images` are the
+    /// `holes` replaces every overlay's holes (SM-16, WP-04); `images` are the
     /// images of the retargeted layers' new sizes (SM-27).
     public func retarget(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
-        velocities: [WindowID: CGPoint], adding flights: [SnapshotDisplayFlight], holes: [CGRect],
+        velocities: [WindowID: CGPoint], adding flights: [SnapshotDisplayFlight], holes: OverlayHoles,
         decorations: OverlayDecorations
     ) {
         self.token = token

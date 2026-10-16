@@ -163,14 +163,15 @@ final class SessionHost: @unchecked Sendable {
     /// are invoked on the session queue and hop to the main thread themselves.
     /// `overlayBegin` primes the overlay and reports back through
     /// `snapshotPrimed`; `overlayFly` starts the tracks after the real writes.
-    /// SM-16: the `[CGRect]` are the holes cut in the backdrops (targets of
-    /// the windows that fly without a layer). SM-27: the retarget's
+    /// SM-16: the `OverlayHoles` are the holes cut in the backdrops (targets
+    /// of the windows that fly without a layer) and, WP-04, in the image
+    /// layers (windows opening in this pass). SM-27: the retarget's
     /// `[WindowID: SnapshotFace<CGImage>]` are the images of the new sizes.
-    var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
+    var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], OverlayHoles, OverlayDecorations) -> Void)?
     var overlayFly: ((Int) -> Void)?
     var overlayRetarget: ((
         Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [WindowID: CGPoint], [SnapshotDisplayFlight],
-        [CGRect], OverlayDecorations
+        OverlayHoles, OverlayDecorations
     ) -> Void)?
     var overlayTrack: ((Int, [WindowID: CGRect]) -> Void)?
     var overlayEnd: (() -> Void)?
@@ -1707,7 +1708,7 @@ final class SessionHost: @unchecked Sendable {
         {
             switch overlayFlight.drive(
                 animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps,
-                release: gestureRelease
+                release: gestureRelease, entries: pass.entries
             ) {
             case .ax:
                 break
@@ -2351,9 +2352,10 @@ private final class HostOverlayPort: OverlayPort {
 
     func beginFlight(
         token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
-        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init), Array(holes.values), decorations)
+        let overlayHoles = OverlayHoles(holes: holes, entries: entryHoles)
+        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init), overlayHoles, decorations)
     }
 
     func flyFlight(token: Int) {
@@ -2363,10 +2365,11 @@ private final class HostOverlayPort: OverlayPort {
     func retargetFlight(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
         velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
+        let overlayHoles = OverlayHoles(holes: holes, entries: entryHoles)
         host.overlayRetarget?(
-            token, targets, images, velocities, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations
+            token, targets, images, velocities, adds.map(SnapshotDisplayFlight.init), overlayHoles, decorations
         )
     }
 

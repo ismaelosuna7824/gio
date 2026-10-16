@@ -553,6 +553,10 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   images sliding over it, no black or empty rectangle); Chromium/Electron windows paint under the
   non-occluding panel inside the hole (no white or stale area); no `snapshot fallback reason=cache-miss`
   during rapid Alt+H/L chains unless no moving window has an image.
+  Follow-up WP-04 (`odd/tasks/new-window-position.md`): a window opening in the pass (NA-02 entry) without an
+  image is an entry hole (`SnapshotHole.entry`): the window layers hang in one container masked at the entry
+  holes (`OverlayHoles.images`), so a neighbour's image no longer covers the new window mid-strip; ordinary
+  holes keep the images above them. Debug line now `snapshot holes ids=N entries=E`.
 
 - [ ] SM-17 (`fa27a03`) — Title tie-break for same-size parked windows never seen on screen.
   Evidence (2026-10-08 20:28-20:31 UTC, renderer snapshot, debug): `snapshot miss id=5618:3/5618:4

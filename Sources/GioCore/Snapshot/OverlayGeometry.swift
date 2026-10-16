@@ -221,6 +221,21 @@ public func overlayBackdropMask(holes: [CGRect], in display: CGRect, flipped: Bo
     return mask
 }
 
+/// WP-04: the holes one flight cuts, sorted by window: every hole in the
+/// backdrop (`backdrop`), the entry holes (windows opening in this pass) in
+/// the image layers as well (`images`). Each set is masked with
+/// `overlayBackdropMask`.
+public struct OverlayHoles: Equatable, Sendable {
+    public let backdrop: [CGRect]
+    public let images: [CGRect]
+
+    public init(holes: [WindowID: CGRect] = [:], entries: Set<WindowID> = []) {
+        let ids = holes.keys.sorted()
+        backdrop = ids.map { holes[$0]! }
+        images = ids.filter(entries.contains).map { holes[$0]! }
+    }
+}
+
 // MARK: shadow, ring and dim
 
 /// The shadow each window layer casts, in the layer's (y-up) space: offset

@@ -53,19 +53,22 @@ public protocol OverlayPort: AnyObject {
     /// overlay could not be shown.
     /// SM-16: `holes` are the target frames of the windows that fly without
     /// a layer; each display's backdrop is cut there so they show through.
+    /// WP-04: `entryHoles` (windows opening in this pass) cut the image
+    /// layers too.
     func beginFlight(
         token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     )
     /// The real windows' writes are dispatched: start the springs.
     func flyFlight(token: Int)
-    /// `holes` replaces the flight's whole hole set. SM-27: `images` holds,
-    /// for each retargeted layer, the image of its new size when cached
-    /// (the layer shows it at once, SM-32; without one, its closest image).
+    /// `holes` and `entryHoles` replace the flight's whole hole set. SM-27:
+    /// `images` holds, for each retargeted layer, the image of its new size
+    /// when cached (the layer shows it at once, SM-32; without one, its
+    /// closest image).
     func retargetFlight(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
         velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     )
     func trackFlight(token: Int, frames: [WindowID: CGRect])
     /// Remove the overlay at once.
@@ -222,8 +225,12 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// SM-19: per-app paint statistics for the session.
     private var trust = PaintTrustBook()
     /// SM-16: windows visible at their target without a layer, at that
-    /// target; the backdrop is cut there.
+    /// target; the backdrop is cut there. WP-04: `entryHoles` are those of
+    /// `opening` (the windows that opened in a pass of this flight); the
+    /// image layers are cut there too.
     private var holes: [WindowID: CGRect] = [:]
+    private var entryHoles: Set<WindowID> = []
+    private var opening: Set<WindowID> = []
     /// SM-27: the size of the image each layer started with (its bottom
     /// face), for the resize mode a retarget logs.
     private var imageSizes: [WindowID: CGSize] = [:]
@@ -338,10 +345,12 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// Decide snapshot vs AX for this motion and start (or retarget) the
     /// overlay flight. `.flying`: the caller runs the ordinary instant pass
     /// now (the real windows' one write under a primed overlay). `.priming`:
-    /// the caller defers that pass with `deferPass`.
+    /// the caller defers that pass with `deferPass`. WP-04: `entries` are the
+    /// windows opening in this pass (NA-02); their holes are entry holes for
+    /// the rest of the flight.
     public func drive(
         animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: [WindowID: JumpPath] = [:],
-        release: GestureRelease? = nil
+        release: GestureRelease? = nil, entries: Set<WindowID> = []
     ) -> SnapshotDrive {
         let screens = context.displayFrames()
         var targets: [WindowID: CGRect] = [:]
@@ -410,6 +419,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             // SM-14: a retarget during the hold flies on; the hold is over.
             handoff.cancel()
             origins.merge(starts) { joined, _ in joined }
+            opening.formUnion(entries)
             let previousTargets = self.targets
             self.targets.merge(targets) { _, latest in latest }
             let plan = planSnapshotRetarget(
@@ -420,8 +430,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
             windows.formUnion(plan.adds.map(\.id))
             // SM-16: the hole set follows the latest targets and layers.
             let previous = holes
+            let previousEntries = entryHoles
             setHoles(snapshotHoles(
-                layered: ids, targets: self.targets, displays: screens, activeDisplays: displays, undrawn: undrawn
+                layered: ids, targets: self.targets, displays: screens, activeDisplays: displays, undrawn: undrawn,
+                opening: opening
             ))
             // SM-27: every retargeted layer shows the image of its new size
             // (SM-32: at once; the one it shows when the size stays).
@@ -443,7 +455,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             overlay.retargetFlight(
                 token: token, targets: plan.retargets, images: faces, velocities: retargetVelocities,
                 adds: makeFlights(plan.adds, images: images, velocities: velocities, now: now),
-                holes: holes, decorations: context.decorations(targets)
+                holes: holes, entryHoles: entryHoles, decorations: context.decorations(targets)
             )
             if primingToken == nil {
                 // SM-30: the instant pass writes these windows now.
@@ -455,15 +467,16 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 context.log(.debug, "snapshot retarget uncovered ids=\(plan.uncovered.count)")
                 cache.schedule(delay: 0.05)
             }
-            if holes != previous, !holes.isEmpty {
-                context.log(.debug, snapshotHolesLine(count: holes.count))
+            if holes != previous || entryHoles != previousEntries, !holes.isEmpty {
+                context.log(.debug, snapshotHolesLine(count: holes.count, entries: entryHoles.count))
             }
             return primingToken == nil ? .flying : .priming
         }
         let cache = cache
         let decision = planSnapshotFlight(
             starts: starts, targets: targets, displays: screens, hasImage: usable,
-            backdropReady: { cache.backdrop(for: screens[$0]) != nil }, undrawn: undrawn, pinnedDisplays: pinned
+            backdropReady: { cache.backdrop(for: screens[$0]) != nil }, undrawn: undrawn, pinnedDisplays: pinned,
+            opening: entries
         )
         switch decision {
         case .fallback(let reason, let missing):
@@ -486,9 +499,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
             self.ids = ids
             windows = ids
             displays = Set(items.map(\.displayIndex)).union(holes.map(\.displayIndex))
+            opening = entries
             setHoles(holes)
             if !holes.isEmpty {
-                context.log(.debug, snapshotHolesLine(count: holes.count))
+                context.log(.debug, snapshotHolesLine(count: holes.count, entries: entryHoles.count))
             }
             startedAt = now
             cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids, now: now)
@@ -497,7 +511,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             primingToken = token
             pending = nil
             overlay.beginFlight(
-                token: token, spring: spring, flights: flights, holes: self.holes,
+                token: token, spring: spring, flights: flights, holes: self.holes, entryHoles: entryHoles,
                 decorations: context.decorations(targets)
             )
             return .priming
@@ -559,6 +573,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         ids = held
         windows = held
         displays = [index]
+        opening = []
         setHoles([])
         startedAt = now
         cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: held, now: now)
@@ -569,7 +584,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
         gestureLost = lost
         heldFrames = [:]
         overlay.beginFlight(
-            token: token, spring: spring, flights: flights, holes: holes, decorations: context.decorations(frames)
+            token: token, spring: spring, flights: flights, holes: holes, entryHoles: entryHoles,
+            decorations: context.decorations(frames)
         )
         return transport
     }
@@ -976,6 +992,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
         origins = [:]
         targets = [:]
         holes = [:]
+        entryHoles = []
+        opening = []
         backgrounds = [:]
         startFaces = [:]
         resizeModes = [:]
@@ -988,5 +1006,6 @@ public final class SnapshotFlightController: @unchecked Sendable {
 
     private func setHoles(_ next: [SnapshotHole]) {
         holes = Dictionary(uniqueKeysWithValues: next.map { ($0.id, $0.frame) })
+        entryHoles = Set(next.filter(\.entry).map(\.id))
     }
 }

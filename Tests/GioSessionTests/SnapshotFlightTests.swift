@@ -10,10 +10,14 @@ import XCTest
 /// `publish` to the same list.
 final class FakeOverlay: OverlayPort, @unchecked Sendable {
     var events: [String] = []
-    var begins: [(token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations)] = []
+    var begins: [(
+        token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], entryHoles: Set<WindowID>,
+        decorations: OverlayDecorations
+    )] = []
     var retargets: [(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
-        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     )] = []
     var tracks: [(token: Int, frames: [WindowID: CGRect])] = []
     var flies: [Int] = []
@@ -23,10 +27,10 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
 
     func beginFlight(
         token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
         events.append("prime:\(token)")
-        begins.append((token, flights, holes, decorations))
+        begins.append((token, flights, holes, entryHoles, decorations))
     }
 
     func flyFlight(token: Int) {
@@ -37,10 +41,10 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     func retargetFlight(
         token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
         velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
         events.append("retarget:\(token)")
-        retargets.append((token, targets, images, velocities, adds, holes, decorations))
+        retargets.append((token, targets, images, velocities, adds, holes, entryHoles, decorations))
     }
 
     func trackFlight(token: Int, frames: [WindowID: CGRect]) {
@@ -573,8 +577,9 @@ final class SnapshotFlightTests: XCTestCase {
 
         XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [idA])
         XCTAssertEqual(overlay.begins.first?.holes, [idB: b], "the real window shows through at its target")
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [], "not opening: the images still draw above it")
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot fallback") })
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=0") })
     }
 
     func testAHoleWindowIsPaintCheckedBeforeTheHandOff() {
@@ -610,7 +615,66 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(flight.drive(animations: [second], plans: [ParkingPlan(visible: visible)], spring: .niri), .flying)
 
         XCTAssertEqual(overlay.retargets.first?.holes, [idB: b])
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=0") })
+    }
+
+    // MARK: WP-04 entry holes
+
+    /// A window opening mid-strip without an image: its hole cuts the image
+    /// layers too, from the prime on, so the neighbour it displaces slides
+    /// out from under the real window instead of covering it.
+    func testAnOpeningWindowIsAnEntryHoleFromThePrime() {
+        refresh([idA: a])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: b.offsetBy(dx: 0, dy: -40), to: b, duration: 0.3)
+
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB]), .priming
+        )
+
+        XCTAssertEqual(overlay.begins.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [idB])
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=1") })
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertEqual(world.paintChecks, [[idB: b]], "an entry hole is paint-checked like any hole")
+    }
+
+    func testARetargetKeepsTheEntryHoleWhileTheWindowIsStillAHole() {
+        refresh([idA: a])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: b.offsetBy(dx: 0, dy: -40), to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB]), .priming
+        )
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+
+        var next = plan.visible
+        next[idA] = a.offsetBy(dx: 200, dy: 0)
+        let more = WindowAnimation(id: idA, from: animation.to, to: next[idA]!, duration: 0.3)
+        XCTAssertEqual(flight.drive(animations: [more], plans: [ParkingPlan(visible: next)], spring: .niri), .flying)
+
+        XCTAssertEqual(overlay.retargets.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.retargets.first?.entryHoles, [idB], "the same flight: still opening")
+    }
+
+    func testAnUndrawnOpeningWindowGetsNoHole() {
+        refresh([idA: a])
+        cache.noteVanished([idB])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: b.offsetBy(dx: 0, dy: -40), to: b, duration: 0.3)
+
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB]), .priming
+        )
+
+        XCTAssertEqual(overlay.begins.first?.holes, [:])
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [])
     }
 
     // MARK: SM-31 vanished and undrawn windows
