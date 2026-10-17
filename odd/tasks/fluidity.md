@@ -794,12 +794,14 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
 - [x] PF-AQ (`dd99f31`) — `SettleCaptureGate`: an instant pass schedules the settle capture only
   when it wrote, ended an AX motion, placed instantly, or changed the shown workspaces; else
   debug `snapshot settle skipped reason=noop`. RED: compile (`SettleCaptureGateTests`).
-- [x] PF-AP (`10ac99d`) — The overview takes thumbnails from the snapshot cache when an image
-  matches the window's size (2 pt), is at most 30 s old and has >= 0.75 px/pt; only the rest is
-  captured. RED: compile (`OverviewThumbnailPlanTests`). Log: info
-  `overview thumbnails cached=N capture=N`.
-  GREEN (PF-AK..PF-AQ): `swift test` all bundles 0 failures (UI 313/53 skipped, Session 519,
-  POC 7, Mac 19, MacOS 91, Core 2062); signed Debug build succeeded; `git diff --check` clean.
+- [ ] PF-AP (`10ac99d`, reverted `d8df5ad`) — The overview took thumbnails from the snapshot
+  cache (fresh, same size, >= 0.75 px/pt) and captured only the rest. Reverted after the A/B
+  below: Gio CPU for 4 opens 0.72-0.76 s before, 0.95-0.96 s with the cached 2x images, 0.83 s
+  with them scaled to 0.75 px/pt first (PF-AR, never committed); replayd 0.17-0.18 -> 0.11-0.13
+  s; WindowServer not measurable from the test host. No proven gain for more Gio CPU.
+  GREEN (PF-AK..PF-AQ, PF-AP reverted): `swift test` all bundles 0 failures (UI 313/53 skipped,
+  Session 519, POC 7, Mac 19, MacOS 91, Core 2051); signed Release `0.1.3-rc.3` built and
+  packaged by `make-dmg.sh`; `git diff --check` clean.
   LIVE 2026-10-17 (signed Release `0.1.3-rc.1` from `make-dmg.sh`, installed in `/Applications`,
   one display, driven by `gio action` / `gio overview`): every `reflow timing` line ends with
   `focusWait=... path=reconcile|dispatch`; 12 moves of a floating Finder window gave 12 no-op
@@ -813,6 +815,19 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   the test host may not send keystrokes, `osascript ... not allowed to send keystrokes`),
   per-display backdrops and the merged pass on two displays (PF-AL, PF-AO: one display
   connected).
+  A/B 2026-10-17 (same method as PF-T: signed Release builds, one display, launched by `open`,
+  main window open, `ps` CPU deltas per phase; before = `7794db1` x4, after = `0.1.3-rc.3`
+  (PF-AK..PF-AQ without PF-AP) x3, alternated). Workload per run: W1 (2 x 8 focus right, 8
+  left, 4 workspace switches), 3 focus bursts (4 actions in 50 ms), 12 moves of a floating
+  Finder window, 4 overview opens, 60 s idle. Means (range):
+  Gio CPU W1 0.91 (0.82-1.00) -> 0.86 (0.83-0.89) s; bursts 0.29 -> 0.32 s; floating churn
+  0.26 (0.24-0.27) -> 0.16 (0.15-0.17) s; overview 0.74 -> 0.72 s; idle 0.17 -> 0.19 s.
+  replayd churn 0.17 -> 0.04 s. Captures per run 29.8 -> 14.7, captured pixels 233 -> 116 Mpx,
+  backdrop runs 15 -> 1.7, `reflow timing` lines 124 -> 83, no-op settle runs skipped 0 -> 39,
+  flight frames dropped 62 -> 54, hitches 8.2 -> 5.3. Unchanged within noise: summed
+  `reflow timing` 2292 -> 2521 ms (merged passes report bigger single totals), footprint
+  67-71 -> 71 MB (the images are IOSurfaces, outside `footprint`). Idle of 2 of 5 after-runs
+  was discarded: the user pressed keys during it.
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
