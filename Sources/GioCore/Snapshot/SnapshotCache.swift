@@ -582,17 +582,21 @@ public func snapshotCaptureSet(
 /// size (none at all, only another size, or one past `maxAge`). The soft
 /// age is the refresh set's rule, not the strip's. Whether a window was
 /// tried before does not matter; `excluded` (known blank/unmatchable
-/// parked windows) never is. Strip order.
+/// parked windows) never is. Strip order. PF-AK: a typing mark the typing
+/// rule holds (`snapshotTypingHolds`, `typedAt`) does not count, and the
+/// window is captured only for a missing image or a new size.
 public func snapshotStripSelection<Image>(
     cache: SnapshotCache<Image>, strip: [(id: WindowID, frame: CGRect)],
-    dirty: [WindowID: SnapshotCaptureReason], excluded: Set<WindowID>, now: TimeInterval,
+    dirty: [WindowID: SnapshotCaptureReason], typedAt: [WindowID: TimeInterval] = [:],
+    excluded: Set<WindowID>, now: TimeInterval,
     maxAge: TimeInterval = snapshotMaxAge, tolerance: CGFloat = 2
 ) -> [(id: WindowID, cause: SnapshotRefreshCause)] {
     strip.compactMap { item in
         guard !excluded.contains(item.id) else {
             return nil
         }
-        if let reason = dirty[item.id] {
+        let held = typingHeld(item.id, cache: cache, dirty: dirty, typedAt: typedAt, now: now)
+        if let reason = dirty[item.id], !held {
             return (item.id, .dirty(reason))
         }
         guard cache.entry(item.id) != nil else {
@@ -600,6 +604,9 @@ public func snapshotStripSelection<Image>(
         }
         guard let entry = cache.entry(item.id, matching: item.frame, tolerance: tolerance) else {
             return (item.id, .sizeChanged)
+        }
+        if held {
+            return nil
         }
         if now - entry.capturedAt > maxAge {
             return (item.id, .stale)
@@ -627,19 +634,25 @@ public enum SnapshotRefreshCause: Equatable, Sendable {
 /// frame). Wanted order. A missing image that was marked dirty (a new
 /// window) reports the mark, so the run is logged with its reason. SM-22:
 /// a window in `fullResolution` (a shown strip) whose image of its size is
-/// half resolution is captured again; any other keeps it.
+/// half resolution is captured again; any other keeps it. PF-AK: a typing
+/// mark the typing rule holds (`snapshotTypingHolds`, `typedAt`) does not
+/// count, and the window is captured only for a missing image or a new size.
 public func snapshotRefreshSelection<Image>(
     cache: SnapshotCache<Image>, wanted: [(id: WindowID, frame: CGRect)],
-    dirty: [WindowID: SnapshotCaptureReason], now: TimeInterval,
+    dirty: [WindowID: SnapshotCaptureReason], typedAt: [WindowID: TimeInterval] = [:], now: TimeInterval,
     softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2, fullResolution: Set<WindowID> = []
 ) -> [(id: WindowID, cause: SnapshotRefreshCause)] {
     wanted.compactMap { item in
+        let held = typingHeld(item.id, cache: cache, dirty: dirty, typedAt: typedAt, now: now)
         guard cache.entry(item.id) != nil else {
-            return (item.id, dirty[item.id].map { .dirty($0) } ?? .missing)
+            return (item.id, held ? .missing : dirty[item.id].map { .dirty($0) } ?? .missing)
         }
         // SM-11: an image of either kept size counts.
         guard let entry = cache.entry(item.id, matching: item.frame, tolerance: tolerance) else {
             return (item.id, .sizeChanged)
+        }
+        if held {
+            return nil
         }
         if let reason = dirty[item.id] {
             return (item.id, .dirty(reason))
@@ -652,6 +665,18 @@ public func snapshotRefreshSelection<Image>(
         }
         return nil
     }
+}
+
+/// PF-AK: the window's typing mark is not due yet.
+private func typingHeld<Image>(
+    _ id: WindowID, cache: SnapshotCache<Image>, dirty: [WindowID: SnapshotCaptureReason],
+    typedAt: [WindowID: TimeInterval], now: TimeInterval
+) -> Bool {
+    guard dirty[id] == .typing else {
+        return false
+    }
+    let due = snapshotTypingCaptureDue(typedAt: typedAt[id], capturedAt: cache.entry(id)?.capturedAt)
+    return due - now > snapshotTypingSlack
 }
 
 /// The reason logged for one capture run: the most specific cause wins
@@ -767,10 +792,42 @@ public let snapshotTypingFloor: TimeInterval = 5
 /// PF-V: how long a typing capture waits from now: the pause, or longer
 /// while the window's newest image (`capturedAt`) is younger than the floor.
 public func snapshotTypingCaptureDelay(capturedAt: TimeInterval?, now: TimeInterval) -> TimeInterval {
-    guard let capturedAt else {
-        return snapshotTypingQuiet
+    snapshotTypingCaptureDue(typedAt: now, capturedAt: capturedAt) - now
+}
+
+/// PF-AK: when a window marked dirty by typing may be captured: the pause
+/// after its last typing hop (`typedAt`, nil: long ago) and the floor after
+/// its newest image (`capturedAt`, nil: none), whichever ends later.
+public func snapshotTypingCaptureDue(typedAt: TimeInterval?, capturedAt: TimeInterval?) -> TimeInterval {
+    max((typedAt ?? -.infinity) + snapshotTypingQuiet, (capturedAt ?? -.infinity) + snapshotTypingFloor)
+}
+
+/// PF-AK: a typing capture this close to its due time counts as due (the
+/// timer armed for it fires at the due time, give or take rounding).
+let snapshotTypingSlack: TimeInterval = 0.001
+
+/// PF-AK: the typing marks the typing rule holds at `now` (every run, not
+/// only the targeted typing run: a settle run used to capture the window
+/// through its mark), each with the time it may be captured. A held window
+/// keeps its mark; its run is armed for that time.
+public func snapshotTypingHolds<Image>(
+    cache: SnapshotCache<Image>, dirty: [WindowID: SnapshotCaptureReason],
+    typedAt: [WindowID: TimeInterval], now: TimeInterval
+) -> [WindowID: TimeInterval] {
+    var holds: [WindowID: TimeInterval] = [:]
+    for (id, reason) in dirty where reason == .typing {
+        let due = snapshotTypingCaptureDue(typedAt: typedAt[id], capturedAt: cache.entry(id)?.capturedAt)
+        if due - now > snapshotTypingSlack {
+            holds[id] = due
+        }
     }
-    return max(snapshotTypingQuiet, capturedAt + snapshotTypingFloor - now)
+    return holds
+}
+
+/// PF-AK: `snapshot typing held id=P:E wait=S.S`, a run left a typed-in
+/// window out until the pause and the floor allow it (debug).
+public func snapshotTypingHeldLogLine(id: WindowID, wait: TimeInterval) -> String {
+    "snapshot typing held id=\(id.pid):\(id.elementID) wait=\(String(format: "%.1f", wait))"
 }
 
 // MARK: - SM-09 backdrop staleness

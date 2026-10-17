@@ -177,6 +177,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     private var pendingFull = false
     /// SM-09: windows whose image changed since it was captured, by reason.
     private(set) var dirty: [WindowID: SnapshotCaptureReason] = [:]
+    /// PF-AK: the last typing hop of each window marked dirty by typing:
+    /// every run holds the mark until the pause after it (and the floor).
+    private var typedAt: [WindowID: TimeInterval] = [:]
     private var backdropDirty = false
     /// SM-09: unmanaged on-screen windows as of the last backdrop decision.
     private var unmanagedFingerprint: Set<ServerWindowKey>?
@@ -248,6 +251,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         cache.removeAll()
         coverageStopped = false
         dirty.removeAll()
+        typedAt.removeAll()
         tried.removeAll()
         parkedMisses.removeAll()
         undrawnWindows.removeAll()
@@ -383,12 +387,15 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// The user typed into the focused window (coalesced by the caller to a
     /// few hops per second): its image changes while nothing moves. PF-V:
     /// captured after a pause, never sooner than the floor after its last
-    /// image (`snapshotTypingCaptureDelay`).
+    /// image (`snapshotTypingCaptureDelay`). PF-AK: every run holds the mark
+    /// until then, not only this targeted one.
     public func noteTyping() {
         guard let focused = context.session().manager.currentWorkspace().focusedWindow else {
             return
         }
-        let delay = snapshotTypingCaptureDelay(capturedAt: cache.entry(focused)?.capturedAt, now: context.now())
+        let now = context.now()
+        let delay = snapshotTypingCaptureDelay(capturedAt: cache.entry(focused)?.capturedAt, now: now)
+        typedAt[focused] = now
         markDirty([focused], reason: .typing, delay: delay)
     }
 
@@ -736,6 +743,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         // set drains (SM-11: marks of minimized, floating or gone windows).
         let capturable = refreshIDs.union(coverage.map(\.id))
         dirty = dirty.filter { capturable.contains($0.key) }
+        typedAt = typedAt.filter { dirty[$0.key] == .typing }
         let wanted = (full ? refresh : refresh.filter { dirty[$0.id] != nil }).filter { !parkedMisses.contains($0.id) }
         // SM-22: the shown strips want full resolution, everything else half.
         let shown = Set(stripPlan().strip.map(\.id))
@@ -752,12 +760,20 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                     || (full && !coverageStopped && lacksFreshImage(item.id, now: now) && !tried.contains(item.id)))
         }.map { (id: $0.id, frame: $0.frame) }
         // SM-21: a coverage stage does not ask again for a window this
-        // pass already asked for (unless it is dirty again).
+        // pass already asked for (unless it is dirty again). PF-AK: a typing
+        // mark counts only once the pause and the floor allow it.
         let selected = Array((
-            snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, now: now, fullResolution: shown)
-                + snapshotStripSelection(cache: cache, strip: strip, dirty: dirty, excluded: parkedMisses, now: now)
-                + snapshotRefreshSelection(cache: cache, wanted: extra, dirty: dirty, now: now, fullResolution: shown)
+            snapshotRefreshSelection(
+                cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+            )
+                + snapshotStripSelection(
+                    cache: cache, strip: strip, dirty: dirty, typedAt: typedAt, excluded: parkedMisses, now: now
+                )
+                + snapshotRefreshSelection(
+                    cache: cache, wanted: extra, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+                )
         ).filter { !full || !stripPass.contains($0.id) || dirty[$0.id] != nil }.prefix(Self.maxWindows))
+        armTypingRun(selected: Set(selected.map(\.id)), now: now)
         let managed = managedFrames()
         let backdrops = backdropFrames(full: full, managed: managed, now: now)
         let (screens, primary) = context.captureScreens()
@@ -786,6 +802,20 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                 self?.finish(outcome, requested: requested, half: half, requestedBackdrops: backdrops)
             }
         }
+    }
+
+    /// PF-AK: typed-in windows this run held keep their mark; the targeted
+    /// typing run (which a settle replaced) is armed for the first of them.
+    private func armTypingRun(selected: Set<WindowID>, now: TimeInterval) {
+        let holds = snapshotTypingHolds(cache: cache, dirty: dirty, typedAt: typedAt, now: now)
+            .filter { !selected.contains($0.key) }
+        guard let due = holds.values.min() else {
+            return
+        }
+        for (id, at) in holds.sorted(by: { $0.key < $1.key }) {
+            context.log(.debug, snapshotTypingHeldLogLine(id: id, wait: at - now))
+        }
+        scheduleRun(delay: due - now, full: false)
     }
 
     /// SM-20: drops what no flight can use (`SnapshotCache.prune`), one
