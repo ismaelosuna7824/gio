@@ -38,6 +38,31 @@ public struct ParkingPlan: Equatable, Sendable {
     }
 }
 
+/// PF-AO: every plan of one pass (each display, then the hidden workspaces)
+/// as one write set and the pass's focus intent, applied once after every
+/// write. A window in several plans takes the later plan's write, visible or
+/// parked, as when the plans were written one after another. The reconciler
+/// still writes each app's parked windows before its visible ones.
+public struct PassWrites: Equatable, Sendable {
+    public var plan: ParkingPlan
+    public var focus: WindowID?
+}
+
+public func mergePassWrites(_ plans: [ParkingPlan], focus: WindowID?) -> PassWrites {
+    var merged = ParkingPlan()
+    for plan in plans {
+        for (id, frame) in plan.visible {
+            merged.visible[id] = frame
+            merged.parked.removeValue(forKey: id)
+        }
+        for (id, target) in plan.parked {
+            merged.parked[id] = target
+            merged.visible.removeValue(forKey: id)
+        }
+    }
+    return PassWrites(plan: merged, focus: focus)
+}
+
 /// macOS refuses fully off-screen frames, so a parked window keeps this
 /// many points inside its display (scrollable-tiler behavior, as in
 /// AeroSpace/PaperWM).
