@@ -744,44 +744,6 @@ public func snapshotRefreshReason(causes: [SnapshotRefreshCause], backdrop: Bool
     }
 }
 
-// MARK: - PF-AP overview thumbnails
-
-/// PF-AP: which overview thumbnails come from the cache and which windows
-/// are still captured.
-public struct OverviewThumbnailPlan<Image> {
-    public let fromCache: [WindowID: Image]
-    public let toCapture: [WindowID: CGRect]
-}
-
-/// PF-AP: a window's thumbnail is its cached image of its current size
-/// (`tolerance`; a move keeps it) while younger than `softAge` and at least
-/// `minPixelsPerPoint` dense (the overview capture's own scale, so a
-/// half-resolution image on a 1x display is captured again); every other
-/// window, the image of another size or none at all, is captured. The ax
-/// renderer keeps no images: everything is captured.
-public func overviewThumbnailPlan<Image>(
-    windows: [WindowID: CGRect], cache: SnapshotCache<Image>, now: TimeInterval,
-    softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2, minPixelsPerPoint: CGFloat = 0
-) -> OverviewThumbnailPlan<Image> {
-    var fromCache: [WindowID: Image] = [:]
-    var toCapture: [WindowID: CGRect] = [:]
-    for (id, frame) in windows {
-        if let entry = cache.entry(id, matching: frame, tolerance: tolerance), now - entry.capturedAt <= softAge,
-           CGFloat(entry.pixels) >= entry.frame.width * entry.frame.height * minPixelsPerPoint * minPixelsPerPoint
-        {
-            fromCache[id] = entry.image
-        } else {
-            toCapture[id] = frame
-        }
-    }
-    return OverviewThumbnailPlan(fromCache: fromCache, toCapture: toCapture)
-}
-
-/// PF-AP: `overview thumbnails cached=N capture=N`, once per overview open.
-public func overviewThumbnailsLogLine(cached: Int, captured: Int) -> String {
-    "overview thumbnails cached=\(cached) capture=\(captured)"
-}
-
 // MARK: - SM-09 blank guard
 
 /// A capture that shows nothing: every sample transparent, or every opaque
