@@ -132,6 +132,10 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// PF-Q: motion-start focus calls (`focusSoon`), serial, off the caller.
     private let focusQueue = DispatchQueue(label: "gio.focus", qos: .userInteractive)
     private let focusPending = DispatchGroup()
+    /// PF-AN: the newest `focusSoon` call; older queued ones are skipped.
+    private let soonBook = DispatchFocusBook()
+    /// Where `focusSoon` work runs (the focus queue; tests run it by hand).
+    lazy var focusSubmit: (@escaping @Sendable () -> Void) -> Void = { [focusQueue] in focusQueue.async(execute: $0) }
     /// SM-12: the newest dispatched lane per app (supersession) and the
     /// newest dispatched focus step (moved behind a newer write of its
     /// window). Calling thread only.
@@ -694,22 +698,31 @@ public final class WindowReconciler<Actuator: WindowActuator> {
     /// for the motion lanes, without writing any frame and without holding
     /// the caller: the call (`focusAXWindow` activates the app and polls
     /// until it is frontmost, 12-45 ms live) runs on a serial focus queue,
-    /// in submission order, so the motion's first tick and a retarget's next
-    /// one are not held back. A refused focus is logged like any other
-    /// (PF-I gate). `reconcile` waits for these before its own focus, so
-    /// the final pass still focuses last.
+    /// so the motion's first tick and a retarget's next one are not held
+    /// back. PF-AN: newest wins: a queued call that is no longer the newest
+    /// when the queue reaches it is skipped (no AX call), so a key burst onto
+    /// slow apps costs one focus, not their sum. A refused focus is logged
+    /// like any other (PF-I gate). `reconcile` waits for these before its own
+    /// focus, so the final pass still focuses last.
     public func focusSoon(_ id: WindowID) {
         let runner = FocusRunner(
             focus: { [actuator] in try actuator.focus(id: $0) },
             failed: { [weak self] in self?.logFocusFailure($0, reason: $1) }
         )
+        let book = soonBook
+        let generation = book.issue()
         focusPending.enter()
-        focusQueue.async { [focusPending] in
+        focusSubmit { [focusPending] in
             defer { focusPending.leave() }
-            do {
-                try runner.focus(id)
-            } catch {
-                runner.failed(id, focusFailureKind(error))
+            let ran = book.runIfLatest(generation) {
+                do {
+                    try runner.focus(id)
+                } catch {
+                    runner.failed(id, focusFailureKind(error))
+                }
+            }
+            if !ran {
+                GioLog.record(.debug, "focus superseded id=\(id.pid):\(id.elementID)")
             }
         }
     }

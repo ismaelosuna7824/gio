@@ -54,7 +54,7 @@ final class MotionStartFocusTests: XCTestCase {
         XCTAssertEqual(actuator.lines, ["focus 1"])
     }
 
-    func testMotionStartFocusesRunInOrderAndTheSettleFocusComesAfterThem() {
+    func testTheNewestMotionStartFocusLandsAndTheSettleFocusComesAfterIt() {
         let actuator = BlockingActuator(blocking: [id(1)])
         let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
         reconciler.focusSoon(id(1))
@@ -62,9 +62,11 @@ final class MotionStartFocusTests: XCTestCase {
         let gate = actuator.gate
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.05) { gate.signal() }
         // The final pass focuses last; a motion-start focus still running
-        // must not land after it.
+        // must not land after it. PF-AN: focus 1 runs only when the queue
+        // started it before focus 2 was issued.
         reconciler.reconcile(frames: [:], focused: id(3), currentlyFocused: nil)
-        XCTAssertEqual(actuator.lines, ["focus 1", "focus 2", "focus 3"])
+        XCTAssertEqual(actuator.lines.filter { $0 != "focus 1" }, ["focus 2", "focus 3"])
+        XCTAssertTrue(["focus 1", "focus 2", "focus 3"].suffix(actuator.lines.count) == ArraySlice(actuator.lines))
     }
 
     func testARefusedMotionStartFocusIsLoggedOnce() {
@@ -77,5 +79,35 @@ final class MotionStartFocusTests: XCTestCase {
         XCTAssertTrue(reconciler.waitForFocusIdle(timeout: 2))
         let lines = GioLog.entries().filter { $0.message.hasPrefix("focus failed id=10:4") }
         XCTAssertEqual(lines.count, 1, "the PF-I gate holds the repeat back")
+    }
+
+    /// PF-AN: a burst of key presses queues three focus calls; by the time
+    /// the queue reaches them only the newest still matters.
+    func testABurstOfMotionStartFocusesRunsOnlyTheNewest() {
+        GioLog.clearForTests()
+        GioLog.logFilePath = NSTemporaryDirectory() + "gio-pfan-\(UUID().uuidString).log"
+        let actuator = BlockingActuator()
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        var queued: [@Sendable () -> Void] = []
+        reconciler.focusSubmit = { queued.append($0) }
+        reconciler.focusSoon(id(1))
+        reconciler.focusSoon(id(2))
+        reconciler.focusSoon(id(3))
+        XCTAssertFalse(reconciler.waitForFocusIdle(timeout: 0.01))
+        queued.forEach { $0() }
+        XCTAssertEqual(actuator.lines, ["focus 3"])
+        XCTAssertTrue(reconciler.waitForFocusIdle(timeout: 0.01))
+        let superseded = GioLog.entries(minLevel: .debug).filter { $0.message.hasPrefix("focus superseded") }
+        XCTAssertEqual(superseded.map(\.message), ["focus superseded id=10:1", "focus superseded id=10:2"])
+    }
+
+    func testASingleMotionStartFocusStillRuns() {
+        let actuator = BlockingActuator()
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        var queued: [@Sendable () -> Void] = []
+        reconciler.focusSubmit = { queued.append($0) }
+        reconciler.focusSoon(id(1))
+        queued.forEach { $0() }
+        XCTAssertEqual(actuator.lines, ["focus 1"])
     }
 }
