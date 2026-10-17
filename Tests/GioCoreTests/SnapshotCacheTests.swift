@@ -262,7 +262,7 @@ final class SnapshotCacheTests: XCTestCase {
             ServerWindow(pid: 20, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
         ]
         let print = unmanagedWindowFingerprint(
-            server: server, managed: [id(1): managed], ownPid: 77, displays: [CGRect(x: 0, y: 0, width: 1800, height: 1169)]
+            server: server, managed: [id(1): managed], ownPid: 77, display: CGRect(x: 0, y: 0, width: 1800, height: 1169)
         )
         XCTAssertEqual(
             print, [ServerWindowKey(pid: 10, x: 900, y: 0, width: 300, height: 200), ServerWindowKey(pid: 20, x: 100, y: 100, width: 50, height: 50)]
@@ -270,7 +270,7 @@ final class SnapshotCacheTests: XCTestCase {
         let moved = server.map { $0.pid == 20 ? ServerWindow(pid: 20, bounds: $0.bounds.offsetBy(dx: 10, dy: 0)) : $0 }
         XCTAssertNotEqual(
             unmanagedWindowFingerprint(
-                server: moved, managed: [id(1): managed], ownPid: 77, displays: [CGRect(x: 0, y: 0, width: 1800, height: 1169)]
+                server: moved, managed: [id(1): managed], ownPid: 77, display: CGRect(x: 0, y: 0, width: 1800, height: 1169)
             ),
             print
         )
@@ -290,8 +290,58 @@ final class SnapshotCacheTests: XCTestCase {
             ServerWindow(pid: 12, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
         ]
         XCTAssertEqual(
-            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, displays: [display]),
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, display: display),
             [ServerWindowKey(pid: 12, x: 100, y: 100, width: 50, height: 50)]
+        )
+    }
+
+    /// PF-AL: live, one popup re-captured every display's backdrop. Each
+    /// display has its own fingerprint: only the windows showing more than a
+    /// sliver on it (one spanning two displays is in both).
+    func testEachDisplayHasItsOwnFingerprint() {
+        let left = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let right = CGRect(x: 1800, y: 0, width: 1800, height: 1169)
+        let server = [
+            ServerWindow(pid: 20, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
+            ServerWindow(pid: 21, bounds: CGRect(x: 2000, y: 100, width: 300, height: 200)),
+            ServerWindow(pid: 22, bounds: CGRect(x: 1700, y: 100, width: 200, height: 200)),
+        ]
+        XCTAssertEqual(
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, display: left),
+            [ServerWindowKey(pid: 20, x: 100, y: 100, width: 50, height: 50),
+             ServerWindowKey(pid: 22, x: 1700, y: 100, width: 200, height: 200)]
+        )
+        XCTAssertEqual(
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, display: right),
+            [ServerWindowKey(pid: 21, x: 2000, y: 100, width: 300, height: 200),
+             ServerWindowKey(pid: 22, x: 1700, y: 100, width: 200, height: 200)]
+        )
+    }
+
+    /// PF-AL: which backdrops a run captures. A missing one (settle runs),
+    /// one marked dirty (any run, at once), an expired one (settle runs);
+    /// one whose display's unmanaged windows changed only once it is
+    /// `snapshotBackdropMinAge` old (a burst of popups: at most one capture
+    /// per display per interval).
+    func testBackdropDueRateLimitsUnmanagedChanges() {
+        let entry = SnapshotBackdropEntry(image: "b", displayFrame: frame, capturedAt: 100, pixels: 1)
+        XCTAssertGreaterThan(snapshotBackdropMinAge, 0)
+        XCTAssertLessThan(snapshotBackdropMinAge, snapshotBackdropMaxAge)
+        XCTAssertTrue(snapshotBackdropDue(nil as SnapshotBackdropEntry<String>?, markedDirty: false, unmanagedChanged: false, settle: true, now: 100))
+        XCTAssertFalse(snapshotBackdropDue(nil as SnapshotBackdropEntry<String>?, markedDirty: true, unmanagedChanged: true, settle: false, now: 100))
+        XCTAssertTrue(snapshotBackdropDue(entry, markedDirty: true, unmanagedChanged: false, settle: false, now: 101))
+        XCTAssertTrue(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: false, settle: true, now: 401))
+        XCTAssertFalse(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: false, settle: false, now: 401))
+        XCTAssertFalse(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: false, settle: true, now: 200))
+        XCTAssertFalse(
+            snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: true, settle: true, now: 100 + snapshotBackdropMinAge - 1),
+            "too young: remembered"
+        )
+        XCTAssertTrue(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: true, settle: true, now: 100 + snapshotBackdropMinAge))
+        XCTAssertFalse(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: true, settle: false, now: 200))
+        XCTAssertEqual(
+            snapshotBackdropChangedLogLine(display: CGRect(x: 1800, y: 0, width: 1800, height: 1169), wait: 24.66),
+            "snapshot backdrop unmanaged changed display=1800,0 wait=24.7"
         )
     }
 

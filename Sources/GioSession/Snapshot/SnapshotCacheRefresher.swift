@@ -52,10 +52,11 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 /// on dirty signals (typing in the focused window, a window focused for
 /// 3 s, a new window). A run captures only what is missing, resized, dirty
 /// or older than the soft age, never the whole set; the backdrop only when
-/// missing, past its max age or when the unmanaged on-screen windows
-/// changed. SM-11 coverage: a settle run also captures the windows of every
-/// workspace that have no image yet, at most `maxWindows` per run, staged
-/// until none is missing; each such window is tried once until it
+/// missing, past its max age, marked dirty, or (PF-AL: per display, at most
+/// once per `snapshotBackdropMinAge`) when the unmanaged on-screen windows
+/// on its display changed. SM-11 coverage: a settle run also captures the
+/// windows of every workspace that have no image yet, at most `maxWindows`
+/// per run, staged until none is missing; each such window is tried once until it
 /// registers, moves workspace or shows again. A window that misses while
 /// parked is not retried before it is visible. SM-13: under the cap the
 /// images of windows away from the screen go first; once an eviction ran,
@@ -180,9 +181,15 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// PF-AK: the last typing hop of each window marked dirty by typing:
     /// every run holds the mark until the pause after it (and the floor).
     private var typedAt: [WindowID: TimeInterval] = [:]
+    /// Every backdrop is captured again by the next run, however young
+    /// (`markBackdropDirty`).
     private var backdropDirty = false
-    /// SM-09: unmanaged on-screen windows as of the last backdrop decision.
-    private var unmanagedFingerprint: Set<ServerWindowKey>?
+    /// SM-09: unmanaged on-screen windows on each display as of the last
+    /// settle run (PF-AL: one fingerprint per display).
+    private var unmanagedFingerprints: [(display: CGRect, print: Set<ServerWindowKey>)] = []
+    /// PF-AL: displays whose unmanaged windows changed since their backdrop
+    /// was captured, captured again once it is `snapshotBackdropMinAge` old.
+    private var unmanagedChanged: [CGRect] = []
     /// SM-09: the focused window the last `noteFocus` saw.
     private var lastFocused: WindowID?
     /// SM-11: the pending focus-dwell check; a newer focus cancels it.
@@ -259,7 +266,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         nearWorkspaces.removeAll()
         stripPass.removeAll()
         stripCapLogged = false
-        unmanagedFingerprint = nil
+        unmanagedFingerprints.removeAll()
+        unmanagedChanged.removeAll()
     }
 
     /// Purged windows lose their image.
@@ -367,7 +375,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// nil until one was captured. Age never makes it unusable: a stale
     /// desktop under the flight beats an AX fallback, and the settle run
     /// re-captures it past `snapshotBackdropMaxAge` or when the unmanaged
-    /// windows changed.
+    /// windows on its display changed (`snapshotBackdropDue`).
     public func backdrop(for displayFrame: CGRect) -> CGImage? {
         cache.backdrop(for: displayFrame)?.image
     }
@@ -376,8 +384,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         cache.backdrop(for: displayFrame).map { context.now() - $0.capturedAt }
     }
 
-    /// Display parameters or the Space changed: the backdrop shows
-    /// something else now.
+    /// Display parameters, the wallpaper or the Space changed: every
+    /// backdrop shows something else now and is captured by the next run.
     public func markBackdropDirty() {
         backdropDirty = true
     }
@@ -692,29 +700,42 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         return frames
     }
 
-    /// SM-09: display frames whose backdrop must be captured in this run.
-    /// A settle run captures a missing or expired backdrop and one whose
-    /// unmanaged on-screen windows changed; a dirty-only run only an
-    /// explicitly dirtied one. The renderer alone needs backdrops.
+    /// SM-09: display frames whose backdrop must be captured in this run
+    /// (`snapshotBackdropDue`). A settle run compares each display's
+    /// unmanaged on-screen windows with the previous run's; PF-AL: a change
+    /// is remembered for that display only until its backdrop is captured.
+    /// The renderer alone needs backdrops.
     private func backdropFrames(full: Bool, managed: [WindowID: CGRect], now: TimeInterval) -> [CGRect] {
         guard context.rendererAvailable() else {
             return []
         }
         let frames = context.displays().map(\.frame)
         if full {
-            let print = unmanagedWindowFingerprint(
-                server: context.serverWindows(), managed: managed, ownPid: context.ownPid, displays: frames
-            )
-            if let previous = unmanagedFingerprint, previous != print {
-                backdropDirty = true
+            let server = context.serverWindows()
+            let prints = frames.map { frame in
+                (display: frame, print: unmanagedWindowFingerprint(
+                    server: server, managed: managed, ownPid: context.ownPid, display: frame
+                ))
             }
-            unmanagedFingerprint = print
+            unmanagedChanged.removeAll { !frames.contains($0) }
+            for (frame, print) in prints where !unmanagedChanged.contains(frame) {
+                guard let previous = unmanagedFingerprints.first(where: { $0.display == frame }), previous.print != print
+                else {
+                    continue
+                }
+                unmanagedChanged.append(frame)
+                let age = cache.backdrop(for: frame).map { now - $0.capturedAt } ?? snapshotBackdropMinAge
+                context.log(
+                    .debug, snapshotBackdropChangedLogLine(display: frame, wait: max(0, snapshotBackdropMinAge - age))
+                )
+            }
+            unmanagedFingerprints = prints
         }
         return frames.filter { frame in
-            guard let entry = cache.backdrop(for: frame) else {
-                return full
-            }
-            return backdropDirty || (full && !snapshotBackdropUsable(entry, now: now))
+            snapshotBackdropDue(
+                cache.backdrop(for: frame), markedDirty: backdropDirty,
+                unmanagedChanged: unmanagedChanged.contains(frame), settle: full, now: now
+            )
         }
     }
 
@@ -891,6 +912,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                 image: backdrop.image, displayFrame: backdrop.displayFrame,
                 pixels: backdrop.image.width * backdrop.image.height, at: now
             )
+            unmanagedChanged.removeAll { $0 == backdrop.displayFrame }
         }
         if !requestedBackdrops.isEmpty, requestedBackdrops.allSatisfy({ frame in
             outcome.backdrops.contains { $0.displayFrame == frame }

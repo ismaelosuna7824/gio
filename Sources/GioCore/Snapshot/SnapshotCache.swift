@@ -119,8 +119,19 @@ public let snapshotMaxAge: TimeInterval = 180
 public let snapshotSoftAge: TimeInterval = 30
 
 /// SM-09: the per-display backdrop (desktop, icons, unmanaged windows) is
-/// re-captured after this age, or sooner when the unmanaged window set changes.
+/// re-captured after this age, or sooner when the unmanaged windows on its
+/// display change (PF-AL: no sooner than `snapshotBackdropMinAge`).
 public let snapshotBackdropMaxAge: TimeInterval = 300
+
+/// PF-AL: youngest backdrop a change of the unmanaged windows on its
+/// display re-captures. Live, Chrome's omnibox popups (managed floating
+/// windows, kept in the backdrop) changed the fingerprint on most
+/// keystrokes: 50 backdrop captures an hour, p50 2 s apart, ~27 % of every
+/// captured pixel. A burst now costs at most one capture per display per
+/// interval; the change is remembered and captured once the backdrop is
+/// this old. A wallpaper, Space or display change (`markBackdropDirty`)
+/// is not limited.
+public let snapshotBackdropMinAge: TimeInterval = 30
 
 /// Why a capture ran: the settle refresh, a dirty signal, or a debug use.
 public enum SnapshotCaptureReason: String, Equatable, Sendable {
@@ -146,6 +157,37 @@ public func snapshotBackdropUsable<Image>(
     _ entry: SnapshotBackdropEntry<Image>, now: TimeInterval, maxAge: TimeInterval = snapshotBackdropMaxAge
 ) -> Bool {
     now - entry.capturedAt <= maxAge
+}
+
+/// PF-AL: whether a run captures one display's backdrop (`entry`, nil when
+/// none was captured). A settle run captures a missing or expired one, and
+/// one whose display's unmanaged windows changed since it was captured once
+/// it is `snapshotBackdropMinAge` old; any run one marked dirty (wallpaper,
+/// Space, display parameters), however young.
+public func snapshotBackdropDue<Image>(
+    _ entry: SnapshotBackdropEntry<Image>?, markedDirty: Bool, unmanagedChanged: Bool, settle: Bool,
+    now: TimeInterval
+) -> Bool {
+    guard let entry else {
+        return settle
+    }
+    if markedDirty {
+        return true
+    }
+    guard settle else {
+        return false
+    }
+    return !snapshotBackdropUsable(entry, now: now)
+        || (unmanagedChanged && now - entry.capturedAt >= snapshotBackdropMinAge)
+}
+
+/// PF-AL: `snapshot backdrop unmanaged changed display=X,Y wait=S.S`, the
+/// unmanaged windows on the display at origin X,Y changed; its backdrop is
+/// captured by the first settle run after `wait` seconds (debug, once per
+/// change until that capture).
+public func snapshotBackdropChangedLogLine(display: CGRect, wait: TimeInterval) -> String {
+    "snapshot backdrop unmanaged changed display=\(Int(display.minX)),\(Int(display.minY)) "
+        + "wait=\(String(format: "%.1f", wait))"
 }
 
 func snapshotSameSize(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
@@ -851,23 +893,24 @@ public struct ServerWindowKey: Hashable, Sendable {
 }
 
 /// The on-screen windows Gio does not manage (other apps' palettes and
-/// unmanaged windows, desktop widgets): what the backdrop shows besides the
-/// wallpaper. Gio's own windows and every managed window (matched by pid
-/// and a frame within the render tolerance) are left out, so Gio moving its
-/// own layout never changes the fingerprint; anything else appearing,
-/// closing or moving does, and the backdrop is captured again. PF-AJ: so is
-/// every window that shows no more than a parking sliver on any of
-/// `displays` (it is not in the picture; parked windows macOS clamped or
-/// whose app kept its own size used to change it on every re-park).
+/// unmanaged windows, desktop widgets) on one display: what its backdrop
+/// shows besides the wallpaper. Gio's own windows and every managed window
+/// (matched by pid and a frame within the render tolerance) are left out,
+/// so Gio moving its own layout never changes the fingerprint; anything
+/// else appearing, closing or moving does, and that display's backdrop is
+/// captured again (PF-AL: only that display's). PF-AJ: so is every window
+/// that shows no more than a parking sliver on `display` (it is not in the
+/// picture; parked windows macOS clamped or whose app kept its own size
+/// used to change it on every re-park).
 public func unmanagedWindowFingerprint(
-    server: [ServerWindow], managed: [WindowID: CGRect], ownPid: pid_t, displays: [CGRect]
+    server: [ServerWindow], managed: [WindowID: CGRect], ownPid: pid_t, display: CGRect
 ) -> Set<ServerWindowKey> {
     var byPid: [pid_t: [CGRect]] = [:]
     for (id, frame) in managed {
         byPid[id.pid, default: []].append(frame)
     }
     var result: Set<ServerWindowKey> = []
-    for window in server where window.pid != ownPid && showsMoreThanASliver(window.bounds, on: displays) {
+    for window in server where window.pid != ownPid && showsMoreThanASliver(window.bounds, on: display) {
         if let frames = byPid[window.pid], frames.contains(where: { near($0, window.bounds) }) {
             continue
         }
@@ -879,11 +922,9 @@ public func unmanagedWindowFingerprint(
     return result
 }
 
-private func showsMoreThanASliver(_ frame: CGRect, on displays: [CGRect]) -> Bool {
-    displays.contains { display in
-        let inside = frame.intersection(display)
-        return !inside.isNull && inside.width > parkingSliver * 2 && inside.height > parkingSliver * 2
-    }
+private func showsMoreThanASliver(_ frame: CGRect, on display: CGRect) -> Bool {
+    let inside = frame.intersection(display)
+    return !inside.isNull && inside.width > parkingSliver * 2 && inside.height > parkingSliver * 2
 }
 
 /// Whether a managed window is cut out of the backdrop: only windows that
