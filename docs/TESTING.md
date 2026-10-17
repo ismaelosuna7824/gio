@@ -185,7 +185,7 @@ rg "reflow timing|anim done|focus adopt|focus dropped|restore" ~/.config/gio/gio
 
 | Line (prefix) | Level | Meaning |
 | --- | --- | --- |
-| `reflow timing total=Xms windows=N axCalls=M slowest=<app> Yms focus=Zms` | info | One reconcile pass: total time, windows written, Accessibility calls, slowest app. Healthy passes measured live were 2 to 12 ms. |
+| `reflow timing total=Xms windows=N axCalls=M slowest=<app> Yms focus=Zms focusWait=Wms path=<reconcile\|dispatch>` | info | One reconcile pass: total time, windows written, Accessibility calls, slowest app. `focus` is the focus call alone, `focusWait` the wait before it (another focus still running, or the final pass waiting for the motion-start focus), `path` whether the pass held the session queue (`reconcile`) or ran on the lanes under a snapshot overlay (`dispatch`) (PF-AM). Healthy passes measured live were 2 to 12 ms. |
 | `reflow slow window=pid:id app=<name> Yms axCalls=N` | debug | A window write that took more than 20 ms. Names the slow app. |
 | `reflow applied=A parked=P already=Q failed=F` | info | Outcome counts. `applied` = moved, `parked` = written to a parking spot, `already` = already correct (nothing written), `failed` = write failed or timed out. |
 | `reconcile applied=... parked=... already=... vanished=... failed=...` | debug | Same, from the reconciler, plus windows that no longer exist. |
