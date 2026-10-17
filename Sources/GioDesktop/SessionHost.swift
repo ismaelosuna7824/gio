@@ -1814,8 +1814,8 @@ final class SessionHost: @unchecked Sendable {
     ) {
         motion.stop()
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
-        // pass nil so they never steal focus. The intent reaches the last
-        // plan only, so focus lands after every frame of the pass.
+        // pass nil so they never steal focus. The reconciler applies it after
+        // every frame of the pass.
         let settleFocus = focus.takeSettleFocus(parked: Set(plans.flatMap { $0.parked.keys }))
         let focusTarget = settleFocus.target
         defer {
@@ -1834,23 +1834,22 @@ final class SessionHost: @unchecked Sendable {
             overlayFlight.passSettled()
             return
         }
-        var zoomWriteFailures: Set<WindowID> = []
-        var deferred: [WindowID] = []
-        for (planIndex, plan) in plans.enumerated() {
-            let planFocus = planIndex == plans.count - 1 ? focusTarget : nil
-            let report = reconciler.reconcile(
-                frames: plan.visible, parked: plan.parked,
-                focused: planFocus, currentlyFocused: nil,
-                trusted: trustedFrames
-            )
-            foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus, placement: placement)
-            zoomWriteFailures.formUnion(report.failed)
-            deferred += report.deferred
-        }
+        // PF-AO: every plan in one reconcile, so the session queue waits for
+        // the slowest app of the pass once, not once per plan.
+        let writes = mergePassWrites(plans, focus: focusTarget)
+        let report = reconciler.reconcile(
+            frames: writes.plan.visible, parked: writes.plan.parked,
+            focused: writes.focus, currentlyFocused: nil,
+            trusted: trustedFrames
+        )
+        foldSettle(
+            report, visible: writes.plan.visible, parked: writes.plan.parked, focusTarget: writes.focus,
+            placement: placement
+        )
         if let zoomJob {
             nativeZoom.start(zoomJob)
         }
-        finishSettle(deferred: deferred, zoomWriteFailures: zoomWriteFailures)
+        finishSettle(deferred: report.deferred, zoomWriteFailures: Set(report.failed))
         if renderVerifier.hasCandidates {
             renderVerifier.schedule()
         }
@@ -1868,12 +1867,9 @@ final class SessionHost: @unchecked Sendable {
     private func dispatchUnderOverlay(
         plans: [ParkingPlan], focusTarget: WindowID?, reconciler: WindowReconciler<AXWindowActuator>
     ) {
-        var visible: [WindowID: CGRect] = [:]
-        var parked: [WindowID: ParkedTarget] = [:]
-        for plan in plans {
-            visible.merge(plan.visible) { _, new in new }
-            parked.merge(plan.parked) { _, new in new }
-        }
+        let writes = mergePassWrites(plans, focus: focusTarget)
+        let visible = writes.plan.visible
+        let parked = writes.plan.parked
         let pass = reconciler.dispatch(
             frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames
         )
