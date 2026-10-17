@@ -230,7 +230,7 @@ final class SnapshotCacheTests: XCTestCase {
         cache.store(id(1), image: "fresh", frame: frame, pixels: 1, at: 100)
         cache.store(id(2), image: "moved", frame: frame, pixels: 1, at: 100)
         cache.store(id(3), image: "resized", frame: frame, pixels: 1, at: 100)
-        cache.store(id(4), image: "dirty", frame: frame, pixels: 1, at: 100)
+        cache.store(id(4), image: "dirty", frame: frame, pixels: 1, at: 90)
         cache.store(id(5), image: "old", frame: frame, pixels: 1, at: 60)
         let wanted: [(id: WindowID, frame: CGRect)] = [
             (id(1), frame), (id(2), frame.offsetBy(dx: 900, dy: 0)),
@@ -322,6 +322,63 @@ final class SnapshotCacheTests: XCTestCase {
             snapshotTypingCaptureDelay(capturedAt: 9, now: 10), snapshotTypingFloor - 1, accuracy: 1e-9,
             "an image 1 s old waits for the floor"
         )
+    }
+
+    /// PF-AK: live, a settle run before the targeted typing run captured
+    /// the typed-in window through its dirty mark, bypassing the floor and
+    /// the pause (three 16.4 Mpx captures of one Chrome window 0.6 s apart).
+    /// A typing mark counts only once the typing rule allows it: the pause
+    /// after the last hop and the floor after the window's newest image.
+    /// Held, the window is left out of the run (a missing image or a new
+    /// size is still captured); other marks keep their behavior.
+    func testTypingMarkCountsOnlyAfterThePauseAndTheFloor() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "young", frame: frame, pixels: 1, at: 100)
+        cache.store(id(2), image: "old", frame: frame, pixels: 1, at: 90)
+        cache.store(id(4), image: "other size", frame: frame, pixels: 1, at: 90)
+        cache.store(id(5), image: "stale", frame: frame, pixels: 1, at: 60)
+        cache.store(id(6), image: "focused", frame: frame, pixels: 1, at: 100)
+        let wanted: [(id: WindowID, frame: CGRect)] = [
+            (id(1), frame), (id(2), frame), (id(3), frame), (id(4), CGRect(x: 0, y: 0, width: 700, height: 600)),
+            (id(5), frame), (id(6), frame),
+        ]
+        let dirty: [WindowID: SnapshotCaptureReason] = [
+            id(1): .typing, id(2): .typing, id(3): .typing, id(4): .typing, id(5): .typing, id(6): .focus,
+        ]
+        let typedAt: [WindowID: TimeInterval] = [id(1): 95, id(2): 100.5, id(3): 100.5, id(4): 100.5, id(5): 100.5]
+        let held = snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: 101)
+        XCTAssertEqual(held.map(\.id), [id(3), id(4), id(6)], "floor (1), pause (2) and stale (5) held")
+        XCTAssertEqual(held.map(\.cause), [.missing, .sizeChanged, .dirty(.focus)])
+        let strip = snapshotStripSelection(
+            cache: cache, strip: wanted, dirty: dirty, typedAt: typedAt, excluded: [], now: 101
+        )
+        XCTAssertEqual(strip.map(\.id), [id(3), id(4), id(6)])
+        XCTAssertEqual(strip.map(\.cause), [.missing, .sizeChanged, .dirty(.focus)])
+
+        let allowed = snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: 105)
+        XCTAssertEqual(allowed.map(\.id), [id(1), id(2), id(3), id(4), id(5), id(6)])
+        XCTAssertEqual(allowed.map(\.cause).prefix(2), [.dirty(.typing), .dirty(.typing)])
+        XCTAssertEqual(
+            snapshotStripSelection(cache: cache, strip: wanted, dirty: dirty, typedAt: typedAt, excluded: [], now: 105)
+                .map(\.cause).prefix(2),
+            [.dirty(.typing), .dirty(.typing)]
+        )
+    }
+
+    /// PF-AK: the held typing marks and when each may be captured: the
+    /// later of the pause after the last hop and the floor after the newest image.
+    func testTypingHoldsReportWhenEachWindowMayBeCaptured() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "young", frame: frame, pixels: 1, at: 100)
+        cache.store(id(2), image: "old", frame: frame, pixels: 1, at: 90)
+        cache.store(id(3), image: "allowed", frame: frame, pixels: 1, at: 90)
+        let holds = snapshotTypingHolds(
+            cache: cache, dirty: [id(1): .typing, id(2): .typing, id(3): .typing, id(4): .focus],
+            typedAt: [id(1): 95, id(2): 100.5, id(3): 90], now: 101
+        )
+        XCTAssertEqual(holds, [id(1): 100 + snapshotTypingFloor, id(2): 100.5 + snapshotTypingQuiet])
+        XCTAssertEqual(snapshotTypingCaptureDue(typedAt: nil, capturedAt: nil), -.infinity, "nothing holds it")
+        XCTAssertEqual(snapshotTypingHeldLogLine(id: id(1), wait: 1.24), "snapshot typing held id=10:1 wait=1.2")
     }
 
     // MARK: SM-11 two sizes per window, other-size fallback, off-screen, miss log

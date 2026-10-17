@@ -341,6 +341,45 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertEqual(scheduler.pendingCount, 0)
     }
 
+    /// PF-AK: live, a settle run before the targeted typing run captured the
+    /// typed-in window through its typing mark (68 of 276 typing captures
+    /// under the 5 s floor). Every run now holds a typing mark until the
+    /// pause and the floor allow it; the window keeps its mark and the
+    /// targeted typing run is armed again (the settle had replaced it).
+    func testSettleRunsHoldTheTypedInWindowUntilThePauseAndTheFloor() {
+        refresh([idA: a, idB: b])
+        scheduler.advance(by: snapshotTypingFloor + 1)
+        cache.noteTyping()
+        scheduler.advance(by: 0.5)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 1, "the pause: held by the settle run")
+        XCTAssertEqual(cache.dirty[idA], .typing, "the mark stays")
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("snapshot typing held id=1:") })
+        scheduler.advance(by: snapshotTypingQuiet - 0.8 + 0.01)
+        XCTAssertEqual(world.captures.count, 2, "the typing run fires once the pause is over")
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA])
+        XCTAssertEqual(lastRequest?.reason, .typing)
+        complete([idA: a], backdrop: false)
+
+        cache.noteTyping()
+        scheduler.advance(by: snapshotTypingQuiet)
+        let resized = CGRect(x: 820, y: 100, width: 600, height: 900)
+        fixture.physicalFrames[idB] = resized
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 3)
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idB], "the floor: only the resized window")
+        complete([idB: resized], backdrop: false)
+        XCTAssertEqual(cache.dirty[idA], .typing)
+        scheduler.advance(by: snapshotTypingFloor - snapshotTypingQuiet - 0.3 + 0.01)
+        XCTAssertEqual(world.captures.count, 4, "captured once the floor allows it")
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA])
+        complete([idA: a], backdrop: false)
+        XCTAssertNil(cache.dirty[idA])
+        XCTAssertEqual(scheduler.pendingCount, 0)
+    }
+
     /// SM-11: Alt+H/L only moves the focus; the content of neither window
     /// changed, so nothing is captured.
     func testFocusChangeAloneCapturesNothing() {
