@@ -108,6 +108,8 @@ final class SessionHost: @unchecked Sendable {
     /// first layout (launch, `gio restart`), Accessibility regained, and a
     /// mouse-abandoned motion (session queue only).
     private var instantPlacement = InstantPlacementGate()
+    /// PF-AQ: whether an instant pass starts a snapshot settle run.
+    private var settleCapture = SettleCaptureGate()
     /// NA-02: windows registered since the last pass (they enter from below).
     private var openingWindows = WindowOpenBook()
     /// PF-02: per-window open timings, one log line when each settles.
@@ -1792,6 +1794,7 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         motion.start(animations, sink: reconciler)
+        settleCapture.noteMotion()
         openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
         // FI-06: the keyboard follows the logical focus right away instead
         // of after the animation; the final pass only re-asserts a drift.
@@ -1832,6 +1835,8 @@ final class SessionHost: @unchecked Sendable {
             // The writes are on their lanes; the flight settles once its
             // layers land too, and folds their outcome then.
             overlayFlight.passSettled()
+            // The flight's settle schedules its own capture run.
+            settleCapture.noteFlight(shown: Set(displays.allDisplays().map(\.workspace)))
             return
         }
         // PF-AO: every plan in one reconcile, so the session queue waits for
@@ -1853,7 +1858,14 @@ final class SessionHost: @unchecked Sendable {
         if renderVerifier.hasCandidates {
             renderVerifier.schedule()
         }
-        snapshotRefresher.schedule()
+        // PF-AQ: a pass that changed nothing captures nothing.
+        if settleCapture.decide(
+            report: report, placement: placement, shown: Set(displays.allDisplays().map(\.workspace))
+        ) != nil {
+            snapshotRefresher.schedule()
+        } else {
+            GioLog.record(.debug, settleCaptureSkippedLogLine)
+        }
     }
 
     /// SM-12: the real windows' one write under a snapshot overlay. All

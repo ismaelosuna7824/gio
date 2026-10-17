@@ -47,7 +47,8 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 
 /// SM-04/SM-09/SM-11: the pre-captured window images (up to two sizes per
 /// window) and per-display backdrops the overlay flies. Refreshed by
-/// one-shot debounced runs (never a periodic timer): after each settle, and
+/// one-shot debounced runs (never a periodic timer): after each settle that
+/// changed something (PF-AQ, `SettleCaptureGate`), and
 /// on dirty signals (typing in the focused window, a window focused for
 /// 3 s, a new window). A run captures only what is missing, resized, dirty
 /// or older than the soft age, never the whole set; the backdrop only when
