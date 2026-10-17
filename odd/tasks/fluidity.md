@@ -759,6 +759,60 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   POC 7, Mac 19, MacOS 98, Core 1994); signed Debug and Release builds succeeded; `git diff
   --check` clean. LIVE PENDING (user eyes): flight colours on both displays look like the
   real windows (the WindowServer now matches P3 to each profile).
+- Audit 2026-10-16 (user choice: the Swift Performance Optimization skill, evidence first).
+  Field log `gio.log` + `.1`, 5.37 h, debug, renderer snapshot, two displays: 68 of 276
+  `reason=typing` captures came < 5 s apart (PF-V floor bypassed by settle runs); 267 backdrop
+  recaptures (50/h, gap p50 2 s, 27 % of all captured pixels: Chrome's omnibox popups are
+  managed floating windows and change the fingerprint per keystroke, and the change dirtied
+  every display); every no-op pass scheduled a settle run; `reflow timing focus=` was 53 % of
+  summed pass time but counted lock waits and stale steps; instant passes reconciled one plan
+  at a time; the overview captured every window per open (127 runs). Not chosen yet (need a
+  decision or a trace): trimming the ~250 MB snapshot cache at rest, AX observers on their own
+  thread, an asynchronous `collect`.
+- [x] PF-AK (`eb24946`) — Typing marks wait for the pause and the floor in every run
+  (`snapshotTypingHolds`, `snapshotTypingCaptureDue`); a held window keeps its mark and re-arms
+  the typing run. RED: compile (`snapshotTypingHolds`, `typedAt:`), then
+  `SnapshotCacheRefresherTests.testSettleRunsHoldTheTypedInWindowUntilThePauseAndTheFloor`.
+  Log: debug `snapshot typing held id= wait=`.
+- [x] PF-AL (`239777a`) — One unmanaged fingerprint per display; a change re-captures only that
+  display's backdrop, and only once it is `snapshotBackdropMinAge` (30 s) old
+  (`snapshotBackdropDue`); `markBackdropDirty()` still re-captures every display at once. RED:
+  compile, then the old union logic failed
+  `testUnmanagedChangeRecapturesOnlyItsDisplayAtMostOncePerInterval`. Log: debug
+  `snapshot backdrop unmanaged changed display=x,y wait=`.
+- [x] PF-AM (`e059c29`) — `reflow timing` appends `focusWait=Wms path=reconcile|dispatch`;
+  `focus=` is the focus call only, a stale step reports 0 and no longer stretches `total`, a
+  timed-out lane in `collect` ends at its stall bound, not at collect time (the 509 ms
+  artifact). RED: compile (`ReflowTimingFocusTests`).
+- [x] PF-AN (`f5b7513`) — `focusSoon` keeps only the newest queued focus (generation from its
+  own `DispatchFocusBook`); skipped calls log debug `focus superseded id=`. RED: compile, then
+  the ordering test (`["focus 2","focus 3"]` vs all three);
+  `MotionStartFocusTests.testABurstOfMotionStartFocusesRunsOnlyTheNewest`.
+- [x] PF-AO (`44e7488`) — An instant pass merges its plans (`mergePassWrites`, later plan wins,
+  focus once, parked before visible per app) into one `reconcile`, one `foldSettle`; the
+  overlay dispatch uses the same merge. RED: compile (`PassWritesMergeTests`).
+- [x] PF-AQ (`dd99f31`) — `SettleCaptureGate`: an instant pass schedules the settle capture only
+  when it wrote, ended an AX motion, placed instantly, or changed the shown workspaces; else
+  debug `snapshot settle skipped reason=noop`. RED: compile (`SettleCaptureGateTests`).
+- [x] PF-AP (`10ac99d`) — The overview takes thumbnails from the snapshot cache when an image
+  matches the window's size (2 pt), is at most 30 s old and has >= 0.75 px/pt; only the rest is
+  captured. RED: compile (`OverviewThumbnailPlanTests`). Log: info
+  `overview thumbnails cached=N capture=N`.
+  GREEN (PF-AK..PF-AQ): `swift test` all bundles 0 failures (UI 313/53 skipped, Session 519,
+  POC 7, Mac 19, MacOS 91, Core 2062); signed Debug build succeeded; `git diff --check` clean.
+  LIVE 2026-10-17 (signed Release `0.1.3-rc.1` from `make-dmg.sh`, installed in `/Applications`,
+  one display, driven by `gio action` / `gio overview`): every `reflow timing` line ends with
+  `focusWait=... path=reconcile|dispatch`; 12 moves of a floating Finder window gave 12 no-op
+  passes, each `snapshot settle skipped reason=noop`, no capture and no backdrop run (before:
+  one settle run each, and a backdrop on each fingerprint change); the next workspace switch
+  still ran its `reason=settle` capture. Overview: `cached=5 capture=2` and `cached=4
+  capture=3` right after a settle, `cached=0 capture=7` once the images were > 30 s old; the
+  cached thumbnails look like captured ones (screenshot). Renderer ax, 4 `focus-left` in 50 ms:
+  `focus superseded id=5138:2`, the last target landed (frontmost app = Gio's focused window).
+  No crash, one known warn (LoopOps ADE min width). NOT verified live: the typing hold (PF-AK:
+  the test host may not send keystrokes, `osascript ... not allowed to send keystrokes`),
+  per-display backdrops and the merged pass on two displays (PF-AL, PF-AO: one display
+  connected).
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
