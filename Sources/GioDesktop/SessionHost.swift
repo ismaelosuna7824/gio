@@ -1064,15 +1064,11 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "overview display id=\(choice.display.rawValue) reason=\(choice.reason.rawValue)")
     }
 
-    /// WO-01: thumbnails of the given windows (`WindowFact.id`s) at their
-    /// current physical frames, parked ones included. PF-AP: a fresh cached
-    /// image of the window's current size is reused (`overviewThumbnailPlan`,
-    /// read here on the session queue); only the rest is captured, in one
-    /// capture without a backdrop and at most `overviewThumbnailScale`, and
-    /// none when nothing is left. Empty without Screen Recording or before
-    /// macOS 14; the panel then keeps the app icons. Main-thread completion;
-    /// logs `overview thumbnails cached=N capture=N` and the capture its own
-    /// summary (counts only).
+    /// WO-01: one capture of the given windows (`WindowFact.id`s) at their
+    /// current physical frames, parked ones included, without a backdrop and
+    /// at most `overviewThumbnailScale`. Empty without Screen Recording or
+    /// before macOS 14; the panel then keeps the app icons. Main-thread
+    /// completion; the capture logs its own summary (counts only).
     func captureOverviewThumbnails(
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
@@ -1092,22 +1088,9 @@ final class SessionHost: @unchecked Sendable {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
-            let plan = overviewThumbnailPlan(
-                windows: frames, cache: snapshotRefresher.cache, now: ProcessInfo.processInfo.systemUptime,
-                minPixelsPerPoint: overviewThumbnailScale
-            )
-            var cached: [String: OverviewThumbnail] = [:]
-            for (id, image) in plan.fromCache {
-                cached[windowFactID(id)] = OverviewThumbnail(image: image)
-            }
-            GioLog.record(.info, overviewThumbnailsLogLine(cached: cached.count, captured: plan.toCapture.count))
-            guard !plan.toCapture.isEmpty else {
-                DispatchQueue.main.async { completion(cached) }
-                return
-            }
             let (screens, primaryHeight) = displayParameters.captureScreens
             let request = SnapshotCaptureRequest(
-                windows: plan.toCapture,
+                windows: frames,
                 displays: screens.map {
                     SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
                 },
@@ -1115,7 +1098,7 @@ final class SessionHost: @unchecked Sendable {
             )
             Task.detached { [snapshotCapturer] in
                 let result = await snapshotCapturer.capture(request)
-                var thumbnails = cached
+                var thumbnails: [String: OverviewThumbnail] = [:]
                 for (id, snapshot) in result.snapshots {
                     thumbnails[windowFactID(id)] = OverviewThumbnail(image: snapshot.image)
                 }
