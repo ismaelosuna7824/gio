@@ -53,6 +53,13 @@ public struct MotionWriteStats: Equatable, Sendable {
     }
 }
 
+/// PF-AM: which entry point produced a `reflow timing` line: the
+/// synchronous `reconcile` on the session queue, or `dispatch` + `collect`.
+public enum ReflowPath: String, Equatable, Sendable {
+    case reconcile
+    case dispatch
+}
+
 /// Measurements of one `reconcile` pass. IDs and app names only — never
 /// window titles.
 public struct ReflowTiming: Equatable, Sendable {
@@ -60,19 +67,28 @@ public struct ReflowTiming: Equatable, Sendable {
     public static let slowWindowMilliseconds: Double = 20
 
     public var totalMilliseconds: Double
+    /// PF-AM: the focus call itself only.
     public var focusMilliseconds: Double
     /// Deterministic order (same as the report: parked first, then visible).
     public var windows: [WindowWriteTiming]
     public var focusAXCalls: Int
+    /// PF-AM: time spent waiting before the focus call (an older focus
+    /// still running: the dispatched book's lock, or `reconcile`'s wait for
+    /// motion-start focuses).
+    public var focusWaitMilliseconds: Double
+    public var path: ReflowPath
 
     public init(
         totalMilliseconds: Double, focusMilliseconds: Double = 0,
-        windows: [WindowWriteTiming], focusAXCalls: Int = 0
+        windows: [WindowWriteTiming], focusAXCalls: Int = 0,
+        focusWaitMilliseconds: Double = 0, path: ReflowPath = .reconcile
     ) {
         self.totalMilliseconds = totalMilliseconds
         self.focusMilliseconds = focusMilliseconds
         self.windows = windows
         self.focusAXCalls = focusAXCalls
+        self.focusWaitMilliseconds = focusWaitMilliseconds
+        self.path = path
     }
 
     public var axCalls: Int {
@@ -94,11 +110,12 @@ public struct ReflowTiming: Equatable, Sendable {
             }
     }
 
-    /// `reflow timing total=Xms windows=N axCalls=M slowest=<app> Yms focus=Zms`
+    /// `reflow timing total=Xms windows=N axCalls=M slowest=<app> Yms focus=Zms focusWait=Wms path=<reconcile|dispatch>`
     public var summaryLine: String {
         let slowest = slowestApp.map { "\($0.app) \(Self.format($0.milliseconds))ms" } ?? "none"
         return "reflow timing total=\(Self.format(totalMilliseconds))ms windows=\(windows.count) "
-            + "axCalls=\(axCalls) slowest=\(slowest) focus=\(Self.format(focusMilliseconds))ms"
+            + "axCalls=\(axCalls) slowest=\(slowest) focus=\(Self.format(focusMilliseconds))ms "
+            + "focusWait=\(Self.format(focusWaitMilliseconds))ms path=\(path.rawValue)"
     }
 
     /// One debug line per window slower than the threshold.
