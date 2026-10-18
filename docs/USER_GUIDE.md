@@ -201,6 +201,8 @@ An invalid config never stops the window manager.
 
 Each animation also has its own table, `[animations.<name>]` (`horizontal-view-movement`, `window-movement`, `workspace-switch`, `window-open`, `window-close`, `window-resize`), with the same keys (`enabled`, `curve`, `duration-ms`, `spring-*`) overriding the global ones for that animation only; Settings > Animations > **Per animation** edits them. Every animation is on by default except **`window-resize`** (maximize, fullscreen and width changes): animating a size change with window images always shows the content jump from one layout to the other, so by default the window takes its new size at once while scrolling and workspace switches stay animated. Turn it on with `[animations.window-resize] enabled = true` or the **Window resize** switch.
 
+`[animations.window-open]` also takes `offset`: how many points below its slot a new window starts its rise (0-200, default 24). With the snapshot renderer a new window is shown only once it has redrawn at its size in the strip: its slot keeps showing the desktop while the neighbours slide, then its picture rises `offset` points into place and fades in over the `window-open` animation (its spring, or its ease-out duration), and the real window takes over. You no longer see the app redraw itself at the new size. An app that has not redrawn within 0.4 s simply appears in place; a click during that wait shows it at once. With `renderer = "ax"`, or with `window-open` off, a new window appears as before.
+
 ### `[logging]`
 
 | Key | Type | Default | Meaning |

@@ -198,6 +198,16 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { overlay.fadeOut(windows: windows, duration: duration) }
             }
         }
+        host.overlayPop = { token, image, pop in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.pop(token: token, image: image, pop: pop) }
+            }
+        }
+        host.overlayReveal = { token, windows, holes in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.reveal(token: token, windows: windows, holes: holes) }
+            }
+        }
         // NA-03: the close ghost, a window-sized layer that removes itself.
         let ghosts = closeGhosts
         host.ghostShow = { token, image, frame, duration, shrink in

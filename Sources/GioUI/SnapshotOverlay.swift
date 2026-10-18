@@ -280,6 +280,21 @@ private final class WindowLayers {
         }
     }
 
+    func fadeIn(_ opacities: [Double], keyframes: FlightKeyframes, beginTime: CFTimeInterval) {
+        let times = keyframes.times.map { NSNumber(value: $0) }
+        for layer in all {
+            let animation = CAKeyframeAnimation(keyPath: "opacity")
+            animation.values = opacities.map { NSNumber(value: Float($0) * layer.opacity) }
+            animation.keyTimes = times
+            animation.calculationMode = .linear
+            animation.duration = keyframes.duration
+            animation.beginTime = layer.convertTime(beginTime, from: nil)
+            animation.isRemovedOnCompletion = false
+            animation.fillMode = .both
+            layer.add(animation, forKey: "gio.pop")
+        }
+    }
+
     /// The clip draws faces: its own contents go, a layer per source not yet
     /// drawn joins, every face takes its drawing order, and only the
     /// underlay (SM-34), when there is one, draws its fill: the faces above
@@ -435,6 +450,8 @@ final class SnapshotOverlay {
     private let windowLayer = CALayer()
     private let windowMask = CAShapeLayer()
     private var windows: [WindowID: WindowLayers] = [:]
+    private var pops: [WindowID: WindowLayers] = [:]
+    private var decorations = OverlayDecorations.none
     var spring: SpringParameters
 
     var ids: Set<WindowID> { Set(windows.keys) }
@@ -634,6 +651,7 @@ final class SnapshotOverlay {
         backdrop.isHidden = true
         backdrop.contents = nil
         backdrop.mask = nil
+        removePops(Set(pops.keys))
         for (id, layers) in windows where !ids.contains(id) {
             layers.removeAnimations()
             layers.removeFromSuperlayer()
@@ -644,6 +662,36 @@ final class SnapshotOverlay {
         }
         CATransaction.commit()
         return !windows.isEmpty
+    }
+
+    func pop(_ id: WindowID, image: SnapshotFace<CGImage>, pop: WindowOpenPop, now: CFTimeInterval) {
+        let keyframes = windowOpenPopKeyframes(pop, in: area.panelFrame, flipped: root.isFlipped, rate: sampleRate)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        removePops([id])
+        let layers = WindowLayers(
+            image: image, scale: scale,
+            track: FlightTrack(
+                start: overlayLayerGeometry(frame: pop.from, in: area.panelFrame, flipped: root.isFlipped),
+                end: overlayLayerGeometry(frame: pop.to, in: area.panelFrame, flipped: root.isFlipped)
+            )
+        )
+        layers.show(nil)
+        decorate(layers, id: id)
+        layers.all.forEach { windowLayer.addSublayer($0) }
+        pops[id] = layers
+        layers.startedAt = now
+        layers.animate(keyframes.flight, beginTime: now)
+        layers.fadeIn(keyframes.opacities, keyframes: keyframes.flight, beginTime: now)
+        CATransaction.commit()
+    }
+
+    func reveal(_ ids: Set<WindowID>, holes: OverlayHoles) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        removePops(ids)
+        cut(holes)
+        CATransaction.commit()
     }
 
     /// Remove the overlay at once: with the backdrop, shadows, ring and dim
@@ -706,18 +754,31 @@ final class SnapshotOverlay {
     }
 
     private func applyDecorations(_ decorations: OverlayDecorations) {
-        let dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-        let dimAlpha = decorations.dim.map { Float(focusDimAlpha(strength: $0.strength, darkAppearance: dark)) }
-        for (id, layers) in windows {
-            layers.decorate(
-                ring: decorations.ring?.id == id ? decorations.ring : nil,
-                dimAlpha: decorations.dim?.ids.contains(id) == true ? dimAlpha : nil
-            )
+        self.decorations = decorations
+        for (id, layers) in windows.merging(pops, uniquingKeysWith: { flying, _ in flying }) {
+            decorate(layers, id: id)
             if layers.startedAt == nil {
                 layers.apply(layers.track.start)
             } else {
                 layers.apply(layers.track.end)
             }
+        }
+    }
+
+    private func decorate(_ layers: WindowLayers, id: WindowID) {
+        let dark = NSApplication.shared.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let dimAlpha = decorations.dim.map { Float(focusDimAlpha(strength: $0.strength, darkAppearance: dark)) }
+        layers.decorate(
+            ring: decorations.ring?.id == id ? decorations.ring : nil,
+            dimAlpha: decorations.dim?.ids.contains(id) == true ? dimAlpha : nil
+        )
+    }
+
+    private func removePops(_ ids: Set<WindowID>) {
+        for id in ids {
+            pops[id]?.removeAnimations()
+            pops[id]?.removeFromSuperlayer()
+            pops.removeValue(forKey: id)
         }
     }
 
@@ -729,6 +790,7 @@ final class SnapshotOverlay {
             layers.removeFromSuperlayer()
         }
         windows = [:]
+        removePops(Set(pops.keys))
         CATransaction.commit()
     }
 }
@@ -932,6 +994,32 @@ public final class SnapshotOverlayController {
             if !mine.isEmpty {
                 overlay.freshen(mine, now: now)
             }
+        }
+    }
+
+    /// WP-05: the covered opening window `pop.id` of flight `token` redrew:
+    /// its `image` pops in on the overlay of the display holding its target.
+    /// The watchdog covers the pop.
+    public func pop(token: Int, image: SnapshotFace<CGImage>, pop: WindowOpenPop) {
+        guard token == self.token, !active.isEmpty else {
+            return
+        }
+        let showing = active.sorted().compactMap { overlays[$0] }
+        guard let index = overlayDisplayIndex(from: pop.to, to: pop.to, displays: showing.map(\.displayFrame)) else {
+            return
+        }
+        armWatchdog(limit: pop.watchdogLimit)
+        showing[index].pop(pop.id, image: image, pop: pop, now: CACurrentMediaTime())
+    }
+
+    /// WP-05: the real `windows` of flight `token` show: their pop layers go
+    /// and `holes` replace every overlay's holes.
+    public func reveal(token: Int, windows: Set<WindowID>, holes: OverlayHoles) {
+        guard token == self.token, !active.isEmpty else {
+            return
+        }
+        for key in active.sorted() {
+            overlays[key]?.reveal(windows, holes: holes)
         }
     }
 
