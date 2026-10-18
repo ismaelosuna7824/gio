@@ -12,7 +12,7 @@ right of the focused column, left of it, at the start or at the end (today's beh
 - No config key controls it.
 
 ## Scope
-WP-01..WP-03 below. Not in scope: a per-rule override (`[[window-rules]]`), dwindle placement
+WP-01..WP-05 below. Not in scope: a per-rule override (`[[window-rules]]`), dwindle placement
 (the dwindle tree already splits the focused leaf), changing startup/rescan order.
 
 ## Constraints
@@ -44,14 +44,14 @@ WP-01..WP-03 below. Not in scope: a per-rule override (`[[window-rules]]`), dwin
 - [x] **WP-01 Core:** `NewWindowPosition`, `LayoutSectionConfig.newWindowPosition`, parser
   (`[layout] new-window-position`, error on unknown value), config template, positioned
   `appendArrivalColumn`/`placeArrival`/`applyTitleRecheck` with tests (each position, focus shift,
-  empty strip, dwindle unchanged, parse/invalid/default). Commit `efc8a6c`. Route: delegated
+  empty strip, dwindle unchanged, parse/invalid/default). Commit `b41c5e7`. Route: delegated
   (writer trigger).
 - [x] **WP-02 Session:** `DiscoveryService` passes the configured position for live arrivals and
-  dragged-out tabs, `end` for the startup/rescan scan; session tests. Commit `341eb65`.
+  dragged-out tabs, `end` for the startup/rescan scan; session tests. Commit `006e488`.
   Route: delegated (writer trigger).
 - [x] **WP-03 Settings and docs:** Settings > Layout picker ("New windows open"), its config edit,
   `docs/USER_GUIDE.md` `[layout]` row and Settings row, `docs/TESTING.md` live-pending line.
-  Commit `ac1b60f`. Route: delegated (writer trigger).
+  Commit `657de7c`. Route: delegated (writer trigger).
 - [x] **WP-04 Open lag mid-strip (live report 2026-10-16):** with `right-of-focused`, a new
   window is visible in its tile only ~400–560 ms after registration although its frame is written
   at +5–32 ms. Cause (log 19:18–19:19Z, Notes 32798:14/32892:15/33263:16): the insert moves a
@@ -62,7 +62,19 @@ WP-01..WP-03 below. Not in scope: a per-rule override (`[[window-rules]]`), dwin
   ids=1`). Fix: the hole of a window opening in this pass also cuts through the image layers, for
   the whole flight and its retargets, so the new window shows at once and the neighbours slide out
   from under it. Undrawn windows keep no hole (SM-31); the paint check on holes stays. Route:
-  delegated (writer trigger). Commit `da1766c`.
+  delegated (writer trigger). Commit `55d5f88`.
+- [x] **WP-05 Niri-like open: hidden until redrawn, then pop in (live report 2026-10-16/17):**
+  after WP-04 the new window shows at once, but the user sees the app redraw at its new size
+  (Notes: `paint check ms=157`, `handoff waited ms=73`, log 20:20:14Z). Niri never shows a window
+  before its first frame at the configured size (initial configure, unmapped until the first
+  buffer) and pops it in with a short `window-open` animation. macOS has no initial configure, so
+  Gio hides the redraw instead: with the snapshot renderer, an opening visible tiled window's slot
+  stays covered (no hole) while it redraws at its target; once a capture at the target size is
+  not blank, its image rises `offset` points and fades in over the `window-open` animation, then
+  the real window is revealed. A bounded wait (no confirmed paint in time) reveals it as today.
+  Applies to mid-strip flights and to open passes where nothing else moves. AX renderer and
+  windows that are not shown keep today's behavior. Rebased onto `origin/dev` `68ada7e` first
+  (WP hashes changed again). Route: delegated (writer trigger). Commit `cc52ff7`.
 
 ## Checks
 `swift test` (every bundle, 0 failures), signed `xcodebuild` (GioUI changes), `git diff --check`.
@@ -73,7 +85,7 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
 
 ## Progress
 - 2026-10-15: document created; WP-01..WP-03 pending.
-- 2026-10-15 WP-01 `efc8a6c` `feat(layout): choose where new windows open (WP-01)`: RED
+- 2026-10-15 WP-01 `b41c5e7` `feat(layout): choose where new windows open (WP-01)`: RED
   `swift build --build-tests` failed to compile (`cannot find 'NewWindowPosition' in scope`,
   `extra argument 'position' in call`, no member `newWindowPosition`). GREEN: 6 new
   `RulePlacementTests` (each value with focus taken and kept, empty strip, a rule's other
@@ -82,24 +94,24 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
   test-setup ordering bug in the title re-check test, fixed before commit). The position
   index lives in `NewWindowPosition.insertionIndex`; a non-focusing arrival shifts `focusedColumn`
   only when inserted at or before it in a non-empty strip, so `end` stays byte for byte.
-- 2026-10-15 WP-02 `341eb65` `feat(session): open live arrivals at the configured position (WP-02)`:
+- 2026-10-15 WP-02 `006e488` `feat(session): open live arrivals at the configured position (WP-02)`:
   `DiscoveryService.Context.newWindowPosition` (default `{ .end }`), wired in `SessionHost` to
   `session.config.layout.newWindowPosition` (read at each arrival) and in the test `EventWorld`.
   RED: with `DiscoveryService.swift` at HEAD the build failed (`extra argument 'newWindowPosition'
   in call`). GREEN: `NewWindowPositionArrivalTests` (live arrival with `right-of-focused` lands
   right of the focused column; a full scan still appends) 2/2; `swift test`: 2975 executed,
   0 failures (53 skipped).
-- 2026-10-15 WP-03 `ac1b60f` `feat(settings): pick where new windows open (WP-03)`:
+- 2026-10-15 WP-03 `657de7c` `feat(settings): pick where new windows open (WP-03)`:
   `LayoutSettingsForm.newWindowPosition` and its edit; the picker sits in Settings > Layout >
   Column Width (the center-focused-column picker lives in the Focus section's Scrolling card, which
   edits `FocusSectionDraft`, not the layout form). RED: with `SettingsForms.swift` at HEAD the build
   failed (the picker's options did not resolve). GREEN: `swift test`: GioPackageTests 2976
   executed, 0 failures (53 skipped); signed `xcodebuild` (scheme Gio): BUILD SUCCEEDED;
   `git diff --check` clean. Live behavior not verified (TESTING.md live-pending line).
-- 2026-10-16: the commits had been rebased onto `7794db1` (hashes above are the rebased ones);
-  moved off `dev` to `feat/new-window-position` (cut from up-to-date `origin/dev`), `dev` reset
-  to `origin/dev`. Not pushed.
-- 2026-10-16 WP-04 `da1766c` `fix(snapshot): show an opening window above the images it displaces (WP-04)`:
+- 2026-10-16: the commits had been rebased onto `7794db1`; moved off `dev` to
+  `feat/new-window-position` (cut from up-to-date `origin/dev`), `dev` reset to `origin/dev`.
+  Not pushed.
+- 2026-10-16 WP-04 `55d5f88` `fix(snapshot): show an opening window above the images it displaces (WP-04)`:
   `SnapshotHole.entry`; `planSnapshotFlight`/`snapshotHoles(opening:)` mark the hole of a window
   opening in the pass (NA-02 entry) as an entry hole; `SnapshotFlightController.drive(entries:)`
   (`SessionHost` passes `pass.entries`) keeps the flight's opening set across retargets (a window
@@ -118,4 +130,37 @@ Delegated direct: one writer (2+ non-trivial files across GioCore, GioSession, G
   `git diff --check` clean. Not unit-tested (compile-checked): the `CALayer` container and its
   mask. Live behavior not verified (TESTING.md live-pending line). Route: delegated (writer
   trigger).
-- Next: live check per `docs/TESTING.md` (New window position, New window lag mid-strip).
+- 2026-10-17: the branch was rebased onto `origin/dev` `68ada7e`; the hashes above are the
+  rebased ones (WP-01 `b41c5e7`, WP-02 `006e488`, WP-03 `657de7c`, WP-04 `55d5f88`; record commits
+  `af4fbb6`, `35d42a2`, `0697f42`). Not pushed.
+- 2026-10-17 WP-05 `cc52ff7` `feat(snapshot): hide an opening window until it has redrawn, then pop it in (WP-05)`:
+  Core `GioCore/Snapshot/WindowOpenPop.swift`: `WindowOpenPop` (the rise from the NA-02 entry start
+  to the target on the resolved window-open spring or ease-out, opacity = the rise's progress,
+  `watchdogLimit`), `windowOpenPopKeyframes`, `WindowOpenPopPlan`/`planWindowOpenPops` (entries
+  and their start frames when `window-open` is active), `WindowOpenPopBook` (cover, capture
+  verdicts, `maxWait` 0.4 s, `firstCaptureDelay` 0.05 s, `retryInterval` 0.04 s, expiry reasons
+  `timeout|blank|noCapture`, `retarget`, `abort`) and the debug lines `snapshot open pop id=P:E
+  waited ms=N` / `snapshot open reveal id=P:E reason=...`; `planSnapshotFlight(covered:)` and
+  `SnapshotFlightDecision.snapshot(covered:)` (no layer, no hole, display animated, so an open alone
+  is an overlay flight). Session `SnapshotFlightController.drive(pops:)`: covers at the pass, first
+  capture after the writes (SM-30 `captureFresh` + `snapshotFreshVerdict`), pop through
+  `OverlayPort.popFlight` (image cached with `storeFresh`), reveal through `revealFlight` (entry
+  hole), deferred `handOver` until no window is covered, retarget reveals moved windows, every
+  abort path clears with `reason=abort`; covered windows are not paint-checked. GioUI
+  `SnapshotOverlayController.pop`/`reveal` (a `WindowLayers` per pop, keyframed position and
+  opacity, the flight's ring and dim, watchdog re-armed); `SessionHost` builds the plan and wires
+  `overlayPop`/`overlayReveal` (`main.swift`). RED: `swift build --build-tests` failed to compile
+  (`cannot find 'planWindowOpenPops'`/`'WindowOpenPop'`/`'WindowOpenPopBook'`/`'WindowOpenPopPlan'
+  in scope`, `cannot infer contextual base in reference to member 'noCapture'`). GREEN: 18
+  `WindowOpenPopTests` (covered vs hole, entry-only flight, no backdrop, parked/undrawn never
+  covered, pop plan, spring and ease-out timelines, keyframes, watchdog, wait verdicts and
+  reasons, retarget, log lines) and 13 new `SnapshotFlightTests` (covered at the prime, confirmed
+  capture pops then reveals and hands over, partial read retried, timeout reveals without the pop,
+  abort mid-wait, end mid-pop, failed prime, retarget moving or keeping the target, entry-only via
+  the overlay, alone on its display, no backdrop and no plan keep AX); `swift test`:
+  GioPackageTests 3051 executed, 0 failures (53 skipped); signed `xcodebuild` (scheme Gio): BUILD
+  SUCCEEDED; `git diff --check` clean. Not unit-tested (compile-checked): the pop's `CALayer`
+  keyframes and the watchdog re-arm. Live behavior not verified (TESTING.md live-pending line).
+  Route: delegated (writer trigger).
+- Next: live check per `docs/TESTING.md` (New window position, New window lag mid-strip, New
+  window hidden until redrawn).
