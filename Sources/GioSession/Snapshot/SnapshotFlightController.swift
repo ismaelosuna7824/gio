@@ -81,6 +81,13 @@ public protocol OverlayPort: AnyObject {
     /// the real windows in `duration`. A mouse down or a new flight removes
     /// them at once.
     func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval)
+    /// WP-05: the covered opening window `pop.id` redrew at its target
+    /// (`image`): its image rises from `pop.from` to `pop.to` while it fades
+    /// in, timed by `pop`, over the backdrop that covered it.
+    func popFlight(token: Int, image: SnapshotFace<CGImage>, pop: WindowOpenPop)
+    /// WP-05: the real `windows` show: their pop layers go, and `holes` and
+    /// `entryHoles` replace the flight's whole hole set.
+    func revealFlight(token: Int, windows: Set<WindowID>, holes: [WindowID: CGRect], entryHoles: Set<WindowID>)
 }
 
 /// What `drive` decided for this animated pass.
@@ -120,7 +127,11 @@ public enum SnapshotDrive: Equatable, Sendable {
 /// its write (`SnapshotFreshTracker`, `captureFresh`); a fresh read goes to
 /// the overlay (the layer fades to it) and into the cache; at the hand-off
 /// the resized layers fade out over the real windows (`fadeOutFlight`)
-/// instead of a hard cut. Session queue only;
+/// instead of a hard cut. WP-05: with a pop plan, the opening windows are
+/// covered (`WindowOpenPopBook`): no hole until a capture at their target
+/// reads fresh, then their image pops in (`popFlight`) and they are
+/// revealed (`revealFlight`); the hand-off waits for them, at most
+/// `WindowOpenPopBook.maxWait` plus the pop. Session queue only;
 /// `primed`/`deadlineArmed`/`layersFinished`/`aborted` are called from main
 /// and hop on.
 public final class SnapshotFlightController: @unchecked Sendable {
@@ -248,6 +259,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
     private var heldFrames: [WindowID: CGRect] = [:]
     private var layerModel = FlightLayerModel(spring: .niri)
     private var flyAfterPass = false
+    private var pops = WindowOpenPopBook()
+    private var deferredHandover: SnapshotHandoffSummary?
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -258,11 +271,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
         self.scheduler = scheduler
     }
 
-    /// A flight runs or its overlay is held for the hand-off (SM-14): either
-    /// way the overlay is up, so ring, dim, cache refresh and render checks
-    /// wait, and a key press retargets.
+    /// A flight runs or its overlay is held for the hand-off (SM-14, WP-05:
+    /// or for the opening windows): either way the overlay is up, so ring,
+    /// dim, cache refresh and render checks wait, and a key press retargets.
     public var isActive: Bool {
-        gate.isActive || handoff.isHolding
+        gate.isActive || handoff.isHolding || deferredHandover != nil
     }
 
     public var isHoldingGesture: Bool {
@@ -302,17 +315,18 @@ public final class SnapshotFlightController: @unchecked Sendable {
     }
 
     /// `images`: the one lookup per window the plan was decided with. Every
-    /// display of `items` and of `holes` gets a flight (SM-16: a display
-    /// may show only holes).
+    /// display of `items`, of `holes` and (WP-05) of `covered` gets a flight
+    /// (SM-16: a display may show only holes).
     private func makeFlights(
-        _ items: [SnapshotFlightItem], holes: [SnapshotHole] = [], images: [WindowID: SnapshotCacheUse<CGImage>],
-        velocities: [WindowID: CGPoint] = [:], now: TimeInterval
+        _ items: [SnapshotFlightItem], holes: [SnapshotHole] = [], covered: [SnapshotFlightItem] = [],
+        images: [WindowID: SnapshotCacheUse<CGImage>], velocities: [WindowID: CGPoint] = [:], now: TimeInterval
     ) -> [OverlayFlight] {
         let frames = context.displayFrames()
         let usable = context.usableFrames()
         var byDisplay: [Int: [OverlayFlightItem]] = [:]
-        for hole in holes where frames.indices.contains(hole.displayIndex) {
-            byDisplay[hole.displayIndex, default: []] = []
+        let displaysWithoutLayers = holes.map(\.displayIndex) + covered.map(\.displayIndex)
+        for index in displaysWithoutLayers where frames.indices.contains(index) {
+            byDisplay[index, default: []] = []
         }
         for item in items {
             guard let use = images[item.id], frames.indices.contains(item.displayIndex) else {
@@ -347,10 +361,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// now (the real windows' one write under a primed overlay). `.priming`:
     /// the caller defers that pass with `deferPass`. WP-04: `entries` are the
     /// windows opening in this pass (NA-02); their holes are entry holes for
-    /// the rest of the flight.
+    /// the rest of the flight. WP-05: the windows of `pops` that a new flight
+    /// shows are covered until they redrew, then pop in.
     public func drive(
         animations: [WindowAnimation], plans: [ParkingPlan], spring: SpringParameters, jumps: [WindowID: JumpPath] = [:],
-        release: GestureRelease? = nil, entries: Set<WindowID> = []
+        release: GestureRelease? = nil, entries: Set<WindowID> = [], pops popPlan: WindowOpenPopPlan? = nil
     ) -> SnapshotDrive {
         let screens = context.displayFrames()
         var targets: [WindowID: CGRect] = [:]
@@ -418,12 +433,18 @@ public final class SnapshotFlightController: @unchecked Sendable {
             }
             // SM-14: a retarget during the hold flies on; the hold is over.
             handoff.cancel()
+            deferredHandover = nil
             origins.merge(starts) { joined, _ in joined }
             opening.formUnion(entries)
             let previousTargets = self.targets
             self.targets.merge(targets) { _, latest in latest }
+            let revealed = pops.retarget(self.targets)
+            for id in revealed {
+                context.log(.debug, windowOpenRevealLine(id, reason: .retarget))
+            }
+            let covered = pops.covered
             let plan = planSnapshotRetarget(
-                active: ids, starts: starts, targets: targets, displays: screens,
+                active: ids, starts: starts, targets: targets.filter { !covered.contains($0.key) }, displays: screens,
                 activeDisplays: displays, hasImage: usable, undrawn: undrawn, pinnedDisplays: pinned
             )
             ids.formUnion(plan.adds.map(\.id))
@@ -432,8 +453,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let previous = holes
             let previousEntries = entryHoles
             setHoles(snapshotHoles(
-                layered: ids, targets: self.targets, displays: screens, activeDisplays: displays, undrawn: undrawn,
-                opening: opening
+                layered: ids.union(covered), targets: self.targets, displays: screens, activeDisplays: displays,
+                undrawn: undrawn, opening: opening
             ))
             // SM-27: every retargeted layer shows the image of its new size
             // (SM-32: at once; the one it shows when the size stays).
@@ -457,6 +478,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 adds: makeFlights(plan.adds, images: images, velocities: velocities, now: now),
                 holes: holes, entryHoles: entryHoles, decorations: context.decorations(targets)
             )
+            if !revealed.isEmpty {
+                overlay.revealFlight(token: token, windows: Set(revealed), holes: holes, entryHoles: entryHoles)
+            }
             if primingToken == nil {
                 // SM-30: the instant pass writes these windows now.
                 followFresh(Set(plan.retargets.keys).union(plan.adds.map(\.id)), previousTargets: previousTargets)
@@ -476,7 +500,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         let decision = planSnapshotFlight(
             starts: starts, targets: targets, displays: screens, hasImage: usable,
             backdropReady: { cache.backdrop(for: screens[$0]) != nil }, undrawn: undrawn, pinnedDisplays: pinned,
-            opening: entries
+            opening: entries, covered: popPlan?.windows ?? []
         )
         switch decision {
         case .fallback(let reason, let missing):
@@ -484,13 +508,15 @@ public final class SnapshotFlightController: @unchecked Sendable {
             // Next time the images are there.
             cache.schedule(delay: 0.05)
             return .ax
-        case .snapshot(let items, let holes):
+        case .snapshot(let items, let holes, let covered):
             imageSizes = [:]
             backgrounds = [:]
             startFaces = [:]
             resizeModes = [:]
             layerModel.reset(spring: spring)
-            let flights = makeFlights(items, holes: holes, images: images, velocities: velocities, now: now)
+            let flights = makeFlights(
+                items, holes: holes, covered: covered, images: images, velocities: velocities, now: now
+            )
             guard !flights.isEmpty else {
                 return .ax
             }
@@ -498,11 +524,16 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let token = gate.begin()
             self.ids = ids
             windows = ids
-            displays = Set(items.map(\.displayIndex)).union(holes.map(\.displayIndex))
+            displays = Set(items.map(\.displayIndex)).union(holes.map(\.displayIndex)).union(covered.map(\.displayIndex))
             opening = entries
             setHoles(holes)
             if !holes.isEmpty {
                 context.log(.debug, snapshotHolesLine(count: holes.count, entries: entryHoles.count))
+            }
+            for item in covered {
+                if let pop = popPlan?.pop(item.id, to: item.to) {
+                    cover(pop, now: now)
+                }
             }
             startedAt = now
             cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids, now: now)
@@ -653,6 +684,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 if pass != nil {
                     // SM-30: the resized windows were just written.
                     followFresh(snapshotResizedWindows(starts: origins, targets: targets).intersection(ids))
+                    followOpening()
                 }
             }
             if retarget {
@@ -809,13 +841,14 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// The windows whose paint the hand-off waits for. SM-16: the hole
     /// windows came into view through their holes (always checked); SM-19:
     /// the others of trusted apps are skipped; SM-29: except resized ones
-    /// (`resized`: those of `windows` that changed size).
+    /// (`resized`: those of `windows` that changed size). WP-05: covered
+    /// opening windows are confirmed by their own captures.
     private func paintCheckWindows() -> (windows: Set<WindowID>, resized: Set<WindowID>) {
         let screens = context.displayFrames()
         let candidates = snapshotPaintCheckWindows(
             starts: origins, targets: targets, screens: screens,
             covered: displays.sorted().filter { screens.indices.contains($0) }.map { screens[$0] }
-        ).union(holes.keys)
+        ).union(holes.keys).subtracting(pops.covered)
         let resized = snapshotResizedWindows(starts: origins, targets: targets).intersection(candidates)
         let windows = trust.windowsToCheck(candidates, always: resized.union(holes.keys))
         return (windows, resized)
@@ -943,12 +976,102 @@ public final class SnapshotFlightController: @unchecked Sendable {
         }
     }
 
+    // MARK: WP-05 covered opening windows
+
+    private func cover(_ pop: WindowOpenPop, now: TimeInterval) {
+        let token = pops.cover(pop, now: now)
+        scheduler.asyncAfter(WindowOpenPopBook.maxWait) { [weak self] in
+            self?.expireOpening(pop.id, token: token)
+        }
+    }
+
+    private func followOpening() {
+        for (id, token) in pops.waitingTokens.sorted(by: { $0.key < $1.key }) {
+            scheduler.asyncAfter(WindowOpenPopBook.firstCaptureDelay) { [weak self] in
+                self?.captureOpening(id, token: token)
+            }
+        }
+    }
+
+    private func captureOpening(_ id: WindowID, token: Int) {
+        guard !context.isShuttingDown(), isActive, pops.isWaiting(id, token: token), let pop = pops.pop(of: id) else {
+            return
+        }
+        let probe = SnapshotFreshProbe<CGImage>(paint: SnapshotPaintProbe(frame: pop.to))
+        context.captureFresh(id, probe) { [weak self] read in
+            self?.scheduler.async { [weak self] in
+                self?.openingAnswered(id, token: token, read: read)
+            }
+        }
+    }
+
+    private func openingAnswered(_ id: WindowID, token: Int, read: SnapshotFreshRead<CGImage>?) {
+        guard !context.isShuttingDown(), isActive, let target = pops.pop(of: id)?.to else {
+            return
+        }
+        let verdict = snapshotFreshVerdict(read, target: target.size)
+        guard let step = pops.record(id, token: token, verdict: verdict, now: context.now()) else {
+            return
+        }
+        switch (step, read) {
+        case (.pop(let pop, let waited), let read?):
+            let face = SnapshotFace(image: read.image, size: pop.to.size, fill: read.fill)
+            cache.storeFresh(id, CapturedImage(image: read.image, frame: pop.to, fill: read.fill))
+            overlay.popFlight(token: gate.currentToken, image: face, pop: pop)
+            context.log(.debug, windowOpenPopLine(id, waited: waited))
+            scheduler.asyncAfter(pop.duration) { [weak self] in
+                self?.openingPopped(id, token: token)
+            }
+        case (.retry(let delay), _):
+            scheduler.asyncAfter(delay) { [weak self] in
+                self?.captureOpening(id, token: token)
+            }
+        case (.pop, nil), (.wait, _):
+            break
+        }
+    }
+
+    private func openingPopped(_ id: WindowID, token: Int) {
+        guard !context.isShuttingDown(), isActive, pops.popped(id, token: token) else {
+            return
+        }
+        reveal([id])
+    }
+
+    private func expireOpening(_ id: WindowID, token: Int) {
+        guard !context.isShuttingDown(), isActive, let reason = pops.expire(id, token: token, now: context.now()) else {
+            return
+        }
+        context.log(.debug, windowOpenRevealLine(id, reason: reason))
+        reveal([id])
+    }
+
+    private func reveal(_ windows: Set<WindowID>) {
+        let previous = holes
+        setHoles(snapshotHoles(
+            layered: ids.union(pops.covered), targets: targets, displays: context.displayFrames(),
+            activeDisplays: displays, undrawn: cache.undrawnWindows, opening: opening
+        ))
+        overlay.revealFlight(token: gate.currentToken, windows: windows, holes: holes, entryHoles: entryHoles)
+        if holes != previous {
+            context.log(.debug, snapshotHolesLine(count: holes.count, entries: entryHoles.count))
+        }
+        if pops.isEmpty, let summary = deferredHandover {
+            deferredHandover = nil
+            handOver(summary)
+        }
+    }
+
     /// The live ring and dim go up (same geometry as the overlay's), then
     /// the overlay comes down, then the render check and the image refresh.
     /// SM-30: the resized layers fade out over the real windows instead
     /// (`snapshotHandoffFading`); each logs how it resized and when its
     /// fresh image came.
     private func handOver(_ summary: SnapshotHandoffSummary) {
+        guard pops.isEmpty else {
+            deferredHandover = summary
+            return
+        }
         let resized = snapshotResizedWindows(starts: origins, targets: targets).intersection(ids)
         for id in resized.sorted() {
             guard let origin = origins[id], let target = targets[id],
@@ -1002,6 +1125,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
         heldFrames = [:]
         layerModel.removeAll()
         flyAfterPass = false
+        for id in pops.removeAll() {
+            context.log(.debug, windowOpenRevealLine(id, reason: .abort))
+        }
+        deferredHandover = nil
     }
 
     private func setHoles(_ next: [SnapshotHole]) {

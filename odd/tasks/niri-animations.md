@@ -79,3 +79,4 @@ NA-01..NA-04: one delegated writer (audit first, then implementation commits).
 ## Progress
 - 2026-09-30: document created. Next: NA-01..NA-04.
 - 2026-09-30: NA-01..NA-04 done, pushed. Next: named workspaces.
+- 2026-10-17: NA-02 follow-up WP-05 (`odd/tasks/new-window-position.md`, branch `feat/new-window-position`): with the snapshot renderer the entry is no longer shown while the app redraws at its new size; it stays covered under the overlay until a capture at its target reads painted, then its image rises from `windowOpenStartFrame` and fades in on the resolved `window-open` animation (spring or ease-out), at most 400 ms of wait. The AX renderer keeps the NA-02 rise. LIVE PENDING.

@@ -18,7 +18,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(-300), id(2): win(100)],
             displays: [display], hasImage: all, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1), id(2)])
         XCTAssertEqual(items[1].from, win(400))
         XCTAssertEqual(items[1].to, win(100))
@@ -30,7 +30,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(0), id(2): win(500)],
             displays: [display], hasImage: all, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1), id(2)])
     }
 
@@ -65,7 +65,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(400)], targets: [id(1): win(50), id(2): parked],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, let holes, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
         XCTAssertEqual(holes, [])
         XCTAssertEqual(decision.finalFrames, [id(1): win(50)])
@@ -78,7 +78,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(9): parkedA], targets: [id(1): win(50), id(9): parkedB],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
     }
 
@@ -88,7 +88,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             targets: [id(1): win(-300), id(9): win(500)],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, let holes, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
         XCTAssertEqual(holes, [SnapshotHole(id: id(9), frame: win(500), displayIndex: 0)])
         XCTAssertEqual(decision.finalFrames, [id(1): win(-300), id(9): win(500)], "the hole window is written too")
@@ -99,7 +99,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(0), id(2): win(1000)], targets: [id(1): win(50), id(2): win(1000)],
             displays: [display, other], hasImage: { $0 == id(1) }, backdropReady: { _ in true }
         )
-        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, let holes, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
         XCTAssertEqual(holes, [], "a display without motion gets no overlay, so no hole")
     }
@@ -113,7 +113,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             displays: [display, other], hasImage: all, backdropReady: { _ in true },
             pinnedDisplays: [id(1): 0]
         )
-        guard case .snapshot(let items, _) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, _, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.displayIndex), [0])
         let retarget = planSnapshotRetarget(
             active: [], starts: [id(1): win(600)], targets: [id(1): win(1100)],
@@ -228,7 +228,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             starts: [id(1): win(100), id(2): win(100)], targets: [id(1): win(500), id(2): win(100)],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, opening: [id(2)]
         )
-        guard case .snapshot(let items, let holes) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(let items, let holes, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(items.map(\.id), [id(1)])
         XCTAssertEqual(holes, [SnapshotHole(id: id(2), frame: win(100), displayIndex: 0, entry: true)])
     }
@@ -239,7 +239,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             targets: [id(1): win(-300), id(2): win(100), id(3): win(700)],
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, opening: [id(3)]
         )
-        guard case .snapshot(_, let holes) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(_, let holes, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(holes, [
             SnapshotHole(id: id(2), frame: win(100), displayIndex: 0),
             SnapshotHole(id: id(3), frame: win(700), displayIndex: 0, entry: true),
@@ -252,7 +252,7 @@ final class SnapshotFlightPlanningTests: XCTestCase {
             displays: [display], hasImage: { $0 == id(1) }, backdropReady: { _ in true }, undrawn: [id(2)],
             opening: [id(2)]
         )
-        guard case .snapshot(_, let holes) = decision else { return XCTFail("\(decision)") }
+        guard case .snapshot(_, let holes, _) = decision else { return XCTFail("\(decision)") }
         XCTAssertEqual(holes, [])
     }
 

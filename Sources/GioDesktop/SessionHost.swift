@@ -180,6 +180,10 @@ final class SessionHost: @unchecked Sendable {
     /// duration) instead of `overlayEnd`.
     var overlayFreshen: ((Int, [WindowID: SnapshotFace<CGImage>]) -> Void)?
     var overlayFade: ((Set<WindowID>, TimeInterval) -> Void)?
+    /// WP-05: an opening window's pop (token, image, pop) and the reveal of
+    /// the real windows (token, ids, holes).
+    var overlayPop: ((Int, SnapshotFace<CGImage>, WindowOpenPop) -> Void)?
+    var overlayReveal: ((Int, Set<WindowID>, OverlayHoles) -> Void)?
     /// Main thread: removes a running flight at once (mouse down); true when one ran.
     var overlayAbortForMouseDown: (() -> Bool)?
     /// NA-03 close ghost hooks, set once by the app before `start()`; invoked
@@ -1703,12 +1707,15 @@ final class SessionHost: @unchecked Sendable {
         // (TG-07: the held layers retarget from their tracked frames); the AX
         // fallback keeps that velocity as well.
         var snapshotFlight = false
+        let openPops = planWindowOpenPops(
+            entries: pass.entries, prepositions: pass.prepositions, animation: settings.resolved(.windowOpen)
+        )
         if animating, snapshotRefresher.rendererUsable(),
-           !animations.isEmpty || overlayFlight.isActive
+           !animations.isEmpty || overlayFlight.isActive || openPops != nil
         {
             switch overlayFlight.drive(
                 animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps,
-                release: gestureRelease, entries: pass.entries
+                release: gestureRelease, entries: pass.entries, pops: openPops
             ) {
             case .ax:
                 break
@@ -2387,6 +2394,14 @@ private final class HostOverlayPort: OverlayPort {
 
     func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval) {
         host.overlayFade?(windows, duration)
+    }
+
+    func popFlight(token: Int, image: SnapshotFace<CGImage>, pop: WindowOpenPop) {
+        host.overlayPop?(token, image, pop)
+    }
+
+    func revealFlight(token: Int, windows: Set<WindowID>, holes: [WindowID: CGRect], entryHoles: Set<WindowID>) {
+        host.overlayReveal?(token, windows, OverlayHoles(holes: holes, entries: entryHoles))
     }
 }
 
