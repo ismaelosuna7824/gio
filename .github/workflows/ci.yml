@@ -37,6 +37,7 @@ jobs:
           persist-credentials: false
 
       - name: Select the latest stable Xcode
+        id: xcode
         run: |
           xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1 || true)"
           if [ -n "$xcode" ]; then
@@ -44,13 +45,22 @@ jobs:
           fi
           xcodebuild -version
           swift --version
+          # The selected Xcode's version and build, for the cache key (for example 27.0-27A5218g).
+          echo "version=$(xcodebuild -version | awk '/^Xcode / { v = $2 } /^Build version / { b = $3 } END { print v "-" b }')" >> "$GITHUB_OUTPUT"
 
+      # One key per commit, so every run saves its .build (a key that already
+      # exists is never saved again, and there is no Package.resolved to change
+      # it). restore-keys bring back the newest cache built by the same Xcode,
+      # preferring the same Package.swift; another Xcode starts from scratch.
+      # release.yml's test job restores (never saves) with the same prefix.
       - name: Cache SwiftPM build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .build
-          key: spm-xcode27-${{ hashFiles('Package.swift', 'Package.resolved') }}
-          restore-keys: spm-xcode27-
+          key: spm-xcode${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            spm-xcode${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.swift') }}-
+            spm-xcode${{ steps.xcode.outputs.version }}-
 
       # Serial, like local runs: the reconciler's lane tests measure real time
       # against 0.1-0.3 s budgets (--parallel on the runner's three cores

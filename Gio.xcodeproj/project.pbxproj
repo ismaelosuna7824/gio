@@ -109,10 +109,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A00000000000000000000011 /* Build configuration list for PBXNativeTarget "Gio" */;
 			buildPhases = (
+				A00000000000000000000079 /* Stamp dev version */,
 				A00000000000000000000012 /* Sources */,
 				A00000000000000000000013 /* Frameworks */,
 				A00000000000000000000077 /* Resources */,
-				A00000000000000000000079 /* Stamp dev version */,
 			);
 			buildRules = (
 			);
@@ -172,23 +172,28 @@
 /* Begin PBXShellScriptBuildPhase section */
 		A00000000000000000000079 /* Stamp dev version */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)",
+				"$(SRCROOT)/Gio.xcodeproj/Gio-Info.plist",
+				"$(SRCROOT)/scripts/stamp-dev-version.sh",
+				"$(SRCROOT)/.git/HEAD",
+				"$(SRCROOT)/.git/logs/HEAD",
+				"$(SRCROOT)/.git/packed-refs",
+				"$(SRCROOT)/.git/refs/tags",
 			);
 			name = "Stamp dev version";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(INFOPLIST_FILE)",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "\"${SRCROOT}/scripts/stamp-dev-version.sh\"\n";
+			shellScript = "\"${SRCROOT}/scripts/stamp-dev-version.sh\" \"${SRCROOT}/Gio.xcodeproj/Gio-Info.plist\" \"${INFOPLIST_FILE}\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -225,10 +230,11 @@
 			buildSettings = {
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				DEAD_CODE_STRIPPING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "Gio.xcodeproj/Gio-Info.plist";
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/Gio-Info.plist";
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				ONLY_ACTIVE_ARCH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -243,14 +249,19 @@
 			buildSettings = {
 				ARCHS = arm64;
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEPLOYMENT_POSTPROCESSING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "Gio.xcodeproj/Gio-Info.plist";
+				INFOPLIST_FILE = "$(DERIVED_FILE_DIR)/Gio-Info.plist";
 				MACOSX_DEPLOYMENT_TARGET = 13.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
+				STRIP_INSTALLED_PRODUCT = YES;
+				STRIP_STYLE = all;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;

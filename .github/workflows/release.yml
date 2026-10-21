@@ -108,6 +108,7 @@ jobs:
           persist-credentials: false
 
       - name: Select the latest stable Xcode
+        id: xcode
         run: |
           xcode="$(find /Applications -maxdepth 1 -name 'Xcode_*.app' | grep -E '/Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -n 1 || true)"
           if [ -n "$xcode" ]; then
@@ -115,6 +116,19 @@ jobs:
           fi
           xcodebuild -version
           swift --version
+          echo "version=$(xcodebuild -version | awk '/^Xcode / { v = $2 } /^Build version / { b = $3 } END { print v "-" b }')" >> "$GITHUB_OUTPUT"
+
+      # Restore only: the newest .build that ci.yml saved on dev with the same
+      # Xcode (same key scheme). Nothing is saved from a release run, and the
+      # signed build job below never uses a cache.
+      - name: Restore the SwiftPM build cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .build
+          key: spm-xcode${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.swift') }}-${{ github.sha }}
+          restore-keys: |
+            spm-xcode${{ steps.xcode.outputs.version }}-${{ hashFiles('Package.swift') }}-
+            spm-xcode${{ steps.xcode.outputs.version }}-
 
       - name: Test (all bundles)
         run: scripts/swift-test-ci.sh
@@ -185,7 +199,14 @@ jobs:
             MARKETING_VERSION="$VERSION" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             build
-          echo "GIO_APP=$RUNNER_TEMP/DerivedData/Build/Products/Release/Gio.app" >> "$GITHUB_ENV"
+          products="$RUNNER_TEMP/DerivedData/Build/Products/Release"
+          echo "GIO_APP=$products/Gio.app" >> "$GITHUB_ENV"
+          # The Release binary is stripped (STRIP_STYLE = all); its symbols are
+          # in Gio.app.dSYM (DEBUG_INFORMATION_FORMAT = dwarf-with-dsym), kept
+          # as a workflow artifact to symbolicate crash reports of this build.
+          mkdir -p "$RUNNER_TEMP/symbols"
+          ditto -c -k --keepParent "$products/Gio.app.dSYM" "$RUNNER_TEMP/symbols/Gio-$VERSION.app.dSYM.zip"
+          echo "GIO_SYMBOLS=$RUNNER_TEMP/symbols" >> "$GITHUB_ENV"
 
       - name: Make and sign the DMG
         env:
@@ -200,6 +221,13 @@ jobs:
         with:
           name: Gio-${{ needs.version.outputs.version }}
           path: ${{ env.GIO_DIST }}
+          if-no-files-found: error
+
+      - name: Upload the dSYM
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: Gio-${{ needs.version.outputs.version }}-dSYM
+          path: ${{ env.GIO_SYMBOLS }}
           if-no-files-found: error
 
       - name: Delete the temporary keychain
