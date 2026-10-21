@@ -303,6 +303,21 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   `NoticePanelTests`, 3). Visual: throwaway render of the real panel (removed). Bundles UI 361
   (53 skipped) / Session 552 / POC 7 / Mac 19 / MacOS 107 / Core 2167, 0 failures; signed Debug
   build OK. LIVE PENDING: Alt+Shift+T on the 9-window workspace shows the notice.
+- [x] FX-07 (`3a671bb`) — User (2026-10-21 23:44): "OrbStack llegó un momento que no se
+  renderizó y se vio su espacio vacío". Log: 25 `reconcile retry ... reason=busy ms=500` today
+  (22 OrbStack), e.g. 23:43:23.954 a flight's dispatched write to OrbStack (busy activating, its
+  focus takes ~210 ms) ended `readbackFailed(position/size,-25204)`, the overlay came down
+  (`handoff waited ms=0 windows=0`), and the retry at 23:43:24.494 wrote it (`applied=1`): its
+  slot showed bare desktop for ~540 ms. Fix: `retryBeforeHandOver` (latest outcome per window
+  over the folded passes; transient failures only; visible or parked target) and
+  `collectDispatchedWrites` writes them once more (`reconcile retry now ... reason=busy`) before
+  the hand-over, while the overlay still covers the slot; the MM-11 backoff applies only if that
+  write fails too. Cost: one window's write at the end of a flight, only after a busy failure
+  (live: 5 ms). RED: compile (`TransientWriteRetryTests`, 3). Bundles UI 361 (53 skipped) /
+  Session 552 / POC 7 / Mac 19 / MacOS 107 / Core 2170, 0 failures; signed Debug build OK. The
+  maximize case (instant resize, app repaints late) was considered and dropped: the user saw
+  OrbStack, and asked not to animate size changes. LIVE PENDING: rapid Alt+H/L across OrbStack
+  never shows its slot empty; the log shows `reconcile retry now` instead of the 0.5 s retry.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
