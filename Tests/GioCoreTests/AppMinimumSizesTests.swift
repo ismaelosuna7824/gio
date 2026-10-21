@@ -10,6 +10,8 @@ import XCTest
 /// BUG-2 (live 2026-10-21): one clamp read too early taught Figma a 1784 pt
 /// minimum (its old maximized width) and PA-24 kept it for every launch. An
 /// app's minimum is now only used once two sessions learned the same value.
+/// FX-05: width and height are confirmed apart (WhatsApp clamps its width
+/// every launch but its height only sometimes, so the pair never matched).
 final class AppMinimumSizesTests: XCTestCase {
     private func window(_ element: UInt64, pid: pid_t = 7, app: String, bundle: String? = nil) -> ManagedWindow {
         ManagedWindow(
@@ -35,9 +37,21 @@ final class AppMinimumSizesTests: XCTestCase {
         let figma = window(1, app: "Figma", bundle: "com.figma.Desktop")
         minimums.record(CGSize(width: 1784, height: 600), for: figma)
         minimums.record(CGSize(width: 900, height: 600), for: figma)
-        XCTAssertNil(minimums.size(for: figma), "the early 1784 was never confirmed")
+        XCTAssertEqual(minimums.size(for: figma), CGSize(width: 0, height: 600), "the early 1784 was never confirmed")
         minimums.record(CGSize(width: 900, height: 600), for: figma)
         XCTAssertEqual(minimums.size(for: figma), CGSize(width: 900, height: 600))
+    }
+
+    /// Live: WhatsApp learned 970x600, then 970x0, then 970x600 again.
+    func testWidthAndHeightAreConfirmedApart() {
+        var minimums = AppMinimumSizes()
+        let app = window(1, app: "WhatsApp", bundle: whatsapp)
+        minimums.record(CGSize(width: 970, height: 600), for: app)
+        minimums.record(CGSize(width: 970, height: 0), for: app)
+        XCTAssertEqual(minimums.size(for: app), CGSize(width: 970, height: 0), "no height evidence leaves it a candidate")
+        XCTAssertFalse(minimums.record(CGSize(width: 970, height: 0), for: app), "already confirmed: nothing to save")
+        minimums.record(CGSize(width: 970, height: 600), for: app)
+        XCTAssertEqual(minimums.size(for: app), CGSize(width: 970, height: 600))
     }
 
     func testTheBundleIDIsTheKeyWhenKnownElseTheName() {
@@ -90,5 +104,19 @@ final class AppMinimumSizesTests: XCTestCase {
         XCTAssertEqual(store.load(), AppMinimumSizes())
         try Data("{not json".utf8).write(to: url)
         XCTAssertEqual(store.load(), AppMinimumSizes())
+    }
+
+    /// The second format kept pairs; only its confirmed ones carry over (its
+    /// candidates include 888 pt clamps from 1 pt dwindle tiles, FX-05).
+    func testTheSecondFormatKeepsOnlyConfirmedPairs() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("gio-min-sizes-\(UUID().uuidString)/app-minimum-sizes.json")
+        defer { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"version":2,"apps":{"bundle:so.stencil.tern":[888,0,1],"bundle:com.apple.dt.Xcode":[400,350,2]}}"#.utf8)
+            .write(to: url)
+        let loaded = AppMinimumSizeStore(url: url).load()
+        XCTAssertNil(loaded.size(for: window(1, app: "Tern", bundle: "so.stencil.tern")))
+        XCTAssertEqual(loaded.size(for: window(2, app: "Xcode", bundle: "com.apple.dt.Xcode")), CGSize(width: 400, height: 350))
     }
 }

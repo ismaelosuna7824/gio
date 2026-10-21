@@ -14,12 +14,17 @@ import Foundation
 /// learned from; neither is one that grew in one dimension while the other
 /// landed smaller: a screen constrained it (MM-11: a window sent to a
 /// taller display kept its top at the other display's visible top and came
-/// back wider). Returns 0 for a dimension without evidence, nil when there
+/// back wider). FX-05: a request below `minimumEvidenceExtent` says nothing
+/// on its axis (a 1 pt dwindle tile came back at the window's column
+/// width). Returns 0 for a dimension without evidence, nil when there
 /// is none at all. Works in either vertical orientation.
 public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat = 1) -> CGSize? {
     func clamped(
         _ requestedMin: CGFloat, _ requestedMax: CGFloat, _ actualMin: CGFloat, _ actualMax: CGFloat
     ) -> CGFloat {
+        guard requestedMax - requestedMin >= minimumEvidenceExtent else {
+            return 0
+        }
         let grew = (actualMax - actualMin) - (requestedMax - requestedMin) > tolerance
         let anchored = abs(actualMin - requestedMin) <= tolerance || abs(actualMax - requestedMax) <= tolerance
         return grew && anchored ? actualMax - actualMin : 0
@@ -33,6 +38,9 @@ public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat
     let height = clamped(requested.minY, requested.maxY, actual.minY, actual.maxY)
     return width > 0 || height > 0 ? CGSize(width: width, height: height) : nil
 }
+
+/// FX-05: the smallest request a clamp is learned from.
+public let minimumEvidenceExtent: CGFloat = 100
 
 private extension CGRect {
     var isFinite: Bool {
