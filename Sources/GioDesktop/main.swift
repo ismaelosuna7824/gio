@@ -29,13 +29,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private lazy var launcher = LauncherPanelController(
         focusWindow: { [host] in host.focusWindow($0) }, catalog: launcherCatalog
     )
-    /// WO-01: Alt+O / `gio overview`.
+    /// WO-01: Alt+O / `gio overview`; WO-02: dragging a tile moves its window.
     private lazy var overview = WorkspaceOverviewController(
         load: { [host] completion in host.workspaceOverview(completion: completion) },
         snapshot: { [host] in host.snapshot() },
         capture: { [host] ids, completion in host.captureOverviewThumbnails(ids, completion: completion) },
         focusWindow: { [host] in host.focusWindow($0) },
-        focusWorkspace: { [host] in host.focusWorkspace($0) }
+        focusWorkspace: { [host] in host.focusWorkspace($0) },
+        move: { [host] move, done in host.moveWindowFromOverview(move, completion: done) }
     )
     /// UP-10: the in-app updater (Overview, Diagnostics, menu bar, `gio
     /// update`). Installing quits through the normal terminate path.

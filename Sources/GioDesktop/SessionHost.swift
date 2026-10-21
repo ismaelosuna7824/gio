@@ -1107,6 +1107,38 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// WO-02: a window tile dropped in the overview, applied on the session
+    /// queue to the overview's display (the focused one, as the overview's
+    /// facts use) by the Core use case. A move reflows like any window move,
+    /// passively: no focus intent, nothing follows. Completes on the main
+    /// thread with that display's fresh overview facts (nil without one).
+    func moveWindowFromOverview(
+        _ move: OverviewMove, completion: @escaping @Sendable (WorkspaceOverviewFacts?) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, !isShuttingDown else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            // A copy: the modes read touches `session` while the move runs.
+            var manager = session.manager
+            let modes = tileableModes()
+            let result = manager.moveWindowFromOverview(move, on: manager.focusedDisplay, modes: modes)
+            let id = WindowID(text: move.windowID).map { "\($0.pid):\($0.elementID)" } ?? "invalid"
+            GioLog.record(
+                .info,
+                "overview move id=\(id) workspace=\(move.workspace) column=\(move.column) result=\(result.rawValue)"
+            )
+            if result == .moved {
+                session.manager = manager
+                motionCauses.note(.windowMovement)
+                reflowAll()
+            }
+            let facts = factsBuilder.workspaceOverview()
+            DispatchQueue.main.async { completion(facts) }
+        }
+    }
+
     /// MM-04: the overview opens on the display the user is on: the one
     /// holding the focused window (the frontmost app's front window, as the
     /// WindowServer lists it, so focus Gio did not adopt counts too), else
