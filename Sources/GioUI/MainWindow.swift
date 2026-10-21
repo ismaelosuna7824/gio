@@ -238,6 +238,12 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
         model.setWindowVisible(true)
     }
 
+    /// PA-21: the session published its first snapshot; show it now rather
+    /// than at the next poll.
+    public func refreshContent() {
+        model.refresh()
+    }
+
     private static let autosaveName = "GioMainWindow"
 
     /// Unified toolbar window with a full-height sidebar; the title follows

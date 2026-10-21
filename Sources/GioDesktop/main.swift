@@ -62,9 +62,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let snapshotOverlay = SnapshotOverlayController()
     private let closeGhosts = CloseGhostOverlay()
     private var signalSources: [DispatchSourceSignal] = []
-    /// PA-16: the launcher's app scan (it draws every app icon) waits this
-    /// long after the session started, so it does not compete with the
-    /// first layout. A summon before then scans on its own (`refreshIfStale`).
+    /// PA-16: the launcher's app scan (it stats every bundle and draws the
+    /// icons that changed, PA-22) waits this long after the session is ready,
+    /// so it does not compete with the first animations. A summon before
+    /// then scans on its own (`refreshIfStale`).
     private static let launcherScanDelay: TimeInterval = 2
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -86,13 +87,19 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
             let updates = DispatchQueue.main.sync { MainActor.assumeIsolated { self?.updates } }
             return updates?.answerCLI(request) ?? "Gio is shutting down"
         }
-        if let error = host.start() {
+        // PA-21: the first layout runs on the session queue while the menu
+        // bar and the window come up; once it is published the window shows
+        // it, and the launcher's scan waits a little longer still.
+        let started = host.start { [weak self, launcherCatalog] in
+            self?.mainWindow.refreshContent()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.launcherScanDelay) {
+                MainActor.assumeIsolated { launcherCatalog.start() }
+            }
+        }
+        if let error = started {
             print("[gio] cannot start: \(error)")
             NSApplication.shared.terminate(nil)
             return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.launcherScanDelay) { [launcherCatalog] in
-            MainActor.assumeIsolated { launcherCatalog.start() }
         }
         installSignalHandlers()
         let bar = MenuBarController()

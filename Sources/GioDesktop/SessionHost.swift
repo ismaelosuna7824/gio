@@ -149,7 +149,8 @@ final class SessionHost: @unchecked Sendable {
     private var multitouchWatcher: MultitouchDeviceWatcher?
     private var multitouchRunning = false
     private var multitouchGeneration = 0
-    private var multitouchShutDown = false
+    /// Main thread: `shutdown()` began (no touch source, no late start step).
+    private var mainShutDown = false
     /// TG-04, session queue: macOS's own swipe settings, read again at most
     /// every 10 s when the facts are built, and on every config apply.
     private var trackpadPreferences = TrackpadSystemPreferences()
@@ -847,7 +848,12 @@ final class SessionHost: @unchecked Sendable {
         guardian?.processIdentifier
     }
 
-    func start() -> String? {
+    /// PA-21: returns once the lock, config and IPC are up; the first layout
+    /// (`initialSync`, ~120 ms with AX reads of every app), the observers
+    /// and the publication run on the session queue while main goes on to
+    /// build the menu bar and window (main waited ~215 ms for them before).
+    /// `onReady` runs on main after the tap and the touch source started.
+    func start(onReady: @escaping @MainActor () -> Void = {}) -> String? {
         // A relaunched instance waits a few seconds for its predecessor's lock.
         guard instanceLock.acquire(
             path: defaultLockPath(), wait: .forLaunch(arguments: CommandLine.arguments)
@@ -889,19 +895,36 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "session started")
         GioLog.record(.info, "spaces separate=\(displaysHaveSeparateSpaces())")
         guardian = spawnGuardian()
-        queue.sync {
+        queue.async {
+            guard !self.isShuttingDown else {
+                return
+            }
             self.initialSync()
         }
+        // Main-thread observers; what they report hops to the queue, behind
+        // the first layout.
         watchDisplays()
         watchDesktopPicture()
         watchMemoryPressure()
         watchManagedSpace()
-        queue.sync {
+        queue.async {
+            guard !self.isShuttingDown else {
+                return
+            }
             self.events.rebuild()
             self.publishSnapshot()
+            GioLog.record(.info, "session ready")
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard !self.mainShutDown else {
+                        return
+                    }
+                    self.startTap()
+                    self.startMultitouch(gestures: config.gestures)
+                    onReady()
+                }
+            }
         }
-        startTap()
-        startMultitouch(gestures: config.gestures)
         return nil
     }
 
@@ -915,7 +938,7 @@ final class SessionHost: @unchecked Sendable {
         multitouchWatcher = nil
         multitouch?.stop()
         multitouchRunning = false
-        multitouchShutDown = true
+        mainShutDown = true
         queue.sync {
             guard !isShuttingDown else {
                 return
@@ -1201,7 +1224,7 @@ final class SessionHost: @unchecked Sendable {
 
     /// Main thread.
     private func setMultitouchRunning(_ running: Bool) {
-        guard let multitouch, running != multitouchRunning, !multitouchShutDown else {
+        guard let multitouch, running != multitouchRunning, !mainShutDown else {
             return
         }
         multitouchRunning = running
