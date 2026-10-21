@@ -277,7 +277,32 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   six windows with the live minimums on 1800x1130 give tiles from 236x375 up, none at 1 pt; a
   7th window returns the workspace to scrolling with all 7. Bundles UI 358 (53 skipped) /
   Session 550 / POC 7 / Mac 19 / MacOS 107 / Core 2163, 0 failures; signed Debug build OK.
-  LIVE PENDING: Alt+Shift+T on the 9-window workspace logs `dwindle refused` and nothing moves.
+  LIVE (23:18:56): `dwindle refused workspace=2 windows=9 max=4` (the user had set 4); nothing
+  moved, which read as a dead shortcut, hence FX-06.
+- [x] FX-05 (`ef6dbe9`) — Performance check of the four builds of 2026-10-21 (log, per launch):
+  median fps 112/113/108/114, dropped frames per animation 1.71/1.44/2.36/1.58, reflow median
+  27/20/27/29 ms, overview open 36-44 ms, overview capture 153 ms before WO-02 vs 73-137 after:
+  no regression (the C build's 68 `frameMismatch` were the 9-window dwindle tests, FX-04).
+  Focus time per app moves with the app (OrbStack 208-221 ms in every build; Xcode 8-64 ms
+  while it debugs Gio). Two defects found: WhatsApp/Figma learned 970x600 then 970x0, so the
+  pair never confirmed and the width was learned again every launch; the 1 pt dwindle tiles had
+  left 888 pt candidates for Tern/Slack/OrbStack (their column width) that one more such learn
+  would confirm. Fix: `AppMinimumSizes` confirms width and height apart (`Axis`), a learn with 0
+  on an axis leaves it alone; `learnedMinimum` ignores an axis whose request is below 100 pt;
+  store format 3, format 2 keeps only confirmed pairs (drops the 888 candidates, keeps Xcode
+  400x350). RED: `testWidthAndHeightAreConfirmedApart`, `testAValueSeenOnceThatDiffersReplaces
+  TheCandidate` (updated: the confirmed height now counts), `testARequestTooSmallToMeanAnything
+  IsNotLearned`. LIVE PENDING: two launches without `min size learned` for WhatsApp's width.
+- [x] FX-06 — A refused Alt+Shift+T showed nothing. `ActionEffect.dwindleRefusal` →
+  `SessionHost.onDwindleRefused` (main) → `NoticePanelController` (`GioUI/NoticePanel.swift`): a
+  click-through, non-activating panel at `.statusBar`, centred 14% up the focused display's
+  visible frame (`noticeFrame`), fades in 0.15 s, holds 2.2 s, fades out; made on first use, no
+  work while hidden; a newer notice replaces the old (generation). `gio layout dwindle` answers
+  `layout unchanged (workspace N has W windows; dwindle holds at most M, [dwindle] max-windows)`
+  instead of "already dwindle". RED: compile (`ActionApplierTests` refusal tests,
+  `NoticePanelTests`, 3). Visual: throwaway render of the real panel (removed). Bundles UI 361
+  (53 skipped) / Session 552 / POC 7 / Mac 19 / MacOS 107 / Core 2167, 0 failures; signed Debug
+  build OK. LIVE PENDING: Alt+Shift+T on the 9-window workspace shows the notice.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
