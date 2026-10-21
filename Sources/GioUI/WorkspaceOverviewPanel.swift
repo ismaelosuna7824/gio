@@ -148,9 +148,7 @@ private struct OverviewRowView: View, Equatable {
 
     var body: some View {
         // A strip wider than the screen shrinks to fit instead of scrolling.
-        let aspect = max(row.miniature.aspectRatio, 0.1)
-        let canvasHeight = min(height, maxCanvasWidth / aspect)
-        let canvas = CGSize(width: canvasHeight * aspect, height: canvasHeight)
+        let canvas = overviewCanvasSize(aspectRatio: row.miniature.aspectRatio, height: height, maxWidth: maxCanvasWidth)
         HStack(alignment: .center, spacing: GioSpacing.xl) {
             label
                 .frame(width: labelWidth, alignment: .leading)

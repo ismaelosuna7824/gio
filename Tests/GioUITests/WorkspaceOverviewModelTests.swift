@@ -108,6 +108,19 @@ final class WorkspaceOverviewModelTests: XCTestCase {
         XCTAssertEqual(overviewRowHeight(rows: 0, available: 920, spacing: 10, minimum: 120, maximum: 360), 360)
     }
 
+    func testCanvasKeepsTheStripAspectWithinRowAndWidth() {
+        XCTAssertEqual(overviewCanvasSize(aspectRatio: 2, height: 200, maxWidth: 1000), CGSize(width: 400, height: 200))
+        XCTAssertEqual(overviewCanvasSize(aspectRatio: 4, height: 200, maxWidth: 400), CGSize(width: 400, height: 100))
+    }
+
+    /// The panel's first layout pass can measure zero: SwiftUI rejects a
+    /// negative frame ("Invalid frame dimension"), so the canvas is empty.
+    func testCanvasIsEmptyNotNegativeBeforeThePanelHasASize() {
+        XCTAssertEqual(overviewCanvasSize(aspectRatio: 2, height: 200, maxWidth: -260), .zero)
+        XCTAssertEqual(overviewCanvasSize(aspectRatio: 2, height: -40, maxWidth: 1000), .zero)
+        XCTAssertEqual(overviewCanvasSize(aspectRatio: .nan, height: 200, maxWidth: 1000).height, 200)
+    }
+
     // MARK: - Thumbnails
 
     private func image() -> OverviewThumbnail {
