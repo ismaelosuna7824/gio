@@ -734,6 +734,12 @@ func applyDwindleKey(
         if let multiplier = number(in: DwindleSectionConfig.splitWidthMultiplierRange, describing: "0.1 to 10") {
             config.dwindle.splitWidthMultiplier = multiplier
         }
+    case "max-windows":
+        if case .int(let count) = value, DwindleSectionConfig.maxWindowsRange.contains(count) {
+            config.dwindle.maxWindows = count
+        } else {
+            warnings.append("line \(line): dwindle.max-windows expects a whole number from 1 to 32, default kept")
+        }
     case "smart-split":
         warnings.append(
             "line \(line): dwindle.smart-split is not supported (Gio has no pointer position when a window opens; use dwindle-preselect-*), ignored"

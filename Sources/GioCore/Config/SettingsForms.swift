@@ -43,6 +43,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var defaultLayout: WorkspaceLayoutKind
     public var splitRatio: Double
     public var splitWidthMultiplier: Double
+    /// FX-04 `[dwindle] max-windows`.
+    public var maxWindows: Int
 
     public init(config: LayoutSectionConfig, dwindle: DwindleSectionConfig = DwindleSectionConfig()) {
         gaps = Double(config.gaps)
@@ -65,6 +67,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         defaultLayout = config.defaultLayout
         splitRatio = Double(dwindle.defaultSplitRatio)
         splitWidthMultiplier = Double(dwindle.splitWidthMultiplier)
+        maxWindows = dwindle.maxWindows
     }
 
     private static func text(_ value: Double) -> String {
@@ -114,6 +117,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         if !DwindleSectionConfig.splitWidthMultiplierRange.contains(splitWidthMultiplier) {
             found.append("Dwindle width multiplier must be 0.1 to 10.")
         }
+        if !DwindleSectionConfig.maxWindowsRange.contains(maxWindows) {
+            found.append("Dwindle maximum windows must be 1 to 32.")
+        }
         return found
     }
 
@@ -140,6 +146,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             .set(table: "layout", key: "default-layout", value: .string(defaultLayout.rawValue)),
             .set(table: "dwindle", key: "default-split-ratio", value: .number(splitRatio)),
             .set(table: "dwindle", key: "split-width-multiplier", value: .number(splitWidthMultiplier)),
+            .set(table: "dwindle", key: "max-windows", value: .int(maxWindows)),
         ]
     }
 }
