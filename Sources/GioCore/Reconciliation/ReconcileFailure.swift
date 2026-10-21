@@ -84,6 +84,50 @@ public struct TransientWriteRetry: Sendable {
     }
 }
 
+/// FX-07: one pass written under a snapshot overlay and its outcome.
+public struct DispatchedOutcome: Sendable {
+    public var report: ReconcileReport
+    public var visible: [WindowID: CGRect]
+    public var parked: [WindowID: ParkedTarget]
+
+    public init(report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget] = [:]) {
+        self.report = report
+        self.visible = visible
+        self.parked = parked
+    }
+}
+
+/// FX-07: the windows whose last write under the overlay failed only because
+/// their app was busy (`isTransient`), with that pass's target, written
+/// again before the overlay comes down. The busy moment (live: OrbStack
+/// activating, ~200 ms) has usually passed by the end of the flight, while
+/// the backoff retry (`TransientWriteRetry`, 0.5 s) left the window's slot
+/// empty after the hand-over. Passes in dispatch order; a later outcome
+/// wins, so a window a later pass placed is not retried.
+public func retryBeforeHandOver(_ passes: [DispatchedOutcome]) -> ParkingPlan {
+    var retry = ParkingPlan()
+    for pass in passes {
+        let report = pass.report
+        for id in report.applied + report.alreadyCorrect + report.parked + report.vanished + report.deferred {
+            retry.visible.removeValue(forKey: id)
+            retry.parked.removeValue(forKey: id)
+        }
+        for id in report.failed {
+            retry.visible.removeValue(forKey: id)
+            retry.parked.removeValue(forKey: id)
+            guard report.failures[id]?.isTransient == true else {
+                continue
+            }
+            if let target = pass.parked[id] {
+                retry.parked[id] = target
+            } else if let frame = pass.visible[id] {
+                retry.visible[id] = frame
+            }
+        }
+    }
+    return retry
+}
+
 /// `(x,y,w,h)` in whole points; non-finite or absurd values never crash.
 public func formatFrame(_ frame: CGRect?) -> String {
     guard let frame else {
