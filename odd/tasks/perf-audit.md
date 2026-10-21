@@ -215,6 +215,31 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   Debug build OK. Tradeoff: a window of the app that could be narrower is never laid out below
   the app's minimum (delete the file to reset). LIVE PENDING: after one launch that learns
   WhatsApp/Figma/NoteX, the next launch logs no `frameMismatch` or `min size learned` for them.
+- [x] BUG-1 — Stacked columns were drawn upside down (live 2026-10-21: Slack consumed into
+  OrbStack's column showed on top, and focus-up from it went to OrbStack below). The model
+  reads a column top to bottom (focus-up = previous, consume "joins at its bottom" = append),
+  but `ScrollableLayoutEngine` put window 0 at `viewport.minY` (Cocoa: the bottom). Fix: stack
+  from `viewport.maxY - padding` down; `makeWorkspaceStrip` measures `top` from the top for
+  both layouts. Three engine tests had pinned the inverted y (taught to agree); updated. RED:
+  `testVerticalStackSharesHeightEquallyFromTheTop` (y 8 vs 536).
+- [x] BUG-2 — PA-24 persisted a transient clamp: Figma's first dwindle write read back 1784 pt
+  (its old maximized width) and was saved as Figma's minimum for every launch. App minimums
+  are now candidates until learned again with the same value (another session or another
+  window; `AppMinimumSizes.Entry.seen`, `confirmations = 2`); only confirmed ones lay windows
+  out; a different value replaces the candidate. Store format v2 (`{"version":2,"apps":
+  {key:[w,h,seen]}}`); the first format (unconfirmed single clamps) reads as empty, so the
+  live file's 1784 is dropped. RED: `AppMinimumSizesTests` (5 failures).
+- [x] BUG-3 — Alt+Shift+T to dwindle with nine windows: tiles of 104x132 pt, every app clamped,
+  late clamps counted as snap-backs, passes rewrote the windows every ~1.5 s, Figma yielded to
+  `appControlled` (floating, so Alt+F ignored it). `DwindleLayoutEngine(minimumSizes:)`: a
+  split gives each side its subtree minimum along its axis when both fit, else the two needs'
+  proportion; unpinned orientations from the nominal rects. `MinimumSizeBook.explains`: a late
+  clamp to a known minimum is kept (no snap-back, no relayout). RED: `DwindleLayoutEngineTests`
+  (compile, then 2 failures on the nested case), `testALateClampToAKnownMinimumIsExplained`.
+  Evidence (BUG-1..3 + WO-02/03): bundles UI 354 (53 skipped) / Session 550 / POC 7 / Mac 19 /
+  MacOS 107 / Core 2149, all 0 failures; signed Debug build OK. LIVE PENDING: stacked column
+  order and Alt+J/K, Alt+Shift+T with many windows (no rewrite loop, no yield), Figma tiled
+  again after Alt+Shift+Space.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).

@@ -207,7 +207,7 @@ What the shared actions do on a dwindle workspace:
 
 `gio focus` and `gio move` follow the tree the same way.
 
-Limits: learned minimum sizes and rule `min-width` / `max-width` apply to the strip only; an app that cannot shrink to its tile overlaps its neighbour. Tabbed or grouped tiles (OmniWM's tile groups) and moving a window to the root are not implemented.
+Limits: rule `min-width` / `max-width` apply to the strip only. Minimum sizes Gio learned (an app that refuses to get narrower or shorter) do count: a split gives each side at least what its windows need when both fit, and shares the space in proportion when they cannot (a tree too crowded for its apps still overlaps, but stays put instead of being rewritten). Tabbed or grouped tiles (OmniWM's tile groups) and moving a window to the root are not implemented.
 
 ## Configuration reference
 
@@ -513,7 +513,7 @@ The status item is a small three-column glyph with the active workspace's number
 
 `Alt+O` (or `gio overview`) covers the display you are on with a dimmed panel (the display holding the focused window, else the one under the cursor, else the focused display; it becomes the focused display, so `1`-`9` and clicks act there; the log says `overview display id=N reason=focusedWindow|cursor|focusedDisplay`) that shows every workspace of its stack as a row, top to bottom, like niri's overview. Each row draws the workspace's strip to scale: the frame is the screen (what the workspace shows when it is the display's), windows outside it are faded, and a strip wider than the screen shrinks to fit. Named workspaces show their icon and `1 · Code` title; the display's current workspace is marked **Current**.
 
-Windows show a live thumbnail captured when the panel opens (parked windows included). Thumbnails need **Screen Recording** and macOS 14; without them each window shows its app icon on the app's color. Window titles appear only in the panel, never in the log.
+Windows show a thumbnail as soon as the panel opens: a recent image Gio already keeps of the window (scaled down to the panel's size), then a fresh capture for the rest (parked windows included); each one fades in over the app-icon placeholder. Thumbnails need **Screen Recording** and macOS 14; without them each window shows its app icon on the app's color. Window titles appear only in the panel, never in the log.
 
 | Input | Effect |
 | --- | --- |
@@ -521,8 +521,9 @@ Windows show a live thumbnail captured when the panel opens (parked windows incl
 | `Return` or click | Close the panel and go there: a window switches to its workspace and takes keyboard focus (like the launcher); an empty workspace (or a click on a row's screen frame) switches to the workspace like `Alt+N`. |
 | `1` ... `9` | Go to that workspace of the stack. |
 | `Esc`, `Alt+O`, a click on the background, or switching apps | Close without changing anything. |
+| Drag a window | Move it without closing the panel: drop it between two windows of a row (an accent bar shows where) to put it there as its own column, or on another row to send it to that workspace (an empty row takes it as its only window). A window alone in its column takes the whole column (width included); a stacked one leaves its column. Nothing follows it: you stay on your workspace and the keyboard focus does not move. `Esc` during a drag cancels it. In a dwindle workspace the tree decides the place (the window splits the focused one). |
 
-The panel shows the stack as it was when it opened; floating windows are not drawn (they are not part of any strip).
+The panel shows the stack as it was when it opened, updated after each drag; floating windows are not drawn (they are not part of any strip).
 
 ## Trackpad gestures
 
