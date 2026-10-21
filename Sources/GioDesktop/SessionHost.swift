@@ -25,6 +25,10 @@ final class SessionHost: @unchecked Sendable {
     /// Mouse, frontmost app, main screen, running apps and the on-screen
     /// window list, read through one seam (concrete type: static dispatch).
     private let probe = LiveSystemProbe()
+    /// PA-15e: app names for logs and resize-capability keys, resolved once
+    /// per pid (`NSRunningApplication` per call before) and dropped when the
+    /// app terminates (`forgetApp`). Its own lock.
+    private let appNames = AppNameCache(resolve: { LiveSystemProbe().applicationName($0) })
     private var session = CommandSession()
     private var displays = DisplayManager()
     private var actuator: AXWindowActuator?
@@ -153,7 +157,8 @@ final class SessionHost: @unchecked Sendable {
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
     /// PF-X: the Screen Recording check is an IPC to tccd (~8 ms); hot
-    /// paths answer from this cache, the polled facts refresh it.
+    /// paths and the polled facts answer from this cache (PA-15b: the facts
+    /// refresh it only while it reads missing, to catch a new grant).
     private let screenRecording = ScreenRecordingPermissionCache()
     /// SM-04: pre-captured window images (refreshed once after each settle,
     /// no periodic timer) and the running overlay flight.
@@ -286,7 +291,7 @@ final class SessionHost: @unchecked Sendable {
         )
         barPublisher = GatedStatePublisher(gate: BarStateGate(), initial: nil, context: .init(
             isObserved: { [unowned self] in onBarState != nil },
-            makeValue: { [unowned self] in parseBarStatus(queryStatus(session: session)) },
+            makeValue: { [unowned self] in barSessionState(session: session) },
             mainHop: mainQueueHop,
             deliver: { [unowned self] in onBarState?($0) }
         ))
@@ -297,7 +302,8 @@ final class SessionHost: @unchecked Sendable {
             configMessages: { [unowned self] in configCoordinator.messages },
             engine: { [unowned self] in engine() },
             tileableModes: { [unowned self] in tileableModes() },
-            screenRecordingGranted: { [unowned self] in screenRecording.refresh() },
+            screenRecordingGranted: { [unowned self] in screenRecording.granted() },
+            refreshScreenRecording: { [unowned self] in screenRecording.refresh() },
             accessibilityGranted: { hasAXPermission() },
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
@@ -478,6 +484,7 @@ final class SessionHost: @unchecked Sendable {
         )
         resizeProbes = ResizeProbeRunner(
             context: .init(
+                isEnabled: { GioLog.minimumLevel <= .debug },
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 matchWindows: { [unowned self] managed in
                     let candidates = windowServerSnapshotCandidates(
@@ -580,7 +587,10 @@ final class SessionHost: @unchecked Sendable {
                     openTimeline.forget(id)
                     actuator?.forget(elementID: id.elementID)
                 },
-                forgetApp: { [unowned self] in reconciler?.forgetApp(pid: $0) },
+                forgetApp: { [unowned self] pid in
+                    appNames.forget(pid)
+                    reconciler?.forgetApp(pid: pid)
+                },
                 reflowAll: { [unowned self] in reflowAll() },
                 displaySnapshots: { snapshotDisplayList() },
                 knownDisplayIDs: { [unowned self] in displays.allDisplays().map(\.id) },
@@ -1298,9 +1308,11 @@ final class SessionHost: @unchecked Sendable {
     // MARK: - Sync
 
     /// MM-01: the global AX/WindowServer flip height is the primary
-    /// display's, whichever screen holds the key window.
+    /// display's, whichever screen holds the key window. PA-15c: main
+    /// publishes it with the screen parameters (no `NSScreen` enumeration
+    /// off main per query); the probe only answers before that first reading.
     private func primaryHeight() -> CGFloat {
-        probe.primaryScreenHeight
+        displayParameters.primaryHeight ?? probe.primaryScreenHeight
     }
 
     private func initialSync() {
@@ -1446,7 +1458,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func resizeKey(_ pid: pid_t) -> String {
-        probe.applicationLabel(pid)
+        appNames.display(pid)
     }
 
     private func logResizeCapability(_ key: String) {
@@ -2045,7 +2057,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func appName(_ pid: pid_t) -> String {
-        probe.applicationLabel(pid)
+        appNames.display(pid)
     }
 
     // MARK: - Workspace visibility (NC-06)

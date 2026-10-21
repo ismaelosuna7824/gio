@@ -93,6 +93,30 @@ final class UpdateControllerTests: XCTestCase {
         )
     }
 
+    /// PA-16: the install eligibility (code-signature and folder facts) is
+    /// read on first use, not when the controller is made at launch.
+    func testEligibilityIsReadOnFirstUseOnly() {
+        final class Counter: @unchecked Sendable {
+            var calls = 0
+        }
+        let counter = Counter()
+        let updates = UpdateController(
+            dependencies: UpdateDependencies(
+                runningVersion: "0.2.0", source: source, preparer: preparer, installer: installer,
+                eligibility: {
+                    counter.calls += 1
+                    return .notifyOnly(.buildFolder)
+                },
+                waitPIDs: { [] }
+            ),
+            defaults: defaults, quit: {}
+        )
+        XCTAssertEqual(counter.calls, 0)
+        XCTAssertEqual(updates.eligibility, .notifyOnly(.buildFolder))
+        _ = updates.presentation
+        XCTAssertEqual(counter.calls, 1)
+    }
+
     func testManualCheckFindsAnUpdateAndRemembersTheTime() async {
         source.result = .success([release("v0.3.0"), release("v0.2.0")])
         let updates = controller()

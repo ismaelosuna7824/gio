@@ -111,7 +111,7 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let rows = moveToDisplayItems(
             displays: displays, current: latest?.stacks.first(where: \.focused)?.display,
-            hasFocusedWindow: connected && latest?.focused != nil
+            hasFocusedWindow: connected && latest?.hasFocusedWindow == true
         )
         guard !rows.isEmpty else {
             return nil

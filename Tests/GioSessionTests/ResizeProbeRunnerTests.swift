@@ -6,7 +6,10 @@ import XCTest
 
 final class ResizeProbeRunnerTests: XCTestCase {
     private final class World: @unchecked Sendable {
+        var enabled = true
         var shuttingDown = false
+        /// Context closures called, `isEnabled` aside.
+        var contextCalls = 0
         var matches: [WindowID: SnapshotMatch] = [:]
         var sizes: [UInt32: CGSize] = [:]
         var settable = true
@@ -30,13 +33,21 @@ final class ResizeProbeRunnerTests: XCTestCase {
         world.sizes = [42: from.size]
         runner = ResizeProbeRunner(
             context: .init(
+                isEnabled: { world.enabled },
                 isShuttingDown: { world.shuttingDown },
                 matchWindows: { _ in
                     world.matchQueries += 1
+                    world.contextCalls += 1
                     return world.matches
                 },
-                windowServerSize: { world.sizes[$0] },
-                isSizeSettable: { _ in world.settable },
+                windowServerSize: {
+                    world.contextCalls += 1
+                    return world.sizes[$0]
+                },
+                isSizeSettable: { _ in
+                    world.contextCalls += 1
+                    return world.settable
+                },
                 appName: { "App\($0)" },
                 log: { world.logs.append(($0, $1)) },
                 now: { scheduler.now }
@@ -68,6 +79,22 @@ final class ResizeProbeRunnerTests: XCTestCase {
         world.sizes[42] = to.size
         scheduler.advance(by: 0.1)
         XCTAssertEqual(latencyLines.last?.hasSuffix("first=false"), true)
+    }
+
+    /// PA-15d: without debug logging a growing motion arms no timer and
+    /// queries nothing (no WindowServer match, no size, no AX attribute).
+    func testDisabledRunnerStartsNoTimerAndCallsNothing() {
+        world.enabled = false
+        runner.probe(of: [growing], frames: \.from)
+        XCTAssertEqual(runner.activeCount, 0)
+        XCTAssertEqual(scheduler.pendingCount, 0, "no 8 ms timer")
+        XCTAssertEqual(world.contextCalls, 0)
+        scheduler.advance(by: 2)
+        XCTAssertTrue(world.logs.isEmpty)
+
+        world.enabled = true
+        runner.probe(of: [growing], frames: \.from)
+        XCTAssertEqual(runner.activeCount, 1, "debug logging turns it back on")
     }
 
     func testOnlyGrowingMatchedSettableWindowsNotAlreadyAtSizeAreProbed() {

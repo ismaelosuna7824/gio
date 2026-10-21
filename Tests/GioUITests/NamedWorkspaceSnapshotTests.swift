@@ -58,7 +58,7 @@ final class NamedWorkspaceSnapshotTests: XCTestCase {
 
     func testMenuRowImages() throws {
         let rows = barMenuModel(BarSessionState(
-            workspace: 2, windows: 9, columns: 4, focused: nil,
+            workspace: 2, windows: 9, columns: 4,
             stacks: [BarStack(display: 1, focused: true, workspaces: Self.stack)]
         )).sections[0].rows
         try SnapshotHarness.render("nw04-menu-rows", size: CGSize(width: 300, height: 170)) {

@@ -13,10 +13,10 @@ final class IdlePolicyTests: XCTestCase {
 
     func testBarStateGateAcceptsOnlyChanges() {
         var gate = BarStateGate()
-        let a = BarSessionState(workspace: 1, windows: 2, columns: 2, focused: nil)
+        let a = BarSessionState(workspace: 1, windows: 2, columns: 2)
         XCTAssertTrue(gate.accept(a), "first state always passes")
         XCTAssertFalse(gate.accept(a))
-        XCTAssertTrue(gate.accept(BarSessionState(workspace: 2, windows: 2, columns: 2, focused: nil)))
+        XCTAssertTrue(gate.accept(BarSessionState(workspace: 2, windows: 2, columns: 2)))
         XCTAssertTrue(gate.accept(nil), "losing the session is a change")
         XCTAssertFalse(gate.accept(nil))
     }

@@ -198,7 +198,7 @@ final class ShellPresentationTests: XCTestCase {
     // MARK: - Menu bar
 
     private let state = BarSessionState(
-        workspace: 2, windows: 5, columns: 3, focused: nil,
+        workspace: 2, windows: 5, columns: 3,
         stacks: [BarStack(display: 1, focused: true, workspaces: [
             WorkspaceEntry(index: 1, windows: 1, columns: 1, isActive: false),
             WorkspaceEntry(index: 2, windows: 5, columns: 3, isActive: true),
@@ -216,7 +216,7 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertEqual(menu.title, "Gio")
         XCTAssertEqual(menu.subtitle, "Workspace 2 of 3 · 5 windows")
         XCTAssertEqual(barMenuModel(nil).subtitle, "Starting…")
-        let single = BarSessionState(workspace: 4, windows: 1, columns: 1, focused: nil)
+        let single = BarSessionState(workspace: 4, windows: 1, columns: 1)
         XCTAssertEqual(barMenuModel(single).subtitle, "Workspace 4 · 1 window")
     }
 

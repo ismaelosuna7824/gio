@@ -70,7 +70,7 @@ final class MotionDriverTests: XCTestCase {
         sink = AcceptingMotionSink()
         let probes = ResizeProbeRunner(
             context: .init(
-                isShuttingDown: { false }, matchWindows: { _ in [:] }, windowServerSize: { _ in nil },
+                isEnabled: { true }, isShuttingDown: { false }, matchWindows: { _ in [:] }, windowServerSize: { _ in nil },
                 isSizeSettable: { _ in true }, appName: { "App\($0)" }, log: { _, _ in }
             ),
             scheduler: scheduler
@@ -237,6 +237,7 @@ final class MotionDriverTests: XCTestCase {
         let parameters = DisplayParameters()
         XCTAssertTrue(parameters.displayRefreshes.isEmpty)
         XCTAssertEqual(parameters.captureScreens.1, 1169)
+        XCTAssertNil(parameters.primaryHeight, "PA-15c: nothing published, the host asks the probe")
 
         let screen = CGRect(x: 0, y: 0, width: 1512, height: 982)
         parameters.store(
@@ -247,6 +248,7 @@ final class MotionDriverTests: XCTestCase {
         XCTAssertEqual(parameters.displayRefreshes.map(\.framesPerSecond), [120])
         XCTAssertEqual(parameters.captureScreens.0.map(\.id), [1])
         XCTAssertEqual(parameters.captureScreens.1, 982)
+        XCTAssertEqual(parameters.primaryHeight, 982, "PA-15c: the flip height without AppKit")
     }
 
     // MARK: Benchmark
@@ -261,7 +263,8 @@ final class MotionDriverTests: XCTestCase {
             context: world.benchmarkContext(clock: clock) { fixture.session.manager.currentWorkspace().focusedWindow },
             resizeProbes: ResizeProbeRunner(
                 context: .init(
-                    isShuttingDown: { false }, matchWindows: { _ in [:] }, windowServerSize: { _ in nil },
+                    isEnabled: { true }, isShuttingDown: { false }, matchWindows: { _ in [:] },
+                    windowServerSize: { _ in nil },
                     isSizeSettable: { _ in true }, appName: { "App\($0)" }, log: { _, _ in }
                 ),
                 scheduler: scheduler
