@@ -121,6 +121,20 @@ public struct MinimumSizeBook: Equatable, Sendable {
         return learn(id, requested: requested, actual: actual)
     }
 
+    /// BUG-3: `actual` is a clamp of `requested` that the window's known
+    /// minimum already accounts for (each clamped dimension within
+    /// `tolerance` of it): the app sits at its minimum because the layout
+    /// could not give it more (a crowded dwindle tree), not taking its frame
+    /// back. The caller neither counts it as a snap-back nor relayouts.
+    public func explains(_ id: WindowID, requested: CGRect, actual: CGRect, tolerance: CGFloat = 1) -> Bool {
+        guard let known = sizes[id],
+              let clamp = learnedMinimum(requested: requested, actual: actual, tolerance: tolerance)
+        else {
+            return false
+        }
+        return clamp.width <= known.width + tolerance && clamp.height <= known.height + tolerance
+    }
+
     public mutating func forget(_ id: WindowID) {
         sizes.removeValue(forKey: id)
         displayPlaced.remove(id)
