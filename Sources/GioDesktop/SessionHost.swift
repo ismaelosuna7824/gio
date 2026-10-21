@@ -241,6 +241,9 @@ final class SessionHost: @unchecked Sendable {
     /// WO-01: Alt+O or `gio overview`; invoked on the main thread. The app
     /// opens or closes the workspace overview panel.
     var onToggleOverview: (() -> Void)?
+    /// FX-06: a switch to dwindle was refused; the focused display's visible
+    /// frame (Cocoa global) for the notice. Main thread; set before `start()`.
+    var onDwindleRefused: ((DwindleRefusal, CGRect) -> Void)?
     /// UP-06: `gio update [--install]`, answered by the app's updater on the
     /// IPC thread (it may block for the network, so never on `queue`). Set
     /// once before `start()`; read-only afterwards.
@@ -2503,6 +2506,13 @@ final class SessionHost: @unchecked Sendable {
         }
         if let frame = effect.warpsToDisplay {
             focus.warpCursor(toDisplay: frame)
+        }
+        if let refusal = effect.dwindleRefusal,
+           let frame = visibleFrames[session.manager.focusedDisplay] ?? probe.primaryScreenVisibleFrame
+        {
+            DispatchQueue.main.async { [weak self] in
+                self?.onDwindleRefused?(refusal, frame)
+            }
         }
         reflowAll()
     }

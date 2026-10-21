@@ -29,6 +29,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private lazy var launcher = LauncherPanelController(
         focusWindow: { [host] in host.focusWindow($0) }, catalog: launcherCatalog
     )
+    /// FX-06: on-screen notice for a refused action (made on first use).
+    private lazy var notices = NoticePanelController()
     /// WO-01: Alt+O / `gio overview`; WO-02: dragging a tile moves its window.
     private lazy var overview = WorkspaceOverviewController(
         load: { [host] completion in host.workspaceOverview(completion: completion) },
@@ -120,6 +122,9 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         self.bar = bar
         host.onSummonLauncher = { [weak self] firedAt in self?.showLauncher(source: .hotkey, requestedAt: firedAt) }
         host.onToggleOverview = { [weak self] in self?.overview.toggle() }
+        host.onDwindleRefused = { [weak self] refusal, frame in
+            self?.notices.show(dwindleRefusalNotice(refusal), on: frame)
+        }
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it
