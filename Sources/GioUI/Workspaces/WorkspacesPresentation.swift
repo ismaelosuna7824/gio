@@ -421,7 +421,7 @@ private func workspaceRuleEdits(config: GioConfig, draft: WorkspacesDraft) -> [C
 private extension WindowRule {
     /// Unassigning the app keeps a rule that still says something else.
     var hasOpinionsBesidesPlacement: Bool {
-        mode != nil || columnWidth != nil || openMaximized || openOnDisplay != nil || !openFocused
+        mode != nil || columnWidth != nil || openMaximized || openOnDisplay != nil || openFocused != nil
             || minWidth != nil || maxWidth != nil
     }
 }

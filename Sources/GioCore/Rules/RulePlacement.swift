@@ -5,10 +5,22 @@ import Foundation
 // windows that appear before their title (Chrome, Electron apps).
 
 /// Whether an arriving window becomes its workspace's focused window: never
-/// a minimized or floating arrival (a dialog or a transient popup must not
-/// take the strip's focus), and never against `open-focused = false`.
-public func arrivalTakesFocus(_ outcome: RuleOutcome, mode: WindowMode, minimized: Bool) -> Bool {
-    outcome.openFocused && !minimized && mode != .floating
+/// a minimized arrival, never against `open-focused = false`. A floating
+/// arrival (a dialog or a transient popup) does not either, except FL-01: an
+/// explicit `open-focused = true` lets a background app's popup take focus,
+/// because macOS opens it under the frontmost app's window where the focused
+/// column hides it. The frontmost app's own popups (Chrome's address-bar
+/// suggestions, re-created on every key) never take it.
+public func arrivalTakesFocus(
+    _ outcome: RuleOutcome, mode: WindowMode, minimized: Bool, fromBackgroundApp: Bool
+) -> Bool {
+    guard !minimized else {
+        return false
+    }
+    if mode == .floating {
+        return outcome.openFocused == true && fromBackgroundApp
+    }
+    return outcome.openFocused != false
 }
 
 /// Where a rule may send an arriving window. A window discovery floated (a

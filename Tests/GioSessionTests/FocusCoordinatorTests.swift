@@ -627,7 +627,7 @@ final class FocusCoordinatorTests: XCTestCase {
     func testGestureIntentRaisesWithoutCenteringOrWarp() {
         world.centerMode = .always
         focusLogically(2)
-        focus.requestGestureIntent()
+        focus.requestUncenteredIntent()
         XCTAssertEqual(focus.takeCenterRequest(), .none)
         let settle = focus.takeSettleFocus(parked: [])
         XCTAssertEqual(settle.target, ids[2])

@@ -73,10 +73,27 @@ final class RulePlacementTests: XCTestCase {
     // MARK: Focus
 
     func testTakesFocusFollowsTheRuleAndTheWindowState() {
-        XCTAssertTrue(arrivalTakesFocus(.none, mode: .tiled, minimized: false))
-        XCTAssertFalse(arrivalTakesFocus(RuleOutcome(openFocused: false), mode: .tiled, minimized: false))
-        XCTAssertFalse(arrivalTakesFocus(.none, mode: .floating, minimized: false))
-        XCTAssertFalse(arrivalTakesFocus(.none, mode: .tiled, minimized: true))
+        XCTAssertTrue(arrivalTakesFocus(.none, mode: .tiled, minimized: false, fromBackgroundApp: false))
+        XCTAssertTrue(arrivalTakesFocus(RuleOutcome(openFocused: true), mode: .tiled, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(RuleOutcome(openFocused: false), mode: .tiled, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(.none, mode: .floating, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(.none, mode: .tiled, minimized: true, fromBackgroundApp: false))
+    }
+
+    /// FL-01: macOS orders a background app's new window under the frontmost
+    /// app's window, where the focused column hides it (Slack, Meet popups).
+    /// Only an explicit `open-focused = true` lets such a popup take focus;
+    /// never the frontmost app's own popups (Chrome's address-bar
+    /// suggestions, re-created on every key) and never by default.
+    func testOnlyAnOptedInBackgroundPopupTakesFocus() {
+        let optedIn = RuleOutcome(openFocused: true)
+        XCTAssertTrue(arrivalTakesFocus(optedIn, mode: .floating, minimized: false, fromBackgroundApp: true))
+        XCTAssertFalse(arrivalTakesFocus(optedIn, mode: .floating, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(optedIn, mode: .floating, minimized: true, fromBackgroundApp: true))
+        XCTAssertFalse(arrivalTakesFocus(.none, mode: .floating, minimized: false, fromBackgroundApp: true))
+        XCTAssertFalse(
+            arrivalTakesFocus(RuleOutcome(openFocused: false), mode: .floating, minimized: false, fromBackgroundApp: true)
+        )
     }
 
     func testAnUnfocusedArrivalKeepsTheWorkspaceFocus() {

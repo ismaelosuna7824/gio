@@ -631,6 +631,12 @@ final class SessionHost: @unchecked Sendable {
                     motionCauses.note(.workspaceSwitch)
                     focus.requestIntent(if: true, previous: previous)
                 },
+                focusArrival: { [unowned self] _ in
+                    // FL-01: the popup is the strip's focus now; the pass the
+                    // registration runs focuses and raises it (no centering:
+                    // a floating window has no column to scroll to).
+                    focus.requestUncenteredIntent()
+                },
                 discoverAttempt: { discoverSystemWindowAttempt(element: $0, pid: $1) },
                 windowRegistered: { [unowned self] timing in
                     openTimeline.registered(timing)
@@ -805,7 +811,7 @@ final class SessionHost: @unchecked Sendable {
             publishFocusRing: { [unowned self] in publishFocusRing() },
             settle: { [unowned self] release in
                 if release.focusChanged {
-                    focus.requestGestureIntent()
+                    focus.requestUncenteredIntent()
                 }
                 pendingGestureRelease = release
                 motionCauses.note(.viewScroll)

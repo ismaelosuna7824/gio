@@ -565,8 +565,13 @@ private func ruleOptionBadges(_ rule: WindowRule) -> [RuleBadge] {
     if let display = rule.openOnDisplay {
         badges.append(RuleBadge(label: "Display \(display)", symbol: "display", kind: .neutral))
     }
-    if !rule.openFocused {
+    switch rule.openFocused {
+    case false?:
         badges.append(RuleBadge(label: "Opens unfocused", symbol: "eye.slash", kind: .neutral))
+    case true?:
+        badges.append(RuleBadge(label: "Popups take focus", symbol: "macwindow.on.rectangle", kind: .neutral))
+    case nil:
+        break
     }
     switch (rule.minWidth, rule.maxWidth) {
     case let (low?, high?):

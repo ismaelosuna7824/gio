@@ -318,7 +318,9 @@ public struct RuleForm: Equatable, Sendable {
     public var widthValue: Double
     public var openMaximized: Bool
     public var openOnDisplay: Int?
-    public var openFocused: Bool
+    /// Nil: the default (tiled arrivals take focus, popups do not); see
+    /// `WindowRule.openFocused` (FL-01).
+    public var openFocused: Bool?
     public var minWidth: Double?
     public var maxWidth: Double?
 
@@ -326,7 +328,7 @@ public struct RuleForm: Equatable, Sendable {
         app: String = "", mode: WindowMode? = nil, workspace: Int? = nil,
         bundleID: String? = nil, openOnWorkspace: String? = nil, follow: WorkspaceFollowPolicy = .whenActive,
         title: String = "", widthChoice: RuleWidthChoice = .layoutDefault, widthValue: Double = 0.5,
-        openMaximized: Bool = false, openOnDisplay: Int? = nil, openFocused: Bool = true,
+        openMaximized: Bool = false, openOnDisplay: Int? = nil, openFocused: Bool? = nil,
         minWidth: Double? = nil, maxWidth: Double? = nil
     ) {
         self.app = app

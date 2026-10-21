@@ -882,7 +882,7 @@ func buildRule(
         }
         openMaximized = flag
     }
-    var openFocused = true
+    var openFocused: Bool?
     if let raw = draft["open-focused"] {
         guard case .bool(let flag) = raw else {
             errors.append("line \(line): window-rules open-focused expects true or false")

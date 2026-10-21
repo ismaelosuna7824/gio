@@ -256,8 +256,9 @@ public func defaultConfigTemplate() -> String {
     # title = "<regex>" narrows the match to window titles (case-insensitive;
     # alone it matches any app). How the window opens: default-column-width
     # (fraction <= 1 or points), open-maximized, open-on-display = N (1 is
-    # the main display), open-focused = false (no focus, no follow), and
-    # min-width / max-width (points) for its column.
+    # the main display), open-focused = false (no focus, no follow) or true
+    # (also focus the app's popups that open while another app is in front:
+    # macOS puts them behind it), and min-width / max-width (points).
     [[window-rules]]
     app = "Calculator"
     mode = "floating"
@@ -278,5 +279,9 @@ public func defaultConfigTemplate() -> String {
     # open-on-display = 2
     # open-focused = false
     # min-width = 600
+    #
+    # [[window-rules]]
+    # app = "Slack"
+    # open-focused = true
     """
 }

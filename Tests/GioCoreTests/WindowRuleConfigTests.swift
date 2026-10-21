@@ -49,9 +49,16 @@ final class WindowRuleConfigTests: XCTestCase {
         XCTAssertNil(rule.columnWidth)
         XCTAssertFalse(rule.openMaximized)
         XCTAssertNil(rule.openOnDisplay)
-        XCTAssertTrue(rule.openFocused)
+        XCTAssertNil(rule.openFocused, "unset: tiled arrivals take focus, popups do not")
         XCTAssertNil(rule.minWidth)
         XCTAssertNil(rule.maxWidth)
+    }
+
+    /// FL-01: an explicit `open-focused = true` is kept apart from unset, so
+    /// it can opt a background app's popups in.
+    func testExplicitOpenFocusedTrueIsKept() throws {
+        let rule = try parsed(rule("app = \"Slack\"\nopen-focused = true")).rules[0]
+        XCTAssertEqual(rule.openFocused, true)
     }
 
     func testTitleAloneIsAValidRule() throws {

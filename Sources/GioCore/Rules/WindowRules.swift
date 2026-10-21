@@ -81,7 +81,11 @@ public struct WindowRule: Equatable, Sendable {
     /// WR-04: display number as `[[workspace]] display` counts them.
     public var openOnDisplay: Int?
     /// WR-04: false keeps the strip's focus where it is (no follow either).
-    public var openFocused: Bool
+    /// FL-01: nil (unset) is the default: a tiled arrival takes focus, a
+    /// floating one does not. Explicit true also lets a floating popup of a
+    /// background app take focus (macOS opens it under the frontmost app's
+    /// window, where the focused column hides it).
+    public var openFocused: Bool?
     /// WR-05: points, clamping the width of the window's column.
     public var minWidth: CGFloat?
     public var maxWidth: CGFloat?
@@ -97,7 +101,7 @@ public struct WindowRule: Equatable, Sendable {
         columnWidth: ColumnWidthSpec? = nil,
         openMaximized: Bool = false,
         openOnDisplay: Int? = nil,
-        openFocused: Bool = true,
+        openFocused: Bool? = nil,
         minWidth: CGFloat? = nil,
         maxWidth: CGFloat? = nil
     ) {
@@ -148,7 +152,7 @@ public struct RuleOutcome: Equatable, Sendable {
     public var openMaximized: Bool
     /// The rule's display number (`open-on-display`), resolved at placement.
     public var display: Int?
-    public var openFocused: Bool
+    public var openFocused: Bool?
     public var widthLimits: ColumnWidthLimits?
     /// The winning rule has a `title` matcher (WR-01 re-check).
     public var matchedByTitle: Bool
@@ -161,7 +165,7 @@ public struct RuleOutcome: Equatable, Sendable {
         columnWidth: ColumnWidthSpec? = nil,
         openMaximized: Bool = false,
         display: Int? = nil,
-        openFocused: Bool = true,
+        openFocused: Bool? = nil,
         widthLimits: ColumnWidthLimits? = nil,
         matchedByTitle: Bool = false
     ) {
@@ -224,7 +228,9 @@ public func placeWindow(
     placed.mode = outcome.mode ?? .tiled
     placed.widthLimits = outcome.widthLimits
     try registry.register(placed)
-    let destID = placeArrival(placed.id, outcome: outcome, takesFocus: outcome.openFocused, manager: &manager)
+    let destID = placeArrival(
+        placed.id, outcome: outcome, takesFocus: outcome.openFocused != false, manager: &manager
+    )
     return WindowPlacement(
         workspace: manager.location(of: destID)?.index ?? manager.current,
         column: (manager.workspace(id: destID)?.columns.count ?? 1) - 1

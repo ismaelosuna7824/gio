@@ -460,8 +460,8 @@ private func renderRule(_ rule: WindowRule) -> [String]? {
     if let display = rule.openOnDisplay {
         block.append("open-on-display = \(display)")
     }
-    if !rule.openFocused {
-        block.append("open-focused = false")
+    if let openFocused = rule.openFocused {
+        block.append("open-focused = \(openFocused)")
     }
     for (key, value) in [("min-width", rule.minWidth), ("max-width", rule.maxWidth)] {
         guard let value else {
