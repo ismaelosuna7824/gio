@@ -61,6 +61,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let snapshotOverlay = SnapshotOverlayController()
     private let closeGhosts = CloseGhostOverlay()
     private var signalSources: [DispatchSourceSignal] = []
+    /// PA-16: the launcher's app scan (it draws every app icon) waits this
+    /// long after the session started, so it does not compete with the
+    /// first layout. A summon before then scans on its own (`refreshIfStale`).
+    private static let launcherScanDelay: TimeInterval = 2
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // DA-06: read while the launch Apple event is still the current one.
@@ -69,17 +73,25 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         // main window shows; hand the Dock the icon inside this build instead
         // of the possibly stale system icon cache (see `applyBundleAppIcon`).
         applyBundleAppIcon()
-        launcherCatalog.start()
         _ = launcher
         focusRing.start()
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
-        host.onUpdateRequest = { [updates] in updates.answerCLI($0) }
+        // PA-16: resolved per `gio update`, so the updater (code signature,
+        // URLSession) is not built before the session starts. The IPC thread
+        // hops to main for it, as `answerCLI` itself waits on main.
+        host.onUpdateRequest = { [weak self] request in
+            let updates = DispatchQueue.main.sync { MainActor.assumeIsolated { self?.updates } }
+            return updates?.answerCLI(request) ?? "Gio is shutting down"
+        }
         if let error = host.start() {
             print("[gio] cannot start: \(error)")
             NSApplication.shared.terminate(nil)
             return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.launcherScanDelay) { [launcherCatalog] in
+            MainActor.assumeIsolated { launcherCatalog.start() }
         }
         installSignalHandlers()
         let bar = MenuBarController()

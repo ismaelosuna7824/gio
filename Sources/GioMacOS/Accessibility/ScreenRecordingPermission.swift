@@ -12,9 +12,9 @@ public func hasScreenRecordingPermission() -> Bool {
 
 /// PF-X: the session asked for the permission several times per typing hop
 /// and per capture run, ~8 ms on the session queue each. `granted()`
-/// answers from the last check for `ttl`; `refresh()` asks now (the facts
-/// the UI polls while Gio's window is open), so a grant or revoke shows
-/// there at once and on the snapshot path within `ttl`. Any thread.
+/// answers from the last check for `ttl`; `refresh()` asks now (PA-15b: the
+/// facts the UI polls call it only while the answer is missing, so a grant
+/// shows there at once and a revoke within `ttl`). Any thread.
 public final class ScreenRecordingPermissionCache: @unchecked Sendable {
     public static let ttl: TimeInterval = 10
 

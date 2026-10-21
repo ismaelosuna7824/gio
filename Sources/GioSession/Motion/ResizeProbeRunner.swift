@@ -6,10 +6,13 @@ import GioCore
 /// that window only until they match the requested size or 1.5 s pass, and
 /// logs `resize latency`. The window is found by pid + frame (FI-05 rule);
 /// unresolvable or ambiguous windows are skipped. Each probe is one strict
-/// 8 ms scheduler timer that ends itself. Session queue only. Logs carry app
-/// names, never titles.
+/// 8 ms scheduler timer that ends itself. PA-15d: a diagnostic, so it runs
+/// only while `isEnabled` (debug logging). Session queue only. Logs carry
+/// app names, never titles.
 public final class ResizeProbeRunner: @unchecked Sendable {
     public struct Context {
+        /// PA-15d: probes start only while this is true (debug logging).
+        public var isEnabled: () -> Bool
         public var isShuttingDown: () -> Bool
         /// The WindowServer window of each managed frame (one query for all).
         public var matchWindows: ([WindowID: CGRect]) -> [WindowID: SnapshotMatch]
@@ -22,6 +25,7 @@ public final class ResizeProbeRunner: @unchecked Sendable {
         public var now: () -> TimeInterval
 
         public init(
+            isEnabled: @escaping () -> Bool,
             isShuttingDown: @escaping () -> Bool,
             matchWindows: @escaping ([WindowID: CGRect]) -> [WindowID: SnapshotMatch],
             windowServerSize: @escaping (UInt32) -> CGSize?,
@@ -30,6 +34,7 @@ public final class ResizeProbeRunner: @unchecked Sendable {
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         ) {
+            self.isEnabled = isEnabled
             self.isShuttingDown = isShuttingDown
             self.matchWindows = matchWindows
             self.windowServerSize = windowServerSize
@@ -77,7 +82,7 @@ public final class ResizeProbeRunner: @unchecked Sendable {
                 && ($0.to.width - $0.from.width > ResizeProbeLimits.tolerance
                     || $0.to.height - $0.from.height > ResizeProbeLimits.tolerance)
         }
-        guard !growing.isEmpty else {
+        guard !growing.isEmpty, context.isEnabled() else {
             return
         }
         let managed = Dictionary(growing.map { ($0.id, frames($0)) }, uniquingKeysWith: { $1 })

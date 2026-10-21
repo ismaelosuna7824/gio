@@ -12,12 +12,16 @@ public final class AppNameCache: @unchecked Sendable {
         self.resolve = resolve
     }
 
-    /// The app name, or `pid<N>` when it cannot be resolved.
+    /// The app name, or `pid<N>` when it cannot be resolved. Only a resolved
+    /// name is kept: an unreadable one is asked again next time, so callers
+    /// that key learned state by name never stay on the placeholder.
     public func display(_ pid: pid_t) -> String {
         if let known = lock.withLock({ names[pid] }) {
             return known
         }
-        let name = resolve(pid) ?? "pid\(pid)"
+        guard let name = resolve(pid) else {
+            return "pid\(pid)"
+        }
         lock.withLock { names[pid] = name }
         return name
     }

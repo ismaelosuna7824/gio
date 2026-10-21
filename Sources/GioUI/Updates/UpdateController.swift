@@ -49,10 +49,8 @@ public struct UpdateDependencies: Sendable {
             teamIdentifier: signature.teamIdentifier, leafCommonName: signature.leafCommonName
         )
         let parent = (bundle.bundlePath as NSString).deletingLastPathComponent
-        let eligibility = installEligibility(InstallLocationFacts(
-            bundlePath: bundle.bundlePath, parentWritable: FileManager.default.isWritableFile(atPath: parent),
-            runningVersion: version, teamIdentifier: signature.teamIdentifier
-        ))
+        let bundlePath = bundle.bundlePath
+        let teamIdentifier = signature.teamIdentifier
         let log: @Sendable (LogLevel, String) -> Void = { GioLog.record($0, $1) }
         return UpdateDependencies(
             runningVersion: version,
@@ -70,7 +68,13 @@ public struct UpdateDependencies: Sendable {
                 bundleIdentifier: bundleIdentifier, log: log
             ),
             installer: DetachedScriptInstaller(requirement: requirement),
-            eligibility: { eligibility },
+            // PA-16: asked on first use (UpdateController.eligibility), not at launch.
+            eligibility: {
+                installEligibility(InstallLocationFacts(
+                    bundlePath: bundlePath, parentWritable: FileManager.default.isWritableFile(atPath: parent),
+                    runningVersion: version, teamIdentifier: teamIdentifier
+                ))
+            },
             waitPIDs: { [getpid()] + (guardianPID().map { [$0] } ?? []) },
             log: log
         )
@@ -104,7 +108,8 @@ public final class UpdateController: ObservableObject {
     }
 
     public let runningVersion: String
-    public let eligibility: InstallEligibility
+    /// PA-16: read from the dependencies on first use, not in `init`.
+    public private(set) lazy var eligibility: InstallEligibility = dependencies.eligibility()
     private let dependencies: UpdateDependencies
     private let defaults: UserDefaults
     private let quit: @MainActor () -> Void
@@ -115,7 +120,6 @@ public final class UpdateController: ObservableObject {
         self.defaults = defaults
         self.quit = quit
         runningVersion = dependencies.runningVersion
-        eligibility = dependencies.eligibility()
         automaticChecks = defaults.object(forKey: Self.automaticChecksKey) as? Bool ?? true
         includeBetas = defaults.bool(forKey: Self.includeBetasKey)
         lastCheck = defaults.object(forKey: Self.lastCheckKey) as? Date

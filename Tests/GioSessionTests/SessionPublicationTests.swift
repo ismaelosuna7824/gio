@@ -69,7 +69,8 @@ final class GatedStatePublisherTests: XCTestCase {
 final class SessionFactsBuilderTests: XCTestCase {
     private func make(
         _ fixture: SessionFixture, logs: Recorder<String>, prefetches: Recorder<Bool>,
-        screenRecording: Bool = true, exists: Bool = false,
+        screenRecording: Bool = true, refreshedScreenRecording: Bool? = nil,
+        permissionChecks: Recorder<String> = Recorder(), exists: Bool = false,
         gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1),
         conflicts: [GestureConflict] = []
     ) -> SessionFactsBuilder {
@@ -84,7 +85,14 @@ final class SessionFactsBuilderTests: XCTestCase {
             tileableModes: {
                 Dictionary(uniqueKeysWithValues: fixture.session.registry.managedWindows().map { ($0.id, $0.mode) })
             },
-            screenRecordingGranted: { screenRecording },
+            screenRecordingGranted: {
+                permissionChecks.append("cached")
+                return screenRecording
+            },
+            refreshScreenRecording: {
+                permissionChecks.append("refresh")
+                return refreshedScreenRecording ?? screenRecording
+            },
             accessibilityGranted: { true },
             configFileExists: { _ in exists },
             homeDirectory: { "/Users/test" },
@@ -165,6 +173,31 @@ final class SessionFactsBuilderTests: XCTestCase {
             missingLogs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=ax reason=screen-recording-missing"]
         )
         XCTAssertEqual(missingPrefetches.values, [false])
+    }
+
+    /// PA-15b: the polled facts answer from the cached permission; the
+    /// uncached tccd check runs only while it is missing, to catch a grant.
+    func testGrantedScreenRecordingIsReadFromTheCacheOnly() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let checks = Recorder<String>()
+        let builder = make(fixture, logs: Recorder(), prefetches: Recorder(), permissionChecks: checks)
+        XCTAssertTrue(builder.facts().screenRecordingGranted)
+        XCTAssertTrue(builder.facts().screenRecordingGranted)
+        XCTAssertEqual(checks.values, ["cached", "cached"])
+    }
+
+    func testMissingScreenRecordingIsRecheckedToCatchANewGrant() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let checks = Recorder<String>()
+        let granted = make(
+            fixture, logs: Recorder(), prefetches: Recorder(), screenRecording: false, refreshedScreenRecording: true,
+            permissionChecks: checks
+        )
+        XCTAssertTrue(granted.facts().screenRecordingGranted)
+        XCTAssertEqual(checks.values, ["cached", "refresh"])
+
+        let stillMissing = make(fixture, logs: Recorder(), prefetches: Recorder(), screenRecording: false)
+        XCTAssertFalse(stillMissing.facts().screenRecordingGranted)
     }
 
     /// TG-03: whether trackpad gestures run is logged once (again only when
