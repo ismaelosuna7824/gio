@@ -29,7 +29,7 @@ stamp() {
 }
 
 short_version() { /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "${out}" 2>/dev/null; }
-inode() { ls -i "${out}" | awk '{ print $1 }'; }
+inode() { stat -f '%i' "${out}"; }
 
 expect_version() { # <name> <expected CFBundleShortVersionString>
     local actual
@@ -52,6 +52,7 @@ g tag v0.3.0
 stamp 0.0.0-dev
 expect_version "a dev build reports the last tag plus +dev" '0.3.0+dev'
 executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "${out}" 2>/dev/null)"
+# shellcheck disable=SC2016 # the literal, unexpanded build setting reference
 if [[ "${executable}" == '$(EXECUTABLE_NAME)' ]]; then
     pass "other keys keep their build setting references"
 else
