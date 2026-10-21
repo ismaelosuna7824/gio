@@ -744,6 +744,45 @@ public func snapshotRefreshReason(causes: [SnapshotRefreshCause], backdrop: Bool
     }
 }
 
+// MARK: - PF-AS overview thumbnails
+
+/// PF-AS: which overview thumbnails come from the cache (shown first,
+/// scaled down to the thumbnail density) and which windows are captured.
+public struct OverviewThumbnailPlan<Image> {
+    public let fromCache: [WindowID: Image]
+    public let toCapture: [WindowID: CGRect]
+}
+
+/// PF-AS (PF-AP revived): a window's first thumbnail is its cached image of
+/// its current size (`tolerance`; a move keeps it) while younger than
+/// `softAge` and at least `minPixelsPerPoint` dense (the overview capture's
+/// own scale, so a half-resolution image on a 1x display is captured
+/// again); every other window, the image of another size or none at all,
+/// is captured. The ax renderer keeps no images: everything is captured.
+public func overviewThumbnailPlan<Image>(
+    windows: [WindowID: CGRect], cache: SnapshotCache<Image>, now: TimeInterval,
+    softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2, minPixelsPerPoint: CGFloat = 0
+) -> OverviewThumbnailPlan<Image> {
+    var fromCache: [WindowID: Image] = [:]
+    var toCapture: [WindowID: CGRect] = [:]
+    for (id, frame) in windows {
+        if let entry = cache.entry(id, matching: frame, tolerance: tolerance), now - entry.capturedAt <= softAge,
+           CGFloat(entry.pixels) >= entry.frame.width * entry.frame.height * minPixelsPerPoint * minPixelsPerPoint
+        {
+            fromCache[id] = entry.image
+        } else {
+            toCapture[id] = frame
+        }
+    }
+    return OverviewThumbnailPlan(fromCache: fromCache, toCapture: toCapture)
+}
+
+/// PF-AS: `overview thumbnails cached=N capture=N scaleMs=S`, once per
+/// overview open (`scaleMs`: scaling the cached images down).
+public func overviewThumbnailsLogLine(cached: Int, captured: Int, scaleMilliseconds: Int) -> String {
+    "overview thumbnails cached=\(cached) capture=\(captured) scaleMs=\(scaleMilliseconds)"
+}
+
 // MARK: - SM-09 blank guard
 
 /// A capture that shows nothing: every sample transparent, or every opaque

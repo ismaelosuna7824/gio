@@ -1160,11 +1160,17 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "overview display id=\(choice.display.rawValue) reason=\(choice.reason.rawValue)")
     }
 
-    /// WO-01: one capture of the given windows (`WindowFact.id`s) at their
-    /// current physical frames, parked ones included, without a backdrop and
-    /// at most `overviewThumbnailScale`. Empty without Screen Recording or
-    /// before macOS 14; the panel then keeps the app icons. Main-thread
-    /// completion; the capture logs its own summary (counts only).
+    /// WO-01: thumbnails of the given windows (`WindowFact.id`s) at their
+    /// current physical frames, parked ones included. PF-AS: a fresh cached
+    /// image of the window's current size (`overviewThumbnailPlan`, read here
+    /// on the session queue) is scaled down to `overviewThumbnailScale` off
+    /// this queue and delivered first (`deliverCachedOverviewThumbnails`);
+    /// only the rest is captured, in one capture without a backdrop and at
+    /// most `overviewThumbnailScale`, and delivered after. `completion` runs
+    /// on main once per batch (twice when both exist; the ids are disjoint).
+    /// Empty without Screen Recording or before macOS 14; the panel then
+    /// keeps the app icons. Logs `overview thumbnails cached=N capture=N
+    /// scaleMs=S` once, the capture its own summary (counts only).
     func captureOverviewThumbnails(
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
@@ -1184,9 +1190,26 @@ final class SessionHost: @unchecked Sendable {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
+            let plan = overviewThumbnailPlan(
+                windows: frames, cache: snapshotRefresher.cache, now: ProcessInfo.processInfo.systemUptime,
+                minPixelsPerPoint: overviewThumbnailScale
+            )
+            if plan.fromCache.isEmpty {
+                GioLog.record(.info, overviewThumbnailsLogLine(
+                    cached: 0, captured: plan.toCapture.count, scaleMilliseconds: 0
+                ))
+            } else {
+                deliverCachedOverviewThumbnails(
+                    plan.fromCache.map { (id: $0.key, image: $0.value, size: frames[$0.key]?.size ?? .zero) },
+                    captured: plan.toCapture.count, completion: completion
+                )
+            }
+            guard !plan.toCapture.isEmpty else {
+                return
+            }
             let (screens, primaryHeight) = displayParameters.captureScreens
             let request = SnapshotCaptureRequest(
-                windows: frames,
+                windows: plan.toCapture,
                 displays: screens.map {
                     SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
                 },
@@ -1200,6 +1223,35 @@ final class SessionHost: @unchecked Sendable {
                 }
                 DispatchQueue.main.async { completion(thumbnails) }
             }
+        }
+    }
+
+    /// PF-AS: the cached images (often 2x) drawn down to
+    /// `overviewThumbnailScale` of each window's frame on a detached task
+    /// (never on main, where SwiftUI would draw the full image, PF-AP, nor on
+    /// the session queue), then handed to main as the first batch. Logs the
+    /// open's `overview thumbnails` line with the time the scaling took.
+    private func deliverCachedOverviewThumbnails(
+        _ cached: [(id: WindowID, image: CGImage, size: CGSize)], captured: Int,
+        completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
+    ) {
+        // Immutable images, read by the one task below only.
+        nonisolated(unsafe) let sources = cached
+        Task.detached(priority: .userInitiated) {
+            let start = DispatchTime.now().uptimeNanoseconds
+            var thumbnails: [String: OverviewThumbnail] = [:]
+            for source in sources {
+                if let image = snapshotDownscaled(
+                    source.image, pointSize: source.size, pixelsPerPoint: overviewThumbnailScale
+                ) {
+                    thumbnails[windowFactID(source.id)] = OverviewThumbnail(image: image)
+                }
+            }
+            let milliseconds = Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+            GioLog.record(.info, overviewThumbnailsLogLine(
+                cached: sources.count, captured: captured, scaleMilliseconds: milliseconds
+            ))
+            DispatchQueue.main.async { completion(thumbnails) }
         }
     }
 
