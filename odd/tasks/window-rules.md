@@ -90,7 +90,7 @@ inline `(?...)`, TOML escape sequences in strings (the parser keeps strings verb
   refresh).
 - [ ] WR-06 (`e564c8d`) — Settings > Rules: rows and editor for every key, form round trips;
   Workspaces section leaves title rules alone.
-- [x] FL-01 — Background popups hidden behind the tiles (user report 2026-10-21: Slack and Google
+- [x] FL-01 (`f40571c`) — Background popups hidden behind the tiles (user report 2026-10-21: Slack and Google
   Meet popups opened while another app had focus float but sit behind the windows). Repro without
   Gio (throwaway probe): a non-active app's new titled window lands at on-screen stacking index 1,
   right under the frontmost app's window (index 0); `AXRaise` on it returns success but leaves it
