@@ -108,7 +108,7 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   95 / Core 1970, 0 failures; signed `xcodebuild` BUILD SUCCEEDED, `Gio_GioUI.bundle` with the
   mascot inside `Gio.app`, `codesign --verify --deep --strict` OK. Not verified live: the real
   sidebar's selection color (`.tint` on the `List`; AppKit may keep the system accent).
-- [ ] DD-08 — Launcher (`Alt+Space`) in the landing identity. User (2026-10-21, photo of the live
+- [ ] DD-08 (`467e1cd`) — Launcher (`Alt+Space`) in the landing identity. User (2026-10-21, photo of the live
   launcher over a busy page): "¿se puede adaptar el diseño que tenemos?". The `.popover` vibrancy let
   the desktop bleed through the results (pink/green wash). `LauncherWindow.swift`: the panel is a
   window like the ones the mascot holds (navy title bar `GioBrand.navy` with three mint dots,
