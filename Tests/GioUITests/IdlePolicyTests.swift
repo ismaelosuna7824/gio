@@ -1,3 +1,5 @@
+import Combine
+import GioCore
 import XCTest
 @testable import GioUI
 
@@ -37,6 +39,29 @@ final class IdlePolicyTests: XCTestCase {
         XCTAssertEqual(fetches, base + 1)
     }
 
+    /// PA-12: polling an idle session republishes nothing; a real change
+    /// publishes once.
+    @MainActor
+    func testRefreshPublishesOnlyAChangedSnapshot() {
+        let source = SnapshotSource()
+        let model = DesktopModel(fetch: { source.current })
+        var changes = 0
+        let subscription = model.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+
+        model.refresh()
+        model.refresh()
+        XCTAssertEqual(changes, 0, "same snapshot, no redraw")
+
+        source.current = SessionSnapshot(config: GioConfig(keybindings: [
+            (HotkeyCombo(modifiers: [.alt], key: "H"), .focusLeft),
+        ]))
+        model.refresh()
+        model.refresh()
+        XCTAssertEqual(changes, 1)
+        XCTAssertEqual(model.snapshot, source.current)
+    }
+
     /// PF-AG: every Gio flight puts a display-sized overlay over the main
     /// window, so its occlusion flipped hidden and back twice per action and
     /// each flip re-rendered the whole SwiftUI window (two bursts per action
@@ -59,4 +84,13 @@ private final class Counter: @unchecked Sendable {
     private var count = 0
     var value: Int { lock.withLock { count } }
     func bump() { lock.withLock { count += 1 } }
+}
+
+private final class SnapshotSource: @unchecked Sendable {
+    private let lock = NSLock()
+    private var snapshot = SessionSnapshot()
+    var current: SessionSnapshot {
+        get { lock.withLock { snapshot } }
+        set { lock.withLock { snapshot = newValue } }
+    }
 }

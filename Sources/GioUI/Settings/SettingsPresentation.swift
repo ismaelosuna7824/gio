@@ -25,8 +25,12 @@ public struct SettingsDraft<Value: Equatable>: Equatable {
         current = saved
     }
 
-    /// The session's value changed (reload, another section's Apply).
+    /// The session's value changed (reload, another section's Apply). The
+    /// same value again changes nothing (PA-12).
     public mutating func adopt(saved newSaved: Value) {
+        guard newSaved != saved else {
+            return
+        }
         if !isDirty {
             current = newSaved
         }

@@ -288,6 +288,22 @@ public struct GioConfig: Sendable {
     }
 }
 
+/// PA-12: written out because `keybindings` holds tuples, which are not
+/// Equatable; they compare element-wise, in order. Every stored property
+/// takes part (`GioConfigEqualityTests` counts them).
+extension GioConfig: Equatable {
+    public static func == (lhs: GioConfig, rhs: GioConfig) -> Bool {
+        guard lhs.layout == rhs.layout, lhs.behavior == rhs.behavior, lhs.animations == rhs.animations,
+              lhs.focusRing == rhs.focusRing, lhs.focus == rhs.focus, lhs.logging == rhs.logging,
+              lhs.unboundKeys == rhs.unboundKeys, lhs.rules == rhs.rules, lhs.workspaces == rhs.workspaces,
+              lhs.dwindle == rhs.dwindle, lhs.gestures == rhs.gestures
+        else {
+            return false
+        }
+        return lhs.keybindings.elementsEqual(rhs.keybindings) { $0.0 == $1.0 && $0.1 == $1.1 }
+    }
+}
+
 public func defaultGioConfig() -> GioConfig {
     GioConfig()
 }

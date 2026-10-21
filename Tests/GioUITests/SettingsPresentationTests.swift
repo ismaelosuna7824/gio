@@ -281,6 +281,27 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertEqual(edited.saved, 3)
     }
 
+    /// PA-12: a refresh that brings the same saved value leaves the draft as
+    /// it is (here a value whose `stamp` does not take part in ==).
+    func testAdoptWithAnEqualValueLeavesTheDraftUntouched() {
+        struct Tagged: Equatable {
+            var value: Int
+            var stamp: Int
+            static func == (lhs: Tagged, rhs: Tagged) -> Bool { lhs.value == rhs.value }
+        }
+        var clean = SettingsDraft(saved: Tagged(value: 1, stamp: 1))
+        clean.adopt(saved: Tagged(value: 1, stamp: 2))
+        XCTAssertEqual(clean.saved.stamp, 1)
+        XCTAssertEqual(clean.current.stamp, 1)
+
+        var edited = SettingsDraft(saved: Tagged(value: 1, stamp: 1))
+        edited.current = Tagged(value: 7, stamp: 1)
+        edited.adopt(saved: Tagged(value: 1, stamp: 2))
+        XCTAssertEqual(edited.saved.stamp, 1)
+        XCTAssertEqual(edited.current, Tagged(value: 7, stamp: 1))
+        XCTAssertTrue(edited.isDirty)
+    }
+
     func testCommitMakesTheCurrentValueTheSavedOne() {
         var draft = SettingsDraft(saved: 1)
         draft.current = 4

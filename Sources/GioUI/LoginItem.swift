@@ -63,9 +63,10 @@ public final class LoginItemModel: ObservableObject {
 
     public func refresh() {
         let current = service.status
-        if current != status {
-            error = nil
+        guard current != status else {
+            return
         }
+        error = nil
         status = current
     }
 
