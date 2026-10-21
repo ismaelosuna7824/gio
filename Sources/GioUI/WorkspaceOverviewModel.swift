@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import GioCore
@@ -245,11 +246,18 @@ public final class WorkspaceOverviewModel: ObservableObject {
     private var moving = false
     /// Escape ended this gesture; its remaining events are ignored.
     private var cancelledDragStart: CGPoint?
+    /// FX-03: the pointer (screen points) and where it was when the panel
+    /// opened. Hover selects only once it moved: the panel opens under a
+    /// still pointer, and SwiftUI reports it hovering whatever tile lands there.
+    private let pointer: () -> CGPoint
+    private let openingPointer: CGPoint
+    private var pointerMoved = false
 
     public init(
         facts: WorkspaceOverviewFacts, stack: [WorkspaceEntry], titles: [String: String],
         focusWindow: @escaping (String) -> Bool, focusWorkspace: @escaping (Int) -> Void,
-        move: @escaping OverviewMoveRequest = { _, done in done(nil) }
+        move: @escaping OverviewMoveRequest = { _, done in done(nil) },
+        pointer: @escaping () -> CGPoint = { NSEvent.mouseLocation }
     ) {
         self.facts = facts
         self.stack = stack
@@ -259,6 +267,8 @@ public final class WorkspaceOverviewModel: ObservableObject {
         self.focusWindow = focusWindow
         self.focusWorkspace = focusWorkspace
         moveWindow = move
+        self.pointer = pointer
+        openingPointer = pointer()
     }
 
     /// Every window the rows draw, in row then reading order.
@@ -281,11 +291,19 @@ public final class WorkspaceOverviewModel: ObservableObject {
     }
 
     /// The pointer moved over a tile or row. Ignored while a tile is lifted,
-    /// so the selection stays on it.
+    /// so the selection stays on it, and until the pointer first moves.
     public func hover(_ selection: OverviewSelection) {
-        if liftedWindowID == nil, self.selection != selection {
-            self.selection = selection
+        guard liftedWindowID == nil, self.selection != selection else {
+            return
         }
+        if !pointerMoved {
+            let now = pointer()
+            guard abs(now.x - openingPointer.x) >= 1 || abs(now.y - openingPointer.y) >= 1 else {
+                return
+            }
+            pointerMoved = true
+        }
+        self.selection = selection
     }
 
     /// True when the key was the overview's.
