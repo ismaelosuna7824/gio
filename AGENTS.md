@@ -59,7 +59,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 ## Pitfalls
 
 - **The repository directory may be named `gio ` with a trailing space.** Quote every path in shell commands and scripts. Some tools trim it and fail (`lstat .../gio: not found`).
-- **`swift test` prints one `Executed N tests` line per bundle**, plus an `All tests` line after each. The last line is only the last bundle. Read all of them (`swift test 2>&1 | rg "Test Suite '.*\.xctest' (passed|failed)" -A1`). Baseline: GioUITests 20, GioPOCTests 7, GioMacTests 19, GioMacOSTests 23, GioCoreTests 602.
+- **`swift test` prints one `Executed N tests` line per bundle**, plus an `All tests` line after each. The last line is only the last bundle. Read all of them (`swift test 2>&1 | rg "Test Suite '.*\.xctest' (passed|failed)" -A1`). Baseline (2026-10-21): GioUITests 341 (53 skipped: opt-in PNG renders), GioSessionTests 550, GioPOCTests 7, GioMacTests 19, GioMacOSTests 102, GioCoreTests 2110.
 - **Never run `gio-poc tile` against a live desktop** while Gio runs (or at all on a desktop you care about): it rewrites window frames and fights the session. Recovery: `swift run gio-poc restore`.
 - **Never write the user's real config or files in tests.** `applyConfigEdits(_:toFileAt:)` defaults to `~/.config/gio/config.toml`, `loadGioConfig(at:)` reads the real path by default (`GioLog.logFilePath` defaults to a temp file under XCTest, HD-08), and `dispatch(.reload, ...)` re-reads the real config. Pass temp paths (see `ConfigPatcherTests`, `GioLogTests`, `CommandDispatcherTests`). Socket tests must use temp sockets.
 - **The Xcode `Gio` target lists the `GioDesktop` files explicitly** in `Gio.xcodeproj/project.pbxproj` (`main.swift`, `SessionHost.swift`). A new file in `Sources/GioDesktop` will not be compiled by Xcode unless the pbxproj is edited. Put new UI and logic in `Sources/GioUI` or `Sources/GioCore`, which the app links as package products.
@@ -94,6 +94,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `multi-monitor.md` | Multiple displays: primary-display flip, position order, startup placement, per-display parking, switch motion and widths (MM-01); monitor actions (MM-02); stacked displays and floating monitor moves (MM-03); no straddling, hot-plug, overview display, Move to Display, display log lines (MM-04). |
 | `dwindle-layout.md` | Dwindle layout per workspace: tree model kept in sync with the columns, engine, planning, actions, config, overview/IPC (DW-01..). |
 | `release.md` | Versioning, signed DMG, release workflow and its hardening (RL-01..RL-08) and the in-app updater and its hardening (UP-01..UP-17). |
+| `public-release.md` | Public release readiness: audit, owner decisions (Developer ID, notarization, license), launcher binding, onboarding/diagnostics copy, user docs, release notes (PR-01..). |
 | `trackpad-gestures.md` | Trackpad gestures (TG-01..): MultitouchSupport input, swipe recognizer, interactive strip scroll with a snapping spring, workspace and overview swipes, `[gestures]` config, macOS gesture conflicts. |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 
