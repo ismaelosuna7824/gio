@@ -108,6 +108,23 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   95 / Core 1970, 0 failures; signed `xcodebuild` BUILD SUCCEEDED, `Gio_GioUI.bundle` with the
   mascot inside `Gio.app`, `codesign --verify --deep --strict` OK. Not verified live: the real
   sidebar's selection color (`.tint` on the `List`; AppKit may keep the system accent).
+- [ ] DD-08 — Launcher (`Alt+Space`) in the landing identity. User (2026-10-21, photo of the live
+  launcher over a busy page): "¿se puede adaptar el diseño que tenemos?". The `.popover` vibrancy let
+  the desktop bleed through the results (pink/green wash). `LauncherWindow.swift`: the panel is a
+  window like the ones the mascot holds (navy title bar `GioBrand.navy` with three mint dots,
+  `GioMascot`, "Gio · Launcher", `⌥ Space`); backdrop is `GioColor.page` at 93% over `.hudWindow`
+  vibrancy (page color alone on a static page); search glyph in the accent, field in SF Pro Rounded
+  20; selection is the pastel mint (`tintFill(.green)`) with navy text in both appearances and a
+  navy edge mark; the kind badge plus the window's workspace as a sky number pill (was
+  `Window · WS 3`); `⌘1–9` and the footer hints as keycaps (`LauncherKeycap`); footer on
+  `GioColor.sidebar`, `>` and `!` in the accent. Tokens: `GioBrand.navy` / `onNavy`. View only, no
+  model change. Evidence: launcher snapshots (`dd05-launcher*`, `nw04-launcher`) rendered light and
+  dark and reviewed (the app-icon variants keep the known offscreen grey veil; the icon-free variant
+  shows the true colors); `swift test` UI 333 (53 skipped) / Session 548 / POC 7 / Mac 19 / MacOS
+  102 / Core 2100, 0 failures on local `dev`, and GioUITests 330 (53 skipped) 0 failures on the PR
+  base `origin/dev` `9ede867`; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  LIVE PENDING: the real panel over a desktop (vibrancy and shadow cannot be rendered
+  offscreen).
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.
