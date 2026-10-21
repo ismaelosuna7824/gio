@@ -8,6 +8,7 @@ import XCTest
 final class WorkspaceOverviewModelTests: XCTestCase {
     private var events: [String] = []
     private var moves: [OverviewMove] = []
+    private var pointer = CGPoint.zero
 
     private func strip(_ index: Int, focused: String?, ids: [String]) -> WorkspaceStripFact {
         WorkspaceStripFact(
@@ -48,7 +49,8 @@ final class WorkspaceOverviewModelTests: XCTestCase {
             move: { [unowned self] move, done in
                 moves.append(move)
                 done(reply)
-            }
+            },
+            pointer: { [unowned self] in pointer }
         )
         model.dismiss = { [unowned self] reason in events.append("dismiss \(reason.rawValue)") }
         return model
@@ -200,6 +202,28 @@ final class WorkspaceOverviewModelTests: XCTestCase {
                 canvas: CGRect(x: 0, y: 200, width: 400, height: 100), tiles: []
             ),
         ]
+    }
+
+    /// FX-03: the panel opens under a pointer that has not moved; SwiftUI
+    /// reports it hovering whatever tile lands there, which must not take
+    /// the selection off the focused window.
+    func testAStillPointerDoesNotSelectTheTileItLandsOn() {
+        pointer = CGPoint(x: 900, y: 400)
+        let model = make()
+        let initial = model.selection
+        model.hover(OverviewSelection(workspace: 2, windowID: "2:3"))
+        XCTAssertEqual(model.selection, initial)
+    }
+
+    func testHoverSelectsOnceThePointerMoved() {
+        pointer = CGPoint(x: 900, y: 400)
+        let model = make()
+        pointer = CGPoint(x: 905, y: 400)
+        model.hover(OverviewSelection(workspace: 2, windowID: "2:3"))
+        XCTAssertEqual(model.selection, OverviewSelection(workspace: 2, windowID: "2:3"))
+        pointer = CGPoint(x: 900, y: 400)
+        model.hover(OverviewSelection(workspace: 1, windowID: "1:2"))
+        XCTAssertEqual(model.selection, OverviewSelection(workspace: 1, windowID: "1:2"), "armed for the panel's life")
     }
 
     func testDroppingATileMovesItThere() {
