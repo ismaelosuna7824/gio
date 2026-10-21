@@ -4,13 +4,57 @@
 
 Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It moves windows through public macOS APIs (Accessibility, `NSWorkspace`, `CGEvent`); the only private call it makes reads the trackpad's finger positions for gestures (see [Private APIs](#private-apis)). **System Integrity Protection stays on**; Gio injects nothing into other processes or the Dock.
 
-> Status: pre-release. The version comes from the release tag (`MARKETING_VERSION`, see [RELEASING](docs/RELEASING.md)); local and SwiftPM builds report the last tag or `0.0.0-dev`. Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read [Known limitations](docs/TESTING.md#known-limitations) before relying on it.
+> Status: pre-release. The version comes from the release tag (`MARKETING_VERSION`, see [RELEASING](docs/RELEASING.md)); local and SwiftPM builds report the last tag or `0.0.0-dev`. Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read the [Known limitations](docs/USER_GUIDE.md#known-limitations) before relying on it (developer detail: [TESTING](docs/TESTING.md#known-limitations)).
+
+## Install
+
+Gio needs a Mac with **Apple silicon** and **macOS 13 or later**. The smooth-motion renderer, the overview thumbnails and the close ghost use Screen Recording, which needs macOS 14 or later (see [Why Screen Recording](#why-screen-recording)).
+
+1. Download **[Gio.dmg](https://github.com/ismaelosuna7824/gio/releases/latest/download/Gio.dmg)** (the newest release). Each release on the [Releases page](https://github.com/ismaelosuna7824/gio/releases) also has `Gio-<version>.dmg` with a checksum: `shasum -a 256 -c Gio-<version>.dmg.sha256` in the download folder.
+2. Open the DMG and drag **Gio** onto **Applications**. Run it from `/Applications`: a copy opened straight from the DMG or from Downloads cannot update itself.
+3. Open Gio. The app is **not notarized yet**, so the first time macOS refuses with a dialog saying Apple could not verify Gio is free of malware. Click **Done** (not **Move to Trash**).
+4. Open **System Settings > Privacy & Security**, scroll to the message about Gio being blocked and click **Open Anyway**, then confirm with your password. On macOS 15 and later this is the only way; the old right-click **Open** shortcut no longer bypasses the check. You do this once: later versions install through Gio's own updater.
+5. Grant **Accessibility** when Gio's first-run guide asks (or turn Gio on in System Settings > Privacy & Security > Accessibility). Without it Gio cannot move windows or hear shortcuts.
+6. Optional: grant **Screen Recording** (from the first-run guide, or **Request access** in the app's Overview or Diagnostics), then **relaunch Gio**: macOS applies the grant only on the next launch. Without it Gio still tiles, but windows stutter as they move.
+
+Then read [First steps](docs/USER_GUIDE.md#first-steps) and, on a non-US keyboard, [Keyboard layouts](docs/USER_GUIDE.md#keyboard-layouts): Gio's default shortcuts take `Option` combos that type characters such as `@`, `#`, `|`, `[` and `]` on many layouts.
+
+## Uninstall
+
+1. **Quit Gio** (menu bar item > **Quit Gio**). Quitting brings every window Gio parked back on screen.
+2. If you turned on **Open at Login**, turn it off first (Overview > Status in the app), or remove Gio in System Settings > General > Login Items.
+3. Delete the app and its files:
+
+   ```sh
+   rm -rf /Applications/Gio.app
+   rm -rf ~/.config/gio                                  # config, log, socket and lock
+   rm -rf ~/Library/Logs/Gio                             # the updater's log
+   rm -rf ~/Library/Caches/dev.gio.windowmanager         # the launcher's app icon cache
+   defaults delete dev.gio.windowmanager                 # first-run guide and update settings
+   ```
+
+4. Remove the permissions:
+
+   ```sh
+   tccutil reset Accessibility dev.gio.windowmanager
+   tccutil reset ScreenCapture dev.gio.windowmanager
+   ```
+
+`dev.gio.windowmanager` is the bundle identifier of the released app. A build you signed yourself uses the `PRODUCT_BUNDLE_IDENTIFIER` from your `Config/Signing.local.xcconfig`.
+
+## Privacy
+
+- **No telemetry.** Gio sends no analytics, usage data or crash reports.
+- **Update checks** ask GitHub's public API (`api.github.com`) for the releases of `ismaelosuna7824/gio`, anonymously, with a `Gio/<version>` user agent; an update downloads the release's DMG from GitHub. Turn the automatic check off in **Diagnostics > Updates**.
+- **Logs never contain window titles**: only numeric window IDs, counts, timings and app names. They stay on your Mac (`~/.config/gio/gio.log`).
+- **Window images** captured for motion and the overview (Screen Recording) stay in memory; Gio never writes them to disk or sends them anywhere.
+- **Report a Problem** (Diagnostics) saves a zip in `~/Downloads` and opens a prefilled GitHub issue in your browser (with the last warning and error log lines); nothing reaches GitHub until you press **Submit** there, and the zip only if you attach it.
 
 ## What it does
 
 - **Scrollable column layout.** Windows live in columns; the focused column is always revealed by scrolling the strip minimally (Niri rule). Windows inside a column share its height.
 - **Dwindle layout per workspace.** Any workspace can switch (`Alt+Shift+T`) to a Hyprland-style dwindle tree: every window on screen, each new one splitting the focused one, with split toggles, swaps, preselection and balance; focus, moves, sizes and the edge crossing keep working there. See [Dwindle layout](docs/USER_GUIDE.md#dwindle-layout).
-- **Keyboard control** (global `Alt`-based shortcuts, all rebindable in `config.toml`): focus and move windows, cycle or step column widths, maximize a column, center a column, consume/expel windows between columns, toggle floating and fullscreen.
+- **Keyboard control** (global `Alt`-based shortcuts, all rebindable or removable in the app's **Shortcuts** section or `config.toml`): focus and move windows, cycle or step column widths, maximize a column, center a column, consume/expel windows between columns, toggle floating and fullscreen.
 - **Dynamic vertical workspaces.** Like Niri, each display has its own stack of workspaces with always one empty workspace at the bottom; emptied workspaces disappear once you leave them. Windows of inactive workspaces are hidden off the bottom corner of the display, and the switch is animated.
 - **Automatic window admission.** Every window is classified as tile, float (with a reason), ignore or suspend. Dialogs, fixed-size windows and panels float; minimized windows stay registered and rejoin their column when restored.
 - **Window rules.** `[[window-rules]]` in the config can force an app to float, tile or start on a given workspace.
@@ -18,10 +62,10 @@ Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges 
 - **Animation.** Scroll, focus and workspace moves animate with a Niri-style spring (or an `ease-out` curve). By default the real windows move once and an overlay slides images of them at the display's refresh rate, so slow apps keep up; this needs Screen Recording (see [Why Screen Recording](#why-screen-recording)). The alternative `ax` renderer moves the real windows through Accessibility on every frame.
 - **Multi-display aware** layout state (one workspace stack and viewport per display), niri's monitor actions, and optional edge crossing: `move-column-left/right-or-to-monitor-*` and `focus-column-or-monitor-*` carry a column past the strip's edge to the next display; with `[behavior] move-crosses-monitor-at-edge`, the window move (`Alt+Shift+H/J/K/L`, OmniWM's Move Edge) sends the window and the column move (`Alt+Shift+<` / `>`) the column.
 - **Trackpad gestures.** Swipe left or right with three fingers to scroll the strip: it follows the fingers and settles on a column with the swipe's speed, like niri. Swipe up or down to switch workspace; optionally swipe up with four fingers for the workspace overview. macOS's own three- and four-finger swipes must be moved or turned off; Gio says which collide (see [Private APIs](#private-apis) and the [User guide](docs/USER_GUIDE.md#trackpad-gestures)).
-- **Desktop app.** One main window (Overview, Shortcuts, Layout, Focus, Animations, Rules, Logs, Diagnostics), a menu bar item, an `Alt+Space` launcher panel and an `Alt+O` workspace overview (every workspace as a row of window thumbnails). Closing the window keeps Gio running from the menu bar.
+- **Desktop app.** One main window (Overview, Shortcuts, Workspaces, Layout, Focus, Animations, Rules, Logs, Diagnostics), a menu bar item, an `Alt+Space` launcher panel and an `Alt+O` workspace overview (every workspace as a row of window thumbnails). Closing the window keeps Gio running from the menu bar.
 - **Config with live reload.** `~/.config/gio/config.toml` is a strict subset of TOML. Invalid config never breaks the window manager; it falls back to defaults and reports the problems.
-- **Command line.** A `gio` client controls the running app over a Unix socket. A separate `gio-poc` tool exercises Accessibility directly and can restore windows after a crash.
-- **Recovery.** Quitting Gio (menu, Cmd+Q, SIGTERM/SIGINT/SIGHUP) brings every parked window back on screen.
+- **Command line (from a source checkout).** A `gio` client controls the running app over a Unix socket, and a separate `gio-poc` tool exercises Accessibility directly and can restore windows after a crash. Neither is in the DMG: build them with SwiftPM (see [Build and run](#build-and-run-from-source)).
+- **Recovery.** Quitting Gio (menu, Cmd+Q, SIGTERM/SIGINT/SIGHUP) brings every parked window back on screen, and a guardian helper does the same if Gio crashes or is killed (see [Recovery](#recovery)).
 
 See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 
@@ -29,9 +73,9 @@ See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 
 | Requirement | Detail |
 | --- | --- |
-| macOS | 13 or later (`platforms: [.macOS(.v13)]` in `Package.swift`, deployment target 13.0 in the Xcode project). |
-| Toolchain | Xcode with Swift 6 (`swift-tools-version: 6.0`). The `Gio` target builds in Swift 6 mode. |
-| Architecture | The Xcode `Gio` target is `arm64` only. |
+| macOS | 13 or later (`platforms: [.macOS(.v13)]` in `Package.swift`, deployment target 13.0 in the Xcode project). Screen Recording features need 14 or later. |
+| Toolchain (building from source) | Xcode with Swift 6 (`swift-tools-version: 6.0`). The `Gio` target builds in Swift 6 mode. |
+| Architecture | Apple silicon: the Xcode `Gio` target and the released app are `arm64` only. |
 | Permission | **Accessibility** for the process that runs Gio (System Settings > Privacy & Security > Accessibility). Without it Gio cannot move windows or hear shortcuts. |
 | Permission for smooth motion | **Screen Recording**, required by the default snapshot renderer, the overview thumbnails and the optional close ghost (macOS 14 or later); relaunch Gio after granting it. Without it Gio still tiles, but windows stutter as they move; see below. |
 | SIP | Stays enabled. |
@@ -54,7 +98,7 @@ Trackpad gestures need the fingers' positions, which no public API reports. When
 
 The symbols are loaded at runtime (`dlopen`/`dlsym`), never linked. Windows themselves always move through Accessibility. Gio also switches an app's `AXEnhancedUserInterface` attribute off while it writes that app's windows and back on right after (assistive apps such as VoiceOver set it, and it makes Chromium and Electron apps slow to move).
 
-## Build and run
+## Build and run (from source)
 
 Live Accessibility validation must use the **signed `Gio.app`**. macOS ties the Accessibility grant to the app's code-signing identity, and an unsigned or re-signed executable loses the grant on every rebuild.
 
@@ -72,7 +116,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 
 A command-line `DEVELOPMENT_TEAM=<YOUR_TEAM_ID>` argument still overrides the xcconfig files.
 
-Swift Package Manager (libraries, tests and the helper executables):
+Swift Package Manager (libraries, tests and the helper executables, among them the `gio` client, target `GioCLI`, and `gio-poc`; they are not part of the DMG):
 
 ```sh
 swift build
@@ -85,22 +129,28 @@ The repository directory on the original author's disk is named `gio ` (with a *
 
 ## Recovery
 
-Gio parks off-viewport windows at the edge of a display. If Gio is killed with SIGKILL (for example Xcode's Stop button) or crashes, parked windows stay where they are. Bring them back with either:
+Gio parks off-viewport windows at the edge of a display. It brings them back by itself:
 
-- the shared Xcode scheme **`gio-poc-restore`** in `Gio.xcworkspace`, or
-- `swift run gio-poc restore` (needs Accessibility permission for the terminal or tool that runs it).
+- **On quit.** Quitting Gio (menu bar > **Quit Gio**, Cmd+Q, SIGTERM/SIGINT/SIGHUP, or an update) restores every parked window.
+- **After a crash.** Gio starts a small guardian helper (a second `Gio --guardian` process, no icon). If Gio crashes or is killed (Force Quit, `kill -9`, Xcode's Stop button), the guardian brings the parked windows back within about a second; the log shows `guardian restore applied=N`.
 
-Starting Gio again also recovers leftover parked windows that will not be tiled, and the first layout re-places tiled ones. The app's **Diagnostics > Restore All Windows** button does the same restore without quitting.
+If windows are still missing (power loss, or a guardian that could not run):
+
+1. **Open Gio again.** At startup it recovers leftover parked windows that will not be tiled, and the first layout re-places the tiled ones.
+2. Or, while Gio runs, **Diagnostics > Restore All Windows** brings every parked window on screen without quitting (tiling stays on, so the next layout change parks them again).
+3. From a source checkout only: `swift run gio-poc restore` (needs Accessibility permission for the terminal that runs it), or the shared Xcode scheme **`gio-poc-restore`** in `Gio.xcworkspace`.
 
 ## Files Gio uses
 
 | Path | Purpose |
 | --- | --- |
-| `~/.config/gio/config.toml` | User configuration. Created from a commented template by `gio setup` or **Diagnostics > Open Config File**; the app also creates it on the first edit from Settings. |
-| `~/.config/gio/gio.log` | Append-only log (no window titles). `gio logs` and the Logs section read it. |
-| `~/.config/gio/gio.sock` | Unix socket the `gio` CLI talks to while the app runs. |
+| `~/.config/gio/config.toml` | User configuration. Created from a commented template by **Diagnostics > Open Config File** (or `gio setup` from a source checkout); the app also creates it on the first edit from Settings. |
+| `~/.config/gio/gio.log` | Append-only log (no window titles), rotated at about 1 MB to `gio.log.1`. The Logs section (and `gio logs`) read it. |
+| `~/.config/gio/gio.sock` | Unix socket the `gio` CLI (source checkout) talks to while the app runs. |
 | `~/.config/gio/gio.lock` | Single-instance lock (`flock`). |
 | `~/.config/gio/themes/` | Optional theme directory. Themes are implemented in Core but not yet consumed by the UI. |
+| `~/Library/Logs/Gio/update.log` | The updater helper's log (paths and steps only). |
+| `~/Library/Caches/dev.gio.windowmanager/launcher-icons.plist` | The launcher's cache of app icons (the folder is the app's bundle identifier). |
 
 ## Documentation
 
