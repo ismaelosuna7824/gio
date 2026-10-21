@@ -56,6 +56,9 @@ public enum HotkeyAction: Equatable, Sendable {
     /// Niri `toggle-overview` (Alt+O): open or close the workspace overview.
     /// The app handles it (a panel); the session state is left unchanged.
     case toggleOverview
+    /// `toggle-launcher` (Alt+Space): open or close the launcher panel. The
+    /// app handles it like the overview; the session state is left unchanged.
+    case toggleLauncher
     /// Niri `focus-monitor-<direction>` (Ctrl+Alt+H/J/K/L): focus the
     /// neighbouring display (`displayNeighbour`) and its shown workspace.
     case focusMonitor(FocusDirection)
@@ -187,9 +190,9 @@ public struct HotkeyDispatcher: Equatable, Sendable {
 /// Alt+Shift+N move-to-workspace, Alt+U / Alt+I workspace down / up (Alt+Shift+U / I
 /// move the window along), Alt+R cycle width presets,
 /// Alt+Minus / Alt+Equal step the width by 10%, Alt+F maximize column, Alt+C center column, Alt+[ / Alt+] consume-or-expel, Alt+Shift+F fullscreen, Alt+Shift+Space toggle
-/// floating, Alt+O the workspace overview, Ctrl+Alt+H/J/K/L focus the neighbouring display,
-/// Ctrl+Alt+Shift+H/J/K/L move the column there and Ctrl+Alt+Cmd+H/J/K/L move only the focused
-/// window (MM-04) (Alt+Space stays the launcher; exact-match combos never collide).
+/// floating, Alt+O the workspace overview, Alt+Space the launcher, Ctrl+Alt+H/J/K/L focus the neighbouring
+/// display, Ctrl+Alt+Shift+H/J/K/L move the column there and Ctrl+Alt+Cmd+H/J/K/L move only the focused
+/// window (MM-04) (exact-match combos never collide).
 /// NC-08..NC-11 follow niri's defaults with Alt as Mod: Alt+Home/End focus the first/last column,
 /// Ctrl+Alt+Home/End move the column there, Alt+Shift+Minus/Equal and Alt+Shift+R size the window
 /// within its column, Ctrl+Alt+R resets the heights, Ctrl+Alt+N / Ctrl+Alt+U / I move the column to
@@ -231,6 +234,7 @@ public func defaultHotkeyBindings() -> [(HotkeyCombo, HotkeyAction)] {
         (combo([.alt, .shift], "U"), .moveWindowToWorkspaceDown),
         (combo([.alt, .shift], "I"), .moveWindowToWorkspaceUp),
         (combo([.alt], "O"), .toggleOverview),
+        (combo([.alt], "Space"), .toggleLauncher),
         (combo([.alt], "Home"), .focusColumnFirst),
         (combo([.alt], "End"), .focusColumnLast),
         (combo([.ctrl, .alt], "Home"), .moveColumnToFirst),

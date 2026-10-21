@@ -958,6 +958,7 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-window-to-workspace-down": return .moveWindowToWorkspaceDown
     case "move-window-to-workspace-up": return .moveWindowToWorkspaceUp
     case "toggle-overview": return .toggleOverview
+    case "toggle-launcher": return .toggleLauncher
     case "focus-monitor-left": return .focusMonitor(.left)
     case "focus-monitor-right": return .focusMonitor(.right)
     case "focus-monitor-up": return .focusMonitor(.up)
@@ -1037,7 +1038,7 @@ public func validActionNames() -> [String] {
         "move-up", "move-down",
         "workspace N", "move-to-workspace N",
         "focus-workspace-down", "focus-workspace-up",
-        "move-window-to-workspace-down", "move-window-to-workspace-up", "toggle-overview",
+        "move-window-to-workspace-down", "move-window-to-workspace-up", "toggle-overview", "toggle-launcher",
         "toggle-floating", "fullscreen",
         "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
         "maximize-column", "center-column",

@@ -12,7 +12,7 @@ final class ActionApplierTests: XCTestCase {
             .moveColumnLeft, .moveColumnRight, .moveUp, .moveDown, .workspace(2), .moveToWorkspace(2),
             .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
             .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-            .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview,
+            .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview, .toggleLauncher,
             .focusMonitor(.right), .moveColumnToMonitor(.right), .moveWindowToMonitor(.right),
             .moveWorkspaceToMonitor(.right),
             .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
@@ -34,7 +34,7 @@ final class ActionApplierTests: XCTestCase {
                  .moveColumnLeft, .moveColumnRight, .moveUp, .moveDown, .workspace, .moveToWorkspace,
                  .focusWorkspaceDown, .focusWorkspaceUp, .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp,
                  .toggleFloating, .fullscreen, .switchPresetColumnWidth, .shrinkColumnWidth, .growColumnWidth,
-                 .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview,
+                 .maximizeColumn, .centerColumn, .consumeOrExpelLeft, .consumeOrExpelRight, .toggleOverview, .toggleLauncher,
                  .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
                  .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
                  .focusColumnFirst, .focusColumnLast, .moveColumnToFirst, .moveColumnToLast,
@@ -150,13 +150,16 @@ final class ActionApplierTests: XCTestCase {
         }
     }
 
-    func testOverviewLeavesTheSessionUntouched() {
-        let before = world.session.manager
-        let effect = apply(.toggleOverview)
-        XCTAssertEqual(world.session.manager, before)
-        XCTAssertFalse(effect.carriesFocusIntent)
-        XCTAssertNil(effect.zoomRequest)
-        XCTAssertNil(effect.fullscreenToggle)
+    func testOverviewAndLauncherLeaveTheSessionUntouched() {
+        for action in [HotkeyAction.toggleOverview, .toggleLauncher] {
+            setUp()
+            let before = world.session.manager
+            let effect = apply(action)
+            XCTAssertEqual(world.session.manager, before, "\(action)")
+            XCTAssertFalse(effect.carriesFocusIntent, "\(action)")
+            XCTAssertNil(effect.zoomRequest, "\(action)")
+            XCTAssertNil(effect.fullscreenToggle, "\(action)")
+        }
     }
 
     // MARK: Focus and moves

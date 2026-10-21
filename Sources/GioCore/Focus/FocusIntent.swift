@@ -22,7 +22,7 @@ extension HotkeyAction {
              .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight:
             return true
         case .toggleFloating, .switchPresetColumnWidth, .shrinkColumnWidth,
-             .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview,
+             .growColumnWidth, .maximizeColumn, .centerColumn, .toggleOverview, .toggleLauncher,
              .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight, .resetWindowHeight,
              .switchPresetColumnWidthBack, .expandColumnToAvailableWidth, .centerVisibleColumns:
             return false

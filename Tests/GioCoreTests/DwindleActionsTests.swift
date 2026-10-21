@@ -366,7 +366,7 @@ final class DwindleActionsTests: XCTestCase {
         XCTAssertEqual(dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "B")), .dwindleBalance)
         XCTAssertEqual(dispatcher.action(for: HotkeyCombo(modifiers: [.alt, .shift], key: "Space")), .toggleFloating,
                        "Alt+Shift+Space stays toggle-floating")
-        XCTAssertEqual(dispatcher.bindingCount, 79)
+        XCTAssertEqual(dispatcher.bindingCount, 80)
         XCTAssertEqual(motionCause(for: .toggleWorkspaceLayout), .windowMovement)
         XCTAssertEqual(motionCause(for: .setWorkspaceLayout(.dwindle)), .windowMovement)
         XCTAssertEqual(motionCause(for: .dwindleToggleSplit), .windowResize)

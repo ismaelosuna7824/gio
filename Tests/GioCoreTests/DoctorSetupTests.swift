@@ -11,6 +11,21 @@ final class DoctorSetupTests: XCTestCase {
         XCTAssertEqual(config.rules.count, 1)
     }
 
+    /// The starter rule matches Calculator by bundle id: app names are
+    /// localized ("Calculadora" on a Spanish system).
+    func testTemplateStarterRuleMatchesCalculatorByBundleID() throws {
+        let (config, _) = try parseGioConfig(defaultConfigTemplate()).get()
+        let rule = try XCTUnwrap(config.rules.first)
+        XCTAssertEqual(rule.bundleID, "com.apple.calculator")
+        XCTAssertEqual(rule.app, "")
+        XCTAssertEqual(rule.mode, .floating)
+        XCTAssertTrue(rule.matches(app: "Calculadora", bundleID: "com.apple.calculator"))
+    }
+
+    func testTemplateDocumentsTheLauncherAction() {
+        XCTAssertTrue(defaultConfigTemplate().contains("\"toggle-launcher\" (Alt+Space)"))
+    }
+
     func testDoctorReportsFacts() {
         var session = CommandSession(
             permissionGranted: true, displayCount: 2, recentErrors: ["boom"]

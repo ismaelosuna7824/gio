@@ -24,7 +24,6 @@ final class ShortcutEditingTests: XCTestCase {
         let focusLeft = row("focus-left")
         XCTAssertEqual(focusLeft.bindings.map(\.combo), [combo("Alt+H")])
         XCTAssertEqual(focusLeft.bindings.map(\.source), [.default])
-        XCTAssertTrue(focusLeft.isEditable)
         XCTAssertFalse(focusLeft.isCustomized)
         XCTAssertFalse(focusLeft.canReset)
         XCTAssertTrue(focusLeft.workspaceChoices.isEmpty)
@@ -50,9 +49,16 @@ final class ShortcutEditingTests: XCTestCase {
         XCTAssertTrue(center.canReset)
     }
 
-    func testLauncherRowIsReadOnlyAndWorkspaceRowsPickANumber() {
-        XCTAssertFalse(row("launcher").isEditable)
-        XCTAssertFalse(row("launcher").canReset)
+    func testLauncherRowIsEditableAndWorkspaceRowsPickANumber() {
+        let launcher = row("toggle-launcher")
+        XCTAssertEqual(launcher.bindings.map(\.combo), [combo("Alt+Space")])
+        XCTAssertFalse(launcher.canReset)
+        XCTAssertEqual(launcher.removeEdits(combo("Alt+Space")), [.setKeybinding(combo("Alt+Space"), .none)])
+        let moved = row("toggle-launcher", GioConfig(
+            keybindings: [(combo("Ctrl+Alt+Space"), .toggleLauncher)], unboundKeys: [combo("Alt+Space")]
+        ))
+        XCTAssertTrue(moved.canReset)
+        XCTAssertEqual(moved.removed, [combo("Alt+Space")])
         let workspace = row("workspace N")
         XCTAssertEqual(workspace.workspaceChoices, Array(1...9))
         XCTAssertTrue(workspace.isRange)
@@ -61,24 +67,44 @@ final class ShortcutEditingTests: XCTestCase {
 
     // MARK: - Recorder
 
-    func testRecorderPromptsUntilAKeyIsPressed() throws {
-        let recorder = try XCTUnwrap(ShortcutRecorder(entry: entry("center-column")))
+    func testRecorderPromptsUntilAKeyIsPressed() {
+        let recorder = ShortcutRecorder(entry: entry("center-column"))
         XCTAssertEqual(recorder.message, "Press the new shortcut. Esc cancels.")
         XCTAssertNil(recorder.saveTitle)
         XCTAssertTrue(recorder.edits.isEmpty)
-        XCTAssertNil(ShortcutRecorder(entry: entry("launcher")))
     }
 
-    func testFreeComboCanBeAdded() throws {
-        var recorder = try XCTUnwrap(ShortcutRecorder(entry: entry("center-column")))
+    func testLauncherRecorderBindsANewCombo() {
+        var recorder = ShortcutRecorder(entry: entry("toggle-launcher"))
+        recorder.record(combo("Ctrl+Alt+Space"), config: GioConfig())
+        XCTAssertEqual(recorder.saveTitle, "Add")
+        XCTAssertEqual(recorder.edits, [.setKeybinding(combo("Ctrl+Alt+Space"), .action(.toggleLauncher))])
+    }
+
+    func testAltSpaceIsTakenFromTheLauncherWithReplaceAndFreeOnceItMoved() {
+        var recorder = ShortcutRecorder(entry: entry("center-column"))
+        recorder.record(combo("Alt+Space"), config: GioConfig())
+        XCTAssertEqual(recorder.message, "⌥Space already runs Open launcher (default). Replace moves it to Center column.")
+        XCTAssertEqual(recorder.saveTitle, "Replace")
+        XCTAssertEqual(recorder.edits, [.setKeybinding(combo("Alt+Space"), .action(.centerColumn))])
+        let moved = GioConfig(
+            keybindings: [(combo("Ctrl+Alt+Space"), .toggleLauncher)], unboundKeys: [combo("Alt+Space")]
+        )
+        recorder.record(combo("Alt+Space"), config: moved)
+        XCTAssertEqual(recorder.message, "⌥Space is free.")
+        XCTAssertEqual(recorder.saveTitle, "Add")
+    }
+
+    func testFreeComboCanBeAdded() {
+        var recorder = ShortcutRecorder(entry: entry("center-column"))
         recorder.record(combo("Ctrl+Alt+F9"), config: GioConfig())
         XCTAssertEqual(recorder.saveTitle, "Add")
         XCTAssertEqual(recorder.tone, .ok)
         XCTAssertEqual(recorder.edits, [.setKeybinding(combo("Ctrl+Alt+F9"), .action(.centerColumn))])
     }
 
-    func testConflictNamesTheOtherActionAndOffersReplace() throws {
-        var recorder = try XCTUnwrap(ShortcutRecorder(entry: entry("focus-left")))
+    func testConflictNamesTheOtherActionAndOffersReplace() {
+        var recorder = ShortcutRecorder(entry: entry("focus-left"))
         recorder.record(combo("Alt+L"), config: GioConfig())
         XCTAssertEqual(recorder.message, "⌥L already runs Focus right (default). Replace moves it to Focus left.")
         XCTAssertEqual(recorder.saveTitle, "Replace")
@@ -90,14 +116,12 @@ final class ShortcutEditingTests: XCTestCase {
         XCTAssertEqual(recorder.message, "⌃F9 already runs Center column (set in config.toml). Replace moves it to Focus left.")
     }
 
-    func testInvalidCombosExplainWhyAndCannotBeSaved() throws {
-        var recorder = try XCTUnwrap(ShortcutRecorder(entry: entry("focus-left")))
+    func testInvalidCombosExplainWhyAndCannotBeSaved() {
+        var recorder = ShortcutRecorder(entry: entry("focus-left"))
         recorder.record(HotkeyCombo(modifiers: [], key: "H"), config: GioConfig())
         XCTAssertEqual(recorder.message, "Add at least one modifier (⌃ ⌥ ⇧ ⌘) so the key still types normally.")
         XCTAssertNil(recorder.saveTitle)
         XCTAssertEqual(recorder.tone, .error)
-        recorder.record(launcherHotkey, config: GioConfig())
-        XCTAssertEqual(recorder.message, "⌥Space opens the launcher and cannot be rebound.")
         recorder.record(HotkeyCombo(modifiers: [.alt], key: "§"), config: GioConfig())
         XCTAssertEqual(recorder.message, "§ cannot be bound. Use a letter, digit, F1–F12, an arrow or a punctuation key.")
         recorder.record(combo("Alt+H"), config: GioConfig())
@@ -106,8 +130,8 @@ final class ShortcutEditingTests: XCTestCase {
         XCTAssertTrue(recorder.edits.isEmpty)
     }
 
-    func testWorkspaceRecorderBindsTheChosenNumber() throws {
-        var recorder = try XCTUnwrap(ShortcutRecorder(entry: entry("workspace N")))
+    func testWorkspaceRecorderBindsTheChosenNumber() {
+        var recorder = ShortcutRecorder(entry: entry("workspace N"))
         XCTAssertEqual(recorder.workspace, 1)
         recorder.choose(workspace: 4, config: GioConfig())
         recorder.record(combo("Ctrl+4"), config: GioConfig())
@@ -141,7 +165,7 @@ final class ShortcutEditingTests: XCTestCase {
         )
         XCTAssertEqual(ApplyToast(feedback: .rejected(messages: ["bad"]), successTitle: "x").kind, .failure)
         XCTAssertEqual(ApplyToast(feedback: .applied(warnings: ["w"]), successTitle: "x").kind, .warning)
-        var recorder = ShortcutRecorder(entry: entry("focus-left"))!
+        var recorder = ShortcutRecorder(entry: entry("focus-left"))
         recorder.record(combo("Alt+L"), config: GioConfig())
         XCTAssertEqual(recorder.savedTitle, "Moved ⌥L to Focus left")
         recorder.record(combo("Ctrl+Alt+F9"), config: GioConfig())

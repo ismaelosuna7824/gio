@@ -155,9 +155,9 @@ public func motionCause(for action: HotkeyAction) -> MotionCause {
          .switchPresetColumnWidthBack, .expandColumnToAvailableWidth,
          .dwindleToggleSplit, .dwindleBalance:
         return .windowResize
-    case .toggleOverview, .dwindlePreselect, .dwindlePreselectClear:
-        // The overview is the app's panel; a preselection only marks where the
-        // next window goes. Nothing moves.
+    case .toggleOverview, .toggleLauncher, .dwindlePreselect, .dwindlePreselectClear:
+        // The overview and the launcher are the app's panels; a preselection
+        // only marks where the next window goes. Nothing moves.
         return .passive
     }
 }
