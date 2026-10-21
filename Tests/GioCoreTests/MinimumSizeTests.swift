@@ -218,9 +218,9 @@ final class MinimumSizeTests: XCTestCase {
         let result = try engine.calculate(
             workspace: workspace([column(1, width: 400, [id(1), id(2)])]), viewport: viewport
         )
-        // Usable 784 minus one gap = 776: window 1 takes its 600, window 2 the rest.
-        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 8, width: 400, height: 600))
-        XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 616, width: 400, height: 176))
+        // Usable 784 minus one gap = 776: window 1 (the top one) takes its 600, window 2 the rest.
+        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 192, width: 400, height: 600))
+        XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 8, width: 400, height: 176))
     }
 
     func testStackedHeightsFallBackToProportionalWhenMinimumsCannotFit() throws {

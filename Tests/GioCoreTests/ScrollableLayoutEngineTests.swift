@@ -46,15 +46,20 @@ final class ScrollableLayoutEngineTests: XCTestCase {
         XCTAssertEqual(result.contentWidth, 724)
     }
 
-    func testVerticalStackSharesHeightEqually() throws {
+    /// Layout frames are Cocoa (y up): a column's first window is its top
+    /// one, as `focus-up`/`focus-down`, consume ("joins at its bottom") and
+    /// the overview's miniature all read the column. Live 2026-10-21: the
+    /// first window was drawn at the bottom, so focus-up from the top window
+    /// went to the one below it.
+    func testVerticalStackSharesHeightEquallyFromTheTop() throws {
         let workspace = Workspace(
             id: WorkspaceID(1),
             columns: [column(width: 400, windows: [id(1), id(2), id(3)])]
         )
         let result = try engine.calculate(workspace: workspace, viewport: viewport)
-        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 8, width: 400, height: 256))
+        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 536, width: 400, height: 256))
         XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 272, width: 400, height: 256))
-        XCTAssertEqual(result.frames[id(3)], CGRect(x: 8, y: 536, width: 400, height: 256))
+        XCTAssertEqual(result.frames[id(3)], CGRect(x: 8, y: 8, width: 400, height: 256))
     }
 
     func testZeroGapsAndPaddingTileExactly() throws {

@@ -62,9 +62,9 @@ final class WindowResizeTests: XCTestCase {
         var weighted = workspace()
         weighted = resizeFocusedWindowHeight(in: weighted, factor: 3)
         let result = try engine.calculate(workspace: weighted, viewport: viewport)
-        // Usable 784 minus one 8pt gap = 776, weights 3:1 → 582 and 194.
-        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 8, width: 300, height: 582))
-        XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 598, width: 300, height: 194))
+        // Usable 784 minus one 8pt gap = 776, weights 3:1 → 582 (top) and 194 (bottom).
+        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 210, width: 300, height: 582))
+        XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 8, width: 300, height: 194))
     }
 
     func testEngineDefaultsStayEqual() throws {
