@@ -258,6 +258,26 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   compile (`testCanvasIsEmptyNotNegativeBeforeThePanelHasASize`). Bundles UI 356 (53 skipped)
   / Session 550 / POC 7 / Mac 19 / MacOS 107 / Core 2155, 0 failures; signed Debug build OK.
   LIVE PENDING: Alt+K onto OrbStack shows the ring at once; no warning when opening Alt+O.
+- [x] FX-03 (`f0893b0`) — Overview opened under a still pointer resting on a Chrome tile: SwiftUI
+  reported the hover at once and the selection left the focused window (user 23:02 UTC). Hover
+  now selects only once the pointer moved since the panel opened (`WorkspaceOverviewModel`,
+  injected `pointer`, default `NSEvent.mouseLocation`). RED: compile (2 tests).
+- [x] FX-04 — Alt+Shift+T with 9 windows still overlapped (log 23:00:35: 7 `frameMismatch`,
+  tiles `(1792,148,1,132)` for Xcode and Zed). Two causes: (1) BUG-3's proportional share gave a
+  side with no known minimum 0 pt when its neighbour's need exceeded the split (RED:
+  `testASideWithoutAMinimumIsNotSqueezedToNothing`, 970/1 instead of 691/279): each need now
+  counts at least its nominal extent; (2) nine windows cannot fit one display. User decision
+  (2026-10-21): refuse dwindle above a fixed configurable maximum. `[dwindle] max-windows`
+  (1-32, default 6, Settings > Layout > Dwindle maximum windows): `setLayout(.dwindle)` refuses
+  (`dwindleRefusal`, log `dwindle refused workspace=<id> windows=N max=M`); a dwindle workspace
+  given more windows (arrival, move, rule, lower maximum on reload) returns to the strip in
+  `WorkspaceManager.store`. Deviation from the option text the user picked ("a new window
+  stacks on the focused one"): a dwindle tile holds one window, so the workspace returns to
+  scrolling instead. RED: compile (`DwindleMaxWindowsTests`, 7). Smoke (throwaway, removed):
+  six windows with the live minimums on 1800x1130 give tiles from 236x375 up, none at 1 pt; a
+  7th window returns the workspace to scrolling with all 7. Bundles UI 358 (53 skipped) /
+  Session 550 / POC 7 / Mac 19 / MacOS 107 / Core 2163, 0 failures; signed Debug build OK.
+  LIVE PENDING: Alt+Shift+T on the 9-window workspace logs `dwindle refused` and nothing moves.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
