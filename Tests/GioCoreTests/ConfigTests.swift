@@ -130,6 +130,23 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(messages.isEmpty)
     }
 
+    /// S6: an error rejects the whole file (defaults, custom shortcuts
+    /// included); warnings keep the file. The report says which.
+    func testLoaderReportSaysWhetherTheFileWasRejected() {
+        let invalid = loadGioConfigReport(at: writeTemp("[keybindings]\n\"Ctrl+Alt+F9\" = \"center-column\"\n[layout]\ngaps = -1\n"))
+        XCTAssertTrue(invalid.status.rejected)
+        XCTAssertFalse(invalid.status.messages.isEmpty)
+        XCTAssertEqual(invalid.config, defaultGioConfig())
+
+        let warned = loadGioConfigReport(at: writeTemp("[layout]\ngaps = 4\ngasp = 4\n"))
+        XCTAssertFalse(warned.status.rejected)
+        XCTAssertEqual(warned.status.messages, ["line 3: unknown layout key 'gasp', ignored"])
+        XCTAssertEqual(warned.config.layout.gaps, 4)
+
+        let missing = loadGioConfigReport(at: "/nonexistent/gio-test-config.toml")
+        XCTAssertEqual(missing.status, ConfigLoadStatus())
+    }
+
     func testUnknownKeysWarnWithoutFailing() throws {
         let doc = "[layout]\ngaps = 4\ngasp = 4\n[future]\nthing = 1\n"
         let (config, warnings) = try parseGioConfig(doc).get()

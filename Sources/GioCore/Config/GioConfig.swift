@@ -308,17 +308,37 @@ public func defaultGioConfig() -> GioConfig {
     GioConfig()
 }
 
+/// S6: the outcome of loading config.toml for the UI. `rejected`: the file
+/// had errors, so none of it applies (custom shortcuts included) and the
+/// defaults run; `messages` are then the errors. Otherwise `messages` are the
+/// warnings of a file that still applies.
+public struct ConfigLoadStatus: Equatable, Sendable {
+    public var messages: [String]
+    public var rejected: Bool
+
+    public init(messages: [String] = [], rejected: Bool = false) {
+        self.messages = messages
+        self.rejected = rejected
+    }
+}
+
 /// Missing file means first run: silent defaults. Present-but-invalid means
 /// defaults plus the error messages — an invalid config never breaks the WM.
-public func loadGioConfig(at path: String? = nil) -> (config: GioConfig, messages: [String]) {
+public func loadGioConfigReport(at path: String? = nil) -> (config: GioConfig, status: ConfigLoadStatus) {
     let resolved = path ?? (FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml")
     guard let text = try? String(contentsOfFile: resolved, encoding: .utf8) else {
-        return (defaultGioConfig(), [])
+        return (defaultGioConfig(), ConfigLoadStatus())
     }
     switch parseGioConfig(text) {
     case .success(let (parsed, warnings)):
-        return (parsed, warnings)
+        return (parsed, ConfigLoadStatus(messages: warnings))
     case .failure(let errors):
-        return (defaultGioConfig(), errors.messages)
+        return (defaultGioConfig(), ConfigLoadStatus(messages: errors.messages, rejected: true))
     }
+}
+
+/// `loadGioConfigReport` without the rejected flag (CLI, reload, doctor).
+public func loadGioConfig(at path: String? = nil) -> (config: GioConfig, messages: [String]) {
+    let report = loadGioConfigReport(at: path)
+    return (report.config, report.status.messages)
 }

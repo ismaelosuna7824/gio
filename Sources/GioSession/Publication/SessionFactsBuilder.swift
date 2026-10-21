@@ -10,7 +10,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var session: () -> CommandSession
         public var displays: () -> [DisplayState]
         public var visibleFrame: (DisplayID) -> CGRect?
-        public var configMessages: () -> [String]
+        /// The config file's load outcome: messages and whether it was rejected.
+        public var configStatus: () -> ConfigLoadStatus
         public var engine: () -> ScrollableLayoutEngine
         public var tileableModes: () -> [WindowID: WindowMode]
         /// PA-15b: the cached permission (TTL), read on every publication.
@@ -31,7 +32,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
 
         public init(
             session: @escaping () -> CommandSession, displays: @escaping () -> [DisplayState],
-            visibleFrame: @escaping (DisplayID) -> CGRect?, configMessages: @escaping () -> [String],
+            visibleFrame: @escaping (DisplayID) -> CGRect?, configStatus: @escaping () -> ConfigLoadStatus,
             engine: @escaping () -> ScrollableLayoutEngine, tileableModes: @escaping () -> [WindowID: WindowMode],
             screenRecordingGranted: @escaping () -> Bool, refreshScreenRecording: @escaping () -> Bool,
             accessibilityGranted: @escaping () -> Bool,
@@ -46,7 +47,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
-            self.configMessages = configMessages
+            self.configStatus = configStatus
             self.engine = engine
             self.tileableModes = tileableModes
             self.screenRecordingGranted = screenRecordingGranted
@@ -114,9 +115,11 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         if let line = conflictLog.line(for: conflicts) {
             context.log(conflicts.isEmpty ? .info : .warn, line)
         }
+        let configStatus = context.configStatus()
         return SessionFacts(
             configPath: path, configExists: context.configFileExists(path),
-            configMessages: context.configMessages(), accessibilityGranted: context.accessibilityGranted(),
+            configMessages: configStatus.messages, configRejected: configStatus.rejected,
+            accessibilityGranted: context.accessibilityGranted(),
             currentWorkspace: session.manager.current,
             displays: displayStates.map {
                 DisplayFact(
