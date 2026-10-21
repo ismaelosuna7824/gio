@@ -14,14 +14,41 @@ import Foundation
 /// window of the app; `tolerance`); only confirmed values lay windows out. A
 /// different value replaces the candidate, so a transient one never
 /// survives and a real change (an app update) is confirmed again.
+///
+/// FX-05: width and height are confirmed apart. An app clamps one axis on
+/// one write and both on another (live: WhatsApp 970x600, then 970x0), so a
+/// pair never matched and the width was learned again every launch. A
+/// learning without evidence on an axis (0) leaves that axis alone.
 public struct AppMinimumSizes: Equatable, Sendable {
-    public struct Entry: Equatable, Sendable {
-        public var size: CGSize
+    /// One axis of an app's minimum: the value and how often it was learned.
+    public struct Axis: Equatable, Sendable {
+        public var value: CGFloat
         public var seen: Int
 
-        public init(size: CGSize, seen: Int) {
-            self.size = size
+        public init(value: CGFloat, seen: Int) {
+            self.value = value
             self.seen = seen
+        }
+
+        var confirmed: CGFloat? {
+            seen >= AppMinimumSizes.confirmations ? value : nil
+        }
+    }
+
+    public struct Entry: Equatable, Sendable {
+        public var width: Axis?
+        public var height: Axis?
+
+        public init(width: Axis? = nil, height: Axis? = nil) {
+            self.width = width
+            self.height = height
+        }
+
+        /// The confirmed axes (0 for one that is not); nil when neither is.
+        var confirmed: CGSize? {
+            let width = width?.confirmed ?? 0
+            let height = height?.confirmed ?? 0
+            return width > 0 || height > 0 ? CGSize(width: width, height: height) : nil
         }
     }
 
@@ -38,33 +65,39 @@ public struct AppMinimumSizes: Equatable, Sendable {
 
     /// Whether any app has a confirmed minimum (no layout work otherwise).
     public var hasConfirmed: Bool {
-        entries.values.contains { $0.seen >= Self.confirmations }
+        entries.values.contains { $0.confirmed != nil }
     }
 
-    /// The app's confirmed minimum; nil while it is a candidate.
+    /// The app's confirmed minimum (0 on an axis still a candidate); nil
+    /// while neither axis is confirmed.
     public func size(for window: ManagedWindow) -> CGSize? {
-        confirmed(Self.key(for: window))
+        entries[Self.key(for: window)]?.confirmed
     }
 
-    private func confirmed(_ key: String) -> CGSize? {
-        entries[key].flatMap { $0.seen >= Self.confirmations ? $0.size : nil }
-    }
-
-    /// The app's window learned `size`. True when the entry changed (the
-    /// caller saves).
+    /// The app's window learned `size` (0 on an axis without evidence).
+    /// True when the entry changed (the caller saves).
     @discardableResult
     public mutating func record(_ size: CGSize, for window: ManagedWindow, tolerance: CGFloat = 1) -> Bool {
         let key = Self.key(for: window)
-        guard let known = entries[key],
-              abs(known.size.width - size.width) <= tolerance, abs(known.size.height - size.height) <= tolerance
-        else {
-            entries[key] = Entry(size: size, seen: 1)
-            return true
+        var entry = entries[key] ?? Entry()
+        func learn(_ value: CGFloat, into axis: inout Axis?) {
+            guard value > 0 else {
+                return
+            }
+            guard let known = axis, abs(known.value - value) <= tolerance else {
+                axis = Axis(value: value, seen: 1)
+                return
+            }
+            if known.seen < Self.confirmations {
+                axis = Axis(value: known.value, seen: known.seen + 1)
+            }
         }
-        guard known.seen < Self.confirmations else {
+        learn(size.width, into: &entry.width)
+        learn(size.height, into: &entry.height)
+        guard entry != entries[key] else {
             return false
         }
-        entries[key] = Entry(size: known.size, seen: known.seen + 1)
+        entries[key] = entry
         return true
     }
 
@@ -76,7 +109,7 @@ public struct AppMinimumSizes: Equatable, Sendable {
         }
         var result = learned
         for window in windows where result[window.id] == nil {
-            if let size = confirmed(Self.key(for: window)) {
+            if let size = size(for: window) {
                 result[window.id] = size
             }
         }
@@ -84,12 +117,13 @@ public struct AppMinimumSizes: Equatable, Sendable {
     }
 }
 
-/// PA-24: `AppMinimumSizes` on disk: `{"version": 2, "apps": {key:
-/// [width, height, seen]}}`. Regenerable, so the host keeps it in Caches; a
-/// missing, unreadable or first-format file (single clamps, BUG-2) reads as
-/// empty. No shared state.
+/// PA-24: `AppMinimumSizes` on disk: `{"version": 3, "apps": {key:
+/// [width, widthSeen, height, heightSeen]}}` (0 for an axis never learned).
+/// Regenerable, so the host keeps it in Caches; a missing or unreadable file
+/// reads as empty, the first format (single clamps, BUG-2) too, and the
+/// second (pairs, FX-05) keeps only its confirmed pairs. No shared state.
 public struct AppMinimumSizeStore: Sendable {
-    private static let version = 2
+    private static let version = 3
     public let url: URL
 
     public init(url: URL) {
@@ -103,23 +137,36 @@ public struct AppMinimumSizeStore: Sendable {
 
     public func load() -> AppMinimumSizes {
         guard let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(File.self, from: data), file.version == Self.version
+              let file = try? JSONDecoder().decode(File.self, from: data)
         else {
             return AppMinimumSizes()
         }
         var entries: [String: AppMinimumSizes.Entry] = [:]
-        for (key, values) in file.apps
-        where values.count == 3 && values.allSatisfy({ $0.isFinite && $0 >= 0 }) && values[2] >= 1 {
-            entries[key] = AppMinimumSizes.Entry(
-                size: CGSize(width: values[0], height: values[1]), seen: Int(values[2])
-            )
+        for (key, values) in file.apps where values.allSatisfy({ $0.isFinite && $0 >= 0 }) {
+            func axis(_ value: Double, _ seen: Double) -> AppMinimumSizes.Axis? {
+                value > 0 && seen >= 1 ? AppMinimumSizes.Axis(value: value, seen: Int(seen)) : nil
+            }
+            let entry: AppMinimumSizes.Entry
+            switch (file.version, values.count) {
+            case (Self.version, 4):
+                entry = AppMinimumSizes.Entry(width: axis(values[0], values[1]), height: axis(values[2], values[3]))
+            case (2, 3) where values[2] >= Double(AppMinimumSizes.confirmations):
+                entry = AppMinimumSizes.Entry(width: axis(values[0], values[2]), height: axis(values[1], values[2]))
+            default:
+                continue
+            }
+            if entry.width != nil || entry.height != nil {
+                entries[key] = entry
+            }
         }
         return AppMinimumSizes(entries: entries)
     }
 
     /// Replaces the file atomically; a failure keeps the old file.
     public func save(_ minimums: AppMinimumSizes) {
-        let apps = minimums.entries.mapValues { [Double($0.size.width), Double($0.size.height), Double($0.seen)] }
+        let apps = minimums.entries.mapValues { entry in
+            [entry.width, entry.height].flatMap { axis in [Double(axis?.value ?? 0), Double(axis?.seen ?? 0)] }
+        }
         guard let data = try? JSONEncoder().encode(File(version: Self.version, apps: apps)) else {
             return
         }

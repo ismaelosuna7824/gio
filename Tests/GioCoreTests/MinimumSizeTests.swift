@@ -75,6 +75,25 @@ final class MinimumSizeTests: XCTestCase {
         ))
     }
 
+    /// FX-05 (live 23:00:35): a 1 pt wide dwindle tile came back at the
+    /// window's 888 pt column width and was learned as Tern's, Slack's and
+    /// OrbStack's minimum. A request below 100 pt says nothing about the
+    /// minimum on that axis; the other axis still counts.
+    func testARequestTooSmallToMeanAnythingIsNotLearned() {
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: 822, y: 8, width: 1, height: 553),
+            actual: CGRect(x: 822, y: 8, width: 888, height: 553)
+        ))
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 1792, y: 148, width: 1, height: 132),
+            actual: CGRect(x: 1792, y: -70, width: 400, height: 350)
+        ), CGSize(width: 0, height: 350), "the 132 pt height request is real evidence")
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 100, height: 784),
+            actual: CGRect(x: 8, y: 8, width: 360, height: 784)
+        ), CGSize(width: 360, height: 0), "100 pt is a real request")
+    }
+
     /// MM-11 live (TextEdit sent to the external display five times): each
     /// landing kept the top at the built-in display's visible top (height
     /// 1394 -> 1130) and came back 32 pt wider; learning that width made the
