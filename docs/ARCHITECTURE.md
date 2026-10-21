@@ -167,7 +167,7 @@ Stage by stage:
 9. **Actuation (`AXWindowActuator`).** Converts Cocoa frames to AX, orders position and size writes, verifies visible writes with a readback, and enforces a per-element messaging timeout.
 10. **Echo suppression.** Applied frames are recorded in `WriteEchoGate`; see [Echo gate](#echo-gate).
 
-IPC (`gio` CLI) enters the same queue: `IPCServer` calls `queue.sync { ipcRouter.handle }` (`IPCRouter`), and verbs that change state (`focus`, `move`, `workspace`, `reload`) end in `reflowAll`.
+IPC (`gio` CLI) enters the same queue: `IPCServer` calls `queue.sync { ipcRouter.handle }` (`IPCRouter`), and verbs that change state (`focus`, `move`, `workspace`, `reload`) end in `reflowAll`. The server handles one connection at a time, so nothing answering a request may connect back to it: `gio doctor` inside the session reports IPC as serving without probing the socket (`dispatchIPC` passes `inSessionIPCCheck`, PA-17a). Every socket read and write is bounded (PA-17b, `SO_RCVTIMEO`/`SO_SNDTIMEO`, thrown as `IPCError.timedOut`): the server waits at most `ipcServerTimeout` (5 s) for a connection's request and its reply write (not the handler), the client `ipcClientTimeout` (60 s, longer than the up to 45 s `gio update` answer) unless the caller passes its own; both sockets set `SO_NOSIGPIPE`, so a reply to a client that gave up fails instead of killing Gio. The launcher sends its Gio command and workspace entries from a background queue and applies the outcome on main (PA-17c).
 
 ## Layout details
 

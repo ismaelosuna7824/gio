@@ -24,21 +24,7 @@ func runLauncherEntry(_ entry: LauncherEntry, focusWindow: (String) -> Bool = { 
         let opened = url.map { NSWorkspace.shared.open($0) } ?? false
         return opened ? "opened \(name)" : "could not open \(name)"
     case .gioCommand, .workspace:
-        guard let argv = launcherIPCArguments(entry) else {
-            return "nothing to run"
-        }
-        do {
-            let response = try sendIPCRequest(argv, socketPath: defaultSocketPath())
-            if response.ok {
-                if case .workspace(_, let name, _, _) = entry {
-                    return "switched to \(name)"
-                }
-                return response.output ?? "ok"
-            }
-            return "gio failed: \(response.error ?? "unknown")"
-        } catch {
-            return "no running Gio session"
-        }
+        return runLauncherIPC(entry)
     case .shellCommand(let command):
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -49,6 +35,26 @@ func runLauncherEntry(_ entry: LauncherEntry, focusWindow: (String) -> Bool = { 
         } catch {
             return "shell failed: \(error)"
         }
+    }
+}
+
+/// A Gio command or workspace entry over IPC. PA-17c: blocks until the
+/// session answers (its queue may be busy), so never on the main thread.
+public func runLauncherIPC(_ entry: LauncherEntry) -> String {
+    guard let argv = launcherIPCArguments(entry) else {
+        return "nothing to run"
+    }
+    do {
+        let response = try sendIPCRequest(argv, socketPath: defaultSocketPath())
+        if response.ok {
+            if case .workspace(_, let name, _, _) = entry {
+                return "switched to \(name)"
+            }
+            return response.output ?? "ok"
+        }
+        return "gio failed: \(response.error ?? "unknown")"
+    } catch {
+        return "no running Gio session"
     }
 }
 
@@ -71,15 +77,19 @@ public final class LauncherViewModel: ObservableObject {
     private var entries: [LauncherEntry]
     private let leading: [LauncherEntry]
     private let focusWindow: (String) -> Bool
+    /// PA-17c: answers a Gio command or workspace entry; runs off main.
+    private let requestIPC: @Sendable (LauncherEntry) -> String
     var dismiss: (LauncherDismissReason) -> Void = { _ in }
 
     public init(
         windows: [WindowFact] = [], workspaces: [LauncherEntry] = [], apps: [LauncherEntry] = [],
-        focusWindow: @escaping (String) -> Bool = { _ in false }
+        focusWindow: @escaping (String) -> Bool = { _ in false },
+        requestIPC: @escaping @Sendable (LauncherEntry) -> String = { runLauncherIPC($0) }
     ) {
         leading = launcherWindowEntries(from: windows) + workspaces
         entries = leading + apps
         self.focusWindow = focusWindow
+        self.requestIPC = requestIPC
         refreshResults()
     }
 
@@ -164,7 +174,22 @@ public final class LauncherViewModel: ObservableObject {
     }
 
     func run(_ entry: LauncherEntry) {
-        let outcome = runLauncherEntry(entry, focusWindow: focusWindow)
+        switch entry {
+        case .gioCommand, .workspace:
+            // PA-17c: the reply waits on the session queue; main never does.
+            let request = requestIPC
+            DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                let outcome = request(entry)
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.finish(entry, outcome: outcome) }
+                }
+            }
+        default:
+            finish(entry, outcome: runLauncherEntry(entry, focusWindow: focusWindow))
+        }
+    }
+
+    private func finish(_ entry: LauncherEntry, outcome: String) {
         switch entry {
         case .app, .window:
             dismiss(.action)

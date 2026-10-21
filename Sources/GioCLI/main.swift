@@ -25,6 +25,8 @@ do {
     } else {
         gioFail(response.error ?? "request failed")
     }
+} catch IPCError.timedOut {
+    gioFail("the Gio session did not answer within \(Int(ipcClientTimeout)) s")
 } catch {
     gioFail("no running Gio session (start the daemon): \(error)")
 }

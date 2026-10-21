@@ -6,6 +6,36 @@ import Foundation
 /// no ports, no network, filesystem permissions apply.
 public let ipcMaxMessageBytes: Int = 4 * 1024 * 1024
 
+/// PA-17b: how long `sendIPCRequest` waits on each read or write by default.
+/// Generous on purpose: the app answers `gio update` after up to 45 s
+/// (`UpdateController.answerCLI`), and other verbs wait on the session queue.
+public let ipcClientTimeout: TimeInterval = 60
+
+/// PA-17b: how long the server waits on a connection's request read and
+/// reply write (not the handler), so a peer that never sends or never reads
+/// cannot hold the sequential accept loop.
+public let ipcServerTimeout: TimeInterval = 5
+
+/// PA-17b: bounds every blocking `recv`/`send` on `fd` (a timed-out call
+/// fails with `EAGAIN`, thrown as `IPCError.timedOut`), and makes a write to
+/// a peer that already closed fail with `EPIPE` instead of a `SIGPIPE` that
+/// would kill the process.
+func ipcConfigureSocket(_ fd: Int32, timeout: TimeInterval) {
+    let seconds = timeout.rounded(.down)
+    var value = timeval(tv_sec: Int(seconds), tv_usec: Int32((timeout - seconds) * 1_000_000))
+    let size = socklen_t(MemoryLayout<timeval>.size)
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &value, size)
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &value, size)
+    var on: Int32 = 1
+    setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &on, socklen_t(MemoryLayout<Int32>.size))
+}
+
+/// A failed `send`/`recv`: a socket timeout or any other I/O error.
+private func ipcIOFailure(_ result: Int) -> IPCError {
+    let code = errno
+    return result < 0 && (code == EAGAIN || code == EWOULDBLOCK) ? .timedOut : .ioError
+}
+
 func ipcWriteAll(_ fd: Int32, _ data: Data) throws {
     var sent = 0
     try data.withUnsafeBytes { buffer in
@@ -15,7 +45,7 @@ func ipcWriteAll(_ fd: Int32, _ data: Data) throws {
             }
             let result = send(fd, base.advanced(by: sent), data.count - sent, 0)
             guard result > 0 else {
-                throw IPCError.ioError
+                throw ipcIOFailure(result)
             }
             sent += result
         }
@@ -30,7 +60,7 @@ func ipcReadExactly(_ fd: Int32, _ count: Int) throws -> Data {
     while received < count {
         let chunk = recv(fd, &buffer, min(buffer.count, count - received), 0)
         guard chunk > 0 else {
-            throw IPCError.ioError
+            throw ipcIOFailure(chunk)
         }
         result.append(contentsOf: buffer.prefix(chunk))
         received += chunk
@@ -77,13 +107,19 @@ func ipcSocketAddress(_ path: String) -> sockaddr_un {
 /// Sequential per-connection handling — enough for a local control socket.
 public final class IPCServer: @unchecked Sendable {
     private let socketPath: String
+    /// PA-17b: bound on each connection's request read and reply write.
+    private let timeout: TimeInterval
     private let handler: @Sendable ([String]) -> IPCResponse
     private let state = NSLock()
     private var listenFD: Int32 = -1
     private var running = false
 
-    public init(socketPath: String, handler: @Sendable @escaping ([String]) -> IPCResponse) {
+    public init(
+        socketPath: String, timeout: TimeInterval = ipcServerTimeout,
+        handler: @Sendable @escaping ([String]) -> IPCResponse
+    ) {
         self.socketPath = socketPath
+        self.timeout = timeout
         self.handler = handler
     }
 
@@ -152,6 +188,7 @@ public final class IPCServer: @unchecked Sendable {
                 }
                 continue
             }
+            ipcConfigureSocket(conn, timeout: timeout)
             serveConnection(conn)
             close(conn)
         }
@@ -174,8 +211,11 @@ public final class IPCServer: @unchecked Sendable {
     }
 }
 
-/// One-shot client used by the `gio` executable.
-public func sendIPCRequest(_ argv: [String], socketPath: String) throws -> IPCResponse {
+/// One-shot client used by the `gio` executable. PA-17b: each read and write
+/// waits at most `timeout` seconds, then throws `IPCError.timedOut`.
+public func sendIPCRequest(
+    _ argv: [String], socketPath: String, timeout: TimeInterval = ipcClientTimeout
+) throws -> IPCResponse {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else {
         throw IPCError.socketFailed(errno)
@@ -183,6 +223,7 @@ public func sendIPCRequest(_ argv: [String], socketPath: String) throws -> IPCRe
     defer {
         close(fd)
     }
+    ipcConfigureSocket(fd, timeout: timeout)
     var address = ipcSocketAddress(socketPath)
     let connected = withUnsafePointer(to: &address) { pointer in
         pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
