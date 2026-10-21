@@ -1449,11 +1449,11 @@ final class SessionHost: @unchecked Sendable {
         )
     }
 
-    /// FI-02 + PA-24: this session's learned minimums, else what each
-    /// window's app showed in an earlier launch. No registry pass while no
-    /// app ever clamped.
+    /// FI-02 + PA-24: this session's learned minimums, else each window's
+    /// app's confirmed minimum (BUG-2). No registry pass while no app has
+    /// one.
     private func effectiveMinimumSizes() -> [WindowID: CGSize] {
-        guard !appMinimums.sizes.isEmpty else {
+        guard appMinimums.hasConfirmed else {
             return minimumSizes.sizes
         }
         return appMinimums.effective(learned: minimumSizes.sizes, windows: session.registry.managedWindows())
