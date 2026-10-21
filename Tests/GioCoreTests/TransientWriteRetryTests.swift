@@ -59,4 +59,42 @@ final class TransientWriteRetryTests: XCTestCase {
         XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout"])), 0.5)
         XCTAssertEqual(retry.settle(report(failed: [xcode: "timeout", figma: "timeout"])), 0.5)
     }
+
+    // MARK: - FX-07: retry under the overlay
+
+    private let orbstack = WindowID(pid: 3, elementID: 1)
+    private let target = CGRect(x: 986, y: 8, width: 888, height: 1114)
+
+    /// Live 23:43:23: OrbStack, busy activating, failed its dispatched write
+    /// (`readbackFailed(position/size,-25204)`); the overlay came down with
+    /// its slot empty and the 0.5 s retry filled it 540 ms later. A window
+    /// whose last dispatched write failed only because its app was busy is
+    /// written again before the overlay comes down.
+    func testAWindowWhoseLastWriteWasBusyIsRetriedBeforeTheHandOver() {
+        let passes: [DispatchedOutcome] = [
+            DispatchedOutcome(report: report(applied: [orbstack]), visible: [orbstack: target.offsetBy(dx: -100, dy: 0)]),
+            DispatchedOutcome(
+                report: report(failed: [orbstack: "readbackFailed(position/size,-25204)"]),
+                visible: [orbstack: target, xcode: target]
+            ),
+        ]
+        XCTAssertEqual(retryBeforeHandOver(passes), ParkingPlan(visible: [orbstack: target]))
+    }
+
+    func testALaterSuccessOrARefusalIsNotRetried() {
+        let passes: [DispatchedOutcome] = [
+            DispatchedOutcome(report: report(failed: [orbstack: "timeout"]), visible: [orbstack: target]),
+            DispatchedOutcome(report: report(applied: [orbstack]), visible: [orbstack: target]),
+            DispatchedOutcome(report: report(failed: [figma: ReconcileFailure.frameMismatchKind]), visible: [figma: target]),
+        ]
+        XCTAssertEqual(retryBeforeHandOver(passes), ParkingPlan())
+    }
+
+    func testAParkedTargetIsRetriedAsParked() {
+        let parked = ParkedTarget(frame: CGRect(x: 1799, y: 8, width: 888, height: 1114), edge: .right, display: target)
+        let passes = [
+            DispatchedOutcome(report: report(failed: [orbstack: "timeout"]), visible: [:], parked: [orbstack: parked]),
+        ]
+        XCTAssertEqual(retryBeforeHandOver(passes), ParkingPlan(parked: [orbstack: parked]))
+    }
 }

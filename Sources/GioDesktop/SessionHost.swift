@@ -2079,6 +2079,9 @@ final class SessionHost: @unchecked Sendable {
     /// SM-12: fold every pass dispatched under the overlay, oldest first
     /// (the newest outcome wins). Bounded: a lane with no progress for the
     /// stall timeout fails its windows with "timeout", as in `reconcile`.
+    /// FX-07: a window whose last write failed only because its app was busy
+    /// is written again now, while the overlay still covers it, instead of
+    /// leaving its slot empty until the backoff retry.
     private func collectDispatchedWrites() {
         guard !dispatchedWrites.isEmpty, let reconciler else {
             dispatchedWrites = []
@@ -2088,14 +2091,31 @@ final class SessionHost: @unchecked Sendable {
         dispatchedWrites = []
         var failures: Set<WindowID> = []
         var deferred: [WindowID] = []
+        var outcomes: [DispatchedOutcome] = []
         for entry in passes {
             let report = reconciler.collect(entry.pass)
             // Passes dispatched under an overlay belong to an animated pass.
             foldSettle(
-                report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget, placement: .animate
+                report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget, placement: .animate,
+                retryLater: false
             )
+            outcomes.append(DispatchedOutcome(report: report, visible: entry.visible, parked: entry.parked))
             failures.formUnion(report.failed)
             deferred += report.deferred
+        }
+        let retry = retryBeforeHandOver(outcomes)
+        if !retry.visible.isEmpty || !retry.parked.isEmpty {
+            let ids = (Array(retry.visible.keys) + Array(retry.parked.keys)).sorted()
+            GioLog.record(
+                .info,
+                "reconcile retry now windows=\(ids.count) ids=\(ids.map { "\($0.pid):\($0.elementID)" }.joined(separator: ",")) reason=busy"
+            )
+            let report = reconciler.reconcile(
+                frames: retry.visible, parked: retry.parked, focused: nil, currentlyFocused: nil, trusted: trustedFrames
+            )
+            foldSettle(report, visible: retry.visible, parked: retry.parked, focusTarget: nil, placement: .animate)
+            failures.subtract(report.applied + report.alreadyCorrect + report.parked)
+            failures.formUnion(report.failed)
         }
         finishSettle(deferred: deferred, zoomWriteFailures: failures)
     }
@@ -2103,10 +2123,11 @@ final class SessionHost: @unchecked Sendable {
     /// One settled report into the session's memory: minimum sizes, physical
     /// frames (failed, vanished and deferred windows are forgotten), trust,
     /// render-check candidates. SM-31: vanished windows lose their snapshot
-    /// images and get one proof scan of their pid.
+    /// images and get one proof scan of their pid. `retryLater`: busy writes
+    /// get a backoff retry (MM-11); off while a caller retries them itself.
     private func foldSettle(
         _ report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
-        focusTarget: WindowID?, placement: InstantPlacementDecision
+        focusTarget: WindowID?, placement: InstantPlacementDecision, retryLater: Bool = true
     ) {
         // PF-I: a refused focus is logged by the reconciler, with its reason,
         // once per window per minute (one fails per key press onto it).
@@ -2141,7 +2162,7 @@ final class SessionHost: @unchecked Sendable {
         discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
         // MM-11: writes their busy app timed out are retried with backoff.
-        if let delay = transientRetry.settle(report) {
+        if retryLater, let delay = transientRetry.settle(report) {
             let ids = report.failed.filter { report.failures[$0]?.isTransient == true }
             scheduleTransientRetry(ids, after: delay)
         }
