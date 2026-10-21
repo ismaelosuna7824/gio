@@ -66,6 +66,10 @@ public final class DiscoveryService: @unchecked Sendable {
         /// host requests the keyboard focus intent (argument: the window
         /// focused before the switch).
         public var followArrival: (WindowID?) -> Void
+        /// FL-01: an opted-in background popup took the strip's focus; the
+        /// host asks the next pass to focus and raise it (macOS opened it
+        /// under the frontmost app's window, and only focus brings it up).
+        public var focusArrival: (WindowID) -> Void
         /// PF-02: classify one appeared element and say why it failed (an
         /// unreadable frame retries sooner). Nil: `discoverOne` decides and
         /// a failure keeps the original retry schedule.
@@ -111,6 +115,7 @@ public final class DiscoveryService: @unchecked Sendable {
             windowOpened: @escaping (WindowID) -> Void = { _ in },
             windowsClosing: @escaping ([WindowID]) -> Void = { _ in },
             followArrival: @escaping (WindowID?) -> Void = { _ in },
+            focusArrival: @escaping (WindowID) -> Void = { _ in },
             discoverAttempt: ((AXUIElement, pid_t) -> SingleWindowDiscovery)? = nil,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             windowRegistered: @escaping (WindowOpenTiming) -> Void = { _ in },
@@ -125,6 +130,7 @@ public final class DiscoveryService: @unchecked Sendable {
             self.windowFrame = windowFrame
             self.newWindowPosition = newWindowPosition
             self.followArrival = followArrival
+            self.focusArrival = focusArrival
             self.discoverAttempt = discoverAttempt
             self.now = now
             self.windowRegistered = windowRegistered
@@ -481,7 +487,10 @@ public final class DiscoveryService: @unchecked Sendable {
             let outcome = evaluateRules(
                 context.rules(), app: window.application, bundleID: window.bundleID, title: window.title
             )
-            let takesFocus = arrivalTakesFocus(outcome, mode: window.mode, minimized: window.isMinimized)
+            // A window dragged out of its tab group is not a new popup.
+            let takesFocus = arrivalTakesFocus(
+                outcome, mode: window.mode, minimized: window.isMinimized, fromBackgroundApp: false
+            )
             let position = context.newWindowPosition()
             context.updateManager { manager in
                 placeArrival(id, outcome: outcome, takesFocus: takesFocus, position: position, manager: &manager)
@@ -738,7 +747,7 @@ public final class DiscoveryService: @unchecked Sendable {
             outcome, admissionFloat: candidate.floatReason,
             appHasOtherWindows: context.registry().managedWindows().contains { $0.pid == id.pid && $0.id != id }
         )
-        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused
+        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused != false
             && routing.openOnWorkspace != nil
             ? decideArrivalFollow(
                 outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID(),
@@ -751,16 +760,21 @@ public final class DiscoveryService: @unchecked Sendable {
         var destinationShown = false
         var workspaceLabel = ""
         let position: NewWindowPosition = mayFollow ? context.newWindowPosition() : .end
+        // FL-01: a live arrival of an app other than the frontmost one.
+        let fromBackgroundApp = mayFollow && context.frontmostPID() != window.pid
+        let takesFocus = arrivalTakesFocus(
+            outcome, mode: window.mode, minimized: minimized, fromBackgroundApp: fromBackgroundApp
+        )
         context.updateManager { manager in
             let display = placement.flatMap { displayFor(frame: window.frame, displays: $0) }
             // A floating arrival (a dialog, or a transient popup such as
             // Chrome's address-bar suggestions, re-created on every key) must
             // not take the strip's focus: closing it would leave the focus on
             // the last column. If the OS focuses it, focus adoption follows.
-            // WR-04: neither does an `open-focused = false` arrival.
+            // WR-04: neither does an `open-focused = false` arrival. FL-01:
+            // an opted-in background popup does (`arrivalTakesFocus`).
             let destID = placeArrival(
-                id, outcome: routing,
-                takesFocus: arrivalTakesFocus(outcome, mode: window.mode, minimized: minimized),
+                id, outcome: routing, takesFocus: takesFocus,
                 onDisplay: display, position: position, manager: &manager
             )
             destinationShown = manager.activeIDs.contains(destID)
@@ -790,6 +804,10 @@ public final class DiscoveryService: @unchecked Sendable {
             }
             // PF-02: the switch starts in the pass this registration runs.
             context.followArrival(previousFocus)
+        }
+        if takesFocus, window.mode == .floating, destinationShown {
+            context.log(.info, "window focus-on-open id=\(id.pid):\(id.elementID) app=\(window.application) reason=rule")
+            context.focusArrival(id)
         }
         context.watchWindow(candidate.element, candidate.window.pid)
         // PF-02: only an arrival on the shown workspace enters from below; a

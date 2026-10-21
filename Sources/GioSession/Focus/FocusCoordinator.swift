@@ -460,11 +460,12 @@ public final class FocusCoordinator: @unchecked Sendable {
         focusIntent.request(context.currentWorkspace().focusedWindow, now: context.now())
     }
 
-    /// TG-03: a trackpad scroll settled on another column: the next pass
-    /// raises its window like a keyboard focus change (niri moves the focus
-    /// with the gesture), without centering (the snap chose the offset) or a
-    /// cursor warp (the hand is on the trackpad, not on the pointer).
-    public func requestGestureIntent() {
+    /// The next pass focuses and raises the current workspace's focused
+    /// window like a keyboard focus change, without centering or a cursor
+    /// warp. TG-03: a trackpad scroll settled on another column (the snap
+    /// chose the offset; the hand is on the trackpad, not on the pointer).
+    /// FL-01: an opted-in background popup arrived (the pointer stays put).
+    public func requestUncenteredIntent() {
         focusIntent.request(context.currentWorkspace().focusedWindow, now: context.now())
     }
 

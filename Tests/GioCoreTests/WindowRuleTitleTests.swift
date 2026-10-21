@@ -97,9 +97,9 @@ final class WindowRuleTitleTests: XCTestCase {
         XCTAssertEqual(outcome.columnWidth, .proportion(0.5))
         XCTAssertTrue(outcome.openMaximized)
         XCTAssertEqual(outcome.display, 2)
-        XCTAssertFalse(outcome.openFocused)
+        XCTAssertEqual(outcome.openFocused, false)
         XCTAssertEqual(outcome.widthLimits, ColumnWidthLimits(min: 400, max: 900))
-        XCTAssertTrue(evaluateRules([], app: "Code").openFocused, "default: the new window takes focus")
+        XCTAssertNil(evaluateRules([], app: "Code").openFocused, "default: no opinion (tiled arrivals take focus)")
         XCTAssertNil(evaluateRules([WindowRule(app: "Code")], app: "Code").widthLimits)
     }
 

@@ -66,6 +66,8 @@ final class EventWorld: @unchecked Sendable {
     var opened: [WindowID] = []
     /// NW-02: follow requests (the focus before the switch).
     var follows: [WindowID?] = []
+    /// FL-01: opted-in background popups that asked to be focused.
+    var arrivalFocus: [WindowID] = []
     /// NA-03: (ids, still registered when reported).
     var closing: [([WindowID], Bool)] = []
     var reflows = 0
@@ -161,6 +163,7 @@ final class EventWorld: @unchecked Sendable {
                 self.closing.append((ids, ids.allSatisfy { self.session.registry.find($0) != nil }))
             },
             followArrival: { self.follows.append($0) },
+            focusArrival: { self.arrivalFocus.append($0) },
             log: { self.logs.append(($0, $1)) },
             newWindowPosition: { self.session.config.layout.newWindowPosition }
         )
