@@ -108,21 +108,32 @@ public final class LauncherAppCatalog {
     private let directories: [String]
     private let now: () -> TimeInterval
     private let findRunningApp: (String) -> (bundlePath: String?, icon: NSImage?)?
+    /// PA-22: icons drawn by earlier launches; nil keeps them in memory only.
+    private let iconStore: LauncherIconStore?
+    /// Draws one bundle's icon (background queue).
+    private let drawIcon: @Sendable (String, CGFloat) -> NSImage
     private var observers: [NSObjectProtocol] = []
 
     /// `findRunningApp` finds a running app by name (its bundle path and
-    /// icon) for window rows.
+    /// icon) for window rows. `iconStore` is read on the first scan and
+    /// written whenever a scan drew or dropped an icon.
     public init(
         directories: [String] = defaultApplicationDirectories(),
         now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
         findRunningApp: @escaping (String) -> (bundlePath: String?, icon: NSImage?)? = { name in
             NSWorkspace.shared.runningApplications.first { $0.localizedName == name }
                 .map { ($0.bundleURL?.path, $0.icon) }
+        },
+        iconStore: LauncherIconStore? = nil,
+        drawIcon: @escaping @Sendable (String, CGFloat) -> NSImage = { path, side in
+            scaledLauncherIcon(NSWorkspace.shared.icon(forFile: path), side: side)
         }
     ) {
         self.directories = directories
         self.now = now
         self.findRunningApp = findRunningApp
+        self.iconStore = iconStore
+        self.drawIcon = drawIcon
     }
 
     /// Scan now in the background and refresh when an app launches.
@@ -188,9 +199,17 @@ public final class LauncherAppCatalog {
         let directories = directories
         let started = now()
         let side = Self.iconSide
-        let cached = LauncherScanResult(apps: [], icons: icons, stamps: iconStamps, drawn: 0)
+        // PA-22: the first scan of a launch starts from the icons on disk.
+        let store = iconStore
+        let fromDisk = iconStamps.isEmpty
+        let inMemory = LauncherScanResult(apps: [], icons: icons, stamps: iconStamps, drawn: 0)
         let previous = LauncherAppScan(apps: apps, stamps: iconStamps)
+        let drawIcon = drawIcon
         DispatchQueue.global(qos: .utility).async { [weak self] in
+            var cached = inMemory
+            if fromDisk, let stored = store?.load(side: side) {
+                cached = LauncherScanResult(apps: [], icons: stored.icons, stamps: stored.stamps, drawn: 0)
+            }
             let scan = scanApplications(directories: directories, previous: previous)
             let toDraw = Set(launcherIconsToDraw(found: scan.stamps, drawn: cached.stamps))
             var icons: [String: NSImage] = [:]
@@ -198,8 +217,11 @@ public final class LauncherAppCatalog {
                 if !toDraw.contains(path), let icon = cached.icons[path] {
                     icons[path] = icon
                 } else {
-                    icons[path] = scaledLauncherIcon(NSWorkspace.shared.icon(forFile: path), side: side)
+                    icons[path] = drawIcon(path, side)
                 }
+            }
+            if !toDraw.isEmpty || cached.stamps.keys.contains(where: { scan.stamps[$0] == nil }) {
+                store?.save(icons: icons, stamps: scan.stamps, side: side)
             }
             let result = LauncherScanResult(apps: scan.apps, icons: icons, stamps: scan.stamps, drawn: toDraw.count)
             DispatchQueue.main.async {

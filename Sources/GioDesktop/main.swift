@@ -23,8 +23,9 @@ func activateGio() {
 final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
-    /// PF-01: apps and icons scanned in the background at startup.
-    private let launcherCatalog = LauncherAppCatalog()
+    /// PF-01: apps and icons scanned in the background at startup; PA-22:
+    /// icons drawn by earlier launches come from Caches.
+    private let launcherCatalog = LauncherAppCatalog(iconStore: .userCache())
     private lazy var launcher = LauncherPanelController(
         focusWindow: { [host] in host.focusWindow($0) }, catalog: launcherCatalog
     )
