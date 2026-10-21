@@ -2,7 +2,89 @@
 
 How to use Gio day to day: shortcuts, configuration, window rules, the desktop app and the command line. Everything here is derived from `defaultHotkeyBindings`, `ShortcutCatalog`, the config parser and the command grammar in the source.
 
-Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Dwindle layout](#dwindle-layout) · [Config](#configuration-reference) · [Rules](#window-rules) · [Desktop app](#desktop-app) · [Launcher](#launcher) · [Overview](#workspace-overview) · [CLI](#command-line-gio) · [Updates](#updates) · [gio-poc](#gio-poc)
+Contents: [Install](#install) · [First steps](#first-steps) · [Keyboard layouts](#keyboard-layouts) · [Uninstall](#uninstall) · [If your windows disappear](#if-your-windows-disappear) · [Known limitations](#known-limitations) · [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Dwindle layout](#dwindle-layout) · [Config](#configuration-reference) · [Rules](#window-rules) · [Desktop app](#desktop-app) · [Launcher](#launcher) · [Overview](#workspace-overview) · [CLI](#command-line-gio) · [Updates](#updates) · [gio-poc](#gio-poc)
+
+## Install
+
+Gio runs on Macs with **Apple silicon** and **macOS 13 or later**; Screen Recording features (smooth motion, overview thumbnails, the close ghost) need macOS 14 or later.
+
+1. Download **[Gio.dmg](https://github.com/ismaelosuna7824/gio/releases/latest/download/Gio.dmg)**, open it and drag **Gio** onto **Applications**. Run it from `/Applications`: a copy opened from the DMG or Downloads cannot update itself.
+2. Open Gio. It is **not notarized yet**, so the first time macOS refuses with a dialog saying Apple could not verify Gio is free of malware: click **Done** (not **Move to Trash**). Then open **System Settings > Privacy & Security**, scroll to the message about Gio being blocked, click **Open Anyway** and confirm with your password. On macOS 15 and later this is the only way (right-click **Open** no longer bypasses the check). Only the first install needs it; updates come through Gio's own updater.
+3. Grant **Accessibility** when the first-run guide asks (or turn Gio on in System Settings > Privacy & Security > Accessibility). Without it nothing tiles and no shortcut works.
+4. Optional: grant **Screen Recording** (first-run guide, or **Request access** in Overview or Diagnostics), then **relaunch Gio**; macOS applies it only on the next launch. Without it windows still tile but stutter as they move (see [Why Screen Recording](../README.md#why-screen-recording)).
+
+The command-line tools (`gio`, `gio-poc`) are not in the DMG; they come from a source checkout (see [Command line](#command-line-gio)).
+
+## First steps
+
+Gio tiles the windows of the current Space into a horizontal strip of columns as soon as it has Accessibility. **Alt** is the **Option** key. The ten to learn first (all defaults; the full table is in [Default shortcuts](#default-shortcuts)):
+
+| Keys | What they do |
+| --- | --- |
+| `Alt+H` / `Alt+L` | Focus the column to the left / right. |
+| `Alt+J` / `Alt+K` | Focus the window below / above in the column. |
+| `Alt+Shift+H` / `Alt+Shift+L` | Move the window left / right (out of its column, or into the neighbouring one). |
+| `Alt+Shift+<` / `Alt+Shift+>` | Move the whole column left / right. |
+| `Alt+R` | Cycle the column through the preset widths. |
+| `Alt+F` | Make the column fill the display; again to restore. |
+| `Alt+U` / `Alt+I` | Go to the workspace below / above. |
+| `Alt+1` ... `Alt+9` / `Alt+Shift+1` ... `Alt+Shift+9` | Go to workspace N / send the focused window there. |
+| `Alt+Shift+Space` | Float the focused window (or tile it again). |
+| `Alt+O` / `Alt+Space` | Workspace overview / launcher. |
+
+Closing the main window keeps Gio running from its menu bar item; **Quit Gio** there stops tiling and puts every window back on screen. The app's **Shortcuts** section lists, rebinds and removes every shortcut.
+
+## Keyboard layouts
+
+Gio's default shortcuts are `Option` combos, and on many keyboard layouts `Option` plus a number or letter **types a character**: on Spanish `Option+1` is `|`, `Option+2` is `@` and `Option+3` is `#`; on German `Option+L` is `@`, `Option+5` is `[`, `Option+6` is `]` and `Option+7` is `|`; on US `Option+U` and `Option+I` start an accent (¨, ˆ). While Gio runs it **takes every combo it has bound**, so that character no longer reaches your apps. Keys are matched by their physical position (the US key at that place), whatever the layout.
+
+Give a combo back by removing or moving its binding: in the app's **Shortcuts** section (**×** removes a binding, **Add** records a new combo), or in `~/.config/gio/config.toml`:
+
+```toml
+[keybindings]
+"Alt+2" = "none"                 # Option+2 types @ again
+"Ctrl+Alt+Cmd+2" = "workspace 2" # the action on another combo
+```
+
+See [Custom key bindings](#custom-key-bindings).
+
+## Uninstall
+
+1. **Quit Gio** from its menu bar item: every parked window comes back on screen.
+2. If **Open at Login** is on, turn it off first (Overview > Status), or remove Gio in System Settings > General > Login Items.
+3. Delete the app, its files and its permissions:
+
+   ```sh
+   rm -rf /Applications/Gio.app
+   rm -rf ~/.config/gio                                  # config, log, socket and lock
+   rm -rf ~/Library/Logs/Gio                             # the updater's log
+   rm -rf ~/Library/Caches/dev.gio.windowmanager         # the launcher's app icon cache
+   defaults delete dev.gio.windowmanager                 # first-run guide and update settings
+   tccutil reset Accessibility dev.gio.windowmanager
+   tccutil reset ScreenCapture dev.gio.windowmanager
+   ```
+
+`dev.gio.windowmanager` is the released app's bundle identifier; a copy you built and signed yourself uses your own `PRODUCT_BUNDLE_IDENTIFIER`. (`gio uninstall` in the command line is something else: it only removes a stale socket and lock file, see [Command line](#command-line-gio).)
+
+## If your windows disappear
+
+Gio hides the columns and workspaces you are not looking at just off the edge of the display (a 1 pt sliver stays visible). It brings them back by itself when you **quit** Gio, and its guardian helper does it within about a second if Gio **crashes or is killed** (see [Recovery if Gio dies](#recovery-if-gio-dies)). If windows are still missing (power loss, or the guardian could not run):
+
+1. **Open Gio again.** At startup it brings back leftover parked windows it will not tile, and its first layout re-places the tiled ones.
+2. Or, while Gio runs, use **Diagnostics > Restore All Windows** (every parked window on screen without quitting; the next layout change parks them again).
+3. From a source checkout: `swift run gio-poc restore` (see [gio-poc](#gio-poc)).
+
+## Known limitations
+
+- **One Space.** Gio manages only the macOS Space it started on. Windows on other Spaces are left alone, and Gio never moves windows between Spaces; coming back re-places the managed windows.
+- **Separate Spaces on several displays.** With System Settings > Desktop & Dock > **Displays have separate Spaces** on (macOS's default), a Space change on a secondary display is not seen. Multiple displays are covered by automated tests but not yet validated on real hardware.
+- **Native fullscreen** (the green button) windows are left alone. `Alt+Shift+F` is Gio's own fullscreen, a layout mode inside the Space.
+- **Stage Manager is not supported.** Turn it off (Control Center, or System Settings > Desktop & Dock > Stage Manager) while you use Gio.
+- **Mission Control shows tiny windows**, because it also lays out the windows Gio parks off-screen. Turn on System Settings > Desktop & Dock > **Group windows by application**, or use Gio's overview (`Alt+O`).
+- **English only.** The app's interface is in English.
+- **The dwindle layout is experimental:** covered by automated tests, not yet validated on a real desktop.
+- **Not notarized yet:** the first launch needs **Open Anyway** (see [Install](#install)).
+- **Option shortcuts take characters** on some keyboard layouts (see [Keyboard layouts](#keyboard-layouts)).
 
 ## Concepts
 
@@ -20,7 +102,7 @@ Contents: [Concepts](#concepts) · [Shortcuts](#default-shortcuts) · [Dwindle l
 
 ## Default shortcuts
 
-Shortcuts are global while Gio runs and Accessibility permission is granted. A bound combo is swallowed (the app never sees it); everything else passes through untouched. All shortcuts below except the launcher can be rebound from the app's **Shortcuts** section or in `[keybindings]`.
+Shortcuts are global while Gio runs and Accessibility permission is granted. A bound combo is swallowed (the app never sees it); everything else passes through untouched. Every shortcut below, the launcher's included, can be rebound or removed from the app's **Shortcuts** section or in `[keybindings]` (on layouts where `Option` combos type characters, see [Keyboard layouts](#keyboard-layouts)).
 
 | Shortcut | Action (config name) | What it does |
 | --- | --- | --- |
@@ -61,6 +143,7 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+Shift+1` ... `Alt+Shift+9` | `move-to-workspace N` | Send the focused window to position N (past the end: the empty one at the bottom). Focus stays where it was. |
 | `Ctrl+Alt+1` ... `Ctrl+Alt+9` | `move-column-to-workspace N` | Send the whole focused column to position N (past the end: the empty one at the bottom) and follow it, like niri. |
 | `Alt+O` | `toggle-overview` | Open or close the [workspace overview](#workspace-overview): every workspace of this display as a row of window thumbnails. |
+| `Alt+Space` | `toggle-launcher` | Open or close the [launcher](#launcher) panel. |
 | `Ctrl+Alt+H` / `Ctrl+Alt+L` | `focus-monitor-left` / `focus-monitor-right` | Focus the display on the left / right and the workspace it shows (see [Multiple monitors](#concepts)). No display there: nothing happens. |
 | `Ctrl+Alt+K` / `Ctrl+Alt+J` | `focus-monitor-up` / `focus-monitor-down` | Focus the display above / below. |
 | `Ctrl+Alt+Shift+H` / `Ctrl+Alt+Shift+L` | `move-column-to-monitor-left` / `move-column-to-monitor-right` | Send the focused column (all its windows, same width) to the workspace the display on the left / right shows, next to its focused column, and follow it. |
@@ -73,9 +156,8 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | (unbound) | `set-workspace-layout-scrolling` / `set-workspace-layout-dwindle` | Lay the current workspace out as the strip / the dwindle tree (nothing happens when it already is). |
 | `Alt+Shift+B` | `dwindle-balance` | Dwindle: every split of the workspace back to half and half (OmniWM's default combo). Does nothing on a scrolling workspace. |
 | (unbound) | `dwindle-toggle-split`, `dwindle-swap-split`, `dwindle-preselect-left` / `-right` / `-up` / `-down`, `dwindle-preselect-clear` | Dwindle only; see [Dwindle layout](#dwindle-layout). |
-| `Alt+Space` | (launcher, fixed) | Summon the launcher panel. Handled by the app before the action table; not configurable. |
 
-That is 79 default action bindings plus the launcher (`consume-or-expel-window-left/right` have two each: `Alt+Shift+H/L` and `Alt+[` / `Alt+]`). The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`), and edits it. Most actions have a dwindle meaning on a dwindle workspace; see [Dwindle layout](#dwindle-layout).
+That is 80 default action bindings (`consume-or-expel-window-left/right` have two each: `Alt+Shift+H/L` and `Alt+[` / `Alt+]`). The **Shortcuts** section of the app lists the same table live, with the source of each binding (`default` or `config`), and edits it. Most actions have a dwindle meaning on a dwindle workspace; see [Dwindle layout](#dwindle-layout).
 
 Notes:
 
@@ -129,7 +211,7 @@ Limits: learned minimum sizes and rule `min-width` / `max-width` apply to the st
 
 ## Configuration reference
 
-**File:** `~/.config/gio/config.toml`. Created from a commented template by `GioCLI setup`, **Diagnostics > Open Config File**, or the first edit in a Settings section. Changes apply with `gio reload`, **Diagnostics > Reload Config**, or automatically after **Apply** in Settings.
+**File:** `~/.config/gio/config.toml`. Created from a commented template by **Diagnostics > Open Config File**, the first edit in a Settings section, or `gio setup` (source checkout). Changes apply with **Diagnostics > Reload Config**, the menu bar's **Reload Config**, `gio reload`, or automatically after **Apply** in Settings.
 
 ### Format rules
 
@@ -144,8 +226,8 @@ Validation outcomes:
 
 | Problem | Result |
 | --- | --- |
-| Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used**, and every message (with its line number) is shown in the app (**Overview**, **Diagnostics**) and returned by `gio reload`. |
-| Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility). |
+| Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used** (custom shortcuts included), and every message (with its line number) is shown in the app (**Overview**, and **Diagnostics**, whose Configuration card turns red with an `N errors` badge) and returned by `gio reload`. Fix the lines, then **Reload Config**. |
+| Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility); Diagnostics shows a yellow `N warnings` badge. |
 | `animations.duration-ms` outside 0 to 1000, `animations.spring-damping-ratio` outside 0.2 to 3, `animations.spring-stiffness` outside 100 to 3000, `focus-ring.width` outside 0 to 20, `focus.dim-strength` outside 0.0 to 0.5 | **Warning.** Clamped into range. |
 | `layout.default-layout`, `[[workspace]] layout` other than `"scrolling"` / `"dwindle"`, `dwindle.default-split-ratio` outside 0.1 to 1.9, `dwindle.split-width-multiplier` outside 0.1 to 10 (or not a number) | **Warning.** The default is kept and the rest of the file applies (DW-03: a layout typo never rejects the file). |
 | Missing file | Silent defaults (first run). |
@@ -256,11 +338,11 @@ Trackpad swipes (see [Trackpad gestures](#trackpad-gestures)). Unlike the other 
 The `[keybindings]` table maps a combo to an action name: `"Alt+H" = "focus-left"`.
 
 - **Combo syntax:** one or more modifiers plus one key, joined by `+`. Modifiers (case-insensitive): `ctrl`/`control`, `alt`/`option`, `shift`, `cmd`/`command`. At least one modifier is required. Keys are case-insensitive and come from one list: `A`-`Z`, `0`-`9`, `F1`-`F12`, `Left`, `Right`, `Up`, `Down`, `Tab`, `Return` (`Enter`), `Escape` (`Esc`), `Space`, `Delete` (`Backspace`), `Home`, `End`, `PageUp` (`PgUp`), `PageDown` (`PgDn`), and punctuation `Grave` (`` ` ``), `Comma` (`,`), `Period` (`.`), `Slash` (`/`), `Semicolon` (`;`), `Quote` (`'`), `Backslash` (`\`), `Minus` (`-`), `Equal` (`=`), `BracketLeft` (`[`), `BracketRight` (`]`).
-- **Action names:** `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-column-left`, `move-column-right`, `move-window-left`, `move-window-right` (aliases `move-left`, `move-right`), `move-up`, `move-down`, `workspace N`, `move-to-workspace N` (write them as `"workspace 3"`; use N from 1 to 9, other values do nothing), `focus-workspace-down`, `focus-workspace-up`, `move-window-to-workspace-down`, `move-window-to-workspace-up`, `toggle-floating` (alias `toggle-window-floating`), `fullscreen` (alias `fullscreen-window`), `switch-preset-column-width`, `set-column-width-minus`, `set-column-width-plus`, `maximize-column`, `center-column`, `consume-or-expel-window-left`, `consume-or-expel-window-right`, `switch-preset-window-height`, `set-window-height-minus`, `set-window-height-plus`, `reset-window-height`, `focus-column-first`, `focus-column-last`, `move-column-to-first`, `move-column-to-last`, `swap-window-left`, `swap-window-right`, `move-column-to-workspace N` (like `move-to-workspace N`), `move-column-to-workspace-down`, `move-column-to-workspace-up`, `focus-workspace-previous`, `move-workspace-down`, `move-workspace-up`, `focus-window-or-workspace-down`, `focus-window-or-workspace-up`, `switch-preset-column-width-back`, `expand-column-to-available-width`, `center-visible-columns`, `move-column-left-or-to-monitor-left`, `move-column-right-or-to-monitor-right`, `focus-column-or-monitor-left`, `focus-column-or-monitor-right` (these four are unbound by default), and per direction (`left`, `right`, `up`, `down`) `focus-monitor-<direction>`, `move-column-to-monitor-<direction>`, `move-window-to-monitor-<direction>`, `move-workspace-to-monitor-<direction>` (the last two are unbound by default, for example `"Ctrl+Alt+Cmd+L" = "move-workspace-to-monitor-right"`).
+- **Action names:** `focus-left`, `focus-right`, `focus-up`, `focus-down`, `move-column-left`, `move-column-right`, `move-window-left`, `move-window-right` (aliases `move-left`, `move-right`), `move-up`, `move-down`, `workspace N`, `move-to-workspace N` (write them as `"workspace 3"`; use N from 1 to 9, other values do nothing), `focus-workspace-down`, `focus-workspace-up`, `move-window-to-workspace-down`, `move-window-to-workspace-up`, `toggle-overview`, `toggle-launcher`, `toggle-floating` (alias `toggle-window-floating`), `fullscreen` (alias `fullscreen-window`), `switch-preset-column-width`, `set-column-width-minus`, `set-column-width-plus`, `maximize-column`, `center-column`, `consume-or-expel-window-left`, `consume-or-expel-window-right`, `switch-preset-window-height`, `set-window-height-minus`, `set-window-height-plus`, `reset-window-height`, `focus-column-first`, `focus-column-last`, `move-column-to-first`, `move-column-to-last`, `swap-window-left`, `swap-window-right`, `move-column-to-workspace N` (like `move-to-workspace N`), `move-column-to-workspace-down`, `move-column-to-workspace-up`, `focus-workspace-previous`, `move-workspace-down`, `move-workspace-up`, `focus-window-or-workspace-down`, `focus-window-or-workspace-up`, `switch-preset-column-width-back`, `expand-column-to-available-width`, `center-visible-columns`, `move-column-left-or-to-monitor-left`, `move-column-right-or-to-monitor-right`, `focus-column-or-monitor-left`, `focus-column-or-monitor-right` (these four are unbound by default), per direction (`left`, `right`, `up`, `down`) `focus-monitor-<direction>`, `move-column-to-monitor-<direction>`, `move-window-to-monitor-<direction>`, `move-workspace-to-monitor-<direction>` (the last two are unbound by default, for example `"Ctrl+Alt+Cmd+L" = "move-workspace-to-monitor-right"`), and the layout actions `toggle-workspace-layout`, `set-workspace-layout-scrolling`, `set-workspace-layout-dwindle`, `dwindle-toggle-split`, `dwindle-swap-split`, `dwindle-balance`, `dwindle-preselect-left` / `-right` / `-up` / `-down` and `dwindle-preselect-clear` (see [Dwindle layout](#dwindle-layout)).
 - **Bindings are additive.** Config entries are layered over the defaults: a config entry binds a combo (replacing the default action of that exact combo). Default bindings stay active unless you reuse their combo or unbind it.
 - **Unbind with `"none"`.** `"Alt+C" = "none"` makes the combo do nothing, defaults included (Alt+C no longer centers the column; every other default stays). For one combo the last line in the file wins, so `"none"` followed by an action binds it again. Shortcuts shows such a default under its action as **Removed**.
 - **Unknown keys are rejected.** A binding on a key outside the list above (for example `Alt+F13`) is a config validation error (`unknown key 'F13' in hotkey ...`), never a binding that silently does nothing. Keys are matched on the ANSI virtual keycode, so the physical position wins on non-US layouts.
-- `Alt+Space` (launcher) cannot be rebound or removed.
+- **The launcher is an ordinary action.** `toggle-launcher` (default `Alt+Space`) is rebound and removed like any other: `"Alt+Space" = "none"` gives `Option+Space` back to your apps, and `"Ctrl+Alt+P" = "toggle-launcher"` moves it (a line that binds `Alt+Space` to another action takes it from the launcher). The menu bar's **Launcher** item still opens it.
 - **From the app.** Shortcuts edits these lines for you (see [Main window sections](#main-window-sections)): **Add** writes `"<combo>" = "<action>"` (taking the combo from another action is a **Replace**), **×** on a config-only binding deletes its line and on a default writes `"<combo>" = "none"`, and **Reset** deletes every line that changes that action so its defaults run again. Comments and unrelated lines are kept.
 
 ### `[[workspace]]`
@@ -322,7 +404,7 @@ level = "info"
 "Alt+Shift+R" = "switch-preset-column-width"
 
 [[window-rules]]
-app = "Calculator"
+bundle-id = "com.apple.calculator"
 mode = "floating"
 
 [[window-rules]]
@@ -382,7 +464,7 @@ Behavior:
 | Section | What it shows or does |
 | --- | --- |
 | **Overview** | An **Updates** card at the bottom (version, status, Check Now, Update and Restart, release notes; see [Updates](#updates)). Named workspaces appear with their icon, color and `1 · Code` title in the workspace pills, the live strip header and the window list headers (dynamic ones keep `Workspace N`). Session status, Accessibility permission (with a **Request Access** button), Screen Recording permission (with a **Request access** button and a relaunch hint); in the first-run guide, once you have requested Screen Recording the step offers **Relaunch Gio** and reopens on that step after the restart, config summary and any config messages, display and workspace lines, and every managed window with its application, title, workspace and state (tiled, floating with reason, minimized, hidden). Refreshes every 3 s while the window is visible (nothing runs when it is closed to the menu bar). |
-| **Shortcuts** | Every action grouped by category (Focus, Move, Columns, Windows, Workspaces, Monitors, App) with its current bindings, description and source (a `config` tag when `config.toml` changes it; defaults switched off are listed as **Removed**), search (`Cmd+F`), category chips and a Cheat Sheet layout. Per row: **Add** opens a recorder that captures the next key combo (Gio's own shortcuts are paused while it is open, so a bound combo reaches it; **Esc** cancels; switching to another app or closing the window cancels too). The combo needs at least one modifier and a key from the list in [Custom key bindings](#custom-key-bindings); `Alt+Space` is refused (launcher). A combo another action uses shows which one and whether it is a default or from config, and **Replace** moves it. Workspace rows pick the workspace number in the recorder. **×** removes one binding (in long families such as `Alt+1…9`, the **−** menu lists them). **Reset** appears when config changes the action and restores its defaults. Each change is written to `config.toml` and reloaded at once with a toast (like Rules: there is no draft to apply). The launcher row is fixed. |
+| **Shortcuts** | Every action grouped by category (Focus, Move, Columns, Layout, Windows, Workspaces, Monitors, App) with its current bindings, description and source (a `config` tag when `config.toml` changes it; defaults switched off are listed as **Removed**), search (`Cmd+F`), category chips and a Cheat Sheet layout. Per row: **Add** opens a recorder that captures the next key combo (Gio's own shortcuts are paused while it is open, so a bound combo reaches it; **Esc** cancels; switching to another app or closing the window cancels too). The combo needs at least one modifier and a key from the list in [Custom key bindings](#custom-key-bindings). A combo another action uses shows which one and whether it is a default or from config, and **Replace** moves it. Workspace rows pick the workspace number in the recorder. **×** removes one binding (in long families such as `Alt+1…9`, the **−** menu lists them). **Reset** appears when config changes the action and restores its defaults. Each change is written to `config.toml` and reloaded at once with a toast (like Rules: there is no draft to apply). The launcher (`toggle-launcher`, `Alt+Space`) is edited like every other row. |
 | **Workspaces** | Named workspaces as cards in config order (the order of `Alt+1`, `Alt+2`, ...). Create one with **New Workspace** (`Cmd+N`), or from the empty state with a template (Code, Browsers, Chat, Design: icon and color only, apps are yours to add). Per card: click the icon to pick an SF Symbol (curated grid with search; **Use Number** shows the position instead), pick a color (preset swatches or the color well), rename inline (a name must be non-empty and unique, case-insensitive), choose a **Display** (Main or Display N; shown with more than one display), and reorder by dragging the handle or with the up/down arrows. **Apps** lists the apps whose new windows open there: **Add App** opens a picker with running and installed apps (`/Applications`, `/System/Applications`, `~/Applications`, one folder deep; icons, search, multi-select). An app belongs to one workspace: picking one that another workspace holds moves it, and the picker says so before you confirm. Each app chip's menu sets **Follow** (When Active, Always, Never) or removes it. Deleting a workspace asks first; its windows move to a regular workspace. Edits stay unsaved until **Apply**, which writes `[[workspace]]` blocks and `[[window-rules]]` with `bundle-id`, `app`, `open-on-workspace` and `follow` (an app that already has a rule gets those keys on that rule, so an earlier rule never shadows a new one; removing an assignment keeps the rule when it still sets a mode) and reloads live. Renames update the rules that point at the workspace. |
 | **Layout** | Gaps, padding, default width (fraction or points), preset widths (comma separated), preset window heights (the same chips, NC-08), where new windows open (**New windows open**: at the end, at the start, right or left of the focused column), the center-focused-column mode, the Focus toggles (in the **Focus** section: focus follows mouse, mouse follows focus, and under **Displays** the MM-06/NC-14 **Move windows and columns across displays at the edge**), the **Focus indicator** (Dim / Ring / None; Dim shows a strength slider) and, with Ring selected, the ring settings (enable, width, hide on maximized/fullscreen, and color: a native color picker, preset swatches, a hex field kept in sync and a live preview; the ring is always opaque, so there is no opacity control; Apply writes `active-color = "#rrggbb"` and the ring updates immediately). **Apply** patches `config.toml` in place and reloads live; **Revert** restores the form. Invalid values are explained inline and Apply stays disabled. |
 | **Animations** | Enable toggle, curve, spring or duration controls and the Resize mode (Never, Adaptive, Always) and the Renderer (Snapshot, Accessibility). Apply and Revert as above. |
@@ -405,11 +487,20 @@ The zip holds a folder with `gio.log` (and `gio.log.1` when the log has rotated)
 
 ### Menu bar item
 
-Title `Gio` (or `workspace · windows`), pushed by the session when it changes; no polling. Menu: **Open Gio**, the workspace stack of each display (**Workspace N · windows**, check mark on the active one, only the focused display's rows switch; a named workspace shows its icon and name with its `Alt` number, for example **Code ⌥1 · 2 windows**, and the header reads `Code (1 of 4)`; the status item badge keeps the index), window and column counts, **Move Window to Display** (with two or more displays: one row per display, `N  name`, numbered like `display = N`; the display the focused window is on is checked; sends `move-window-to-display N`), **Reload Config**, **Preferences...** (opens the main window), **Launcher...**, **Update to vX.Y.Z…** while an update is available (see [Updates](#updates)), **Quit Gio**. With no session it shows `no session` and disables session actions. **Quit Gio** runs the normal shutdown, which restores parked windows.
+The status item is a small three-column glyph with the active workspace's number in a badge, pushed by the session when it changes (no polling); its tooltip reads `Workspace 2 of 3 · 5 windows`. The menu, top to bottom:
+
+- A header: **Gio** and the same summary (`Code (1 of 4) · 5 windows` on a named workspace; `Starting…` while there is no session).
+- The workspace stack of each display (**Workspaces**, or **Display 1**, **Display 2**, ... with several displays): one row per workspace with its window count (`Empty`, `2 windows`) and a check mark on the active one; a named workspace shows its icon, its name and its `Alt` number (**Code** `⌥1 · 2 windows`). Only the focused display's rows switch workspace.
+- **Move Window to Display** (with two or more displays): one row per display, `N  name`, numbered like `display = N`; the display the focused window is on is checked; sends `move-window-to-display N`.
+- **Update to vX.Y.Z…** while an update is available (see [Updates](#updates)).
+- **Open Gio** (`Cmd+,`): the main window.
+- **Launcher**: the [launcher](#launcher) panel.
+- **Reload Config** (`Cmd+R`; disabled without a session).
+- **Quit Gio** (`Cmd+Q`): the normal shutdown, which puts every parked window back on screen.
 
 ## Launcher
 
-`Alt+Space` opens a small panel. Type to filter installed apps (top-level `.app` bundles in `/Applications`, `~/Applications`, `/System/Applications`) and Gio's managed windows, then press Enter. Named workspaces of the focused display match by name: typing `code` offers **Go to workspace Code** (kind **Workspace**), which switches there through the same path as `gio workspace N` (so focus follows like the hotkey). Windows are listed as `App — Title` with a window icon and their workspace; minimized windows are left out.
+`Alt+Space` (`toggle-launcher`; rebindable, see [Custom key bindings](#custom-key-bindings)) or the menu bar's **Launcher** opens a small panel. Type to filter installed apps (top-level `.app` bundles in `/Applications`, `~/Applications`, `/System/Applications`) and Gio's managed windows, then press Enter. Named workspaces of the focused display match by name: typing `code` offers **Go to workspace Code** (kind **Workspace**), which switches there through the same path as `gio workspace N` (so focus follows like the hotkey). Windows are listed as `App — Title` with a window icon and their workspace; minimized windows are left out.
 
 | Input | Effect |
 | --- | --- |
@@ -452,7 +543,7 @@ Gio reads the fingers on the built-in trackpad and on Magic Trackpads (see [Priv
 
 ## Command line (`gio`)
 
-The client is the SwiftPM executable target **`GioCLI`** (its usage text prints `gio`). It sends the arguments to the running app over `~/.config/gio/gio.sock`; parsing and execution happen in the app. Without arguments it prints the usage and exits 2; if no app is running it prints an error and exits 1.
+**From a source checkout only:** the `gio` client is not in the DMG; build it with SwiftPM from a clone of the repository. In the app, the launcher's `> <verb>` sends a command to the session the same way (for example `> workspace 2`, `> reload`). The client is the SwiftPM executable target **`GioCLI`** (its usage text prints `gio`). It sends the arguments to the running app over `~/.config/gio/gio.sock`; parsing and execution happen in the app. Without arguments it prints the usage and exits 2; if no app is running it prints an error and exits 1.
 
 ```sh
 swift run GioCLI status
@@ -479,7 +570,7 @@ swift run GioCLI status
 | `gio doctor` | Health report: Accessibility, config, version, IPC, displays, recent errors. |
 | `gio update` | Asks the running app to check GitHub for a newer release and prints the result (up to date, available, or why the check failed). See [Updates](#updates). |
 | `gio update --install` | Checks if needed, then starts the download; replies once it started (or why this copy cannot update itself). Gio verifies the update, quits normally (windows restored) and reopens on the new version. |
-| `gio uninstall` | Removes the socket and lock files only when no session holds the lock; keeps your config and themes. |
+| `gio uninstall` | Not an uninstaller: it only removes the socket (`gio.sock`) and lock (`gio.lock`) files a session left behind, and refuses while a session holds the lock. Keeps the app, your config and themes. To remove Gio, see [Uninstall](#uninstall). |
 | `gio logs [--level trace\|debug\|info\|warn\|error]` | Print the log file, optionally at or above a level. |
 | `gio help` | Usage. |
 
@@ -494,7 +585,7 @@ Gio updates itself from the GitHub releases of `ismaelosuna7824/gio` (the `GioUp
 | **Overview > Updates** | The running version and the updater status: **Check Now**, **Update and Restart** (with a progress bar while downloading), **Release Notes…** (the release's notes in a sheet, with **Update and Restart** and **View on GitHub**). |
 | Menu bar | **Update to vX.Y.Z…** appears while an update is available; it opens Gio with the release notes. |
 | **Diagnostics > Updates** | **Automatically check for updates** (on by default) and **Include beta versions** (off by default). |
-| `gio update`, `gio update --install` | The same check and install from a terminal (see the table above). |
+| `gio update`, `gio update --install` | The same check and install from a terminal (source checkout; see the table above). |
 
 **When Gio checks.** About 30 seconds after launch (skipped if a check ran in the last hour, so restarts do not repeat it) and then about once a day while it runs. The daily check is scheduled by macOS (`NSBackgroundActivityScheduler`), which picks a convenient moment within an hour; Gio keeps no timer of its own, so it stays idle at rest. Turning **Automatically check for updates** off stops both; **Check Now** and `gio update` always work.
 
@@ -518,11 +609,11 @@ GitHub allows 60 unauthenticated requests per hour; Gio sends `If-None-Match`, s
 
 ## Recovery if Gio dies
 
-Gio starts a small helper (a second `Gio --guardian` process, no icon or window). If Gio is killed (Force Quit, `kill -9`, Xcode Stop, a crash), the helper brings parked windows back on screen within about a second and exits; the log shows `guardian restore applied=N`. It needs the same Accessibility permission as Gio. If it could not run, use `swift run gio-poc restore` or start Gio again.
+Gio starts a small helper (a second `Gio --guardian` process, no icon or window). If Gio is killed (Force Quit, `kill -9`, Xcode Stop, a crash), the helper brings parked windows back on screen within about a second and exits; the log shows `guardian restore applied=N`. It needs the same Accessibility permission as Gio. If it could not run, open Gio again (its startup brings leftover parked windows back) or use **Diagnostics > Restore All Windows**; from a source checkout, `swift run gio-poc restore` also works. See [If your windows disappear](#if-your-windows-disappear).
 
 ## `gio-poc`
 
-`gio-poc` is the Accessibility proof-of-concept tool (`swift run gio-poc <verb>`). It talks to Accessibility directly, needs Accessibility permission for the terminal or tool that runs it, and does **not** go through the running app. Window indices are positional within one fresh enumeration per call.
+`gio-poc` is the Accessibility proof-of-concept tool, **from a source checkout only** (not in the DMG): `swift run gio-poc <verb>`. It talks to Accessibility directly, needs Accessibility permission for the terminal or tool that runs it, and does **not** go through the running app. Window indices are positional within one fresh enumeration per call.
 
 | Verb | Effect |
 | --- | --- |
