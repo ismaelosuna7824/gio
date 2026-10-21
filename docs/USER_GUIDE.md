@@ -58,7 +58,7 @@ See [Custom key bindings](#custom-key-bindings).
    rm -rf /Applications/Gio.app
    rm -rf ~/.config/gio                                  # config, log, socket and lock
    rm -rf ~/Library/Logs/Gio                             # the updater's log
-   rm -rf ~/Library/Caches/dev.gio.windowmanager         # the launcher's app icon cache
+   rm -rf ~/Library/Caches/dev.gio.windowmanager         # caches: app icons, apps' minimum window sizes
    defaults delete dev.gio.windowmanager                 # first-run guide and update settings
    tccutil reset Accessibility dev.gio.windowmanager
    tccutil reset ScreenCapture dev.gio.windowmanager
