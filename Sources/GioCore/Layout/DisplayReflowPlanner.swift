@@ -27,7 +27,7 @@ public func planDisplayLayout(
 ) throws -> DisplayLayoutPlan {
     if workspace.layout == .dwindle {
         return try planDwindleDisplayLayout(
-            workspace: workspace, modes: modes, config: engine.config,
+            workspace: workspace, modes: modes, config: engine.config, minimumSizes: engine.minimumSizes,
             viewport: viewport, display: display, otherDisplays: otherDisplays
         )
     }
@@ -162,7 +162,7 @@ public func workspaceLayoutResult(
     }
     var reconciled = workspace
     reconciled.reconcileDwindle(splitRatio: engine.config.dwindle.splitRatio)
-    let frames = try DwindleLayoutEngine(config: engine.config).layout(
+    let frames = try DwindleLayoutEngine(config: engine.config, minimumSizes: engine.minimumSizes).layout(
         reconciled.dwindle, viewport: viewport, modes: modesKeepingFullscreenInColumns(modes)
     ).frames
     return LayoutResult(frames: frames, contentWidth: viewport.width, viewportOffset: 0)
@@ -179,14 +179,14 @@ public func workspaceLayoutResult(
 /// fullscreen window keeps its tile. A maximized focused window fills the
 /// area inside the padding, the others staying in their tiles behind it.
 func planDwindleDisplayLayout(
-    workspace: Workspace, modes: [WindowID: WindowMode], config: LayoutConfig,
+    workspace: Workspace, modes: [WindowID: WindowMode], config: LayoutConfig, minimumSizes: [WindowID: CGSize] = [:],
     viewport: CGRect, display: CGRect, otherDisplays: [CGRect]
 ) throws -> DisplayLayoutPlan {
     var workspace = workspace
     workspace.reconcileDwindle(splitRatio: config.dwindle.splitRatio)
     workspace.viewportOffset = 0
     let covering = fullscreenWindow(in: workspace, modes: modes)
-    let laid = try DwindleLayoutEngine(config: config).layout(
+    let laid = try DwindleLayoutEngine(config: config, minimumSizes: minimumSizes).layout(
         workspace.dwindle, viewport: viewport, modes: modesKeepingFullscreenInColumns(modes)
     )
     workspace.dwindle.root = workspace.dwindle.root?.pinningOrientations(laid.orientations)

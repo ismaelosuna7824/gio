@@ -62,6 +62,50 @@ final class DwindleLayoutEngineTests: XCTestCase {
         XCTAssertEqual(five[id(5)], CGRect(x: 753, y: 10, width: 237, height: 137))
     }
 
+    // MARK: - BUG-3: learned minimum sizes
+
+    private func frames(_ state: DwindleState, minimums: [WindowID: CGSize]) throws -> [WindowID: CGRect] {
+        try DwindleLayoutEngine(config: LayoutConfig(padding: 10, gap: 10), minimumSizes: minimums)
+            .layout(state, viewport: viewport).frames
+    }
+
+    /// Live 2026-10-21: nine windows in a dwindle tree asked WhatsApp (970)
+    /// and Figma (900) for tiles a few hundred points wide; they clamped,
+    /// overlapped their neighbours and the passes fought them. A split now
+    /// gives each side at least its minimum when the two fit together.
+    func testASplitGivesASideItsMinimumWhenBothFit() throws {
+        let wide = try frames(spiral(2), minimums: [id(1): CGSize(width: 700, height: 0)])
+        XCTAssertEqual(wide[id(1)], CGRect(x: 10, y: 10, width: 700, height: 580))
+        XCTAssertEqual(wide[id(2)], CGRect(x: 720, y: 10, width: 270, height: 580))
+        let second = try frames(spiral(2), minimums: [id(2): CGSize(width: 700, height: 0)])
+        XCTAssertEqual(second[id(1)]?.width, 270)
+        XCTAssertEqual(second[id(2)]?.width, 700)
+    }
+
+    func testMinimumsThatCannotBothFitShareInProportion() throws {
+        let both = try frames(spiral(2), minimums: [
+            id(1): CGSize(width: 700, height: 0), id(2): CGSize(width: 600, height: 0),
+        ])
+        // 970 for both (980 minus the gap): 700:600 of it.
+        XCTAssertEqual(both[id(1)]?.width, 522)
+        XCTAssertEqual(both[id(2)]?.width, 448)
+    }
+
+    func testAStackedSubtreeNeedsItsWidestMinimum() throws {
+        // Window 1 on the left, 2 above 3 on the right: 3's 600 pt minimum
+        // widens the whole right half.
+        let laid = try frames(spiral(3), minimums: [id(3): CGSize(width: 600, height: 0)])
+        XCTAssertEqual(laid[id(1)]?.width, 370)
+        XCTAssertEqual(laid[id(2)]?.width, 600)
+        XCTAssertEqual(laid[id(3)]?.width, 600)
+    }
+
+    func testHeightMinimumsMoveAStackedSplit() throws {
+        let laid = try frames(spiral(3), minimums: [id(3): CGSize(width: 0, height: 400)])
+        XCTAssertEqual(laid[id(3)]?.height, 400)
+        XCTAssertEqual(laid[id(2)]?.height, 170)
+    }
+
     func testTilesNeverOverlapAndKeepTheGapBetweenThem() throws {
         for count in UInt64(1)...5 {
             let laid = try frames(spiral(count))

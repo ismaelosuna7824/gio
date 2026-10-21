@@ -174,6 +174,23 @@ final class MinimumSizeTests: XCTestCase {
         XCTAssertNotNil(book.learnLate(id(3), requested: requested, actual: actual), "forgotten with the window")
     }
 
+    /// BUG-3 (live 2026-10-21, dwindle with nine windows): a late clamp to a
+    /// minimum already learned is the app at its minimum, not the app taking
+    /// its frame back. It used to count as a snap-back: Figma yielded
+    /// (`appControlled`, floating) and Alt+F stopped working on it.
+    func testALateClampToAKnownMinimumIsExplained() {
+        let requested = CGRect(x: 904, y: 569, width: 440, height: 553)
+        let clamped = CGRect(x: 904, y: 522, width: 900, height: 600)
+        var book = MinimumSizeBook()
+        XCTAssertFalse(book.explains(id(1), requested: requested, actual: clamped), "nothing learned yet")
+        _ = book.learn(id(1), requested: requested, actual: clamped)
+        XCTAssertTrue(book.explains(id(1), requested: requested, actual: clamped))
+        let wider = CGRect(x: 904, y: 522, width: 1000, height: 600)
+        XCTAssertFalse(book.explains(id(1), requested: requested, actual: wider), "beyond the known minimum")
+        let moved = CGRect(x: 1200, y: 100, width: 440, height: 553)
+        XCTAssertFalse(book.explains(id(1), requested: requested, actual: moved), "not a clamp")
+    }
+
     // MARK: Layout
 
     private let viewport = CGRect(x: 0, y: 0, width: 1000, height: 800)

@@ -1491,9 +1491,17 @@ final class SessionHost: @unchecked Sendable {
 
     /// FI-11: a clamp the app applied after the write's read-back, found by
     /// the router's late re-check (`observed`) against Gio's last write.
+    /// BUG-3: a clamp to a minimum already known is the window at its
+    /// minimum (the layout could not give it more): kept as is, with no
+    /// snap-back count and no relayout, so a crowded dwindle tree does not
+    /// loop or make the app yield.
     private func learnLateClamp(_ id: WindowID, written: CGRect, observed: CGRect) -> Bool {
         guard let size = minimumSizes.learnLate(id, requested: written, actual: observed) else {
-            return false
+            guard minimumSizes.explains(id, requested: written, actual: observed) else {
+                return false
+            }
+            physicalFrames[id] = observed
+            return true
         }
         physicalFrames[id] = observed
         trustedFrames.invalidate(id)
