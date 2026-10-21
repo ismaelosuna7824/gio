@@ -30,6 +30,8 @@ public enum IPCError: Error, Equatable {
     case listenFailed(Int32)
     case connectFailed(Int32)
     case ioError
+    /// PA-17b: the peer did not send or read within the socket timeout.
+    case timedOut
     case messageTooLarge
     case decodeFailed
 }

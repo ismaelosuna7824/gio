@@ -4,7 +4,11 @@ import Foundation
 /// `update`/`uninstall` are version-aware and honest pre-1.0: no releases
 /// are published and no app is installed yet, so they report instead of
 /// pretending. All facts render explicitly — unknown stays unknown.
-public func runDoctor(session: inout CommandSession) -> String {
+///
+/// PA-17a: `ipcCheck` renders the IPC line. Standalone it probes the socket
+/// (`probeSessionIPC`); the session answering a `gio doctor` request passes
+/// `inSessionIPCCheck` instead (see `dispatchIPC`).
+public func runDoctor(session: inout CommandSession, ipcCheck: () -> String = probeSessionIPC) -> String {
     var lines = ["Gio doctor (\(gioVersion))"]
     switch session.permissionGranted {
     case .some(true):
@@ -21,16 +25,7 @@ public func runDoctor(session: inout CommandSession) -> String {
         lines.append("[fail] configuration: " + messages.joined(separator: "; "))
     }
     lines.append("[ok] version: \(gioVersion)")
-    do {
-        let response = try sendIPCRequest(["status"], socketPath: defaultSocketPath())
-        if response.ok {
-            lines.append("[ok] ipc: session answering")
-        } else {
-            lines.append("[fail] ipc: session errored")
-        }
-    } catch {
-        lines.append("[fail] ipc: no session (start the daemon)")
-    }
+    lines.append(ipcCheck())
     if let count = session.displayCount {
         lines.append("[ok] displays: \(count)")
     } else {
@@ -42,6 +37,23 @@ public func runDoctor(session: inout CommandSession) -> String {
         lines.append("[fail] recent errors: " + session.recentErrors.prefix(3).joined(separator: "; "))
     }
     return lines.joined(separator: "\n")
+}
+
+/// The standalone doctor's IPC line: asks the session's socket for `status`.
+public func probeSessionIPC() -> String {
+    do {
+        let response = try sendIPCRequest(["status"], socketPath: defaultSocketPath())
+        return response.ok ? "[ok] ipc: session answering" : "[fail] ipc: session errored"
+    } catch {
+        return "[fail] ipc: no session (start the daemon)"
+    }
+}
+
+/// PA-17a: the IPC line of a doctor run inside the session answering it.
+/// The request arrived over the socket, so IPC serves; probing it again
+/// would wait on the sequential server busy with this very request.
+public func inSessionIPCCheck() -> String {
+    "[ok] ipc: serving this request"
 }
 
 public func runSetup(session: inout CommandSession) -> String {

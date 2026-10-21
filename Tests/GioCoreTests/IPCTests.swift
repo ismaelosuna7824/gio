@@ -153,4 +153,93 @@ final class IPCTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(ipcAcceptRetryDelay(errno: code), 0.1, "errno \(code)")
         }
     }
+
+    /// A bound, listening socket that never accepts: connections complete in
+    /// the kernel backlog, requests are buffered and never answered.
+    private func listenSilently(_ path: String) throws -> Int32 {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw IPCError.socketFailed(errno)
+        }
+        var address = ipcSocketAddress(path)
+        let bound = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.bind(fd, $0, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        guard bound == 0, listen(fd, 4) == 0 else {
+            close(fd)
+            throw IPCError.bindFailed(errno)
+        }
+        return fd
+    }
+
+    /// PA-17b: a session that takes the connection but never answers made
+    /// the client wait forever; it now fails with a timeout within the bound.
+    func testClientTimesOutWhenTheSessionNeverAnswers() throws {
+        let path = tempSocket()
+        let listener = try listenSilently(path)
+        defer {
+            close(listener)
+            unlink(path)
+        }
+        let started = Date()
+        XCTAssertThrowsError(try sendIPCRequest(["status"], socketPath: path, timeout: 0.3)) { error in
+            XCTAssertEqual(error as? IPCError, .timedOut)
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertGreaterThanOrEqual(elapsed, 0.25)
+        XCTAssertLessThan(elapsed, 3)
+    }
+
+    /// PA-17b: the default client bound outlasts `gio update`, which the app
+    /// answers after up to 45 s (`UpdateController.answerCLI`).
+    func testDefaultClientTimeoutCoversUpdateAnswers() {
+        XCTAssertGreaterThan(ipcClientTimeout, 45)
+    }
+
+    /// PA-17b: the sequential server waited forever on a client that
+    /// connected and sent nothing, so nobody else was served. The request
+    /// read is bounded: the silent client gets an error envelope and the
+    /// next client its answer.
+    func testServerDropsASilentClientAndServesTheNext() throws {
+        let path = tempSocket()
+        let server = IPCServer(socketPath: path, timeout: 0.2) { _ in
+            IPCResponse(ok: true, output: "ok")
+        }
+        try server.start()
+        defer {
+            server.stop()
+        }
+        let silent = try openRaw(path)
+        defer {
+            close(silent)
+        }
+        let response = try sendIPCRequest(["status"], socketPath: path, timeout: 5)
+        XCTAssertEqual(response.output, "ok")
+        let envelope = try JSONDecoder().decode(IPCResponse.self, from: ipcReceiveMessage(silent))
+        XCTAssertEqual(envelope, IPCResponse(ok: false, error: "unreadable request"))
+    }
+
+    /// PA-17b: a client that timed out and closed before the reply must not
+    /// take the session down: the reply write fails (no SIGPIPE) and the
+    /// server keeps serving.
+    func testServerSurvivesAClientThatGaveUp() throws {
+        let path = tempSocket()
+        let server = IPCServer(socketPath: path) { argv in
+            if argv == ["slow"] {
+                Thread.sleep(forTimeInterval: 0.4)
+            }
+            return IPCResponse(ok: true, output: argv.joined(separator: " "))
+        }
+        try server.start()
+        defer {
+            server.stop()
+        }
+        XCTAssertThrowsError(try sendIPCRequest(["slow"], socketPath: path, timeout: 0.1)) { error in
+            XCTAssertEqual(error as? IPCError, .timedOut)
+        }
+        let response = try sendIPCRequest(["fast"], socketPath: path, timeout: 5)
+        XCTAssertEqual(response.output, "fast")
+    }
 }

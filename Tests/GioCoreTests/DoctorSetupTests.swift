@@ -15,19 +15,43 @@ final class DoctorSetupTests: XCTestCase {
         var session = CommandSession(
             permissionGranted: true, displayCount: 2, recentErrors: ["boom"]
         )
-        let report = runDoctor(session: &session)
+        let report = runDoctor(session: &session, ipcCheck: { "[ok] ipc: probed" })
         XCTAssertTrue(report.contains("[ok] accessibility: granted"))
         XCTAssertTrue(report.contains(gioVersion))
-        // IPC line depends on the environment (a live daemon answers,
-        // otherwise it reports no session) — either is honest.
-        XCTAssertTrue(report.contains("ipc:"))
+        XCTAssertTrue(report.contains("[ok] ipc: probed"))
         XCTAssertTrue(report.contains("displays: 2"))
         XCTAssertTrue(report.contains("recent errors: boom"))
     }
 
+    /// PA-17a: the IPC line comes from the injected check, asked once.
+    func testDoctorAsksTheIPCCheckOnce() {
+        var calls = 0
+        var session = CommandSession()
+        let report = runDoctor(session: &session, ipcCheck: {
+            calls += 1
+            return "[fail] ipc: probed"
+        })
+        XCTAssertEqual(calls, 1)
+        XCTAssertTrue(report.contains("[fail] ipc: probed"))
+    }
+
+    /// PA-17a: `gio doctor` reaches the session over its own sequential
+    /// socket server, on the session queue; probing that socket from inside
+    /// the request waited on itself forever. The in-session doctor reports
+    /// IPC as serving (this very request) without connecting.
+    func testInSessionDoctorDoesNotProbeItsOwnSocket() {
+        var session = CommandSession(permissionGranted: true)
+        let response = dispatchIPC(["doctor"], session: &session, restartAvailable: true)
+        XCTAssertTrue(response.ok)
+        let report = response.output ?? ""
+        XCTAssertTrue(report.contains("[ok] ipc: serving this request"), report)
+        XCTAssertFalse(report.contains("ipc: no session"), report)
+        XCTAssertTrue(report.contains("[ok] accessibility: granted"), report)
+    }
+
     func testDoctorUnknownsStayUnknown() {
         var session = CommandSession()
-        let report = runDoctor(session: &session)
+        let report = runDoctor(session: &session, ipcCheck: { "[ok] ipc: probed" })
         XCTAssertTrue(report.contains("[??] accessibility: unknown"))
         XCTAssertTrue(report.contains("[??] displays: unknown"))
         XCTAssertTrue(report.contains("recent errors: none"))

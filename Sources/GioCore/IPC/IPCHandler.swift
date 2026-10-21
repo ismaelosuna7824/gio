@@ -110,6 +110,10 @@ public func dispatchIPC(
         if restartAvailable, command.requestsSessionRestart {
             return IPCResponse(ok: true, output: restartAcknowledgement)
         }
+        if command == .doctor {
+            // PA-17a: never probe the socket this request is being served on.
+            return IPCResponse(ok: true, output: runDoctor(session: &session, ipcCheck: inSessionIPCCheck))
+        }
         return IPCResponse(ok: true, output: dispatch(command, session: &session))
     case .failure(let error):
         return IPCResponse(ok: false, error: String(describing: error))
