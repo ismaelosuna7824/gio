@@ -852,7 +852,10 @@ final class SessionHost: @unchecked Sendable {
     /// (`initialSync`, ~120 ms with AX reads of every app), the observers
     /// and the publication run on the session queue while main goes on to
     /// build the menu bar and window (main waited ~215 ms for them before).
-    /// `onReady` runs on main after the tap and the touch source started.
+    /// PA-23: the hotkey tap starts before returning, behind both queued
+    /// steps, so a shortcut pressed during them waits its turn instead of
+    /// reaching the frontmost app. `onReady` runs on main after the touch
+    /// source started.
     func start(onReady: @escaping @MainActor () -> Void = {}) -> String? {
         // A relaunched instance waits a few seconds for its predecessor's lock.
         guard instanceLock.acquire(
@@ -919,12 +922,14 @@ final class SessionHost: @unchecked Sendable {
                     guard !self.mainShutDown else {
                         return
                     }
-                    self.startTap()
                     self.startMultitouch(gestures: config.gestures)
                     onReady()
                 }
             }
         }
+        // PA-23: a combo's action hops to the queue (`handleCombo`), so it
+        // runs after the first layout and the observer rebuild queued above.
+        startTap()
         return nil
     }
 

@@ -168,7 +168,7 @@ Composer vector/recompressed export); config parsed three times per Settings app
 `AXIsProcessTrusted` per frame write (unmeasured); `registerNew` O(N^2) pid scans (<1 ms at
 N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-thread wait on
 `initialSync` at launch.
-- [x] PA-22 (`bc24c1f`) — User chose (2026-10-21) the two largest leftovers. Launcher icons on
+- [x] PA-22 (`63e4181`) — User chose (2026-10-21) the two largest leftovers. Launcher icons on
   disk: `LauncherIconStore` (`~/Library/Caches/<bundle id>/launcher-icons.plist`, PNG per bundle
   path + Info.plist date + icon side, atomic rewrite only when a scan drew or dropped an icon);
   the first scan of a launch starts from it. RED: compile (`cannot find 'LauncherIconStore'`);
@@ -176,15 +176,28 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   catalog draws only the changed bundle). Throwaway probe (real /Applications, temp store, 92
   apps): cold 375 ms, from the store 27 ms; store 523 KB. Tests never touch the real Caches
   (store and draw injected; app passes `.userCache()`).
-- [x] PA-21 (`b12b7c1`) — Launch without the main-thread wait: `start(onReady:)` returns after
+- [x] PA-21 (`a6e3ccd`) — Launch without the main-thread wait: `start(onReady:)` returns after
   lock/config/IPC; `initialSync`, `events.rebuild`, first publication run with `queue.async`
   (`session ready`), then tap, touch source and `onReady` (window refresh, launcher scan in 2 s)
   on main; guards: `isShuttingDown` (queue), `mainShutDown` (main, was `multitouchShutDown`).
   No unit test (GioDesktop has none; ordering/wiring only). Bundles UI 333 (53 skipped) /
   Session 548 / POC 7 / Mac 19 / MacOS 102 / Core 2100, all 0 failures; signed Debug build OK;
-  `git diff --check` clean. LIVE PENDING: gap `session started` -> `launch ... window=` (was
-  ~215 ms + 122 ms) and `session started` -> `session ready`; hotkeys work after ready; window
-  shows real data at once; Gio was not running and was not launched on the user's desktop.
+  `git diff --check` clean. Hashes are the merged ones (PR #18, rebased).
+  Live (user's Xcode Debug runs, `gio.log`): window `session started` -> `launch ... window=`
+  1.33 s before (16:20Z) vs 0.98 s / 0.67 s after (16:36Z, 18:11Z); launcher `appsReady ms=561
+  drawn=92` before vs `ms=84 drawn=0` (startup) and `ms=57 drawn=0` (refresh) after. Hotkeys
+  started later: ~0.54 s before vs `session ready` at 1.71 s / 1.50 s, because both new runs had
+  a slower first pass (NoteX and WhatsApp timing out, `reconcile failure kind=timeout`).
+  Read-only A/B of `discoverSystemWindows()` on the live desktop (7 runs x 2 rounds): before
+  PA-18 (`50fe4e0`) cold 251/298 ms, median 11/16 ms; after (`origin/dev`) cold 285/267 ms,
+  median 9/9 ms: discovery did not get slower, the cold first pass is the apps.
+- [x] PA-23 — Hotkey tap at the end of `start()` (after both startup steps are queued) instead
+  of at `session ready`: a shortcut pressed during startup is taken (never typed into the
+  frontmost app) and its action, which hops to the session queue (`handleCombo`), runs right
+  after the first layout and the observer rebuild. Touch source and `onReady` unchanged. Wiring
+  only, no unit test (GioDesktop); `swift build` and signed Debug build OK. LIVE PENDING: press
+  Alt+L right after launching Gio: no character in the frontmost app, the focus moves once
+  `session ready` logs.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
