@@ -191,13 +191,30 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   Read-only A/B of `discoverSystemWindows()` on the live desktop (7 runs x 2 rounds): before
   PA-18 (`50fe4e0`) cold 251/298 ms, median 11/16 ms; after (`origin/dev`) cold 285/267 ms,
   median 9/9 ms: discovery did not get slower, the cold first pass is the apps.
-- [x] PA-23 — Hotkey tap at the end of `start()` (after both startup steps are queued) instead
+- [x] PA-23 (`cc20286`) — Hotkey tap at the end of `start()` (after both startup steps are queued) instead
   of at `session ready`: a shortcut pressed during startup is taken (never typed into the
   frontmost app) and its action, which hops to the session queue (`handleCombo`), runs right
   after the first layout and the observer rebuild. Touch source and `onReady` unchanged. Wiring
   only, no unit test (GioDesktop); `swift build` and signed Debug build OK. LIVE PENDING: press
   Alt+L right after launching Gio: no character in the frontmost app, the focus moves once
   `session ready` logs.
+- [x] PA-24 — Live log audit (2026-10-21, 16:39-20:23 UTC, 5 launches, 1074 hotkeys, 393
+  snapshot flights, Debug build): `snapshot paint check` 145 runs / 205 windows, 0 blank, 0
+  partial; no watchdog, no prime failure, 3 aborts all `mouse-down`; tap never re-enabled;
+  2.9% frames dropped (821 of 27,230), 33 flights with 3+ hitches; guardian restore live once
+  (16:41:23, `applied=9 failed=0`, no crash report: a forced stop). One overlap source: 22
+  `frameMismatch` right after each launch (WhatsApp 970 pt, Figma and NoteX 900 asked 888): the
+  learned minimums lived in memory only, so every launch overlapped a neighbour once until the
+  relayout. Fix: `AppMinimumSizes` per app (bundle id, else name) in
+  `~/Library/Caches/<bundle id>/app-minimum-sizes.json` (`AppMinimumSizeStore`), loaded before
+  `initialSync`, saved only when an app's minimum grows (`logLearnedMinimum`), and the layout
+  uses this session's minimum else the app's (`effectiveMinimumSizes`; no registry pass while
+  the file is empty, then one pass over the windows per engine build, like `ruleWidthLimits`).
+  RED compile (`cannot find 'AppMinimumSizes'`), GREEN `AppMinimumSizesTests` 4. Bundles UI 341
+  (53 skipped) / Session 550 / POC 7 / Mac 19 / MacOS 102 / Core 2114, all 0 failures; signed
+  Debug build OK. Tradeoff: a window of the app that could be narrower is never laid out below
+  the app's minimum (delete the file to reset). LIVE PENDING: after one launch that learns
+  WhatsApp/Figma/NoteX, the next launch logs no `frameMismatch` or `min size learned` for them.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
