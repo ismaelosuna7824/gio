@@ -73,6 +73,19 @@ public func overviewRowHeight(
     return min(max(fitting, minimum), maximum)
 }
 
+/// A row's canvas: the strip's aspect ratio (at least 0.1) fitted in the
+/// row height and the width left beside the label. Empty, never negative,
+/// while the panel has no size yet (SwiftUI's first layout pass can measure
+/// zero, and a negative frame is invalid).
+public func overviewCanvasSize(aspectRatio: CGFloat, height: CGFloat, maxWidth: CGFloat) -> CGSize {
+    let aspect = aspectRatio.isFinite ? max(aspectRatio, 0.1) : 0.1
+    let canvasHeight = min(height, maxWidth / aspect)
+    guard canvasHeight.isFinite, canvasHeight > 0 else {
+        return .zero
+    }
+    return CGSize(width: canvasHeight * aspect, height: canvasHeight)
+}
+
 // MARK: - Drag and drop
 
 /// A drawn tile for the drop math: its strip column (from the facts, so the
