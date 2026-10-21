@@ -47,8 +47,6 @@ public enum WindowEventAction: Equatable, Sendable {
     /// The app's focused window changed (a click, a key switch): adopt it
     /// as the session focus on a light path, no rescan.
     case adoptFocus
-    /// Fall back to the debounced full resync.
-    case resync
     case ignore
 }
 

@@ -540,7 +540,9 @@ final class SessionHost: @unchecked Sendable {
                 manager: { [unowned self] in session.manager },
                 updateManager: { [unowned self] body in body(&session.manager) },
                 rules: { [unowned self] in session.config.rules },
-                discoverAll: { try? discoverSystemWindows(onlyPID: $0) },
+                discoverAll: { [unowned self] pid in
+                    try? discoverSystemWindows(onlyPID: pid, isKnown: { actuator?.id(matching: $0, pid: $1) != nil })
+                },
                 discoverOne: { discoverSystemWindow(element: $0, pid: $1) },
                 knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
                 registerHandles: { [unowned self] id, candidate in
@@ -1595,6 +1597,7 @@ final class SessionHost: @unchecked Sendable {
         pendingGestureRelease = nil
         // The snap-back reflow after a drag releases the dim hold.
         focusDim.releaseDragHold()
+        events.releaseDragHold()
         // Every exit (animation started or instant pass) refreshes the ring.
         defer {
             publishFocusRing()

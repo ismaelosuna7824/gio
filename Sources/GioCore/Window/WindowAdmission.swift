@@ -40,13 +40,15 @@ public enum SuspendReason: String, Equatable, Sendable {
     case minimized
 }
 
-/// Observed facts about one window, as plain values (no AX types) so the
-/// admission decision stays pure and testable.
-public struct WindowAdmissionFacts: Equatable, Sendable {
+/// Observed facts about one window, with no AX types so the admission
+/// decision stays pure and testable. PA-18a: the settable checks are probes
+/// (one Accessibility message each), asked only when every earlier rule
+/// passed and at most once each.
+public struct WindowAdmissionFacts {
     public var role: String?
     public var subrole: String?
-    public var isPositionSettable: Bool
-    public var isSizeSettable: Bool
+    public var isPositionSettable: () -> Bool
+    public var isSizeSettable: () -> Bool
     public var isFullscreen: Bool
     public var isMinimized: Bool
     public var hasValidFrame: Bool
@@ -54,8 +56,8 @@ public struct WindowAdmissionFacts: Equatable, Sendable {
     public init(
         role: String?,
         subrole: String?,
-        isPositionSettable: Bool,
-        isSizeSettable: Bool,
+        isPositionSettable: @escaping () -> Bool,
+        isSizeSettable: @escaping () -> Bool,
         isFullscreen: Bool = false,
         isMinimized: Bool = false,
         hasValidFrame: Bool = true
@@ -131,7 +133,7 @@ public func classifyWindowAdmission(_ facts: WindowAdmissionFacts) -> WindowAdmi
     if facts.isMinimized {
         return .suspend(.minimized)
     }
-    return facts.isPositionSettable && facts.isSizeSettable ? .tile : .float(.notResizable)
+    return facts.isPositionSettable() && facts.isSizeSettable() ? .tile : .float(.notResizable)
 }
 
 /// MM-12: admission is decided once, when the window is registered, from
