@@ -29,7 +29,7 @@ Then read [First steps](docs/USER_GUIDE.md#first-steps) and, on a non-US keyboar
    rm -rf /Applications/Gio.app
    rm -rf ~/.config/gio                                  # config, log, socket and lock
    rm -rf ~/Library/Logs/Gio                             # the updater's log
-   rm -rf ~/Library/Caches/dev.gio.windowmanager         # the launcher's app icon cache
+   rm -rf ~/Library/Caches/dev.gio.windowmanager         # caches: app icons, apps' minimum window sizes
    defaults delete dev.gio.windowmanager                 # first-run guide and update settings
    ```
 
@@ -151,6 +151,7 @@ If windows are still missing (power loss, or a guardian that could not run):
 | `~/.config/gio/themes/` | Optional theme directory. Themes are implemented in Core but not yet consumed by the UI. |
 | `~/Library/Logs/Gio/update.log` | The updater helper's log (paths and steps only). |
 | `~/Library/Caches/dev.gio.windowmanager/launcher-icons.plist` | The launcher's cache of app icons (the folder is the app's bundle identifier). |
+| `~/Library/Caches/dev.gio.windowmanager/app-minimum-sizes.json` | The minimum widths apps enforce (WhatsApp, Figma...), so their windows are laid out at that width from the first layout after a launch. Delete it to forget them. |
 
 ## Documentation
 

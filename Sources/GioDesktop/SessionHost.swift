@@ -88,6 +88,16 @@ final class SessionHost: @unchecked Sendable {
     private var tileability = TileabilityCache()
     /// FI-02: minimum sizes learned from clamped writes (session queue only).
     private var minimumSizes = MinimumSizeBook()
+    /// PA-24: minimums apps showed in earlier launches, per app (session
+    /// queue only); loaded before the first layout, saved when one grows.
+    private var appMinimums = AppMinimumSizes()
+    private let appMinimumStore: AppMinimumSizeStore? = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask).first
+        .map { caches in
+            AppMinimumSizeStore(url: caches
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "gio")
+                .appendingPathComponent("app-minimum-sizes.json"))
+        }
     /// PA-06: which apps take size writes during motion (keyed by app name).
     private var resizeCapability = ResizeCapability()
     private var fullscreen = FullscreenBook()
@@ -902,6 +912,8 @@ final class SessionHost: @unchecked Sendable {
             guard !self.isShuttingDown else {
                 return
             }
+            // PA-24: the first layout already gives clamping apps their width.
+            self.appMinimums = self.appMinimumStore?.load() ?? AppMinimumSizes()
             self.initialSync()
         }
         // Main-thread observers; what they report hops to the queue, behind
@@ -1432,9 +1444,19 @@ final class SessionHost: @unchecked Sendable {
         // independent (MM-01): default widths resolve per display viewport.
         ScrollableLayoutEngine(
             config: session.config.makeLayoutConfig(),
-            minimumSizes: minimumSizes.sizes,
+            minimumSizes: effectiveMinimumSizes(),
             widthLimits: ruleWidthLimits()
         )
+    }
+
+    /// FI-02 + PA-24: this session's learned minimums, else what each
+    /// window's app showed in an earlier launch. No registry pass while no
+    /// app ever clamped.
+    private func effectiveMinimumSizes() -> [WindowID: CGSize] {
+        guard !appMinimums.sizes.isEmpty else {
+            return minimumSizes.sizes
+        }
+        return appMinimums.effective(learned: minimumSizes.sizes, windows: session.registry.managedWindows())
     }
 
     /// WR-05: rule width limits of the registered windows. Empty, without a
@@ -1482,10 +1504,15 @@ final class SessionHost: @unchecked Sendable {
 
     private func logLearnedMinimum(_ id: WindowID, size: CGSize, late: Bool) {
         noteResizeClamp(pid: id.pid)
+        let window = session.registry.find(id)
+        // PA-24: remembered for the app's windows in later launches.
+        if let window, appMinimums.record(size, for: window) {
+            appMinimumStore?.save(appMinimums)
+        }
         GioLog.record(
             .info,
             "min size learned id=\(id.pid):\(id.elementID) "
-                + "app=\(session.registry.find(id)?.application ?? "pid\(id.pid)") "
+                + "app=\(window?.application ?? "pid\(id.pid)") "
                 + "w=\(Int(size.width.rounded())) h=\(Int(size.height.rounded()))"
                 + (late ? " late=true" : "")
         )
