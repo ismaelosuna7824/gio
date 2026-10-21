@@ -333,7 +333,7 @@ final class WindowMoveEdgeTests: XCTestCase {
         XCTAssertEqual(action([.alt, .shift], "Period"), .moveColumnRight, "`>`")
         XCTAssertNil(action([.alt, .shift], "Left"), "Option+Shift+arrows stay word selection")
         XCTAssertNil(action([.alt, .shift], "Right"))
-        XCTAssertEqual(dispatcher.bindingCount, 79, "NC-14 added the column move's two combos")
+        XCTAssertEqual(dispatcher.bindingCount, 80, "NC-14 added the column move's two combos")
         for (name, value) in [
             ("consume-or-expel-window-left", HotkeyAction.consumeOrExpelLeft),
             ("consume-or-expel-window-right", .consumeOrExpelRight),

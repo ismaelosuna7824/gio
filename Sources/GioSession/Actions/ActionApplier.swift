@@ -159,9 +159,9 @@ public enum ActionApplier {
                 ),
                 over: workspace, manager: &manager
             )
-        case .toggleOverview:
-            // The app's panel; `SessionHost.handleCombo` hands it over before
-            // this table, and the session state stays as it is.
+        case .toggleOverview, .toggleLauncher:
+            // The app's panels; `SessionHost.handleCombo` hands them over
+            // before this table, and the session state stays as it is.
             break
         case .focusMonitor(let direction):
             effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
@@ -402,7 +402,7 @@ public enum ActionApplier {
             break
         case .workspace, .moveToWorkspace, .focusWorkspaceDown, .focusWorkspaceUp,
              .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp, .toggleFloating, .fullscreen,
-             .toggleOverview, .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
+             .toggleOverview, .toggleLauncher, .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
              .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
              .focusWorkspacePrevious, .moveWorkspaceDown, .moveWorkspaceUp,
              .toggleWorkspaceLayout, .setWorkspaceLayout:

@@ -26,8 +26,6 @@ public struct ShortcutRowModel: Equatable, Sendable, Identifiable {
     public let removed: [HotkeyCombo]
     /// config.toml changes this action (the "config" tag).
     public let isCustomized: Bool
-    /// False for the launcher (Alt+Space is fixed).
-    public let isEditable: Bool
     public let canReset: Bool
     /// Workspace families pick the number in the recorder; empty otherwise.
     public let workspaceChoices: [Int]
@@ -42,8 +40,7 @@ public struct ShortcutRowModel: Equatable, Sendable, Identifiable {
 }
 
 public func shortcutRowModel(_ entry: ShortcutEntry, config: GioConfig) -> ShortcutRowModel {
-    let editable = entry.action != nil
-    let reset = editable ? resetShortcutEdits(family: entry.id, config: config) : []
+    let reset = resetShortcutEdits(family: entry.id, config: config)
     let items = entry.bindings.map { binding in
         ShortcutBindingItem(
             combo: binding.combo, source: binding.source,
@@ -53,8 +50,8 @@ public func shortcutRowModel(_ entry: ShortcutEntry, config: GioConfig) -> Short
     return ShortcutRowModel(
         id: entry.id, name: entry.name, summary: entry.summary,
         bindings: items, removed: entry.removedDefaults,
-        isCustomized: !reset.isEmpty, isEditable: editable, canReset: !reset.isEmpty,
-        workspaceChoices: entry.action.flatMap(workspaceNumber) == nil ? [] : Array(1...9),
+        isCustomized: !reset.isEmpty, canReset: !reset.isEmpty,
+        workspaceChoices: workspaceNumber(entry.action) == nil ? [] : Array(1...9),
         isRange: compactBindings(entry.bindings).isRange,
         resetEdits: reset
     )
@@ -110,14 +107,10 @@ public struct ShortcutRecorder: Equatable, Sendable {
     public private(set) var check: ShortcutCheck?
     public let workspaceChoices: [Int]
 
-    /// Nil for entries the config cannot rebind (the launcher).
-    public init?(entry: ShortcutEntry) {
-        guard let action = entry.action else {
-            return nil
-        }
+    public init(entry: ShortcutEntry) {
         entryName = entry.name
-        self.action = action
-        workspaceChoices = workspaceNumber(action) == nil ? [] : Array(1...9)
+        action = entry.action
+        workspaceChoices = workspaceNumber(entry.action) == nil ? [] : Array(1...9)
     }
 
     public var workspace: Int? {
@@ -153,8 +146,6 @@ public struct ShortcutRecorder: Equatable, Sendable {
             return "Add at least one modifier (⌃ ⌥ ⇧ ⌘) so the key still types normally."
         case .invalid(.unsupportedKey(let key)):
             return "\(key) cannot be bound. Use a letter, digit, F1–F12, an arrow or a punctuation key."
-        case .invalid(.reservedForLauncher):
-            return "\(keys) opens the launcher and cannot be rebound."
         }
     }
 

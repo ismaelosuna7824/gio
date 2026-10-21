@@ -77,7 +77,7 @@ struct ShortcutsView: View {
                                     CardRow(divider: index < section.entries.count - 1) {
                                         ShortcutRow(
                                             row: shortcutRowModel(entry, config: config),
-                                            onAdd: { recording = ShortcutRecorder(entry: entry).map(RecordingTarget.init) },
+                                            onAdd: { recording = RecordingTarget(recorder: ShortcutRecorder(entry: entry)) },
                                             onRemove: { remove($0, from: entry, config: config) },
                                             onReset: { reset(entry, config: config) }
                                         )
@@ -178,15 +178,7 @@ private struct ShortcutRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             keys
-            if row.isEditable {
-                actions
-            } else {
-                Text("Fixed")
-                    .font(GioFont.caption)
-                    .foregroundStyle(GioColor.tertiaryText)
-                    .frame(width: 118, alignment: .leading)
-                    .help("Alt+Space always opens the launcher")
-            }
+            actions
         }
     }
 
@@ -196,8 +188,6 @@ private struct ShortcutRow: View {
             Text("Unbound")
                 .font(GioFont.caption)
                 .foregroundStyle(GioColor.tertiaryText)
-        } else if !row.isEditable {
-            BindingKeys(bindings: row.bindings.map { ShortcutBinding(combo: $0.combo, source: $0.source) })
         } else if row.isRange {
             // A long family reads first…last; its removals live in a menu.
             HStack(spacing: GioSpacing.xs) {

@@ -41,12 +41,11 @@ public struct ShortcutEntry: Equatable, Identifiable, Sendable {
     public let name: String
     public let summary: String
     public let category: ShortcutCategory
-    /// The spelling used in `config.toml`; nil for shortcuts the config cannot rebind.
-    public let configName: String?
+    /// The spelling used in `config.toml`.
+    public let configName: String
     public let bindings: [ShortcutBinding]
-    /// DA-07: the representative action (`workspace(1)` for `workspace N`);
-    /// nil for the launcher, which the config cannot rebind.
-    public let action: HotkeyAction?
+    /// DA-07: the representative action (`workspace(1)` for `workspace N`).
+    public let action: HotkeyAction
     /// DA-07: default combos of this action that config set to `"none"`.
     public let removedDefaults: [HotkeyCombo]
 }
@@ -114,6 +113,8 @@ private func actionInfo(_ action: HotkeyAction) -> ActionInfo {
         return ActionInfo(id: "consume-or-expel-window-right", name: "Move window right", summary: "Consume or expel: a window sharing its column moves out into its own column on the right; a window alone in its column joins the bottom of the right column. With move-crosses-monitor-at-edge on, a lone window in the last column goes to the display on the right.", category: .move)
     case .toggleOverview:
         return ActionInfo(id: "toggle-overview", name: "Workspace overview", summary: "Show every workspace of this display as a row of window thumbnails; pick one to go there.", category: .workspaces)
+    case .toggleLauncher:
+        return ActionInfo(id: "toggle-launcher", name: "Open launcher", summary: "Open or close the launcher panel to search apps, windows and workspaces and run Gio commands.", category: .app)
     case .focusMonitor(let direction):
         let side = monitorSide(direction)
         return ActionInfo(id: "focus-monitor-\(side)", name: "Focus monitor \(side)", summary: "Focus the display \(monitorPlace(direction)) and the workspace it shows (no display there: nothing happens).", category: .monitors)
@@ -281,6 +282,7 @@ private let catalogActions: [HotkeyAction] = [
     .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance,
     .dwindlePreselect(.left), .dwindlePreselect(.right), .dwindlePreselect(.up), .dwindlePreselect(.down),
     .dwindlePreselectClear,
+    .toggleLauncher,
 ]
 
 /// Effective bindings: defaults minus `"none"` combos, with config bindings
@@ -300,7 +302,7 @@ public func shortcutCatalog(
     for (combo, action) in defaultHotkeyBindings() where unboundSet.contains(combo) {
         removedByFamily[shortcutFamily(of: action), default: []].append((combo, action))
     }
-    var entries: [ShortcutEntry] = catalogActions.map { representative in
+    return catalogActions.map { representative in
         let info = actionInfo(representative)
         let bindings = (byFamily[info.id] ?? []).sorted(by: bindingOrder)
             .map { ShortcutBinding(combo: $0.combo, source: $0.source) }
@@ -312,14 +314,6 @@ public func shortcutCatalog(
             action: representative, removedDefaults: removed
         )
     }
-    entries.append(ShortcutEntry(
-        id: "launcher", name: "Open launcher",
-        summary: "Summon the launcher panel to search and open apps and windows.",
-        category: .app, configName: nil,
-        bindings: [ShortcutBinding(combo: launcherHotkey, source: .default)],
-        action: nil, removedDefaults: []
-    ))
-    return entries
 }
 
 /// Family order: parameter first (workspace 1…9), then the combo text.
@@ -358,7 +352,7 @@ public func filterShortcuts(_ entries: [ShortcutEntry], query: String) -> [Short
         return entries
     }
     return entries.filter { entry in
-        let haystack = [entry.name, entry.summary, entry.configName ?? ""]
+        let haystack = [entry.name, entry.summary, entry.configName]
             + entry.bindings.map { $0.combo.describe() }
         return haystack.contains { $0.lowercased().contains(needle) }
     }

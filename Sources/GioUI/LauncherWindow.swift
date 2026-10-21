@@ -79,6 +79,9 @@ public final class LauncherViewModel: ObservableObject {
     private let focusWindow: (String) -> Bool
     /// PA-17c: answers a Gio command or workspace entry; runs off main.
     private let requestIPC: @Sendable (LauncherEntry) -> String
+    /// The combo that opens the launcher now (`⌥Space` by default), shown in
+    /// the title bar; nil when it is unbound.
+    public var hotkeyHint: String?
     var dismiss: (LauncherDismissReason) -> Void = { _ in }
 
     public init(
@@ -277,7 +280,7 @@ public struct GioLauncherView: View {
                 .font(.system(size: 12, design: .rounded))
                 .opacity(0.65)
             Spacer(minLength: 0)
-            Text("⌥ Space")
+            Text(model.hotkeyHint ?? "")
                 .font(.system(size: 10, weight: .medium, design: .monospaced))
                 .opacity(0.6)
         }
@@ -646,8 +649,8 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
     /// `requestedAt` is when the hotkey fired (uptime seconds); the log's
     /// `summon→shown` spans from it to the panel ordered front and key.
     public func summon(
-        source: LauncherSummonSource, requestedAt: TimeInterval? = nil, windows: () -> [WindowFact],
-        workspaces: () -> [LauncherEntry] = { [] }, apps: () -> [LauncherEntry]
+        source: LauncherSummonSource, requestedAt: TimeInterval? = nil, hotkey: HotkeyCombo? = nil,
+        windows: () -> [WindowFact], workspaces: () -> [LauncherEntry] = { [] }, apps: () -> [LauncherEntry]
     ) {
         let requested = requestedAt ?? now()
         GioLog.record(.info, "launcher summon source=\(source.rawValue)")
@@ -655,7 +658,7 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
         case .dismiss:
             dismiss(reason: .toggle)
         case .show:
-            show(windows: windows(), workspaces: workspaces(), apps: apps())
+            show(windows: windows(), workspaces: workspaces(), apps: apps(), hotkey: hotkey)
             GioLog.record(
                 .info,
                 "launcher summon→shown ms=\(Int(((now() - requested) * 1000).rounded())) source=\(source.rawValue)"
@@ -666,8 +669,11 @@ public final class LauncherPanelController: NSObject, NSWindowDelegate {
     }
 
     /// A fresh model per summon: the window list is current, the query empty.
-    public func show(windows: [WindowFact], workspaces: [LauncherEntry] = [], apps: [LauncherEntry]) {
+    public func show(
+        windows: [WindowFact], workspaces: [LauncherEntry] = [], apps: [LauncherEntry], hotkey: HotkeyCombo? = nil
+    ) {
         let model = LauncherViewModel(windows: windows, workspaces: workspaces, apps: apps, focusWindow: focusWindow)
+        model.hotkeyHint = hotkey.map(keycapText)
         model.dismiss = { [weak self] reason in self?.dismiss(reason: reason) }
         self.model = model
         // PF-01: icons come from the catalog's cache; never a bundle icon

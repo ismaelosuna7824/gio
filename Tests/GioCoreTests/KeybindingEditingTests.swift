@@ -68,10 +68,31 @@ final class KeybindingEditingTests: XCTestCase {
 
     func testRoutingSendsLauncherOverviewAndActions() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(routeHotkey(launcherHotkey, dispatcher: dispatcher, suspended: false), .launcher)
+        XCTAssertEqual(routeHotkey(combo("Alt+Space"), dispatcher: dispatcher, suspended: false), .launcher)
         XCTAssertEqual(routeHotkey(combo("Alt+O"), dispatcher: dispatcher, suspended: false), .overview)
         XCTAssertEqual(routeHotkey(combo("Alt+H"), dispatcher: dispatcher, suspended: false), .action(.focusLeft))
         XCTAssertEqual(routeHotkey(combo("Ctrl+F9"), dispatcher: dispatcher, suspended: false), .passThrough)
+    }
+
+    func testReboundLauncherFollowsItsComboAndAltSpaceRunsWhatTakesIt() throws {
+        let config = try parse(
+            "[keybindings]\n\"Ctrl+Alt+Space\" = \"toggle-launcher\"\n\"Alt+Space\" = \"center-column\"\n"
+        )
+        let dispatcher = config.makeDispatcher()
+        XCTAssertEqual(routeHotkey(combo("Ctrl+Alt+Space"), dispatcher: dispatcher, suspended: false), .launcher)
+        XCTAssertEqual(
+            routeHotkey(combo("Alt+Space"), dispatcher: dispatcher, suspended: false), .action(.centerColumn)
+        )
+    }
+
+    func testUnboundLauncherPassesAltSpaceThrough() throws {
+        let dispatcher = try parse("[keybindings]\n\"Alt+Space\" = \"none\"\n").makeDispatcher()
+        XCTAssertEqual(routeHotkey(combo("Alt+Space"), dispatcher: dispatcher, suspended: false), .passThrough)
+    }
+
+    func testAConfigWithoutKeybindingsKeepsAltSpaceOnTheLauncher() throws {
+        let dispatcher = try parse("[keybindings]\n\"Alt+H\" = \"center-column\"\n").makeDispatcher()
+        XCTAssertEqual(dispatcher.action(for: combo("Alt+Space")), .toggleLauncher)
     }
 
     func testSuspendedRoutingPassesEveryComboThrough() {
@@ -109,11 +130,17 @@ final class KeybindingEditingTests: XCTestCase {
         )
     }
 
-    func testAltSpaceIsReservedForTheLauncher() {
+    func testAltSpaceConflictsWithTheLauncherLikeAnyDefault() {
         XCTAssertEqual(
-            checkShortcut(launcherHotkey, for: .centerColumn, config: GioConfig()),
-            .invalid(.reservedForLauncher)
+            checkShortcut(combo("Alt+Space"), for: .centerColumn, config: GioConfig()),
+            .conflict(action: .toggleLauncher, source: .default)
         )
+        XCTAssertEqual(checkShortcut(combo("Alt+Space"), for: .toggleLauncher, config: GioConfig()), .alreadyBound)
+    }
+
+    func testAltSpaceIsFreeOnceTheLauncherMovesAway() throws {
+        let config = try parse("[keybindings]\n\"Ctrl+Alt+Space\" = \"toggle-launcher\"\n\"Alt+Space\" = \"none\"\n")
+        XCTAssertEqual(checkShortcut(combo("Alt+Space"), for: .centerColumn, config: config), .free)
     }
 
     func testFreeComboAndComboTheActionAlreadyHas() {
@@ -257,7 +284,7 @@ final class KeybindingEditingTests: XCTestCase {
         let entries = shortcutCatalog(configKeybindings: [])
         XCTAssertEqual(entries.first { $0.id == "focus-left" }?.action, .focusLeft)
         XCTAssertEqual(entries.first { $0.id == "workspace N" }?.action, .workspace(1))
-        XCTAssertNil(entries.first { $0.id == "launcher" }?.action)
+        XCTAssertEqual(entries.first { $0.id == "toggle-launcher" }?.action, .toggleLauncher)
     }
 
     func testConfigActionNamesRoundTrip() {
@@ -267,7 +294,23 @@ final class KeybindingEditingTests: XCTestCase {
         for (_, action) in defaultHotkeyBindings() {
             XCTAssertEqual(parseActionName(configActionName(action)), action, configActionName(action))
         }
+        XCTAssertEqual(configActionName(.toggleLauncher), "toggle-launcher")
+        XCTAssertEqual(parseActionName("toggle-launcher"), .toggleLauncher)
         XCTAssertEqual(shortcutActionTitle(.workspace(3)), "Go to workspace 3")
         XCTAssertEqual(shortcutActionTitle(.focusRight), "Focus right")
+    }
+
+    // MARK: - The launcher's shown combo
+
+    /// The launcher title bar and the menu bar item show the combo that
+    /// opens it now, not a fixed ⌥Space: the user's own binding first.
+    func testTheLauncherHintFollowsTheBinding() throws {
+        XCTAssertEqual(launcherHotkey(in: GioConfig()), combo("Alt+Space"))
+        let moved = try parse("[keybindings]\n\"Alt+Space\" = \"none\"\n\"Ctrl+Alt+P\" = \"toggle-launcher\"\n")
+        XCTAssertEqual(launcherHotkey(in: moved), combo("Ctrl+Alt+P"))
+        let added = try parse("[keybindings]\n\"Ctrl+Alt+P\" = \"toggle-launcher\"\n")
+        XCTAssertEqual(launcherHotkey(in: added), combo("Ctrl+Alt+P"), "the user's binding wins over the default")
+        let removed = try parse("[keybindings]\n\"Alt+Space\" = \"none\"\n")
+        XCTAssertNil(launcherHotkey(in: removed))
     }
 }

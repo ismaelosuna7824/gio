@@ -193,6 +193,9 @@ public func defaultConfigTemplate() -> String {
     # column instead.
     # "toggle-overview" (Alt+O) shows every workspace of the display as a row
     # of window thumbnails (thumbnails need Screen Recording).
+    # "toggle-launcher" (Alt+Space) opens or closes the launcher; move it like
+    # any action, e.g. "Ctrl+Alt+P" = "toggle-launcher" and "Alt+Space" =
+    # "none" to leave Option+Space to other apps.
     # Multiple displays: "focus-monitor-left|right|up|down" (Ctrl+Alt+H / L /
     # K / J) focuses the neighbouring display; "move-column-to-monitor-..."
     # (Ctrl+Alt+Shift+H / L / K / J) sends the focused column there and
@@ -260,7 +263,7 @@ public func defaultConfigTemplate() -> String {
     # (also focus the app's popups that open while another app is in front:
     # macOS puts them behind it), and min-width / max-width (points).
     [[window-rules]]
-    app = "Calculator"
+    bundle-id = "com.apple.calculator"
     mode = "floating"
 
     # [[window-rules]]

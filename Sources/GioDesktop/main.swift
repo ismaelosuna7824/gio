@@ -107,6 +107,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
         bar.stateProvider = { [host] in host.barState() }
         bar.updateTitleProvider = { [updates] in updateMenuTitle(updates.state) }
+        // Read when the menu opens (no wait on the session queue).
+        bar.launcherHotkeyProvider = { [host] in launcherHotkey(in: host.snapshot().config) }
         bar.onUpdate = { [weak self] in
             self?.mainWindow.show()
             self?.updates.notesPresented = true
@@ -275,9 +277,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     /// (FI-09: the toggle reads the panel itself and every step is logged).
     private func showLauncher(source: LauncherSummonSource, requestedAt: TimeInterval? = nil) {
         // One published snapshot read (never a wait on the session queue).
-        let facts = host.snapshot().facts
+        let snapshot = host.snapshot()
+        let facts = snapshot.facts
         launcher.summon(
-            source: source, requestedAt: requestedAt,
+            source: source, requestedAt: requestedAt, hotkey: launcherHotkey(in: snapshot.config),
             windows: { facts?.windows ?? [] },
             workspaces: { launcherWorkspaceEntries(from: facts) },
             apps: { [launcherCatalog] in launcherCatalog.apps }
