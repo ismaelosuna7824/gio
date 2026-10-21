@@ -28,6 +28,9 @@ public struct ActionEffect: Equatable, Sendable {
     /// its usable frame, for `mouse-follows-focus` to put the cursor there
     /// (a focused window takes the cursor after the pass as usual).
     public var warpsToDisplay: CGRect?
+    /// FX-06: a switch to dwindle refused for too many windows (the host
+    /// shows it on screen).
+    public var dwindleRefusal: DwindleRefusal?
 }
 
 /// `SessionHost.apply(_:)`: maps a hotkey action onto the pure Core use
@@ -269,11 +272,11 @@ public enum ActionApplier {
             ) == .crossedDisplay
         case .toggleWorkspaceLayout:
             if !manager.toggleLayout() {
-                logDwindleRefusal(manager)
+                effect.dwindleRefusal = dwindleRefusal(manager)
             }
         case .setWorkspaceLayout(let kind):
             if !manager.setLayout(kind), kind == .dwindle {
-                logDwindleRefusal(manager)
+                effect.dwindleRefusal = dwindleRefusal(manager)
             }
         case .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance, .dwindlePreselect, .dwindlePreselectClear:
             // DW-02: dwindle only (`applyDwindle`); a scrolling workspace has no tree.
@@ -283,15 +286,16 @@ public enum ActionApplier {
     }
 
     /// FX-04: the workspace stayed scrolling because it holds more windows
-    /// than `[dwindle] max-windows`.
-    private static func logDwindleRefusal(_ manager: WorkspaceManager) {
+    /// than `[dwindle] max-windows`; logged and returned for the notice.
+    private static func dwindleRefusal(_ manager: WorkspaceManager) -> DwindleRefusal? {
         guard manager.currentWorkspace().layout == .scrolling, let refusal = manager.dwindleRefusal() else {
-            return
+            return nil
         }
         GioLog.record(
             .info,
             "dwindle refused workspace=\(manager.currentWorkspace().id.rawValue) windows=\(refusal.windows) max=\(refusal.maximum)"
         )
+        return refusal
     }
 
     /// The effects every action reports once its change is stored.

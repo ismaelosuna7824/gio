@@ -221,6 +221,10 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         let current = session.manager.currentWorkspace().layout
         let target = kind ?? current.toggled
         guard session.manager.setLayout(target) else {
+            if target == .dwindle, let refusal = session.manager.dwindleRefusal() {
+                return "layout unchanged (workspace \(session.manager.current) has \(refusal.windows) windows; "
+                    + "dwindle holds at most \(refusal.maximum), [dwindle] max-windows)"
+            }
             return "layout unchanged (workspace \(session.manager.current) is already \(target.rawValue))"
         }
         return "workspace \(session.manager.current) layout=\(target.rawValue)"

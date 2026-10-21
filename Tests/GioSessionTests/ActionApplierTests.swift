@@ -270,6 +270,22 @@ final class ActionApplierTests: XCTestCase {
         XCTAssertEqual(engineCalls, 0, "switching layouts needs no geometry")
     }
 
+    /// FX-06: a refused switch reports why, so the host can show it (the
+    /// workspace stays scrolling and nothing else changes).
+    func testARefusedSwitchToDwindleReportsTheCount() {
+        world.addColumns(4)
+        let before = current
+        XCTAssertEqual(apply(.toggleWorkspaceLayout).dwindleRefusal, DwindleRefusal(windows: 7, maximum: 6))
+        XCTAssertEqual(apply(.setWorkspaceLayout(.dwindle)).dwindleRefusal, DwindleRefusal(windows: 7, maximum: 6))
+        XCTAssertEqual(current, before)
+        XCTAssertNil(apply(.setWorkspaceLayout(.scrolling)).dwindleRefusal, "already scrolling: no refusal")
+    }
+
+    func testAnAcceptedSwitchReportsNoRefusal() {
+        XCTAssertNil(apply(.toggleWorkspaceLayout).dwindleRefusal)
+        XCTAssertNil(apply(.toggleWorkspaceLayout).dwindleRefusal, "back to scrolling")
+    }
+
     func testSharedFocusAndMoveActionsFollowTheTree() {
         let focusCases: [(HotkeyAction, FocusDirection)] = [
             (.focusLeft, .left), (.focusRight, .right), (.focusUp, .up), (.focusDown, .down),

@@ -78,6 +78,16 @@ final class DwindleMaxWindowsTests: XCTestCase {
         }
     }
 
+    /// FX-06: `gio layout dwindle` says why nothing changed.
+    func testTheCommandLineExplainsARefusal() {
+        var session = CommandSession(manager: manager(windows: 7))
+        XCTAssertEqual(
+            dispatch(.setLayout(.dwindle), session: &session),
+            "layout unchanged (workspace 1 has 7 windows; dwindle holds at most 6, [dwindle] max-windows)"
+        )
+        XCTAssertEqual(session.manager.currentWorkspace().layout, .scrolling)
+    }
+
     func testTheSettingsFormEditsTheKey() {
         var config = GioConfig()
         config.dwindle.maxWindows = 4
