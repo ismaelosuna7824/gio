@@ -2,14 +2,57 @@ import AppKit
 import GioCore
 import SwiftUI
 
-/// The running app's icon for a `WindowFact.id` (`pid:element`), looked up
-/// on main through `NSRunningApplication`; nil for unknown processes.
+/// PA-13: running apps' icons by pid for the window rows and tiles, looked
+/// up and rasterized (`AppIconResolver.pixelSize`) once per process instead
+/// of on every render. Misses are cached too; a pid's entry is dropped when
+/// an app launches or quits with it, so a reused pid never shows a stale
+/// icon. Main thread only.
 @MainActor
-func runningAppIcon(windowID: String) -> NSImage? {
-    guard let pidText = windowID.split(separator: ":").first, let pid = Int32(pidText), pid > 0 else {
-        return nil
+final class RunningAppIconCache {
+    static let shared: RunningAppIconCache = {
+        let cache = RunningAppIconCache()
+        cache.forgetOnLaunchAndQuit()
+        return cache
+    }()
+
+    private var icons: [pid_t: CGImage?] = [:]
+    private let lookup: (pid_t) -> NSImage?
+    private var observers: [NSObjectProtocol] = []
+
+    init(lookup: @escaping (pid_t) -> NSImage? = { NSRunningApplication(processIdentifier: $0)?.icon }) {
+        self.lookup = lookup
     }
-    return NSRunningApplication(processIdentifier: pid)?.icon
+
+    /// The icon for a `WindowFact.id` (`pid:element`); nil for unknown
+    /// processes.
+    func icon(windowID: String) -> CGImage? {
+        guard let pidText = windowID.split(separator: ":").first, let pid = pid_t(pidText), pid > 0 else {
+            return nil
+        }
+        if let cached = icons[pid] {
+            return cached
+        }
+        let icon = lookup(pid).flatMap(AppIconResolver.rasterizeIcon)
+        icons[pid] = icon
+        return icon
+    }
+
+    func forget(pid: pid_t) {
+        icons[pid] = nil
+    }
+
+    private func forgetOnLaunchAndQuit() {
+        let center = NSWorkspace.shared.notificationCenter
+        for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didTerminateApplicationNotification] {
+            observers.append(center.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else {
+                    return
+                }
+                let pid = app.processIdentifier
+                MainActor.assumeIsolated { self?.forget(pid: pid) }
+            })
+        }
+    }
 }
 
 /// App icon, or the app's initials on a soft tile when no icon is known.
@@ -19,8 +62,8 @@ struct AppIconView: View {
     var size: CGFloat = 20
 
     var body: some View {
-        if let icon = runningAppIcon(windowID: windowID) {
-            Image(nsImage: icon)
+        if let icon = RunningAppIconCache.shared.icon(windowID: windowID) {
+            Image(decorative: icon, scale: 1)
                 .resizable()
                 .interpolation(.high)
                 .frame(width: size, height: size)
