@@ -235,7 +235,9 @@ public final class DiscoveryService: @unchecked Sendable {
             by: \.window.pid
         ).mapValues { $0.map(\.element) }
         // Minimized windows are candidates too: they stay registered (and
-        // keep their column) but sit out of the layout.
+        // keep their column) but sit out of the layout. PA-18a: a known
+        // window's tile and float candidates are treated alike (the host's
+        // `discoverAll` skips their settable probes); keep it that way.
         for candidate in found.windows + found.floating {
             if let known = context.knownWindow(candidate.element, candidate.window.pid) {
                 liveIDs.insert(known)
@@ -428,6 +430,11 @@ public final class DiscoveryService: @unchecked Sendable {
     /// workspace, so never laid out, parked, verified or written.
     public func isBackgroundTab(_ id: WindowID) -> Bool {
         tabs.isBackground(id)
+    }
+
+    /// A member (front or background) of a native tab group.
+    public func isInTabGroup(_ id: WindowID) -> Bool {
+        tabs.group(of: id) != nil
     }
 
     /// Focus reached a background tab (a tab switch): it becomes its group's

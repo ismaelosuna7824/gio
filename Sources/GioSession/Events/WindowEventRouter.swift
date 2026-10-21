@@ -144,6 +144,11 @@ public final class WindowEventRouter: @unchecked Sendable {
     /// PF-W: a window's title is read at most this often.
     public static let titleCoalesce: TimeInterval = 1
 
+    /// PA-18c: windows whose move during a mouse-down Gio already handled
+    /// since the last pass (true: a resize, tileability invalidated too).
+    /// Cleared by `releaseDragHold` when the pass after the drag runs.
+    private var dragNoted: [WindowID: Bool] = [:]
+
     public init(context: Context, discovery: DiscoveryService, scheduler: SessionScheduler) {
         self.context = context
         self.discovery = discovery
@@ -209,6 +214,12 @@ public final class WindowEventRouter: @unchecked Sendable {
     /// FI-10: a purged or re-registered window starts a new snap-back count.
     public func forgetSnapBacks(_ id: WindowID) {
         snapBacks.forget(id)
+    }
+
+    /// PA-18c: the pass after a drag ran (the host releases the dim's drag
+    /// hold there too): the next drag's first event is handled in full again.
+    public func releaseDragHold() {
+        dragNoted.removeAll()
     }
 
     // MARK: Events
@@ -287,6 +298,15 @@ public final class WindowEventRouter: @unchecked Sendable {
                 }
                 return
             }
+            // PA-18c: a user drag raises ~60 events a second. The first one
+            // held the dim, dropped trust and asked for the pass that waits
+            // for the mouse-up; the rest add nothing, so skip their AX read.
+            // A tab keeps every frame: it may leave its group mid-drag.
+            if let noted = dragNoted[known], noted || !invalidate, context.isMouseDown(),
+               !discovery.isInTabGroup(known)
+            {
+                return
+            }
             let observed = context.frame(known)
             if let observed, context.isEcho(known, observed, now) {
                 return
@@ -302,8 +322,9 @@ public final class WindowEventRouter: @unchecked Sendable {
                 context.updateDim()
                 return
             }
+            let dragging = context.isMouseDown()
             let verdict = snapBacks.note(
-                known, at: now, lastWrite: context.lastWrite(known), dragging: context.isMouseDown()
+                known, at: now, lastWrite: context.lastWrite(known), dragging: dragging
             )
             if case .yield(let count) = verdict, let record {
                 yieldToApp(record, snapBacks: count)
@@ -318,6 +339,9 @@ public final class WindowEventRouter: @unchecked Sendable {
                 context.invalidateTileability(known)
             }
             context.scheduleReflow(false)
+            if dragging {
+                dragNoted[known] = dragNoted[known] == true || invalidate
+            }
         case .reflow:
             context.scheduleReflow(false)
         case .minimize:
@@ -337,8 +361,6 @@ public final class WindowEventRouter: @unchecked Sendable {
             noteTitleChanged(known, element: element)
         case .adoptFocus:
             context.requestFocusAdoption(.focusChanged, pid, element)
-        case .resync:
-            context.scheduleReflow(true)
         case .ignore:
             break
         }

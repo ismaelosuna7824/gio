@@ -775,6 +775,60 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.tileabilityInvalidated, [id])
     }
 
+    /// PA-18c: a user drag raises ~60 moved events a second. The first one
+    /// holds the dim, drops trust and asks for the pass that runs after the
+    /// mouse-up; the others are not even read.
+    func testADragIsReadAndRelayoutOncePerDrag() {
+        let trustDrops = world.trustInvalidated.count
+        world.mouseDown = true
+        for _ in 0..<20 {
+            send(.window(.moved), element: element)
+        }
+        XCTAssertEqual(world.frameReads, [id], "one read per drag, not per event")
+        XCTAssertEqual(world.scheduledReflows, [false], "the pass after the mouse-up is still asked for")
+        XCTAssertEqual(world.dragHolds, 1)
+        XCTAssertEqual(world.trustInvalidated.count, trustDrops + 1)
+        XCTAssertEqual(world.zoomForgotten, [id])
+
+        // Released, before the pass: a move is handled in full again.
+        world.mouseDown = false
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.frameReads, [id, id])
+        XCTAssertEqual(world.scheduledReflows, [false, false])
+    }
+
+    func testThePassAfterADragLetsTheNextDragBeNotedAgain() {
+        world.mouseDown = true
+        send(.window(.moved), element: element)
+        send(.window(.moved), element: element)
+        router.releaseDragHold()
+        send(.window(.moved), element: element)
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.frameReads, [id, id])
+        XCTAssertEqual(world.dragHolds, 2)
+        XCTAssertEqual(world.scheduledReflows, [false, false])
+    }
+
+    func testAResizeDuringANotedDragStillInvalidatesTileabilityOnce() {
+        world.mouseDown = true
+        send(.window(.moved), element: element)
+        send(.window(.resized), element: element)
+        send(.window(.resized), element: element)
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.tileabilityInvalidated, [id])
+        XCTAssertEqual(world.frameReads, [id, id])
+    }
+
+    func testEchoSuppressedDragEventsAreNeverNoted() {
+        world.mouseDown = true
+        world.suppressed = [id]
+        send(.window(.moved), element: element)
+        world.suppressed = []
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.frameReads, [id], "the first event Gio did not cause is read")
+        XCTAssertEqual(world.dragHolds, 1)
+    }
+
     func testMinimizeAndRestore() {
         send(.window(.miniaturized), element: element)
         XCTAssertEqual(world.registered.first?.isMinimized, true)
@@ -879,7 +933,7 @@ final class WindowEventRouterTests: XCTestCase {
             snapBack(after: 2)
         }
         XCTAssertEqual(world.registered.first?.mode, .tiled)
-        XCTAssertEqual(world.scheduledReflows.count, 10, "every move is still laid out again")
+        XCTAssertEqual(world.scheduledReflows.count, 6, "the drag asks once, every later move again")
     }
 
     func testForgettingAWindowDropsItsSnapBacks() {

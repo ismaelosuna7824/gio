@@ -324,6 +324,12 @@ struct AXElementFrameIO: FrameAttributeIO {
         return size
     }
 
+    /// PA-18b: one message for a read-back of both (PF-AE, `readFrame`).
+    func readFrame() throws -> CGRect? {
+        count(1)
+        return try GioMacOS.readFrame(element)
+    }
+
     func writePosition(_ point: CGPoint) throws {
         count(1)
         try writeAXPosition(point, to: element)
