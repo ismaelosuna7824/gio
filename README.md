@@ -151,7 +151,7 @@ If windows are still missing (power loss, or a guardian that could not run):
 | `~/.config/gio/themes/` | Optional theme directory. Themes are implemented in Core but not yet consumed by the UI. |
 | `~/Library/Logs/Gio/update.log` | The updater helper's log (paths and steps only). |
 | `~/Library/Caches/dev.gio.windowmanager/launcher-icons.plist` | The launcher's cache of app icons (the folder is the app's bundle identifier). |
-| `~/Library/Caches/dev.gio.windowmanager/app-minimum-sizes.json` | The minimum widths apps enforce (WhatsApp, Figma...), so their windows are laid out at that width from the first layout after a launch. Delete it to forget them. |
+| `~/Library/Caches/dev.gio.windowmanager/app-minimum-sizes.json` | The minimum width and height apps enforce (WhatsApp, Figma...). Each is used once Gio has seen the same value twice; from then on the app's windows are laid out at it from the first layout after a launch. Delete it to forget them. |
 
 ## Documentation
 
