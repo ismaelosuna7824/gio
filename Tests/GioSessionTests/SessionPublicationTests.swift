@@ -72,13 +72,14 @@ final class SessionFactsBuilderTests: XCTestCase {
         screenRecording: Bool = true, refreshedScreenRecording: Bool? = nil,
         permissionChecks: Recorder<String> = Recorder(), exists: Bool = false,
         gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1),
-        conflicts: [GestureConflict] = []
+        conflicts: [GestureConflict] = [],
+        configStatus: ConfigLoadStatus = ConfigLoadStatus(messages: ["warning: x"])
     ) -> SessionFactsBuilder {
         SessionFactsBuilder(context: .init(
             session: { fixture.session },
             displays: { fixture.displays.allDisplays() },
             visibleFrame: { fixture.visibleFrames[$0] },
-            configMessages: { ["warning: x"] },
+            configStatus: { configStatus },
             engine: {
                 ScrollableLayoutEngine(config: fixture.session.config.makeLayoutConfig())
             },
@@ -124,6 +125,7 @@ final class SessionFactsBuilderTests: XCTestCase {
         XCTAssertEqual(facts.configPath, "/Users/test/.config/gio/config.toml")
         XCTAssertFalse(facts.configExists)
         XCTAssertEqual(facts.configMessages, ["warning: x"])
+        XCTAssertFalse(facts.configRejected)
         XCTAssertTrue(facts.accessibilityGranted)
         XCTAssertTrue(facts.screenRecordingGranted)
         XCTAssertEqual(facts.currentWorkspace, fixture.session.manager.current)
@@ -132,6 +134,15 @@ final class SessionFactsBuilderTests: XCTestCase {
         XCTAssertEqual(facts.windows.first?.workspaceIsShown, true)
         XCTAssertEqual(facts.displays.map(\.id), [1])
         XCTAssertNotNil(facts.strip)
+    }
+
+    /// S6: a config rejected for errors reaches Diagnostics as rejected.
+    func testPublishesARejectedConfig() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let status = ConfigLoadStatus(messages: ["line 2: layout.gaps expects a non-negative number"], rejected: true)
+        let facts = make(fixture, logs: Recorder(), prefetches: Recorder(), configStatus: status).facts()
+        XCTAssertEqual(facts.configMessages, status.messages)
+        XCTAssertTrue(facts.configRejected)
     }
 
     func testConfiguredPathWinsOverTheDefault() {

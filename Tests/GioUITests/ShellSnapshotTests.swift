@@ -20,7 +20,10 @@ final class ShellSnapshotTests: XCTestCase {
     ) throws {
         // Full screen (the setup covers the display): a 14" laptop's 1512 x 982.
         try SnapshotHarness.render(name, size: CGSize(width: 1512, height: 982)) {
-            page(OnboardingContent(accessibilityGranted: ax, screenRecordingGranted: sr, step: step, loginItem: loginItem))
+            page(OnboardingContent(
+                accessibilityGranted: ax, screenRecordingGranted: sr, screenRecordingAvailable: true, step: step,
+                loginItem: loginItem
+            ))
         }
     }
 

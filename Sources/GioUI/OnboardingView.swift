@@ -5,8 +5,8 @@ import SwiftUI
 
 /// DD-05 first-run onboarding, presented as a sheet on the main window: a
 /// welcome, Accessibility (required, with live status from the existing
-/// permission polling), Screen Recording, and the keys to know with the
-/// Open at Login switch (DA-06).
+/// permission polling), Screen Recording (recommended; macOS 14 and later
+/// only), and the keys to know with the Open at Login switch (DA-06).
 
 /// Remembers that onboarding was finished. Injected so tests never write
 /// the user's defaults.
@@ -114,6 +114,7 @@ struct OnboardingSheet: View {
             accessibilityGranted: model.snapshot.facts?.accessibilityGranted ?? false,
             screenRecordingGranted: model.snapshot.facts?.screenRecordingGranted ?? false,
             screenRecordingRequested: model.screenRecordingRequested,
+            screenRecordingAvailable: screenRecordingAvailableOnThisMac,
             step: startStep,
             loginItem: loginItem.presentation,
             onFinish: onFinish, onLater: onLater,
@@ -145,6 +146,14 @@ struct OnboardingSheet: View {
     }
 }
 
+/// S5: Screen Recording features use ScreenCaptureKit (macOS 14 and later).
+var screenRecordingAvailableOnThisMac: Bool {
+    if #available(macOS 14.0, *) {
+        return true
+    }
+    return false
+}
+
 /// Opens System Settings › Privacy & Security at `anchor`.
 func openPrivacyPane(_ anchor: String) {
     if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
@@ -171,7 +180,7 @@ struct OnboardingContent: View {
 
     init(
         accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingRequested: Bool = false,
-        step: OnboardingStep = .welcome, loginItem: LoginItemPresentation? = nil,
+        screenRecordingAvailable: Bool, step: OnboardingStep = .welcome, loginItem: LoginItemPresentation? = nil,
         onFinish: @escaping () -> Void = {}, onLater: @escaping () -> Void = {},
         requestAccessibility: @escaping () -> Void = {}, requestScreenRecording: @escaping () -> Void = {},
         relaunch: @escaping () -> Void = {},
@@ -189,7 +198,8 @@ struct OnboardingContent: View {
         self.setLoginItem = setLoginItem
         self.openLoginItems = openLoginItems
         _state = State(initialValue: OnboardingState(
-            accessibilityGranted: accessibilityGranted, screenRecordingGranted: screenRecordingGranted, step: step
+            accessibilityGranted: accessibilityGranted, screenRecordingGranted: screenRecordingGranted,
+            screenRecordingAvailable: screenRecordingAvailable, step: step
         ))
     }
 
@@ -268,7 +278,7 @@ struct OnboardingContent: View {
         permissionStep(
             icon: SectionIcon(symbol: "hand.raised.fill", tint: .blue, size: 80),
             title: "Allow Accessibility",
-            why: "Gio arranges your windows and listens for its shortcuts through Accessibility. Without it nothing can tile. Gio never reads window contents, and its logs never contain window titles.",
+            why: "Gio arranges your windows and listens for its shortcuts through Accessibility. Without it nothing can tile. Gio never stores or uploads window contents, and its logs never contain window titles.",
             phase: accessibilityGranted ? .granted : .notRequested,
             idleText: "Waiting for permission… turn Gio on in the list, then come back.",
             showsProgress: true,
@@ -280,7 +290,7 @@ struct OnboardingContent: View {
     private var screenRecording: some View {
         permissionStep(
             icon: SectionIcon(symbol: "record.circle", tint: .pink, size: 80),
-            title: "Screen Recording (Required)",
+            title: "Screen Recording (Recommended)",
             why: "Gio's smooth motion needs it: Gio slides captured images of your windows, so every app moves at the same speed, even slow ones, and the overview shows live thumbnails. Without it windows still tile, but they stutter as they move. The images stay in memory; nothing is recorded or saved. macOS applies this permission only after Gio relaunches.",
             phase: screenRecordingStepPhase(granted: screenRecordingGranted, requested: screenRecordingRequested),
             idleText: "Not granted. Turn Gio on in System Settings, then relaunch Gio.",
@@ -388,6 +398,11 @@ struct OnboardingContent: View {
             }
             .frame(maxWidth: 580)
             .padding(.top, 8)
+            Label(onboardingKeyboardNote, systemImage: "globe")
+                .font(GioFont.caption)
+                .foregroundStyle(GioColor.secondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 580, alignment: .leading)
             if let loginItem {
                 SectionCard {
                     CardRow(divider: false) {

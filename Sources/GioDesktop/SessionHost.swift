@@ -300,7 +300,7 @@ final class SessionHost: @unchecked Sendable {
             session: { [unowned self] in session },
             displays: { [unowned self] in displays.allDisplays() },
             visibleFrame: { [unowned self] in visibleFrames[$0] },
-            configMessages: { [unowned self] in configCoordinator.messages },
+            configStatus: { [unowned self] in configCoordinator.status },
             engine: { [unowned self] in engine() },
             tileableModes: { [unowned self] in tileableModes() },
             screenRecordingGranted: { [unowned self] in screenRecording.granted() },
@@ -724,7 +724,7 @@ final class SessionHost: @unchecked Sendable {
             context: .init(
                 session: { [unowned self] in session },
                 reloadSession: { [unowned self] in dispatch(.reload, session: &session) },
-                loadMessages: { loadGioConfig().messages },
+                loadStatus: { loadGioConfigReport().status },
                 patchFile: { GioCore.applyConfigEdits($0) },
                 applyLogLevel: { [unowned self] level in
                     GioLog.minimumLevel = level
@@ -865,13 +865,13 @@ final class SessionHost: @unchecked Sendable {
         }
         // PF-AF: before any discovery or observer touches another app.
         applyGlobalAXMessagingTimeout()
-        let (config, configMessages) = loadGioConfig()
+        let (config, configStatus) = loadGioConfigReport()
         session.config = config
         GioLog.minimumLevel = config.logging.level
         publishDisplayRefreshes()
         configCoordinator.refreshDispatcher()
-        configCoordinator.setMessages(configMessages)
-        for message in configMessages {
+        configCoordinator.setStatus(configStatus)
+        for message in configStatus.messages {
             print("[gio] config: \(message)")
         }
         if !hasAXPermission() {
