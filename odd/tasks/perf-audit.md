@@ -124,6 +124,51 @@ build OK. Gaps: cost learned from position-only writes. LIVE PENDING. ALL PA TAS
   `settleMs=` and `verified=`. RED observed (compile). Bundles 25/7/19/39/1078 all 0 failures
   (parent re-ran); signed build OK. LIVE PENDING.
 
+### Second pass (2026-10-21): renders, startup/bundle, requests, AX N+1, assets/scripts
+User (2026-10-21): web-style checklist (renders, lazy loading/bundle, requests+caching, slow
+queries/N+1, images/fonts/scripts) mapped to Gio: SwiftUI publishes, launch work and the Release
+binary, IPC/tccd/WindowServer requests, AX attribute round trips, icons and build/CI scripts.
+Route: 5 read-only audits, then 5 delegated writers (file-disjoint, no builds mid-flight), parent
+integrated, built and tested once. TDD deviation: writers wrote tests first but could not run
+them (no RED observed) except AppNameCache (RED observed by parent: 3 failures, then GREEN).
+- [x] PA-12/13/14 (`d0f23a6`) — Renders: `GioConfig`/`SessionSnapshot` Equatable; DesktopModel,
+  LoginItemModel, SettingsDraft.adopt skip unchanged values (1-3 s polls re-rendered the whole
+  window). `AppIconView` via pid-keyed `RunningAppIconCache` (128 px raster, misses cached,
+  dropped on launch/quit); launcher window-row misses cached. Launcher rescan stat-first: parses
+  only new/changed Info.plists (was ~91 per system app launch).
+- [x] PA-15/16 (`3c42881`) — Session: bar state built from the session (no JSON encode/decode per
+  reflow), `hasFocusedWindow` Bool; facts read cached Screen Recording permission, tccd only
+  while missing; `primaryHeight` from DisplayParameters; resize probe (PA-08) only at debug
+  level; one host AppNameCache that keeps only resolved names; sizeSchedules once per pid;
+  launcher icon scan 2 s after session start; updater not forced before the session,
+  eligibility on first use.
+- [x] PA-17 (`9418311`) — IPC: `gio doctor` over IPC deadlocked (self-connect to the
+  single-threaded server from inside `queue.sync`); in-session doctor no longer connects.
+  Socket timeouts (client 60 s, server 5 s request I/O), SO_NOSIGPIPE, `IPCError.timedOut`.
+  Launcher workspace/`>` commands off main.
+- [x] PA-18 (`4ddc5f4`) — AX N+1: discovery one `AXUIElementCopyMultipleAttributeValues` per
+  window + lazy settable probes (skipped for known windows): ~8-9 messages -> 1 known / 3 new.
+  Verify read-back one batched read. Drag: one AX frame read per window per drag (tabs exempt).
+  No double observer subscription. Dead `.resync` removed.
+- [x] PA-19/20 (`c374cd7`) — Build: Release dead-code stripping + strip + dSYM artifact. Same
+  source, measured: binary 13,312,832 -> 5,833,184 B, app 16.7 -> 9.4 MB, exported symbols
+  49,459 -> 1; dSYM UUID matches, `atos` symbolicates. Dev stamp: first phase writing the
+  processed Info.plist, real inputs/outputs, write-on-change: second Debug build ran no stamp,
+  no plist processing, no CodeSign (`0.1.0+dev` kept). CI cache keyed by Xcode version + sha
+  with restore prefixes; release test job restore-only.
+
+Evidence: bundles UI 329 (53 skipped) / Session 546 / POC 7 / Mac 19 / MacOS 102 / Core 2098,
+all 0 failures (baseline 313/537/7/19/91/2084). Signed Debug build OK twice; Release build OK
+and `codesign --verify --deep --strict` OK. Script tests: stamp 8/8, release-version all pass;
+workflows load as YAML. NOT verified: CI cache behavior (needs two runs), live `gio doctor`,
+live drag/discovery/launcher timing, Screen Recording grant pickup, Instruments render counts.
+Not done (left for a decision): persistent launcher icon cache on disk; overview thumbnails from
+the snapshot cache; `Assets.car` 3.4 MB from the 1024 px raster icon layer (needs an Icon
+Composer vector/recompressed export); config parsed three times per Settings apply;
+`AXIsProcessTrusted` per frame write (unmeasured); `registerNew` O(N^2) pid scans (<1 ms at
+N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-thread wait on
+`initialSync` at launch.
+
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
 - Motion: fewer AX calls per animation (reported in `anim done`/timing) and frame rate matches display.
