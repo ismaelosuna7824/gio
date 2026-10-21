@@ -2002,6 +2002,14 @@ final class SessionHost: @unchecked Sendable {
         // PF-AO: every plan in one reconcile, so the session queue waits for
         // the slowest app of the pass once, not once per plan.
         let writes = mergePassWrites(plans, focus: focusTarget)
+        // FX-01: a target that stays put shows its ring now, not after the
+        // app's activation returns (the reconcile below waits for it).
+        if focusRingLeadsFocus(
+            target: writes.focus, planned: writes.plan.visible, parked: Set(writes.plan.parked.keys),
+            physical: writes.focus.flatMap { physicalFrames[$0] }
+        ) {
+            focusRing.publish()
+        }
         let report = reconciler.reconcile(
             frames: writes.plan.visible, parked: writes.plan.parked,
             focused: writes.focus, currentlyFocused: nil,

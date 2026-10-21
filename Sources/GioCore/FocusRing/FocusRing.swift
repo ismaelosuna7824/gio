@@ -96,6 +96,21 @@ public enum FocusRingState: Equatable, Sendable {
     }
 }
 
+/// FX-01: whether an instant pass may show the ring on its focus target
+/// before the focus call (an app can take 200 ms to activate, live:
+/// OrbStack). Only when the target is not parked and already sits on its
+/// planned frame (within half a point): the ring is built from physical
+/// frames, so it is drawn where the window stays.
+public func focusRingLeadsFocus(
+    target: WindowID?, planned: [WindowID: CGRect], parked: Set<WindowID>, physical: CGRect?
+) -> Bool {
+    guard let target, !parked.contains(target), let plannedFrame = planned[target], let physical else {
+        return false
+    }
+    return abs(plannedFrame.minX - physical.minX) < 0.5 && abs(plannedFrame.minY - physical.minY) < 0.5
+        && abs(plannedFrame.width - physical.width) < 0.5 && abs(plannedFrame.height - physical.height) < 0.5
+}
+
 /// A window with less than this much of its width or height inside a display
 /// counts as off-viewport (parked windows keep a 1 pt sliver on screen).
 private let minimumVisibleExtent: CGFloat = 24
