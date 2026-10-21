@@ -240,6 +240,24 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   MacOS 107 / Core 2149, all 0 failures; signed Debug build OK. LIVE PENDING: stacked column
   order and Alt+J/K, Alt+Shift+T with many windows (no rewrite loop, no yield), Figma tiled
   again after Alt+Shift+Space.
+- [x] FX-01 — Live check of the new build (2026-10-21 22:18-22:48 UTC, user: "se sintió raro, no
+  como antes ... Alt+K/Alt+J se siente raro, a veces cambia de workspace"). Measured, old build
+  (22:18-22:42, 157 animations) vs new (22:42-22:48, 106): median 112 vs 114 fps, dropped
+  frames per animation 1.71 vs 1.13, hitches 0.64 vs 0.39, reflow median 27 vs 21 ms: no
+  regression. Focus call per app, both builds: OrbStack 208-228 ms median (max 318), every
+  other app 7-100 ms. In the stacked column (OrbStack over Xcode/Figma) Alt+K focuses OrbStack
+  in a pass with no motion, so the instant pass's synchronous focus held the ring (and cursor)
+  ~200 ms. Fix: `focusRingLeadsFocus` (target not parked, on its planned frame within 0.5 pt)
+  lets `instantPass` publish the ring before the focus call. The workspace switch is the
+  user's binding: `Alt+J/K = focus-window-or-workspace-down/up` crosses to the workspace
+  below/above from the column's last/first window (niri semantics); `focus-down/up` stay in
+  the column. RED: compile (`FocusRingLeadTests`, 6).
+- [x] FX-02 — Xcode showed SwiftUI "Invalid frame dimension (negative or non-finite)": the
+  overview row computed its canvas from `proxy.size.width - labelWidth - spacing`, negative on
+  a zero-size first layout pass (since WO-01). `overviewCanvasSize` clamps to empty. RED:
+  compile (`testCanvasIsEmptyNotNegativeBeforeThePanelHasASize`). Bundles UI 356 (53 skipped)
+  / Session 550 / POC 7 / Mac 19 / MacOS 107 / Core 2155, 0 failures; signed Debug build OK.
+  LIVE PENDING: Alt+K onto OrbStack shows the ring at once; no warning when opening Alt+O.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
