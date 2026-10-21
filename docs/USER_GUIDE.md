@@ -173,6 +173,7 @@ Notes:
 A workspace can lay its windows out as a **dwindle** tree instead of the scrolling strip (Hyprland's dwindle; OmniWM has the same per-workspace choice). The usable display area (inside `padding`) is split in two, each half can be split in two again, and so on, with `gaps` between windows. Every window of the workspace is on screen: nothing scrolls, nothing is parked off the side. Workspaces you are not on are hidden below the display as usual.
 
 - **Switching.** `Alt+Shift+T` (`toggle-workspace-layout`) or `set-workspace-layout-scrolling` / `-dwindle`. Every window stays and the focused one keeps the focus. Going to dwindle builds the tree from the strip, left to right (a spiral: each window splits the previous one); going back gives one column per window, in the tree's order (a stacked column becomes one tile per window in dwindle and does not come back stacked).
+- **At most `max-windows` windows** (`[dwindle]`, default 6): a workspace with more stays scrolling when you switch it (the log says `dwindle refused ... windows=N max=M`), and a dwindle workspace that gets one window too many (a new window, a move, a rule) goes back to scrolling, which holds any number.
 - **New windows** split the focused window: side by side when its tile is wider than tall, stacked otherwise, and the new window takes the right (or bottom) half. A split keeps the shape it got when it first appeared, so resizing never flips the splits inside it. `dwindle-preselect-left` / `-right` / `-up` / `-down` choose the side (and the shape) for the next new window of the workspace; `dwindle-preselect-clear` drops the choice. A window that becomes floating or is minimized keeps its place in the tree; its neighbour takes the space until it comes back.
 - **Closing** a window gives its space to its sibling.
 
@@ -229,7 +230,7 @@ Validation outcomes:
 | Syntax error, key outside any table, wrong value type, value out of range, unknown action name, unparsable hotkey, rule without a valid `app` | **Error.** The whole file is rejected, **defaults are used** (custom shortcuts included), and every message (with its line number) is shown in the app (**Overview**, and **Diagnostics**, whose Configuration card turns red with an `N errors` badge) and returned by `gio reload`. Fix the lines, then **Reload Config**. |
 | Unknown table or unknown key inside a known table | **Warning.** Ignored, everything else applies (forward compatibility); Diagnostics shows a yellow `N warnings` badge. |
 | `animations.duration-ms` outside 0 to 1000, `animations.spring-damping-ratio` outside 0.2 to 3, `animations.spring-stiffness` outside 100 to 3000, `focus-ring.width` outside 0 to 20, `focus.dim-strength` outside 0.0 to 0.5 | **Warning.** Clamped into range. |
-| `layout.default-layout`, `[[workspace]] layout` other than `"scrolling"` / `"dwindle"`, `dwindle.default-split-ratio` outside 0.1 to 1.9, `dwindle.split-width-multiplier` outside 0.1 to 10 (or not a number) | **Warning.** The default is kept and the rest of the file applies (DW-03: a layout typo never rejects the file). |
+| `layout.default-layout`, `[[workspace]] layout` other than `"scrolling"` / `"dwindle"`, `dwindle.default-split-ratio` outside 0.1 to 1.9, `dwindle.split-width-multiplier` outside 0.1 to 10 (or not a number), `dwindle.max-windows` not a whole number from 1 to 32 | **Warning.** The default is kept and the rest of the file applies (DW-03: a layout typo never rejects the file). |
 | Missing file | Silent defaults (first run). |
 
 An invalid config never stops the window manager.
@@ -256,6 +257,7 @@ An invalid config never stops the window manager.
 | --- | --- | --- | --- |
 | `default-split-ratio` | number | `1.0` | `0.1` to `1.9`. When a new window splits the focused one, the focused window keeps this share of the tile, times two (`1.0` half and half, `1.2` keeps 60%). Settings > Layout > **Dwindle split ratio**. |
 | `split-width-multiplier` | number | `1.0` | `0.1` to `10`. A new split puts its halves side by side when the tile is at least this many times wider than tall, otherwise stacks them; above 1 favours stacking (Hyprland's `split_width_multiplier`). A split keeps the shape it got. Settings > Layout > **Dwindle width multiplier**. |
+| `max-windows` | integer | `6` | `1` to `32`. The most windows a dwindle workspace holds: `Alt+Shift+T` leaves a workspace with more windows scrolling, and a dwindle workspace that gets one too many returns to scrolling. Settings > Layout > **Dwindle maximum windows**. |
 
 `smart-split` (Hyprland: the side follows the pointer) is not supported: Gio has no pointer position when a window opens. It warns; use `dwindle-preselect-*` instead.
 
@@ -520,6 +522,7 @@ Windows show a thumbnail as soon as the panel opens: a recent image Gio already 
 | Arrows or `H`/`J`/`K`/`L` | Left/right walk the row's windows (column by column, top to bottom); up/down move one workspace and land on the window in the same place on screen. An empty workspace is selected as a whole. |
 | `Return` or click | Close the panel and go there: a window switches to its workspace and takes keyboard focus (like the launcher); an empty workspace (or a click on a row's screen frame) switches to the workspace like `Alt+N`. |
 | `1` ... `9` | Go to that workspace of the stack. |
+| Move the pointer over a window | Selects it. The panel opens with the focused window selected even when the pointer rests on another tile: the pointer selects only once it moves. |
 | `Esc`, `Alt+O`, a click on the background, or switching apps | Close without changing anything. |
 | Drag a window | Move it without closing the panel: drop it between two windows of a row (an accent bar shows where) to put it there as its own column, or on another row to send it to that workspace (an empty row takes it as its only window). A window alone in its column takes the whole column (width included); a stacked one leaves its column. Nothing follows it: you stay on your workspace and the keyboard focus does not move. `Esc` during a drag cancels it. In a dwindle workspace the tree decides the place (the window splits the focused one). |
 

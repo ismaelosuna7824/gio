@@ -67,20 +67,24 @@ public struct LayoutSectionConfig: Equatable, Sendable {
 }
 
 /// DW-03 `[dwindle]`: consumed by the dwindle engine (`makeLayoutConfig`)
-/// and the tree's insertion (`layoutDefaults`).
+/// and the tree's insertion and size limit (`layoutDefaults`).
 public struct DwindleSectionConfig: Equatable, Sendable {
     public static let splitRatioRange = 0.1...1.9
     public static let splitWidthMultiplierRange = 0.1...10.0
+    public static let maxWindowsRange = 1...32
 
     /// `default-split-ratio`: a new split's ratio (the first, existing
     /// window's share times two; 1 = half and half).
     public var defaultSplitRatio: CGFloat
     /// `split-width-multiplier`: side by side when `width >= height * m`.
     public var splitWidthMultiplier: CGFloat
+    /// FX-04 `max-windows`: the most windows a dwindle workspace holds.
+    public var maxWindows: Int
 
-    public init(defaultSplitRatio: CGFloat = 1, splitWidthMultiplier: CGFloat = 1) {
+    public init(defaultSplitRatio: CGFloat = 1, splitWidthMultiplier: CGFloat = 1, maxWindows: Int = 6) {
         self.defaultSplitRatio = defaultSplitRatio
         self.splitWidthMultiplier = splitWidthMultiplier
+        self.maxWindows = maxWindows
     }
 }
 
@@ -250,7 +254,7 @@ public struct GioConfig: Sendable {
 
     /// DW-03: what `WorkspaceManager.applyLayoutDefaults` receives.
     public var layoutDefaults: WorkspaceLayoutDefaults {
-        WorkspaceLayoutDefaults(kind: layout.defaultLayout, splitRatio: dwindle.defaultSplitRatio)
+        WorkspaceLayoutDefaults(kind: layout.defaultLayout, splitRatio: dwindle.defaultSplitRatio, maxWindows: dwindle.maxWindows)
     }
 
     /// Engine input, independent of any display: a fraction stays a

@@ -405,15 +405,28 @@ public struct WorkspaceManager: Equatable, Sendable {
 
     /// DW-01: lay workspace `id` (the current one when nil) out as `kind`,
     /// keeping every window (`Workspace.settingLayout`). False when it is
-    /// already `kind` or unknown.
+    /// already `kind`, unknown, or has more windows than a dwindle
+    /// workspace holds (FX-04, `dwindleRefusal`).
     @discardableResult
     public mutating func setLayout(_ kind: WorkspaceLayoutKind, of id: WorkspaceID? = nil) -> Bool {
         let target = id ?? currentID
-        guard let workspace = workspaces[target], workspace.layout != kind else {
+        guard let workspace = workspaces[target], workspace.layout != kind,
+              kind == .scrolling || dwindleRefusal(of: target) == nil
+        else {
             return false
         }
         store(workspace.settingLayout(kind, splitRatio: layoutDefaults.splitRatio))
         return true
+    }
+
+    /// FX-04: why workspace `id` (the current one when nil) cannot become
+    /// dwindle: more windows than `[dwindle] max-windows`. Nil when it can.
+    public func dwindleRefusal(of id: WorkspaceID? = nil) -> DwindleRefusal? {
+        guard let workspace = workspaces[id ?? currentID] else {
+            return nil
+        }
+        let count = workspace.windows.count
+        return count > layoutDefaults.maxWindows ? DwindleRefusal(windows: count, maximum: layoutDefaults.maxWindows) : nil
     }
 
     /// DW-01 `toggle-workspace-layout`: scrolling to dwindle and back.
@@ -435,6 +448,10 @@ public struct WorkspaceManager: Equatable, Sendable {
             return
         }
         layoutDefaults = defaults
+        // FX-04: a lower maximum returns the dwindle workspaces over it to the strip.
+        for workspace in workspaces.values where workspace.layout == .dwindle && workspace.windows.count > defaults.maxWindows {
+            store(workspace)
+        }
         let pinned = Set(namedDefinitions.filter { $0.layout != nil }.map(\.name))
         for workspace in workspaces.values where workspace.columns.isEmpty && workspace.layout != defaults.kind {
             if let name = workspace.name, pinned.contains(name) {
@@ -687,9 +704,14 @@ public struct WorkspaceManager: Equatable, Sendable {
     // MARK: - Internals
 
     /// DW-01: the single write funnel; a dwindle tree is reconciled with
-    /// the columns on every write, so no path can desync them.
+    /// the columns on every write, so no path can desync them. FX-04: a
+    /// dwindle workspace given more windows than `max-windows` (an arrival,
+    /// a move, a rule) goes back to the strip, which holds any number.
     private mutating func store(_ workspace: Workspace) {
         var reconciled = workspace
+        if reconciled.layout == .dwindle, reconciled.windows.count > layoutDefaults.maxWindows {
+            reconciled = reconciled.settingLayout(.scrolling, splitRatio: layoutDefaults.splitRatio)
+        }
         reconciled.reconcileDwindle(splitRatio: layoutDefaults.splitRatio)
         workspaces[workspace.id] = reconciled
     }

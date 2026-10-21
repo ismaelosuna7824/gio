@@ -91,6 +91,16 @@ final class DwindleLayoutEngineTests: XCTestCase {
         XCTAssertEqual(both[id(2)]?.width, 448)
     }
 
+    /// FX-04: a side with no known minimum keeps its nominal share in the
+    /// proportion, so a crowded neighbour never squeezes it to 1 pt (live:
+    /// 1x132 tiles for Xcode and Zed).
+    func testASideWithoutAMinimumIsNotSqueezedToNothing() throws {
+        let laid = try frames(spiral(2), minimums: [id(1): CGSize(width: 1200, height: 0)])
+        // 1200 against the 485 nominal half: 1200:485 of 970.
+        XCTAssertEqual(laid[id(1)]?.width, 691)
+        XCTAssertEqual(laid[id(2)]?.width, 279)
+    }
+
     func testAStackedSubtreeNeedsItsWidestMinimum() throws {
         // Window 1 on the left, 2 above 3 on the right: 3's 600 pt minimum
         // widens the whole right half.

@@ -46,6 +46,10 @@ public func defaultConfigTemplate() -> String {
     # A split puts its halves side by side when its area is at least this many
     # times wider than tall, else stacks them (0.1-10; above 1 favours stacking).
     split-width-multiplier = 1.0
+    # The most windows a dwindle workspace holds (1-32). Alt+Shift+T leaves a
+    # workspace with more windows scrolling; one window too many returns a
+    # dwindle workspace to scrolling.
+    max-windows = 6
 
     [behavior]
     # Focus the window the pointer rests on (~100 ms); never scrolls.

@@ -268,14 +268,30 @@ public enum ActionApplier {
                 direction, frames: displayFrames(context), geometry: geometry
             ) == .crossedDisplay
         case .toggleWorkspaceLayout:
-            manager.toggleLayout()
+            if !manager.toggleLayout() {
+                logDwindleRefusal(manager)
+            }
         case .setWorkspaceLayout(let kind):
-            manager.setLayout(kind)
+            if !manager.setLayout(kind), kind == .dwindle {
+                logDwindleRefusal(manager)
+            }
         case .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance, .dwindlePreselect, .dwindlePreselectClear:
             // DW-02: dwindle only (`applyDwindle`); a scrolling workspace has no tree.
             break
         }
         return finish(action, effect: effect, startDisplay: startDisplay, manager: manager, context: context)
+    }
+
+    /// FX-04: the workspace stayed scrolling because it holds more windows
+    /// than `[dwindle] max-windows`.
+    private static func logDwindleRefusal(_ manager: WorkspaceManager) {
+        guard manager.currentWorkspace().layout == .scrolling, let refusal = manager.dwindleRefusal() else {
+            return
+        }
+        GioLog.record(
+            .info,
+            "dwindle refused workspace=\(manager.currentWorkspace().id.rawValue) windows=\(refusal.windows) max=\(refusal.maximum)"
+        )
     }
 
     /// The effects every action reports once its change is stored.

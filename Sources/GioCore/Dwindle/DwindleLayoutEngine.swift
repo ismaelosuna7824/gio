@@ -130,7 +130,9 @@ public struct DwindleLayoutEngine: Sendable {
 
     /// The first child's share of the split (0...1): `ratio / 2`, moved just
     /// enough to give each side its minimum along the axis when both fit,
-    /// else the two minimums' proportion.
+    /// else the two needs' proportion, each need at least its side's
+    /// nominal extent (FX-04: a side with no known minimum is not squeezed
+    /// to nothing by a crowded neighbour).
     private func minimumAwareFraction(
         _ split: DwindleSplit, in rect: CGRect, nominal: CGRect, orientation: DwindleOrientation,
         tiled: (WindowID) -> Bool
@@ -150,7 +152,9 @@ public struct DwindleLayoutEngine: Sendable {
             return fraction
         }
         guard needA + needB <= available else {
-            return needA / (needA + needB)
+            let weightA = max(needA, horizontal ? first.width : first.height)
+            let weightB = max(needB, horizontal ? second.width : second.height)
+            return weightA / (weightA + weightB)
         }
         let extent = min(max(available * fraction, needA), available - needB)
         return extent / available
