@@ -205,8 +205,10 @@ public final class LauncherViewModel: ObservableObject {
     }
 }
 
-/// Spotlight-like launcher content: large search field, result rows with
-/// icons, kind badges and ⌘1–9 hints, over a vibrant rounded panel.
+/// Spotlight-like launcher content in Gio's identity: a window like the ones
+/// the mascot holds (navy title bar, three mint dots) over the page color,
+/// a large search field, result rows with icons, kind and workspace badges,
+/// ⌘1–9 keycaps, and the selection in the mascot's mint.
 public struct GioLauncherView: View {
     @ObservedObject var model: LauncherViewModel
     let icon: (LauncherEntry) -> NSImage?
@@ -220,9 +222,10 @@ public struct GioLauncherView: View {
 
     public var body: some View {
         VStack(spacing: 0) {
+            titleBar
             searchRow
             if !model.results.isEmpty || model.commandHint != nil || model.status != nil {
-                Divider().opacity(0.6)
+                Rectangle().fill(GioColor.hairline).frame(height: 1)
             }
             if !model.results.isEmpty {
                 VStack(spacing: 2) {
@@ -253,16 +256,42 @@ public struct GioLauncherView: View {
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+                .strokeBorder(GioColor.hairline, lineWidth: 1)
         )
         .onAppear { searchFocused = true }
+    }
+
+    /// The mascot's window bar: three mint dots, the mascot and the name.
+    private var titleBar: some View {
+        HStack(spacing: GioSpacing.xs) {
+            HStack(spacing: 5) {
+                ForEach(0..<3, id: \.self) { _ in
+                    Circle().fill(Color(nsColor: GioBrand.mint)).frame(width: 9, height: 9)
+                }
+            }
+            Spacer(minLength: 0)
+            GioMascot(size: 18)
+            Text("Gio")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+            Text("· Launcher")
+                .font(.system(size: 12, design: .rounded))
+                .opacity(0.65)
+            Spacer(minLength: 0)
+            Text("⌥ Space")
+                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                .opacity(0.6)
+        }
+        .foregroundStyle(Color(nsColor: GioBrand.onNavy))
+        .padding(.horizontal, GioSpacing.s)
+        .frame(height: 30)
+        .background(Color(nsColor: GioBrand.navy))
     }
 
     private var searchRow: some View {
         HStack(spacing: GioSpacing.s) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 20, weight: .medium))
-                .foregroundStyle(GioColor.secondaryText)
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundStyle(GioColor.accent)
             Group {
                 if isStatic {
                     Text(model.text.isEmpty ? "Search apps, windows and workspaces" : model.text)
@@ -271,11 +300,12 @@ public struct GioLauncherView: View {
                 } else {
                     TextField("Search apps, windows and workspaces", text: $model.text)
                         .textFieldStyle(.plain)
+                        .foregroundStyle(GioColor.primaryText)
                         .focused($searchFocused)
                         .onSubmit { model.commit() }
                 }
             }
-            .font(.system(size: 22, weight: .light))
+            .font(.system(size: 20, design: .rounded))
             if !model.text.isEmpty {
                 InlineTag(text: "esc to clear")
             }
@@ -286,7 +316,7 @@ public struct GioLauncherView: View {
 
     private func messageRow(symbol: String, text: String) -> some View {
         HStack(spacing: GioSpacing.xs) {
-            Image(systemName: symbol).foregroundStyle(GioColor.secondaryText)
+            Image(systemName: symbol).foregroundStyle(GioColor.accent)
             Text(text).font(GioFont.callout).foregroundStyle(GioColor.secondaryText).lineLimit(2)
             Spacer(minLength: 0)
         }
@@ -297,24 +327,54 @@ public struct GioLauncherView: View {
     private var footer: some View {
         HStack(spacing: GioSpacing.m) {
             footerHint("↑↓", "select")
-            footerHint("return", "open")
+            footerHint("↩", "open")
             footerHint("⌘1–9", "jump")
             footerHint("esc", "close")
             Spacer(minLength: 0)
-            Text("> Gio command  ·  ! shell")
-                .font(GioFont.caption)
-                .foregroundStyle(GioColor.tertiaryText)
+            HStack(spacing: 4) {
+                Text(">").foregroundStyle(GioColor.accent)
+                Text("Gio command  ·").foregroundStyle(GioColor.tertiaryText)
+                Text("!").foregroundStyle(GioColor.accent)
+                Text("shell").foregroundStyle(GioColor.tertiaryText)
+            }
+            .font(GioFont.mono)
         }
         .padding(.horizontal, GioSpacing.l)
-        .frame(height: 30)
-        .background(Color.primary.opacity(0.035))
+        .frame(height: 34)
+        .background(GioColor.sidebar)
+        .overlay(alignment: .top) { Rectangle().fill(GioColor.hairline).frame(height: 1) }
     }
 
     private func footerHint(_ keys: String, _ label: String) -> some View {
-        HStack(spacing: 4) {
-            Text(keys).font(GioFont.caption.weight(.semibold)).foregroundStyle(GioColor.secondaryText)
+        HStack(spacing: 5) {
+            LauncherKeycap(text: keys, onSelection: false)
             Text(label).font(GioFont.caption).foregroundStyle(GioColor.tertiaryText)
         }
+    }
+}
+
+/// A small key, like the landing page's `<kbd>`; on the mint selection it
+/// turns navy-on-cream so it still reads as a key.
+private struct LauncherKeycap: View {
+    let text: String
+    let onSelection: Bool
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .medium, design: .rounded).monospacedDigit())
+            .foregroundStyle(onSelection ? GioBrand.onSpot : GioColor.secondaryText)
+            .padding(.horizontal, 5)
+            .frame(minWidth: 20, minHeight: 18)
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(onSelection ? Color(nsColor: GioBrand.onNavy).opacity(0.7) : GioColor.raised)
+                    .shadow(color: onSelection ? GioBrand.onSpot.opacity(0.25) : GioColor.hairline, radius: 0, x: 0, y: 1)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(onSelection ? GioBrand.onSpot.opacity(0.25) : GioColor.hairline, lineWidth: 0.5)
+            )
+            .fixedSize()
     }
 }
 
@@ -338,36 +398,51 @@ private struct LauncherRow: View {
             .frame(width: 30, height: 30)
             VStack(alignment: .leading, spacing: 1) {
                 Text(primary)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(isSelected ? GioColor.onAccent : GioColor.primaryText)
+                    .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
+                    .foregroundStyle(isSelected ? GioBrand.onSpot : GioColor.primaryText)
                     .lineLimit(1)
                 if let secondary {
                     Text(secondary)
                         .font(GioFont.caption)
-                        .foregroundStyle(isSelected ? GioColor.onAccent.opacity(0.8) : GioColor.secondaryText)
+                        .foregroundStyle(isSelected ? GioBrand.onSpot.opacity(0.75) : GioColor.secondaryText)
                         .lineLimit(1)
                 }
             }
             Spacer(minLength: GioSpacing.s)
-            Text(badge)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isSelected ? GioColor.onAccent : GioColor.secondaryText)
-                .padding(.horizontal, 6)
-                .frame(height: 18)
-                .background(Capsule().fill(isSelected ? GioColor.onAccent.opacity(0.16) : Color.primary.opacity(0.07)))
+            HStack(spacing: 5) {
+                Text(kind)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isSelected ? GioBrand.onSpot.opacity(0.8) : GioColor.secondaryText)
+                if case .window(_, _, _, let workspace?) = entry {
+                    // The workspace as its number pill, like `3 · Chat` in the menu bar.
+                    Text("\(workspace)")
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(GioBrand.onSpot)
+                        .frame(minWidth: 18, minHeight: 18)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(GioColor.tintFill(.blue))
+                        )
+                        .accessibilityLabel("workspace \(workspace)")
+                }
+            }
             if index < 9 {
-                Text("⌘\(index + 1)")
-                    .font(GioFont.caption.monospacedDigit())
-                    .foregroundStyle(isSelected ? GioColor.onAccent.opacity(0.85) : GioColor.tertiaryText)
-                    .frame(width: 26, alignment: .trailing)
+                LauncherKeycap(text: "⌘\(index + 1)", onSelection: isSelected)
+                    .frame(width: 30, alignment: .trailing)
             }
         }
         .padding(.horizontal, GioSpacing.s - 2)
         .frame(height: 44)
         .background(
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(isSelected ? GioColor.accent : Color.clear)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isSelected ? GioColor.tintFill(.green) : Color.clear)
         )
+        .overlay(alignment: .leading) {
+            if isSelected {
+                // The mint edge of the landing's brand button, on the side.
+                Capsule().fill(GioBrand.onSpot.opacity(0.55)).frame(width: 3, height: 20).padding(.leading, 3)
+            }
+        }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
@@ -387,10 +462,10 @@ private struct LauncherRow: View {
         }
     }
 
-    private var badge: String {
+    private var kind: String {
         switch entry {
         case .app: return "App"
-        case .window(_, _, _, let workspace): return workspace.map { "Window · WS \($0)" } ?? "Window"
+        case .window: return "Window"
         case .gioCommand: return "Gio"
         case .shellCommand: return "Shell"
         case .workspace: return "Workspace"
@@ -418,16 +493,20 @@ private struct LauncherRow: View {
     }
 }
 
-/// Behind-window vibrancy; a plain material stand-in on a static page.
+/// The page color over a little behind-window vibrancy, so the busy desktop
+/// behind never bleeds through the results; the page color alone on a
+/// static page.
 private struct LauncherBackdrop: View {
     @Environment(\.gioStaticPage) private var isStatic
-    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         if isStatic {
-            (colorScheme == .dark ? Color(white: 0.17).opacity(0.97) : Color(white: 0.97).opacity(0.97))
+            GioColor.page
         } else {
-            VisualEffectBackground(material: .popover)
+            ZStack {
+                VisualEffectBackground(material: .hudWindow)
+                GioColor.page.opacity(0.93)
+            }
         }
     }
 }
