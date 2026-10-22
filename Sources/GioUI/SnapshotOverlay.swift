@@ -53,10 +53,13 @@ public struct SnapshotOverlayItem: @unchecked Sendable {
     public let from: CGRect
     public let to: CGRect
     public let velocity: CGPoint
+    /// FX-09: the window keeps its frame: only its shadow, dim and ring are
+    /// drawn; the real window shows through the backdrop's hole.
+    public let seeThrough: Bool
 
     public init(
         id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect,
-        velocity: CGPoint = .zero
+        velocity: CGPoint = .zero, seeThrough: Bool = false
     ) {
         self.id = id
         self.image = image
@@ -64,6 +67,7 @@ public struct SnapshotOverlayItem: @unchecked Sendable {
         self.from = from
         self.to = to
         self.velocity = velocity
+        self.seeThrough = seeThrough
     }
 }
 
@@ -333,6 +337,29 @@ private final class WindowLayers {
         let outset = overlayRingGeometry(window: geometry, width: ringWidth)
         ring.position = outset.position
         ring.bounds = outset.bounds
+    }
+
+    /// FX-09: no image (the real window shows through the backdrop's hole);
+    /// the shadow is masked to outside the window, where the backdrop hides
+    /// the real one, so it never darkens the window itself. The layer never
+    /// moves (a window that starts moving gets a new layer).
+    func seeThrough() {
+        clip.isHidden = true
+        let outset: CGFloat = 64
+        let bounds = shadow.bounds
+        let mask = CAShapeLayer()
+        mask.actions = noActions
+        mask.frame = bounds.insetBy(dx: -outset, dy: -outset)
+        let path = CGMutablePath()
+        path.addRect(CGRect(origin: .zero, size: mask.frame.size))
+        path.addPath(CGPath(
+            roundedRect: CGRect(x: outset, y: outset, width: bounds.width, height: bounds.height),
+            cornerWidth: overlayWindowCornerRadius, cornerHeight: overlayWindowCornerRadius, transform: nil
+        ))
+        mask.path = path
+        mask.fillRule = .evenOdd
+        mask.fillColor = NSColor.black.cgColor
+        shadow.mask = mask
     }
 
     func decorate(ring spec: OverlayRing?, dimAlpha: Float?) {
@@ -741,6 +768,9 @@ final class SnapshotOverlay {
             )
         )
         layers.show(item.target)
+        if item.seeThrough {
+            layers.seeThrough()
+        }
         layers.all.forEach { windowLayer.addSublayer($0) }
         windows[item.id] = layers
         return layers

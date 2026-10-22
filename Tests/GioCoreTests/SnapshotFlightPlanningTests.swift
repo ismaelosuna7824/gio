@@ -34,6 +34,29 @@ final class SnapshotFlightPlanningTests: XCTestCase {
         XCTAssertEqual(items.map(\.id), [id(1), id(2)])
     }
 
+    /// FX-09 (recording 2026-10-21 19:22): OrbStack did not move while the
+    /// focus went to and from it, but its layer swapped the real window for
+    /// an image of its inactive look at the start and back at the end, while
+    /// OrbStack itself repaints its active look ~200 ms late: inactive,
+    /// active, inactive. A layered window that keeps its frame is drawn
+    /// through a hole (its layer keeps only the ring, dim and shadow); an
+    /// opening one keeps its own handling.
+    func testAWindowThatKeepsItsFrameIsSeenThroughNotDrawn() {
+        let items = [
+            SnapshotFlightItem(id: id(1), from: win(0), to: win(0), displayIndex: 0),
+            SnapshotFlightItem(id: id(2), from: win(400), to: win(500), displayIndex: 0),
+            SnapshotFlightItem(id: id(3), from: win(0), to: win(0.5), displayIndex: 0),
+            SnapshotFlightItem(id: id(4), from: win(600), to: win(600), displayIndex: 0),
+        ]
+        XCTAssertEqual(snapshotStillWindows(items, opening: [id(4)]), [id(1), id(3)], "half a point is no move")
+        var resized = win(0)
+        resized.size.width = 380
+        XCTAssertEqual(
+            snapshotStillWindows([SnapshotFlightItem(id: id(1), from: win(0), to: resized, displayIndex: 0)], opening: []),
+            [], "a resize changes the picture"
+        )
+    }
+
     /// SM-16: no more all-or-nothing. A visible window without an image
     /// is a hole in the backdrop at its target; the real window, written
     /// there at the start, shows through.

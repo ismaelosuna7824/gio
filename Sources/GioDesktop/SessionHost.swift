@@ -2618,7 +2618,8 @@ private extension SnapshotDisplayFlight {
             displayFrame: flight.displayFrame, usableFrame: flight.usableFrame, backdrop: flight.backdrop,
             items: flight.items.map {
                 SnapshotOverlayItem(
-                    id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to, velocity: $0.velocity
+                    id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to, velocity: $0.velocity,
+                    seeThrough: $0.seeThrough
                 )
             }
         )
