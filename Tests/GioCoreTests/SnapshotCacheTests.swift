@@ -225,6 +225,20 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertFalse(snapshotLooksBlank(samples: []), "no samples: keep the image")
     }
 
+    /// FX-08: a window with a see-through part (sidebar vibrancy, terminal
+    /// background opacity) reads translucent; rounded corners do not.
+    func testATranslucentCaptureHasASeeThroughShareBeyondItsCorners() {
+        let opaque: UInt32 = 0x2020_20FF
+        let clear: UInt32 = 0x0000_0000
+        let tinted: UInt32 = 0x1010_10B0
+        let corners = Array(repeating: clear, count: 4) + Array(repeating: opaque, count: 4092)
+        XCTAssertFalse(snapshotLooksTranslucent(samples: corners), "only the rounded corners")
+        let sidebar = Array(repeating: tinted, count: 800) + Array(repeating: opaque, count: 3296)
+        XCTAssertTrue(snapshotLooksTranslucent(samples: sidebar), "a vibrant sidebar, a fifth of the window")
+        XCTAssertTrue(snapshotLooksTranslucent(samples: Array(repeating: 0x1010_10E6, count: 4096)), "terminal at 90 %")
+        XCTAssertFalse(snapshotLooksTranslucent(samples: []))
+    }
+
     func testRefreshSelectionIsOnlyMissingResizedDirtyOrSoftStale() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "fresh", frame: frame, pixels: 1, at: 100)

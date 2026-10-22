@@ -254,6 +254,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// hand-off's resize line) and the fresh captures of the resized windows.
     private var startFaces: [WindowID: SnapshotFace<CGImage>] = [:]
     private var resizeModes: [WindowID: SnapshotResizeMode] = [:]
+    /// FX-08: layers whose image has a see-through part; they fade out at
+    /// the hand-off like resized ones.
+    private var translucentLayers: Set<WindowID> = []
     private var fresh = SnapshotFreshTracker()
     private var gestureLost: (() -> Void)?
     private var heldFrames: [WindowID: CGRect] = [:]
@@ -336,6 +339,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
             imageSizes[item.id] = use.entry.frame.size
             layerModel.add(item.id, from: item.from, to: item.to, velocity: velocities[item.id] ?? .zero, at: now)
             backgrounds[item.id] = use.target?.fill ?? use.entry.fill
+            if use.entry.translucent || use.target?.translucent == true {
+                translucentLayers.insert(item.id)
+            }
             startFaces[item.id] = use.entry.face
             resizeModes[item.id] = use.resize
             byDisplay[item.displayIndex, default: []].append(
@@ -513,6 +519,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             backgrounds = [:]
             startFaces = [:]
             resizeModes = [:]
+            translucentLayers = []
             layerModel.reset(spring: spring)
             let flights = makeFlights(
                 items, holes: holes, covered: covered, images: images, velocities: velocities, now: now
@@ -594,6 +601,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         backgrounds = [:]
         startFaces = [:]
         resizeModes = [:]
+        translucentLayers = []
         layerModel.reset(spring: spring)
         let items = layers.compactMap { id in
             frames[id].map { SnapshotFlightItem(id: id, from: $0, to: $0, displayIndex: index) }
@@ -960,7 +968,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             guard let read, let target = targets[id] else {
                 return
             }
-            cache.storeFresh(id, CapturedImage(image: read.image, frame: target, fill: read.fill))
+            cache.storeFresh(id, CapturedImage(image: read.image, frame: target, fill: read.fill, translucent: read.translucent))
             if let fill = read.fill {
                 backgrounds[id] = fill
             }
@@ -1016,7 +1024,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         switch (step, read) {
         case (.pop(let pop, let waited), let read?):
             let face = SnapshotFace(image: read.image, size: pop.to.size, fill: read.fill)
-            cache.storeFresh(id, CapturedImage(image: read.image, frame: pop.to, fill: read.fill))
+            cache.storeFresh(id, CapturedImage(image: read.image, frame: pop.to, fill: read.fill, translucent: read.translucent))
             overlay.popFlight(token: gate.currentToken, image: face, pop: pop)
             context.log(.debug, windowOpenPopLine(id, waited: waited))
             scheduler.asyncAfter(pop.duration) { [weak self] in
@@ -1084,7 +1092,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let outcome = fresh.outcome(id) ?? SnapshotFreshOutcome(milliseconds: nil, attempts: 0, last: nil)
             context.log(.debug, snapshotResizeOutcomeLine(id, mode: mode, fresh: outcome))
         }
-        let fading = snapshotHandoffFading(resized: resized, layered: ids)
+        let fading = snapshotHandoffFading(resized: resized, translucent: translucentLayers, layered: ids)
         var summary = summary
         if !fading.isEmpty {
             summary.fadeMilliseconds = Int((snapshotHandoffFadeDuration * 1000).rounded())
@@ -1120,6 +1128,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         backgrounds = [:]
         startFaces = [:]
         resizeModes = [:]
+        translucentLayers = []
         fresh.removeAll()
         gestureLost = nil
         heldFrames = [:]

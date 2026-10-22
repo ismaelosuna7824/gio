@@ -326,7 +326,7 @@ Gio's own writes raise moved and resized events. `WriteEchoGate` records every a
 
 ### Snapshot pipeline (SM-03..SM-31)
 
-With the snapshot renderer the real windows move once and a Core Animation overlay draws the motion. SM-08 made it the primary motion path: the overlay goes on screen before the real windows move, draws the captured desktop, the window shadows, the focus ring or dim, and comes down with no fade (SM-30: except the layers of resized windows, which fade out over the real windows in 120 ms).
+With the snapshot renderer the real windows move once and a Core Animation overlay draws the motion. SM-08 made it the primary motion path: the overlay goes on screen before the real windows move, draws the captured desktop, the window shadows, the focus ring or dim, and comes down with no fade (SM-30: except the layers of resized windows, which fade out over the real windows in 120 ms; FX-08: the layers of see-through windows too, `snapshotLooksTranslucent`: at least 3 % of a 64x64 scan of the capture under ~94 % opacity, stored with the image as `SnapshotCacheEntry.translucent`. Their image shows the captured desktop unblurred through the clear part and the inactive look, while the real window blurs what is behind it and turns active, so a hard cut flickered).
 
 ```
 settle (any reflow that ends still)            keypress -> performReflow (animating)

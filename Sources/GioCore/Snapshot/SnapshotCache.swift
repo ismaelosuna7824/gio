@@ -25,10 +25,13 @@ public struct SnapshotCacheEntry<Image> {
     /// SM-27/SM-30: the fill a resize shows where the frame outgrows the
     /// image (`snapshotContentFill`); nil for a see-through capture.
     public let fill: ThemeColor?
+    /// FX-08: part of the window is see-through (`snapshotLooksTranslucent`);
+    /// its layer fades out at the hand-off.
+    public let translucent: Bool
 
     public init(
         image: Image, frame: CGRect, capturedAt: TimeInterval, lastUsed: TimeInterval, pixels: Int,
-        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil
+        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil, translucent: Bool = false
     ) {
         self.image = image
         self.frame = frame
@@ -37,6 +40,7 @@ public struct SnapshotCacheEntry<Image> {
         self.pixels = pixels
         self.resolution = resolution
         self.fill = fill
+        self.translucent = translucent
     }
 
     /// SM-27: the image as a layer draws it, at the size it was captured at.
@@ -275,7 +279,7 @@ public struct SnapshotCache<Image> {
     /// replaces the least recently used one of the window.
     public mutating func store(
         _ id: WindowID, image: Image, frame: CGRect, pixels: Int, at now: TimeInterval,
-        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil
+        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil, translucent: Bool = false
     ) {
         var list = entries[id] ?? []
         list.removeAll { snapshotSameSize($0.frame, frame, tolerance: 2) }
@@ -286,7 +290,7 @@ public struct SnapshotCache<Image> {
         }
         list.append(SnapshotCacheEntry(
             image: image, frame: frame, capturedAt: now, lastUsed: now, pixels: pixels, resolution: resolution,
-            fill: fill
+            fill: fill, translucent: translucent
         ))
         entries[id] = list
     }
@@ -809,6 +813,20 @@ public func snapshotLooksBlank(samples: [UInt32]) -> Bool {
 /// content is smaller than the dense step (one cursor) still reads blank.
 public func snapshotLooksBlank(samples: [UInt32], dense: () -> [UInt32]) -> Bool {
     snapshotLooksBlank(samples: samples) && snapshotLooksBlank(samples: dense())
+}
+
+// MARK: - FX-08 see-through windows
+
+/// FX-08: whether a capture has a see-through part (a vibrant sidebar, a
+/// terminal's background opacity): at least 3 % of `samples` (packed RGBA,
+/// alpha in the low byte; the ~64x64 coarse scan of the whole image) are
+/// less than ~94 % opaque. A window's rounded corners stay well under that.
+public func snapshotLooksTranslucent(samples: [UInt32]) -> Bool {
+    guard !samples.isEmpty else {
+        return false
+    }
+    let seeThrough = samples.reduce(0) { $0 + ($1 & 0xFF < 0xF0 ? 1 : 0) }
+    return Double(seeThrough) >= Double(samples.count) * 0.03
 }
 
 // MARK: - SM-09 typing signal
