@@ -119,6 +119,35 @@ func parseWindowServerStacking(_ entries: [[String: Any]], pids: Set<pid_t>) -> 
     }
 }
 
+/// FX-11: every on-screen window, front to back, any layer, with its
+/// alpha and Cocoa bounds: what may cover a window that is captured as the
+/// display shows it. Public API, no titles read.
+public func windowServerStack(displayHeight: CGFloat) -> [StackedServerWindow] {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return []
+    }
+    return parseWindowServerStack(raw, displayHeight: displayHeight)
+}
+
+func parseWindowServerStack(_ entries: [[String: Any]], displayHeight: CGFloat) -> [StackedServerWindow] {
+    entries.compactMap { entry in
+        guard let pid = entry[kCGWindowOwnerPID as String] as? Int,
+              let number = entry[kCGWindowNumber as String] as? Int,
+              let layer = entry[kCGWindowLayer as String] as? Int,
+              let dictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: dictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return StackedServerWindow(
+            windowID: UInt32(truncatingIfNeeded: number), pid: pid_t(pid), layer: layer,
+            alpha: entry[kCGWindowAlpha as String] as? Double ?? 1,
+            frame: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight)
+        )
+    }
+}
+
 /// SM-10: the `CGWindowID`s of every on-screen window of `pid`, whatever
 /// its layer (Gio's ring, dim and overlay panels sit above layer 0). A
 /// backdrop capture needs them in the shareable-content cache to exclude

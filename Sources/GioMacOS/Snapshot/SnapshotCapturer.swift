@@ -617,6 +617,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
             )
         ).sorted()
         let excludedWindowIDs = Set(excludedMatches)
+        // FX-11: uncovered windows wholly on one display are captured as the
+        // display shows them (materials and vibrancy included).
+        let onScreen = snapshotOnScreenCaptures(
+            frames: request.windows,
+            windowNumbers: matches.compactMapValues { if case .matched(let number) = $0 { return number } else { return nil } },
+            stack: windowServerStack(displayHeight: request.primaryDisplayHeight),
+            displays: request.displays.map(\.frame), ownPid: ownPid, half: request.halfResolution
+        )
         let collector = Collector()
         let timings = Timings()
         let budget = request.measure ? SnapshotCaptureRequest.measureCapMilliseconds : request.budgetMilliseconds
@@ -628,7 +636,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
             Task {
                 await self.runJobs(
                     request: request, ids: ids, matches: matches, excludedWindowIDs: excludedWindowIDs,
-                    backdropDisplays: backdropDisplays, collector: collector, timings: timings
+                    backdropDisplays: backdropDisplays, onScreen: onScreen, collector: collector, timings: timings
                 )
             }
         }
@@ -693,7 +701,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
     @available(macOS 14.0, *)
     private func runJobs(
         request: SnapshotCaptureRequest, ids: [WindowID], matches: [WindowID: SnapshotMatch],
-        excludedWindowIDs: Set<UInt32>, backdropDisplays: [UInt32], collector: Collector,
+        excludedWindowIDs: Set<UInt32>, backdropDisplays: [UInt32], onScreen: [WindowID: Int], collector: Collector,
         timings: Timings
     ) async {
         let managed = Set(ids).union(request.backdropExclusions.keys)
@@ -706,11 +714,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
         // overlay, main window; created lazily, so they may postdate the
         // last fetch): one WindowServer read, a refetch only when one is
         // missing. A captured window is only ever needed itself.
+        let ownWindows = backdropDisplays.isEmpty && onScreen.isEmpty ? [] : windowServerOnScreenWindowIDs(pid: ownPid)
         let needed = backdropDisplays.isEmpty
-            ? captured
-            : captured.union(excludedWindowIDs).union(windowServerOnScreenWindowIDs(pid: ownPid))
+            ? captured.union(ownWindows)
+            : captured.union(excludedWindowIDs).union(ownWindows)
         let fetchBegan = DispatchTime.now().uptimeNanoseconds
-        let lookup = await ensureCache(managed: managed, needed: needed, needsDisplays: !backdropDisplays.isEmpty)
+        let lookup = await ensureCache(
+            managed: managed, needed: needed, needsDisplays: !backdropDisplays.isEmpty || !onScreen.isEmpty
+        )
         timings.setFetch(Double(DispatchTime.now().uptimeNanoseconds - fetchBegan) / 1_000_000, cached: lookup.cached)
         guard let cache = lookup.cache, !collector.isFinished
         else {
@@ -726,6 +737,9 @@ public final class SnapshotCapturer: @unchecked Sendable {
             candidates: own, animated: captured.union(excludedWindowIDs), ownPid: ownPid
         )
         let excluded = excludedIDs.compactMap { cache.windows[$0] }
+        // FX-11: an on-screen capture leaves Gio's own panels (ring, dim,
+        // overlay, main window) out and nothing else.
+        let ownPanels = ownWindows.compactMap { cache.windows[$0] }
 
         struct WindowJob {
             let id: WindowID
@@ -747,9 +761,26 @@ public final class SnapshotCapturer: @unchecked Sendable {
             let frame = request.windows[job.id] ?? .zero
             let scale = captureScale(request, id: job.id, frame: frame)
             let boxed = Box(value: window)
+            let shown = onScreen[job.id].flatMap { index -> (SCDisplay, CGRect)? in
+                guard request.displays.indices.contains(index),
+                      let display = cache.displays[request.displays[index].id]
+                else {
+                    return nil
+                }
+                return (display, snapshotDisplayCrop(window: frame, display: request.displays[index].frame))
+            }
+            let boxedShown = Box(value: shown)
+            let boxedPanels = Box(value: ownPanels)
             Task {
                 let began = DispatchTime.now().uptimeNanoseconds
-                let image = try? await Self.captureWindow(boxed.value, size: frame.size, scale: scale)
+                let image: CGImage?
+                if let (display, crop) = boxedShown.value {
+                    image = try? await Self.captureShown(
+                        display, crop: crop, excluding: boxedPanels.value, size: frame.size, scale: scale
+                    )
+                } else {
+                    image = try? await Self.captureWindow(boxed.value, size: frame.size, scale: scale)
+                }
                 let millis = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
                 // SM-09: a blank capture (unpainted or stale window) is a miss;
                 // the cache keeps the previous image. SM-10: the sparse grid's
@@ -757,7 +788,11 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 let blank = image.map { captured in
                     snapshotLooksBlank(samples: snapshotSamples(of: captured), dense: { snapshotDenseSamples(of: captured) })
                 } ?? false
-                GioLog.record(.debug, "snapshot window id=\(job.id.pid):\(job.id.elementID) ms=\(Int(millis.rounded())) ok=\(image != nil)")
+                GioLog.record(
+                    .debug,
+                    "snapshot window id=\(job.id.pid):\(job.id.elementID) ms=\(Int(millis.rounded())) ok=\(image != nil)"
+                        + (boxedShown.value != nil ? " shown=true" : "")
+                )
                 if blank, self.noteBlank(job.id) {
                     GioLog.record(.debug, "snapshot window blank id=\(job.id.pid):\(job.id.elementID)")
                 }
@@ -847,6 +882,23 @@ public final class SnapshotCapturer: @unchecked Sendable {
         // translucent pane came out flat grey, the real one shows the
         // wallpaper through it), so its image never matched it on screen.
         configuration.backgroundColor = CGColor.clear
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    /// FX-11: the window as the display shows it: a crop of the composited
+    /// display (`crop`, the display's top-left points) without Gio's panels.
+    @available(macOS 14.0, *)
+    private static func captureShown(
+        _ display: SCDisplay, crop: CGRect, excluding panels: [SCWindow], size: CGSize, scale: CGFloat
+    ) async throws -> CGImage {
+        let filter = SCContentFilter(display: display, excludingWindows: panels)
+        let pixels = snapshotPixelSize(points: size, scale: scale)
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = crop
+        configuration.width = pixels.width
+        configuration.height = pixels.height
+        configuration.showsCursor = false
+        configuration.colorSpaceName = snapshotColorSpaceName as CFString
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
