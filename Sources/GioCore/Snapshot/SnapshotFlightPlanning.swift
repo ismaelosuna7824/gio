@@ -145,6 +145,22 @@ public func planSnapshotFlight(
     return .snapshot(items: items, holes: holes, covered: coveredItems)
 }
 
+/// FX-09: the layered windows that keep their frame through the flight
+/// (within `flightMoveTolerance`), opening ones aside. Their layer keeps
+/// only its shadow, dim and ring; the backdrop is cut at their frame so the
+/// real window shows through: nothing swaps the window for an image that
+/// may not match it (live: OrbStack's active and inactive looks, repainted
+/// ~200 ms after a focus change).
+public func snapshotStillWindows(_ items: [SnapshotFlightItem], opening: Set<WindowID>) -> Set<WindowID> {
+    Set(items.filter { !moves($0.from, $0.to) && !opening.contains($0.id) }.map(\.id))
+}
+
+/// FX-09: whether a window's frame changes between `from` and `to` (more
+/// than `flightMoveTolerance` on any edge).
+public func snapshotFrameMoves(from: CGRect, to: CGRect) -> Bool {
+    moves(from, to)
+}
+
 /// SM-16: every window without a layer that is visible at its target on an
 /// overlaid display (`activeDisplays`), sorted by id. Parked windows (their
 /// 1 pt sliver included) and windows on displays without an overlay have no

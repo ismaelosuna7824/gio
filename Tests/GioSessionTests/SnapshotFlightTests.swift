@@ -630,6 +630,43 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=0") })
     }
 
+    // MARK: FX-09 still windows show the real window
+
+    /// Recording 2026-10-21 19:22: OrbStack kept its frame while the focus
+    /// moved; its image (inactive look) replaced the real window (active)
+    /// for the flight and the real one came back still active, then
+    /// repainted: a flicker. A still window's layer is see-through and the
+    /// backdrop is cut at its frame; a moving one flies its image.
+    func testAStillWindowIsSeenThroughAHoleWhileTheOthersFly() {
+        refresh([idA: a, idB: b])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(items.first { $0.id == idB }?.seeThrough, true, "its layer keeps ring, dim and shadow")
+        XCTAssertEqual(items.first { $0.id == idA }?.seeThrough, false)
+        XCTAssertEqual(overlay.begins.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [], "the images still draw above it")
+    }
+
+    func testAStillWindowThatStartsMovingOnARetargetFliesItsImage() {
+        beginAndPrime()
+        var visible = fixture.physicalFrames
+        visible[idA] = a.offsetBy(dx: 200, dy: 0)
+        visible[idB] = b.offsetBy(dx: 100, dy: 0)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [WindowAnimation(id: idB, from: b, to: visible[idB]!, duration: 0.3)],
+                plans: [ParkingPlan(visible: visible)], spring: .niri
+            ),
+            .flying
+        )
+        let added = overlay.retargets.first?.adds.flatMap(\.items) ?? []
+        XCTAssertEqual(added.map(\.id), [idB], "a new layer with its image replaces the see-through one")
+        XCTAssertEqual(added.first?.seeThrough, false)
+        XCTAssertEqual(added.first?.from, b)
+        XCTAssertEqual(overlay.retargets.first?.holes, [:], "nothing to show through any more")
+    }
+
     // MARK: WP-04 entry holes
 
     /// A window opening mid-strip without an image: its hole cuts the image
@@ -883,7 +920,8 @@ final class SnapshotFlightTests: XCTestCase {
             .priming
         )
         XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [idA], "the still neighbour")
-        XCTAssertEqual(overlay.begins.first?.holes, [:])
+        XCTAssertEqual(overlay.begins.first?.flights.first?.items.first?.seeThrough, true, "FX-09: still, seen through")
+        XCTAssertEqual(overlay.begins.first?.holes, [idA: a], "the still neighbour shows through; the opening one is covered")
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot fallback") })
     }
 

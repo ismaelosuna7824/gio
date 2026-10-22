@@ -13,10 +13,13 @@ public struct OverlayFlightItem: @unchecked Sendable {
     public let from: CGRect
     public let to: CGRect
     public let velocity: CGPoint
+    /// FX-09: the window keeps its frame: the layer draws its shadow, dim and
+    /// ring but not the image; the real window shows through a hole.
+    public let seeThrough: Bool
 
     public init(
         id: WindowID, image: SnapshotFace<CGImage>, target: SnapshotFace<CGImage>?, from: CGRect, to: CGRect,
-        velocity: CGPoint = .zero
+        velocity: CGPoint = .zero, seeThrough: Bool = false
     ) {
         self.id = id
         self.image = image
@@ -24,6 +27,7 @@ public struct OverlayFlightItem: @unchecked Sendable {
         self.from = from
         self.to = to
         self.velocity = velocity
+        self.seeThrough = seeThrough
     }
 }
 
@@ -257,6 +261,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// FX-08: layers whose image has a see-through part; they fade out at
     /// the hand-off like resized ones.
     private var translucentLayers: Set<WindowID> = []
+    /// FX-09: layers of windows that keep their frame: drawn without their
+    /// image, the real window showing through a hole.
+    private var seeThrough: Set<WindowID> = []
     private var fresh = SnapshotFreshTracker()
     private var gestureLost: (() -> Void)?
     private var heldFrames: [WindowID: CGRect] = [:]
@@ -322,7 +329,8 @@ public final class SnapshotFlightController: @unchecked Sendable {
     /// (SM-16: a display may show only holes).
     private func makeFlights(
         _ items: [SnapshotFlightItem], holes: [SnapshotHole] = [], covered: [SnapshotFlightItem] = [],
-        images: [WindowID: SnapshotCacheUse<CGImage>], velocities: [WindowID: CGPoint] = [:], now: TimeInterval
+        images: [WindowID: SnapshotCacheUse<CGImage>], velocities: [WindowID: CGPoint] = [:],
+        seeThrough: Set<WindowID> = [], now: TimeInterval
     ) -> [OverlayFlight] {
         let frames = context.displayFrames()
         let usable = context.usableFrames()
@@ -347,7 +355,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             byDisplay[item.displayIndex, default: []].append(
                 OverlayFlightItem(
                     id: item.id, image: use.entry.face, target: use.target?.face, from: item.from, to: item.to,
-                    velocity: velocities[item.id] ?? .zero
+                    velocity: velocities[item.id] ?? .zero, seeThrough: seeThrough.contains(item.id)
                 )
             )
         }
@@ -449,17 +457,29 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 context.log(.debug, windowOpenRevealLine(id, reason: .retarget))
             }
             let covered = pops.covered
+            // FX-09: a see-through layer whose window now moves is replaced
+            // by a new layer flying its image from where the window stands.
+            let moving = seeThrough.filter { id in
+                guard let to = targets[id], let from = previousTargets[id] else {
+                    return false
+                }
+                return snapshotFrameMoves(from: from, to: to)
+            }
+            seeThrough.subtract(moving)
+            ids.subtract(moving)
             let plan = planSnapshotRetarget(
                 active: ids, starts: starts, targets: targets.filter { !covered.contains($0.key) }, displays: screens,
                 activeDisplays: displays, hasImage: usable, undrawn: undrawn, pinnedDisplays: pinned
             )
+            let stillAdds = snapshotStillWindows(plan.adds, opening: opening)
+            seeThrough.formUnion(stillAdds)
             ids.formUnion(plan.adds.map(\.id))
             windows.formUnion(plan.adds.map(\.id))
             // SM-16: the hole set follows the latest targets and layers.
             let previous = holes
             let previousEntries = entryHoles
             setHoles(snapshotHoles(
-                layered: ids.union(covered), targets: self.targets, displays: screens, activeDisplays: displays,
+                layered: ids.subtracting(seeThrough).union(covered), targets: self.targets, displays: screens, activeDisplays: displays,
                 undrawn: undrawn, opening: opening
             ))
             // SM-27: every retargeted layer shows the image of its new size
@@ -481,7 +501,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             layerModel.retarget(plan.retargets, velocities: retargetVelocities, at: now)
             overlay.retargetFlight(
                 token: token, targets: plan.retargets, images: faces, velocities: retargetVelocities,
-                adds: makeFlights(plan.adds, images: images, velocities: velocities, now: now),
+                adds: makeFlights(plan.adds, images: images, velocities: velocities, seeThrough: stillAdds, now: now),
                 holes: holes, entryHoles: entryHoles, decorations: context.decorations(targets)
             )
             if !revealed.isEmpty {
@@ -514,15 +534,22 @@ public final class SnapshotFlightController: @unchecked Sendable {
             // Next time the images are there.
             cache.schedule(delay: 0.05)
             return .ax
-        case .snapshot(let items, let holes, let covered):
+        case .snapshot(let items, let planned, let covered):
             imageSizes = [:]
             backgrounds = [:]
             startFaces = [:]
             resizeModes = [:]
             translucentLayers = []
             layerModel.reset(spring: spring)
+            // FX-09: windows that keep their frame show the real window.
+            let still = snapshotStillWindows(items, opening: entries)
+            let overlaid = Set(items.map(\.displayIndex)).union(planned.map(\.displayIndex)).union(covered.map(\.displayIndex))
+            let holes = still.isEmpty ? planned : snapshotHoles(
+                layered: Set(items.map(\.id)).subtracting(still).union(covered.map(\.id)), targets: targets,
+                displays: screens, activeDisplays: overlaid, undrawn: undrawn, opening: entries
+            )
             let flights = makeFlights(
-                items, holes: holes, covered: covered, images: images, velocities: velocities, now: now
+                items, holes: holes, covered: covered, images: images, velocities: velocities, seeThrough: still, now: now
             )
             guard !flights.isEmpty else {
                 return .ax
@@ -530,8 +557,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let ids = Set(items.map(\.id))
             let token = gate.begin()
             self.ids = ids
+            seeThrough = still
             windows = ids
-            displays = Set(items.map(\.displayIndex)).union(holes.map(\.displayIndex)).union(covered.map(\.displayIndex))
+            displays = overlaid
             opening = entries
             setHoles(holes)
             if !holes.isEmpty {
@@ -602,6 +630,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         startFaces = [:]
         resizeModes = [:]
         translucentLayers = []
+        seeThrough = []
         layerModel.reset(spring: spring)
         let items = layers.compactMap { id in
             frames[id].map { SnapshotFlightItem(id: id, from: $0, to: $0, displayIndex: index) }
@@ -847,18 +876,20 @@ public final class SnapshotFlightController: @unchecked Sendable {
     }
 
     /// The windows whose paint the hand-off waits for. SM-16: the hole
-    /// windows came into view through their holes (always checked); SM-19:
-    /// the others of trusted apps are skipped; SM-29: except resized ones
-    /// (`resized`: those of `windows` that changed size). WP-05: covered
-    /// opening windows are confirmed by their own captures.
+    /// windows came into view through their holes (always checked), FX-09
+    /// except see-through ones, on screen all along; SM-19: the others of
+    /// trusted apps are skipped; SM-29: except resized ones (`resized`: those
+    /// of `windows` that changed size). WP-05: covered opening windows are
+    /// confirmed by their own captures.
     private func paintCheckWindows() -> (windows: Set<WindowID>, resized: Set<WindowID>) {
         let screens = context.displayFrames()
+        let cameThroughHoles = Set(holes.keys).subtracting(seeThrough)
         let candidates = snapshotPaintCheckWindows(
             starts: origins, targets: targets, screens: screens,
             covered: displays.sorted().filter { screens.indices.contains($0) }.map { screens[$0] }
-        ).union(holes.keys).subtracting(pops.covered)
+        ).union(cameThroughHoles).subtracting(pops.covered)
         let resized = snapshotResizedWindows(starts: origins, targets: targets).intersection(candidates)
-        let windows = trust.windowsToCheck(candidates, always: resized.union(holes.keys))
+        let windows = trust.windowsToCheck(candidates, always: resized.union(cameThroughHoles))
         return (windows, resized)
     }
 
@@ -1092,7 +1123,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
             let outcome = fresh.outcome(id) ?? SnapshotFreshOutcome(milliseconds: nil, attempts: 0, last: nil)
             context.log(.debug, snapshotResizeOutcomeLine(id, mode: mode, fresh: outcome))
         }
-        let fading = snapshotHandoffFading(resized: resized, translucent: translucentLayers, layered: ids)
+        let fading = snapshotHandoffFading(resized: resized, translucent: translucentLayers.subtracting(seeThrough), layered: ids)
         var summary = summary
         if !fading.isEmpty {
             summary.fadeMilliseconds = Int((snapshotHandoffFadeDuration * 1000).rounded())
@@ -1129,6 +1160,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
         startFaces = [:]
         resizeModes = [:]
         translucentLayers = []
+        seeThrough = []
         fresh.removeAll()
         gestureLost = nil
         heldFrames = [:]
