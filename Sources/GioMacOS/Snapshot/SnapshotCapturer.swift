@@ -119,6 +119,8 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// Guarded by `lock`. SM-09: windows whose blank capture was logged, so
     /// a window that stays blank logs once.
     private var blankLogged: Set<WindowID> = []
+    /// Guarded by `lock`. FX-10: windows logged as see-through, once each.
+    private var translucentLogged: Set<WindowID> = []
     /// Guarded by `lock`. SM-13: CGWindowIDs learned while windows were on
     /// screen, so same-size windows parked at one frame are told apart.
     private var windowIDs = SnapshotWindowIDBook()
@@ -152,6 +154,11 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// True the first time `id` captures blank.
     private func noteBlank(_ id: WindowID) -> Bool {
         lock.withLock { blankLogged.insert(id).inserted }
+    }
+
+    /// True the first time `id` captures see-through.
+    private func noteTranslucent(_ id: WindowID) -> Bool {
+        lock.withLock { translucentLogged.insert(id).inserted }
     }
 
     /// Never throws and never blocks past the budget (plus scheduling): work
@@ -631,10 +638,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
         for (id, image) in out.images {
             let frame = request.windows[id] ?? .zero
             let scale = captureScale(request, id: id, frame: frame)
+            let translucent = snapshotLooksTranslucent(samples: snapshotDenseSamples(of: image))
+            if translucent, noteTranslucent(id) {
+                GioLog.record(.debug, "snapshot window translucent id=\(id.pid):\(id.elementID)")
+            }
             snapshots[id] = CapturedSnapshot(
                 id: id, image: image, frame: frame, scale: scale,
                 fill: snapshotContentFill(samples: snapshotContentSamples(of: image)),
-                translucent: snapshotLooksTranslucent(samples: snapshotDenseSamples(of: image))
+                translucent: translucent
             )
         }
         var backdrops: [UInt32: CapturedBackdrop] = [:]
@@ -831,6 +842,11 @@ public final class SnapshotCapturer: @unchecked Sendable {
         configuration.colorSpaceName = snapshotColorSpaceName as CFString
         configuration.capturesShadowsOnly = false
         configuration.ignoreShadowsSingleWindow = true
+        // FX-10: keep the window's own transparency. The default black
+        // background was composited under a see-through window (live: Tern's
+        // translucent pane came out flat grey, the real one shows the
+        // wallpaper through it), so its image never matched it on screen.
+        configuration.backgroundColor = CGColor.clear
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
