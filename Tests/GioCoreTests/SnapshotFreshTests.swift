@@ -192,7 +192,21 @@ final class SnapshotFreshTests: XCTestCase {
         let moved = WindowID(pid: 2, elementID: 1)
         let hole = WindowID(pid: 3, elementID: 1)
         XCTAssertEqual(snapshotHandoffFadeDuration, 0.12)
-        XCTAssertEqual(snapshotHandoffFading(resized: [id, hole], layered: [id, moved]), [id])
-        XCTAssertEqual(snapshotHandoffFading(resized: [], layered: [id, moved]), [])
+        XCTAssertEqual(snapshotHandoffFading(resized: [id, hole], translucent: [], layered: [id, moved]), [id])
+        XCTAssertEqual(snapshotHandoffFading(resized: [], translucent: [], layered: [id, moved]), [])
+    }
+
+    /// FX-08 (user, 2026-10-21): an app with a see-through part (a
+    /// translucent sidebar, a terminal with background opacity) flickers
+    /// when focused: its image shows the captured desktop through the clear
+    /// part, the real window blurs what is behind it (and turns active), and
+    /// the overlay left at once. Its layer fades out like a resized one.
+    func testATranslucentWindowWithALayerFadesOutToo() {
+        let translucent = WindowID(pid: 4, elementID: 1)
+        let moved = WindowID(pid: 2, elementID: 1)
+        XCTAssertEqual(
+            snapshotHandoffFading(resized: [], translucent: [translucent], layered: [translucent, moved]), [translucent]
+        )
+        XCTAssertEqual(snapshotHandoffFading(resized: [id], translucent: [translucent], layered: [id]), [id], "no layer: nothing to fade")
     }
 }

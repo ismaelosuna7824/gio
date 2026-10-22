@@ -372,7 +372,7 @@ final class SessionHost: @unchecked Sendable {
                         let result = await snapshotCapturer.capture(request)
                         done(SnapshotCaptureOutcome(
                             images: result.snapshots.mapValues {
-                                CapturedImage(image: $0.image, frame: $0.frame, fill: $0.fill)
+                                CapturedImage(image: $0.image, frame: $0.frame, fill: $0.fill, translucent: $0.translucent)
                             },
                             backdrops: result.backdrops.values.map {
                                 CapturedBackdropImage(image: $0.image, displayFrame: $0.frame)

@@ -51,6 +51,8 @@ public struct SnapshotFreshRead<Image> {
     public let image: Image
     /// `snapshotContentFill` of the capture.
     public let fill: ThemeColor?
+    /// FX-08: `snapshotLooksTranslucent` of the capture.
+    public let translucent: Bool
     /// The size the WindowServer reports for the window, nil when unknown.
     public let windowSize: CGSize?
     /// The SM-29 verdict of the capture (size, blank and grown-strip tests).
@@ -65,11 +67,12 @@ public struct SnapshotFreshRead<Image> {
     public let cached: [UInt32]?
 
     public init(
-        image: Image, fill: ThemeColor?, windowSize: CGSize?, paint: SnapshotPaintVerdict, samples: [UInt32],
-        startRegion: [UInt32]? = nil, freshRegion: [UInt32]? = nil, cached: [UInt32]? = nil
+        image: Image, fill: ThemeColor?, windowSize: CGSize?, translucent: Bool = false, paint: SnapshotPaintVerdict,
+        samples: [UInt32], startRegion: [UInt32]? = nil, freshRegion: [UInt32]? = nil, cached: [UInt32]? = nil
     ) {
         self.image = image
         self.fill = fill
+        self.translucent = translucent
         self.windowSize = windowSize
         self.paint = paint
         self.samples = samples
@@ -293,9 +296,13 @@ public func snapshotResizeOutcomeLine(_ id: WindowID, mode: SnapshotResizeMode, 
 /// eased in and out, the layer is still ~85 % opaque after two frames.
 public let snapshotHandoffFadeDuration: TimeInterval = 0.12
 
-/// The layers that fade out at the hand-off: the windows that changed size
-/// and fly with a layer. Pure moves (and windows shown through holes) leave
-/// at once, as before.
-public func snapshotHandoffFading(resized: Set<WindowID>, layered: Set<WindowID>) -> Set<WindowID> {
-    resized.intersection(layered)
+/// The layers that fade out at the hand-off: the windows that changed size,
+/// and FX-08 the translucent ones (`snapshotLooksTranslucent`: the image
+/// shows the captured desktop through the clear part, the real window blurs
+/// what is behind it), that fly with a layer. Other moves (and windows shown
+/// through holes) leave at once, as before.
+public func snapshotHandoffFading(
+    resized: Set<WindowID>, translucent: Set<WindowID>, layered: Set<WindowID>
+) -> Set<WindowID> {
+    resized.union(translucent).intersection(layered)
 }

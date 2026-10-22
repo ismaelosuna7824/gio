@@ -33,6 +33,9 @@ public struct CapturedSnapshot: @unchecked Sendable {
     /// SM-27/SM-30: the flat fill a resize shows where the frame outgrows the
     /// image (`snapshotContentFill` of its right half); nil when see-through.
     public let fill: ThemeColor?
+    /// FX-08: part of the window is see-through (`snapshotLooksTranslucent`
+    /// of the coarse 64x64 scan).
+    public let translucent: Bool
 }
 
 /// A display image without the animated windows and Gio's own windows.
@@ -416,6 +419,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         }
         return SnapshotFreshRead(
             image: image, fill: snapshotContentFill(samples: snapshotContentSamples(of: image)), windowSize: windowSize,
+            translucent: snapshotLooksTranslucent(samples: snapshotDenseSamples(of: image)),
             paint: paint, samples: samples, startRegion: startRegion, freshRegion: freshRegion,
             cached: probe.cached.map { snapshotSamples(of: $0.image) }
         )
@@ -629,7 +633,8 @@ public final class SnapshotCapturer: @unchecked Sendable {
             let scale = captureScale(request, id: id, frame: frame)
             snapshots[id] = CapturedSnapshot(
                 id: id, image: image, frame: frame, scale: scale,
-                fill: snapshotContentFill(samples: snapshotContentSamples(of: image))
+                fill: snapshotContentFill(samples: snapshotContentSamples(of: image)),
+                translucent: snapshotLooksTranslucent(samples: snapshotDenseSamples(of: image))
             )
         }
         var backdrops: [UInt32: CapturedBackdrop] = [:]
