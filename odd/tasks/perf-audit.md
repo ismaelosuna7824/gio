@@ -352,6 +352,23 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   failures; signed Debug build OK. Not visually verified (the overlay draws on the live
   desktop). LIVE PENDING: the same Alt+H/L across OrbStack and Figma, recorded: OrbStack never
   flips between looks; the ring still moves at once; no shadow pop around still windows.
+- [x] FX-10 — Still flickering (user: "aún sigue pasando ... en tern ... toma captura sin
+  fondo o transparencia"; recording 2026-10-21 19:55, 120 fps). Measured per frame on a patch
+  of Tern's translucent pane: real window RGB (31.7, 40.4, 39.8) (wallpaper green through the
+  blur); for ~200 ms at every Alt+H/L, (43.5, 43.5, 45.4) neutral grey; the ~200 ms windows
+  match the flights in the log (`anim done ... duration=194-232ms`, `layers=2`: Figma and Tern
+  both move, so FX-09 does not apply). The grey is Tern's own translucent tint composited over
+  black: `SCStreamConfiguration.backgroundColor` defaults to black, so a desktop-independent
+  window capture flattened every see-through pixel, the image never matched the window, and
+  FX-08's alpha test never fired. Fix: window captures set `backgroundColor = .clear`; the
+  image keeps its alpha, the overlay shows the backdrop through it, and FX-08 fades the layer
+  at the hand-off. Debug `snapshot window translucent id=P:E` once per window. No test (an
+  adapter setting; Core's translucency and fade decisions are tested); a capture probe from the
+  terminal needs Screen Recording, so it was not run. Limit: the image shows the wallpaper sharp
+  where the real window blurs it (a CA background blur on moving layers was not added: GPU cost
+  per frame). Bundles unchanged (UI 361 / Session 554 / POC 7 / Mac 19 / MacOS 107 / Core 2173),
+  0 failures; signed Debug build OK. LIVE PENDING: the log shows `snapshot window translucent`
+  for Tern; during Alt+H/L its pane stays greenish instead of turning grey.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
