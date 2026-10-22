@@ -318,6 +318,21 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   maximize case (instant resize, app repaints late) was considered and dropped: the user saw
   OrbStack, and asked not to animate size changes. LIVE PENDING: rapid Alt+H/L across OrbStack
   never shows its slot empty; the log shows `reconcile retry now` instead of the 0.5 s retry.
+- [x] FX-08 — User (2026-10-21): apps with transparency flicker when you enter them, while the
+  image goes and the real app comes in. The capture shows the desktop unblurred through a
+  see-through part (sidebar vibrancy, terminal background opacity) and the window's inactive
+  look; the real window blurs what is behind it and turns active; the overlay left with a hard
+  cut (only resized layers faded, SM-30). Fix: `snapshotLooksTranslucent` (at least 3 % of the
+  64x64 coarse scan under alpha 0xF0; rounded corners stay well below), computed once per
+  capture off the session queue (`CapturedSnapshot`, `SnapshotFreshRead`), kept as
+  `SnapshotCacheEntry.translucent`; `snapshotHandoffFading(resized:translucent:layered:)` fades
+  those layers over the real window (120 ms) like resized ones. Cost: one 64x64 draw per
+  captured window (only on capture runs), one CA fade per translucent layer at hand-off. RED:
+  compile (`SnapshotFreshTests`, `SnapshotCacheTests`). Smoke (throwaway, removed): a synthetic
+  1800x1100 capture with rounded corners reads opaque, one with a 360 pt sidebar at 70 % reads
+  translucent. Bundles UI 361 (53 skipped) / Session 552 / POC 7 / Mac 19 / MacOS 107 / Core
+  2172, 0 failures; signed Debug build OK. LIVE PENDING: focusing the translucent app shows a
+  soft hand-off (`snapshot handoff ... fade=120`), no flicker.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
