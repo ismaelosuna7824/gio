@@ -333,6 +333,25 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   translucent. Bundles UI 361 (53 skipped) / Session 552 / POC 7 / Mac 19 / MacOS 107 / Core
   2172, 0 failures; signed Debug build OK. LIVE PENDING: focusing the translucent app shows a
   soft hand-off (`snapshot handoff ... fade=120`), no flicker.
+- [x] FX-09 — FX-08 was not enough (user: "aún pasa", recording 2026-10-21 19:22, 120 fps,
+  frames 1.5-5 s of the OrbStack corner). OrbStack never moved; the menu bar shows the focus
+  going Figma → OrbStack → Figma → OrbStack. Frame by frame: OrbStack frontmost while its
+  window still looks inactive for ~8 frames (its own late repaint), then active; at the next
+  flight's start the window turns inactive while OrbStack is still frontmost (the overlay's
+  image, captured inactive, replaced the real window); after the hand-off, with Figma frontmost,
+  the real OrbStack shows active for 3 frames, then inactive: the flicker. Cause: every visible
+  window on an overlaid display was drawn as an image, moving or not, and a window's image
+  rarely matches its active state at both ends of a focus change. Fix: still windows
+  (`snapshotStillWindows`) get a see-through layer (image hidden, shadow masked to outside the
+  window, ring and dim kept) and a backdrop hole at their frame, so the real window, with its
+  own repaint timing, shows throughout; not paint-checked, never faded; a retarget that moves
+  one replaces its layer with an image layer from where it stands. Fewer images drawn per
+  flight. RED: compile (`SnapshotFlightPlanningTests`, `SnapshotFlightTests`, 2 + 1); one test
+  that pinned no hole beside an opening window updated (the still neighbour is now a hole).
+  Bundles UI 361 (53 skipped) / Session 554 / POC 7 / Mac 19 / MacOS 107 / Core 2173, 0
+  failures; signed Debug build OK. Not visually verified (the overlay draws on the live
+  desktop). LIVE PENDING: the same Alt+H/L across OrbStack and Figma, recorded: OrbStack never
+  flips between looks; the ring still moves at once; no shadow pop around still windows.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
