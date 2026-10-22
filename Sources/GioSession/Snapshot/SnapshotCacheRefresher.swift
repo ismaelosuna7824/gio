@@ -3,17 +3,20 @@ import Foundation
 import GioCore
 import GioMacOS
 
-/// One captured window image, the frame it was captured at and (SM-27,
-/// SM-30) its fill (`snapshotContentFill`).
+/// One captured window image, the frame it was captured at, (SM-27,
+/// SM-30) its fill (`snapshotContentFill`) and (FX-08) whether part of it
+/// is see-through.
 public struct CapturedImage: @unchecked Sendable {
     public let image: CGImage
     public let frame: CGRect
     public let fill: ThemeColor?
+    public let translucent: Bool
 
-    public init(image: CGImage, frame: CGRect, fill: ThemeColor? = nil) {
+    public init(image: CGImage, frame: CGRect, fill: ThemeColor? = nil, translucent: Bool = false) {
         self.image = image
         self.frame = frame
         self.fill = fill
+        self.translucent = translucent
     }
 }
 
@@ -359,7 +362,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     public func storeFresh(_ id: WindowID, _ captured: CapturedImage) {
         cache.store(
             id, image: captured.image, frame: captured.frame, pixels: captured.image.width * captured.image.height,
-            at: context.now(), resolution: .full, fill: captured.fill
+            at: context.now(), resolution: .full, fill: captured.fill, translucent: captured.translucent
         )
         dirty.removeValue(forKey: id)
         undrawnWindows.remove(id)
@@ -901,7 +904,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             cache.store(
                 id, image: snapshot.image, frame: snapshot.frame,
                 pixels: snapshot.image.width * snapshot.image.height, at: now,
-                resolution: half.contains(id) ? .half : .full, fill: snapshot.fill
+                resolution: half.contains(id) ? .half : .full, fill: snapshot.fill, translucent: snapshot.translucent
             )
             dirty.removeValue(forKey: id)
             undrawnWindows.remove(id)
