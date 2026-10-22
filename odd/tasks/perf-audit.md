@@ -369,6 +369,24 @@ N=100); overview rows re-render on hover; LogsView `@State` ticks; ~215 ms main-
   per frame). Bundles unchanged (UI 361 / Session 554 / POC 7 / Mac 19 / MacOS 107 / Core 2173),
   0 failures; signed Debug build OK. LIVE PENDING: the log shows `snapshot window translucent`
   for Tern; during Alt+H/L its pane stays greenish instead of turning grey.
+- [x] FX-11 — FX-10 did not change it (user: "aún sigue pasando"): the live log after the
+  restart (build with FX-10, 03:19 UTC) has no `snapshot window translucent` line at all, so
+  even with a clear background the capture of Tern is opaque. The pane is a WindowServer
+  material: a desktop-independent capture renders the window alone, the material has nothing to
+  blur and comes out as its flat fallback. Fix: a cache capture run captures every window that is
+  at full resolution, wholly on one display and covered by nothing in front of it as a crop of
+  the composited display (Gio's panels excluded): `snapshotOnScreenCaptures` (pure; covered by
+  any on-screen window in front, any layer, except Gio's own and alpha-0 windows) and
+  `snapshotDisplayCrop`; `windowServerStack` (one on-screen list per run). The image is what the
+  screen showed (blur, active or inactive look). Parked, half-resolution and covered windows,
+  SM-30 fresh captures and paint checks keep the window capture. Debug `snapshot window ...
+  shown=true`. Tests: `OnScreenCaptureTests` (6; written with the code, RED not observed). Not
+  probed live (Screen Recording is the app's). Bundles UI 361 (53 skipped) / Session 554 / POC
+  7 / Mac 19 / MacOS 107 / Core 2179, 0 failures; signed Debug build OK. Known: a neighbour's
+  shadow over the window's edge is baked into its image; the image is as old as its capture (a
+  window captured while focused shows its active look). LIVE PENDING: recording of Alt+H/L
+  between Tern and Figma: Tern's pane keeps its colour through every flight; the log shows
+  `shown=true` for the visible windows.
 
 ## Acceptance criteria
 - Idle: no periodic wakeups from Gio except event delivery (verify with log + Activity Monitor).
