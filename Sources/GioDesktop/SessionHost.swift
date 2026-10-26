@@ -1647,12 +1647,20 @@ final class SessionHost: @unchecked Sendable {
     private func tileableModes() -> [WindowID: WindowMode] {
         // Verdicts are cached per window; a failed probe makes the window
         // floating(notResizable) in the registry instead of dropping it.
-        reconcileTileability(registry: session.registry, cache: &tileability) { [actuator] id in
+        let now = ProcessInfo.processInfo.systemUptime
+        let result = reconcileTileability(registry: session.registry, cache: &tileability, now: now) { [actuator] id in
             guard let element = actuator?.element(for: id) else {
-                return false
+                return .notTileable
             }
-            return axIsTileable(element)
+            return axTileability(element)
         }
+        for change in result.changes {
+            GioLog.record(.info, change.logLine)
+        }
+        for probe in result.undetermined {
+            GioLog.record(.debug, probe.logLine)
+        }
+        return result.modes
     }
 
     /// Would `id` be inside its display's viewport under the current offset?

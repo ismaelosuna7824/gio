@@ -278,7 +278,7 @@ final class OverviewMoveTests: XCTestCase {
         try registry.setMinimized(true, for: id(1))
         var cache = TileabilityCache()
         // The host's modes: a minimized window sits out of the layout.
-        let modes = reconcileTileability(registry: registry, cache: &cache) { _ in true }
+        let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in .tileable }.modes
         var manager = before
         XCTAssertEqual(manager.moveWindowFromOverview(move(1, to: 2, column: 0), on: display, modes: modes), .refused)
         XCTAssertEqual(manager, before)
