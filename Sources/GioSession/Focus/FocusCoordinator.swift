@@ -289,6 +289,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// focused-window event of one click therefore adopt once.
     public func requestAdoption(_ source: FocusSource, pid: pid_t, element: AXUIElement?) {
         guard context.allowsWindowWork() else {
+            if source != .focusChanged {
+                logDrop(source, subject: "pid=\(pid)", reason: "window work not allowed")
+            }
             return
         }
         // Gio's own window (main window, launcher) is never a tiling focus.
@@ -304,9 +307,11 @@ public final class FocusCoordinator: @unchecked Sendable {
         let event = FocusEvent(source: source, pid: pid, element: element)
         switch focusSettle.request(event, click: currentClick()) {
         case .adoptNow(let event):
-            if let element = focusedElement(for: event, fresh: false) {
-                adoptResolved(element, event: event)
+            guard let element = focusedElement(for: event, fresh: false) else {
+                logDrop(event.source, subject: "pid=\(event.pid)", reason: "focused window unreadable")
+                return
             }
+            adoptResolved(element, event: event)
         case .wait(let delay):
             scheduleFocusPoll(after: delay)
         case .coalesced:
@@ -395,9 +400,13 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// slot first (whatever the intent says) and the slot is written to it.
     private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
         guard context.allowsWindowWork() else {
+            logDrop(event.source, subject: "pid=\(event.pid)", reason: "window work not allowed")
             return
         }
-        guard event.pid == context.frontmostPID() else {
+        let frontmost = context.frontmostPID()
+        guard event.pid == frontmost else {
+            let frontmostLabel = frontmost.map(String.init) ?? "none"
+            logDrop(event.source, subject: "pid=\(event.pid) frontmost=\(frontmostLabel)", reason: "app not frontmost")
             return
         }
         guard let id = context.knownWindow(element, event.pid) else {
@@ -406,6 +415,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             return
         }
         if context.isMinimized(id) {
+            logDrop(event.source, subject: "id=\(id.pid):\(id.elementID)", reason: "window minimized")
             return
         }
         let switchedTab = context.bringTabToFront(id)
@@ -427,6 +437,10 @@ public final class FocusCoordinator: @unchecked Sendable {
         if switchedTab || promoted || context.pendingScroll() != nil {
             context.reflowAll()
         }
+    }
+
+    private func logDrop(_ source: FocusSource, subject: String, reason: String) {
+        context.log(.debug, "focus dropped source=\(source.rawValue) \(subject) reason=\(reason)")
     }
 
     private func revealOnOtherWorkspace(_ id: WindowID, source: FocusSource) -> Bool {

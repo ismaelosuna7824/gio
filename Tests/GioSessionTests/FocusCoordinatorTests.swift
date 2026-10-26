@@ -457,6 +457,60 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(world.registered, [2], "unknown windows go to single-window admission")
     }
 
+    // MARK: Dropped activations
+
+    private var dropLines: [String] {
+        world.logs.filter { $0.0 == .debug && $0.1.hasPrefix("focus dropped") }.map(\.1)
+    }
+
+    func testActivationWithAnUnreadableFocusedWindowIsLogged() {
+        world.frontmost = 2
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(dropLines, ["focus dropped source=activation pid=2 reason=focused window unreadable"])
+    }
+
+    func testActivationOfAMinimizedWindowIsLogged() {
+        world.frontmost = 2
+        world.minimized = [ids[1]]
+        world.focusedElements[2] = element(1)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        let minimizedID = "\(ids[1].pid):\(ids[1].elementID)"
+        XCTAssertEqual(dropLines, ["focus dropped source=activation id=\(minimizedID) reason=window minimized"])
+    }
+
+    func testActivationOfAnAppNoLongerFrontmostIsLogged() {
+        world.frontmost = 1
+        world.focusedElements[2] = element(1)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(focused, ids[0])
+        XCTAssertEqual(dropLines, ["focus dropped source=activation pid=2 frontmost=1 reason=app not frontmost"])
+    }
+
+    func testActivationWhileWindowWorkIsNotAllowedIsLoggedButKeyWindowChangesAreNot() {
+        world.windowWorkAllowed = false
+        world.frontmost = 3
+
+        focus.requestAdoption(.activation, pid: 3, element: nil)
+        focus.requestAdoption(.focusChanged, pid: 3, element: element(1))
+
+        XCTAssertEqual(dropLines, ["focus dropped source=activation pid=3 reason=window work not allowed"])
+    }
+
+    func testBackgroundKeyWindowChangeAndOwnPidAreNotLogged() {
+        world.frontmost = 1
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(1))
+        focus.requestAdoption(.activation, pid: Self.ownPID, element: nil)
+
+        XCTAssertEqual(dropLines, [])
+    }
+
     func testClickSettlesAfterReleaseAndMatchesTheClickPoint() {
         world.frontmost = 2
         world.focusedElements[2] = element(1)
