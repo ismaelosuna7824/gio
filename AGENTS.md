@@ -96,6 +96,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `release.md` | Versioning, signed DMG, release workflow and its hardening (RL-01..RL-08) and the in-app updater and its hardening (UP-01..UP-17). |
 | `public-release.md` | Public release readiness: audit, owner decisions (Developer ID, notarization, license), launcher binding, onboarding/diagnostics copy, user docs, release notes (PR-01..). |
 | `trackpad-gestures.md` | Trackpad gestures (TG-01..): MultitouchSupport input, swipe recognizer, interactive strip scroll with a snapping spring, workspace and overview swipes, `[gestures]` config, macOS gesture conflicts. |
+| `tileability-probe.md` | Tileability probe errors: three-valued probe (an AX error keeps the mode, retried after `TileabilityCache.retryInterval`), `window mode` log lines, logged focus-activation drops (TP-01..TP-03). |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 
 ## How to verify a change

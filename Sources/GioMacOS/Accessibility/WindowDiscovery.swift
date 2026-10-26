@@ -447,11 +447,18 @@ public func discoverSystemWindow(element: AXUIElement, pid: pid_t) -> Discovered
 /// old skip-zoomed rule dated from one clamp observation that looks more
 /// like minimum-size clamping; real apps decide live now. Live-only.
 public func axIsTileable(_ element: AXUIElement) -> Bool {
+    axTileability(element) == .tileable
+}
+
+public func axTileability(_ element: AXUIElement) -> TileabilityProbe {
     for attribute in [kAXPositionAttribute, kAXSizeAttribute] {
         var settable = DarwinBoolean(false)
         let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
-        guard status == .success, settable.boolValue else {
-            return false
+        guard status == .success else {
+            return .undetermined(status: Int(status.rawValue))
+        }
+        guard settable.boolValue else {
+            return .notTileable
         }
     }
     for name in ["AXFullScreen", "AXFullscreen"] {
@@ -460,10 +467,10 @@ public func axIsTileable(_ element: AXUIElement) -> Bool {
             continue
         }
         if let fullscreen = raw as? Bool, fullscreen {
-            return false
+            return .notTileable
         }
     }
-    return true
+    return .tileable
 }
 
 /// Whether the window's size attribute is settable (the latency probe skips

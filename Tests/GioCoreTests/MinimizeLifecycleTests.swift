@@ -31,7 +31,7 @@ final class MinimizeLifecycleTests: XCTestCase {
 
     private func tiledIDs(_ registry: WindowRegistry, _ manager: WorkspaceManager) -> [[WindowID]] {
         var cache = TileabilityCache()
-        let modes = reconcileTileability(registry: registry, cache: &cache) { _ in true }
+        let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in .tileable }.modes
         return tilingWorkspace(from: manager.currentWorkspace(), modes: modes).columns.map(\.windows)
     }
 
@@ -67,7 +67,7 @@ final class MinimizeLifecycleTests: XCTestCase {
         try registry.setMinimized(true, for: id(2))
         var cache = TileabilityCache()
         var probed: [WindowID] = []
-        _ = reconcileTileability(registry: registry, cache: &cache) { probed.append($0); return true }
+        _ = reconcileTileability(registry: registry, cache: &cache, now: 0) { probed.append($0); return .tileable }
         XCTAssertFalse(probed.contains(id(2)))
     }
 

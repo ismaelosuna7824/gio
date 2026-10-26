@@ -260,7 +260,7 @@ final class DwindleMembershipTests: XCTestCase {
         let engine = ScrollableLayoutEngine(config: LayoutConfig(padding: 10, gap: 10))
         func plan() throws -> DisplayLayoutPlan {
             var cache = TileabilityCache()
-            let modes = reconcileTileability(registry: registry, cache: &cache) { _ in true }
+            let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in .tileable }.modes
             return try planDisplayLayout(
                 workspace: manager.currentWorkspace(), modes: modes, engine: engine,
                 viewport: viewport, display: viewport, otherDisplays: []
