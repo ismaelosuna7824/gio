@@ -25,8 +25,8 @@ final class GitHubReleaseSourceTests: XCTestCase {
     [{"tag_name": "v0.2.0", "draft": false, "prerelease": false, "body": "notes", "assets": []}]
     """.utf8)
 
-    private func source(_ transport: FakeTransport, token: String? = nil) -> GitHubReleaseSource {
-        GitHubReleaseSource(repository: "owner/repo", userAgent: "Gio/0.1.0", token: { token }, transport: transport)
+    private func source(_ transport: FakeTransport) -> GitHubReleaseSource {
+        GitHubReleaseSource(repository: "owner/repo", userAgent: "Gio/0.1.0", transport: transport)
     }
 
     func testFetchesAndDecodesReleases() async throws {
@@ -52,34 +52,26 @@ final class GitHubReleaseSourceTests: XCTestCase {
         XCTAssertEqual(transport.requests.last?.value(forHTTPHeaderField: "If-None-Match"), "W/\"abc\"")
     }
 
-    func testTokenIsSentAsBearer() async {
-        let transport = FakeTransport()
-        transport.responses = [(200, [:], releasesJSON)]
-        _ = await source(transport, token: "fake-test-token").fetchReleases()
-        XCTAssertEqual(transport.requests.first?.value(forHTTPHeaderField: "Authorization"), "Bearer fake-test-token")
-    }
-
-    func testNotFoundWithoutTokenMeansPrivateOrMissing() async {
+    func testNotFoundMeansPrivateOrMissing() async {
         let transport = FakeTransport()
         transport.responses = [(404, [:], Data("{\"message\":\"Not Found\"}".utf8))]
         let result = await source(transport).fetchReleases()
         XCTAssertEqual(result.failure, .repositoryUnavailable)
     }
 
-    func testNotFoundWithTokenAndOtherStatuses() async {
-        let cases: [(Int, [String: String], String?, UpdateFailure)] = [
-            (404, [:], "t", .repositoryNotFound),
-            (401, [:], "t", .tokenRejected),
-            (403, ["X-RateLimit-Remaining": "0"], nil, .rateLimited),
-            (429, [:], nil, .rateLimited),
-            (403, [:], "t", .tokenRejected),
-            (500, [:], nil, .httpStatus(500)),
-            (200, [:], nil, .malformedResponse),
+    func testOtherStatuses() async {
+        let cases: [(Int, [String: String], UpdateFailure)] = [
+            (401, [:], .httpStatus(401)),
+            (403, ["X-RateLimit-Remaining": "0"], .rateLimited),
+            (429, [:], .rateLimited),
+            (403, [:], .httpStatus(403)),
+            (500, [:], .httpStatus(500)),
+            (200, [:], .malformedResponse),
         ]
-        for (status, headers, token, expected) in cases {
+        for (status, headers, expected) in cases {
             let transport = FakeTransport()
             transport.responses = [(status, headers, Data("{}".utf8))]
-            let result = await source(transport, token: token).fetchReleases()
+            let result = await source(transport).fetchReleases()
             XCTAssertEqual(result.failure, expected, "\(status)")
         }
     }
@@ -87,15 +79,22 @@ final class GitHubReleaseSourceTests: XCTestCase {
     func testTransportErrorsBecomeNetworkFailures() async {
         let transport = FakeTransport()
         transport.error = URLError(.notConnectedToInternet)
-        let result = await source(transport, token: "fake-test-token").fetchReleases()
+        let result = await source(transport).fetchReleases()
         guard case .network(let detail)? = result.failure else {
             return XCTFail("expected a network failure, got \(result)")
         }
-        XCTAssertFalse(detail.contains("fake-test-token"))
+        XCTAssertEqual(detail, "offline")
     }
 
-    func testTokenStoreNamesTheKeychainItem() {
-        XCTAssertEqual(KeychainTokenStore.service, "dev.gio.windowmanager.update-token")
+    func testAssetsDownloadAnonymouslyFromTheBrowserURL() throws {
+        let asset = GitHubReleaseAsset(
+            name: "Gio-0.3.0.dmg", size: 1, url: "https://api.github.com/repos/o/r/releases/assets/7",
+            browserDownloadURL: "https://github.com/o/r/releases/download/v0.3.0/Gio-0.3.0.dmg"
+        )
+        let request = try XCTUnwrap(updateAssetRequest(asset, userAgent: "Gio/0.2.0"))
+        XCTAssertEqual(request.url?.absoluteString, "https://github.com/o/r/releases/download/v0.3.0/Gio-0.3.0.dmg")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "User-Agent"), "Gio/0.2.0")
+        XCTAssertNil(request.value(forHTTPHeaderField: "Authorization"))
     }
 }
 

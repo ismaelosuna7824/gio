@@ -32,6 +32,14 @@ public func hoverTarget(
         .key
 }
 
+/// PF-AA: whether the pointer at `point` needs a WindowServer lookup: only
+/// when some managed window other than the focused one is under it. Over the
+/// focused window alone (or no managed window) there is nothing to focus,
+/// whatever covers it.
+public func hoverNeedsLookup(at point: CGPoint, frames: [WindowID: CGRect], focused: WindowID?) -> Bool {
+    frames.contains { $0.key != focused && $0.value.contains(point) }
+}
+
 /// Debounce for `focus-follows-mouse`: the pointer must rest over one window
 /// for `restDelay` before it takes focus; a cursor warp from
 /// `mouse-follows-focus` silences hover for `warpSuppression` so the two

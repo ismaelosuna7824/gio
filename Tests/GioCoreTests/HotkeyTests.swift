@@ -36,7 +36,7 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultsCoverPlanBindings() {
         let dispatcher = HotkeyDispatcher()
-        XCTAssertEqual(dispatcher.bindingCount, 79)
+        XCTAssertEqual(dispatcher.bindingCount, 80)
         XCTAssertEqual(
             dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "H")),
             .focusLeft
@@ -98,6 +98,16 @@ final class HotkeyTests: XCTestCase {
         XCTAssertFalse(HotkeyAction.toggleOverview.carriesFocusIntent)
     }
 
+    func testLauncherIsADefaultBindableAction() {
+        let dispatcher = HotkeyDispatcher()
+        XCTAssertEqual(dispatcher.action(for: HotkeyCombo(modifiers: [.alt], key: "Space")), .toggleLauncher)
+        XCTAssertEqual(parseActionName("toggle-launcher"), .toggleLauncher)
+        XCTAssertTrue(validActionNames().contains("toggle-launcher"))
+        XCTAssertFalse(HotkeyAction.toggleLauncher.carriesFocusIntent)
+        XCTAssertFalse(HotkeyAction.toggleLauncher.growsFocusedWindow)
+        XCTAssertEqual(motionCause(for: .toggleLauncher), .passive)
+    }
+
     func testNiriWorkspaceActionNamesParse() {
         XCTAssertEqual(parseActionName("focus-workspace-down"), .focusWorkspaceDown)
         XCTAssertEqual(parseActionName("focus-workspace-up"), .focusWorkspaceUp)
@@ -148,9 +158,8 @@ final class HotkeyTests: XCTestCase {
 
     func testDefaultCombosAreUnique() {
         let combos = defaultHotkeyBindings().map(\.0)
-        XCTAssertEqual(combos.count, 79)
+        XCTAssertEqual(combos.count, 80)
         XCTAssertEqual(Set(combos).count, combos.count, "a default combo is bound twice")
-        XCTAssertFalse(combos.contains(launcherHotkey), "Alt+Space stays the launcher")
     }
 
     /// NC-08..NC-11: niri's defaults with Alt as Mod, where the combo is free.

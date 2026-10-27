@@ -173,6 +173,8 @@ public final class SystemWindowObserver: @unchecked Sendable {
     /// Subscribe to one window's own notifications on its app's observer.
     /// Idempotent; used for windows a full scan found without an event.
     /// False when the app has no observer or the element is not a window.
+    /// PA-18d: a window the created event or the attach already subscribed
+    /// costs nothing here; one whose role was not readable then is retried.
     @discardableResult
     public func watch(window element: AXUIElement, pid: pid_t) -> Bool {
         lock.lock()
@@ -181,8 +183,11 @@ public final class SystemWindowObserver: @unchecked Sendable {
         guard let record else {
             return false
         }
-        return addWindowNotifications(
-            to: element, observer: record.observer,
+        if record.context.isSubscribed(element) {
+            return true
+        }
+        return subscribeWindow(
+            element, observer: record.observer, box: record.context,
             refcon: Unmanaged.passUnretained(record.context).toOpaque()
         )
     }
@@ -218,7 +223,10 @@ public final class SystemWindowObserver: @unchecked Sendable {
                 // A new window gets its own subscriptions before anyone can
                 // miss its destroyed/moved/resized events.
                 if kind == .windowCreated, let observer = box.observer {
-                    addWindowNotifications(to: element, observer: observer, refcon: refcon)
+                    subscribeWindow(element, observer: observer, box: box, refcon: refcon)
+                }
+                if kind == .destroyed {
+                    box.forgetSubscription(element)
                 }
                 box.emit(SystemWindowEvent(
                     kind: .window(kind), pid: box.pid, label: box.label, element: element
@@ -251,7 +259,7 @@ public final class SystemWindowObserver: @unchecked Sendable {
             let elements = rawWindows as? [AXUIElement]
         {
             for element in elements {
-                addWindowNotifications(to: element, observer: observer, refcon: refcon)
+                subscribeWindow(element, observer: observer, box: context, refcon: refcon)
             }
         }
         return observer
@@ -266,12 +274,60 @@ final class EventRefcon: @unchecked Sendable {
     let emit: @Sendable (SystemWindowEvent) -> Void
     /// Set once right after creation; lets the callback subscribe new windows.
     nonisolated(unsafe) var observer: AXObserver?
+    /// PA-18d: windows whose notifications this observer has, so `watch`
+    /// after registration does not add them again (one role read and six
+    /// messages). Written on main (the callback) and the session queue
+    /// (`watch`, `attach`), hence the lock. A window leaves on its destroyed
+    /// event; the whole set goes with the app's observer.
+    private let subscriptionLock = NSLock()
+    private var subscribed = HandleIndex<AXUIElement>(
+        hash: { Int(truncatingIfNeeded: CFHash($0)) }, equal: { CFEqual($0, $1) }
+    )
+    private var nextSubscription: UInt64 = 0
 
     init(pid: pid_t, label: String, emit: @escaping @Sendable (SystemWindowEvent) -> Void) {
         self.pid = pid
         self.label = label
         self.emit = emit
     }
+
+    var subscribedCount: Int {
+        subscriptionLock.withLock { subscribed.count }
+    }
+
+    func isSubscribed(_ element: AXUIElement) -> Bool {
+        subscriptionLock.withLock { subscribed.find(element, pid: pid) != nil }
+    }
+
+    func noteSubscribed(_ element: AXUIElement) {
+        subscriptionLock.withLock {
+            guard subscribed.find(element, pid: pid) == nil else {
+                return
+            }
+            nextSubscription += 1
+            subscribed.insert(elementID: nextSubscription, pid: pid, element: element)
+        }
+    }
+
+    func forgetSubscription(_ element: AXUIElement) {
+        subscriptionLock.withLock {
+            if let id = subscribed.find(element, pid: pid) {
+                subscribed.remove(elementID: id)
+            }
+        }
+    }
+}
+
+/// `addWindowNotifications`, remembered on `box` when it succeeded.
+@discardableResult
+func subscribeWindow(
+    _ element: AXUIElement, observer: AXObserver, box: EventRefcon, refcon: UnsafeMutableRawPointer
+) -> Bool {
+    guard addWindowNotifications(to: element, observer: observer, refcon: refcon) else {
+        return false
+    }
+    box.noteSubscribed(element)
+    return true
 }
 
 /// Per-window subscriptions for any element with the window role: the

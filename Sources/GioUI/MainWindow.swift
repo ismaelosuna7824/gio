@@ -98,7 +98,7 @@ public struct GioMainView: View {
         .tint(GioColor.accent)
         .environment(\.updateController, updates)
         .environment(\.onboardingPresenter, onboarding)
-        .sheet(isPresented: $onboarding.isPresented) {
+        .setupCover(isPresented: onboarding.isPresented) {
             OnboardingSheet(
                 model: model, startStep: onboarding.startStep,
                 onFinish: { onboarding.finish() }, onLater: { onboarding.later() },
@@ -212,6 +212,8 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private let model: DesktopModel
     private let updates: UpdateController?
+    /// PF-AG: a flight's overlay covering the window is not "hidden".
+    private var occlusion = OcclusionGate()
 
     public init(model: DesktopModel, updates: UpdateController? = nil) {
         self.model = model
@@ -234,6 +236,12 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
         }
         window?.makeKeyAndOrderFront(nil)
         model.setWindowVisible(true)
+    }
+
+    /// PA-21: the session published its first snapshot; show it now rather
+    /// than at the next poll.
+    public func refreshContent() {
+        model.refresh()
     }
 
     private static let autosaveName = "GioMainWindow"
@@ -271,11 +279,26 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
     }
 
     /// Minimized or fully covered windows need no live updates either.
+    /// PF-AG: covered only counts once it lasted `OcclusionGate.hideDelay`
+    /// (Gio's own flight overlay covers it for every slide).
     public func windowDidChangeOcclusionState(_ notification: Notification) {
         guard let window else {
             return
         }
-        model.setWindowVisible(window.isVisible && window.occlusionState.contains(.visible))
+        guard window.isVisible, !window.occlusionState.contains(.visible) else {
+            occlusion.uncovered()
+            model.setWindowVisible(window.isVisible)
+            return
+        }
+        let token = occlusion.occluded()
+        DispatchQueue.main.asyncAfter(deadline: .now() + OcclusionGate.hideDelay) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.occlusion.shouldHide(token) else {
+                    return
+                }
+                self.model.setWindowVisible(false)
+            }
+        }
     }
 
     public func windowShouldClose(_ sender: NSWindow) -> Bool {

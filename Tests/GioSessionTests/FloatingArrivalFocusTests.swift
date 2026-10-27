@@ -61,4 +61,45 @@ final class FloatingArrivalFocusTests: XCTestCase {
             XCTAssertEqual(current.focusedColumn, 0)
         }
     }
+
+    /// FL-01: macOS orders a background app's new window under the frontmost
+    /// app's window (probe 2026-10-21: stacking index 1 under the active
+    /// app; AXRaise alone left it there), so a Slack or Meet popup opened
+    /// while you work elsewhere hides behind the focused column. A rule with
+    /// an explicit `open-focused = true` brings it to the front with focus.
+    func testAnOptedInBackgroundPopupTakesFocusAndAsksToBeRaised() throws {
+        world.session.config.rules = [WindowRule(app: "Slack", openFocused: true)]
+        _ = try XCTUnwrap(arrive(discovered(pid: 7, app: "Slack"), element: 9001))
+        let editor = try XCTUnwrap(arrive(discovered(pid: 8, app: "Ghostty"), element: 9002))
+        var workspace = current
+        workspace.focusedColumn = 1
+        workspace.focusedWindow = editor
+        world.session.manager.update(workspace)
+        world.frontmost = 8  // the user types in Ghostty
+
+        let popup = try XCTUnwrap(arrive(
+            discovered(pid: 7, app: "Slack", floatReason: .dialog), element: 9003
+        ))
+        XCTAssertEqual(current.focusedWindow, popup)
+        XCTAssertEqual(world.arrivalFocus, [popup])
+    }
+
+    func testAPopupOfTheFrontmostAppOrWithoutTheOptInStaysUnfocused() throws {
+        world.session.config.rules = [WindowRule(app: "Google Chrome", openFocused: true)]
+        let browser = try XCTUnwrap(arrive(discovered(pid: 7, app: "Google Chrome"), element: 9001))
+        _ = try XCTUnwrap(arrive(discovered(pid: 8, app: "Slack"), element: 9002))
+        var workspace = current
+        workspace.focusedColumn = 0
+        workspace.focusedWindow = browser
+        world.session.manager.update(workspace)
+        world.frontmost = 7  // typing in Chrome: its address-bar popups
+
+        _ = try XCTUnwrap(arrive(
+            discovered(pid: 7, app: "Google Chrome", floatReason: .notResizable), element: 9003
+        ))
+        // Slack has no opt-in: its background popup keeps today's behaviour.
+        _ = try XCTUnwrap(arrive(discovered(pid: 8, app: "Slack", floatReason: .dialog), element: 9004))
+        XCTAssertEqual(current.focusedWindow, browser)
+        XCTAssertEqual(world.arrivalFocus, [])
+    }
 }

@@ -309,14 +309,10 @@ Decisions:
   (`SecCodeCopySigningInformation`), never hard-coded; checked with `SecStaticCodeCheckValidity`
   (all architectures, nested code, strict) on the mounted app and again on the staged copy. Plus the new
   Info.plist must name the same bundle id and the announced version.
-- GitHub: `GET /repos/<repo>/releases?per_page=30`, `If-None-Match` from the last ETag (304 reuses the
-  list, no rate-limit cost); 404 without token → "private or not found", 404 with token → not found,
-  401/403 with token → token rejected, 403 with `X-RateLimit-Remaining: 0` or 429 → rate limited.
-  Assets: `browser_download_url` without token; with a token the API `url` with
-  `Accept: application/octet-stream`, and the Authorization header is dropped on a redirect to another host.
-- Token: Keychain generic password service `dev.gio.windowmanager.update-token`, account `github`;
-  write-only in the UI (Save/Clear, "a token is saved"), presence checked with an attribute-only query (no
-  Keychain prompt at launch), never logged.
+- GitHub (anonymous, UP-18): `GET /repos/<repo>/releases?per_page=30`, `If-None-Match` from the last ETag
+  (304 reuses the list, no rate-limit cost); 404 → "private or not found", 403 with
+  `X-RateLimit-Remaining: 0` or 429 → rate limited, other statuses → HTTP status.
+  Assets: `browser_download_url`, no Authorization header.
 - Install: verified app staged as `<folder>/.Gio-<v>-update.app` (same volume as the target); the helper
   (`/usr/bin/nohup /bin/sh <tmp script>`, `posix_spawn` with `POSIX_SPAWN_SETSID` and
   `POSIX_SPAWN_CLOEXEC_DEFAULT`, stdio on /dev/null) waits up to 60 s for Gio's pid and the guardian's pid,
@@ -389,6 +385,23 @@ Hardening tasks (security review findings, see RL-05..RL-08 for the release side
   URL, otherwise the anonymous browser URL (`updateAssetRequest`); every redirect drops `Authorization` unless
   the new request is allowed (`updateRedirectRequest`), in the download delegate and in the release-list
   session (`URLSession.updateSession` now has an `UpdateTokenRedirectPolicy` delegate).
+- [x] UP-18 (`cfb58e2`) — Token support removed: the repository is public since 2026-10 (RL-10), so the
+  updater asks GitHub anonymously. Removed the Diagnostics > Updates token row (**Include beta versions** is the
+  card's last row now), `UpdateController.hasToken/saveToken/clearToken`, `UpdateDependencies.tokens`,
+  `UpdateTokenStoring`/`KeychainTokenStore`/`KeychainCalls`, the Authorization header and token parameter of
+  `GitHubReleaseSource` and `URLSessionAssetDownloader` (assets always via `browser_download_url`),
+  `updateTokenAllowed`, `updateRedirectRequest`/`UpdateTokenRedirectPolicy` (nothing left to strip), and
+  `UpdateFailure.repositoryNotFound`/`.tokenRejected` (401/403 now map to `httpStatus`). UP-09, UP-15 and
+  UP-17 are superseded. A leftover Keychain item `dev.gio.windowmanager.update-token` is left alone (no
+  migration). Files: `Sources/GioCore/Update/{UpdateState,UpdateHardening}.swift`,
+  `Sources/GioMacOS/Update/{GitHubReleaseSource,UpdateDownloader}.swift`, `KeychainTokenStore.swift` (deleted),
+  `Sources/GioUI/Updates/{UpdateController,UpdateViews}.swift`; tests `GioCoreTests/{UpdateHardeningTests,
+  UpdateStateTests}`, `GioMacOSTests/GitHubReleaseSourceTests` (token tests dropped, status table without token,
+  new `testAssetsDownloadAnonymouslyFromTheBrowserURL`), `UpdateCredentialTests` (9, deleted),
+  `GioUITests/UpdateControllerTests`; docs USER_GUIDE, TESTING, RELEASING. Evidence (2026-10-15): `swift test`
+  before → after: GioUITests 313 → 312 (53 skipped), GioSessionTests 513 → 513, GioPOCTests 7, GioMacTests 19,
+  GioMacOSTests 98 → 88, GioCoreTests 1999 → 1998; 0 failures. Signed Debug `xcodebuild` BUILD SUCCEEDED;
+  `git diff --check` clean.
 
 Evidence (2026-10-08, shared tree with sibling agents' work; builds in `--scratch-path /tmp/gio-updater-build`
 to avoid fighting over `.build`):

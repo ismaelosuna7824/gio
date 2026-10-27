@@ -78,7 +78,7 @@ final class NamedWorkspacePresentationTests: XCTestCase {
 
     func testMenuRowsCarryNamesAndIcons() {
         let state = BarSessionState(
-            workspace: 2, windows: 3, columns: 1, focused: nil,
+            workspace: 2, windows: 3, columns: 1,
             stacks: [BarStack(display: 7, focused: true, workspaces: [code, browsers, dynamic])]
         )
         let model = barMenuModel(state)
@@ -97,7 +97,7 @@ final class NamedWorkspacePresentationTests: XCTestCase {
             WorkspaceEntry(index: 2, windows: 0, columns: 0, isActive: false),
         ]
         let model = barMenuModel(BarSessionState(
-            workspace: 1, windows: 2, columns: 1, focused: nil,
+            workspace: 1, windows: 2, columns: 1,
             stacks: [BarStack(display: 1, focused: true, workspaces: plain)]
         ))
         XCTAssertEqual(model.sections[0].rows.map(\.title), ["Workspace 1", "Workspace 2"])

@@ -23,18 +23,22 @@ func activateGio() {
 final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
     private var bar: MenuBarController?
-    /// PF-01: apps and icons scanned in the background at startup.
-    private let launcherCatalog = LauncherAppCatalog()
+    /// PF-01: apps and icons scanned in the background at startup; PA-22:
+    /// icons drawn by earlier launches come from Caches.
+    private let launcherCatalog = LauncherAppCatalog(iconStore: .userCache())
     private lazy var launcher = LauncherPanelController(
         focusWindow: { [host] in host.focusWindow($0) }, catalog: launcherCatalog
     )
-    /// WO-01: Alt+O / `gio overview`.
+    /// FX-06: on-screen notice for a refused action (made on first use).
+    private lazy var notices = NoticePanelController()
+    /// WO-01: Alt+O / `gio overview`; WO-02: dragging a tile moves its window.
     private lazy var overview = WorkspaceOverviewController(
         load: { [host] completion in host.workspaceOverview(completion: completion) },
         snapshot: { [host] in host.snapshot() },
         capture: { [host] ids, completion in host.captureOverviewThumbnails(ids, completion: completion) },
         focusWindow: { [host] in host.focusWindow($0) },
-        focusWorkspace: { [host] in host.focusWorkspace($0) }
+        focusWorkspace: { [host] in host.focusWorkspace($0) },
+        move: { [host] move, done in host.moveWindowFromOverview(move, completion: done) }
     )
     /// UP-10: the in-app updater (Overview, Diagnostics, menu bar, `gio
     /// update`). Installing quits through the normal terminate path.
@@ -61,6 +65,11 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let snapshotOverlay = SnapshotOverlayController()
     private let closeGhosts = CloseGhostOverlay()
     private var signalSources: [DispatchSourceSignal] = []
+    /// PA-16: the launcher's app scan (it stats every bundle and draws the
+    /// icons that changed, PA-22) waits this long after the session is ready,
+    /// so it does not compete with the first animations. A summon before
+    /// then scans on its own (`refreshIfStale`).
+    private static let launcherScanDelay: TimeInterval = 2
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // DA-06: read while the launch Apple event is still the current one.
@@ -69,14 +78,28 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         // main window shows; hand the Dock the icon inside this build instead
         // of the possibly stale system icon cache (see `applyBundleAppIcon`).
         applyBundleAppIcon()
-        launcherCatalog.start()
         _ = launcher
         focusRing.start()
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
-        host.onUpdateRequest = { [updates] in updates.answerCLI($0) }
-        if let error = host.start() {
+        // PA-16: resolved per `gio update`, so the updater (code signature,
+        // URLSession) is not built before the session starts. The IPC thread
+        // hops to main for it, as `answerCLI` itself waits on main.
+        host.onUpdateRequest = { [weak self] request in
+            let updates = DispatchQueue.main.sync { MainActor.assumeIsolated { self?.updates } }
+            return updates?.answerCLI(request) ?? "Gio is shutting down"
+        }
+        // PA-21: the first layout runs on the session queue while the menu
+        // bar and the window come up; once it is published the window shows
+        // it, and the launcher's scan waits a little longer still.
+        let started = host.start { [weak self, launcherCatalog] in
+            self?.mainWindow.refreshContent()
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.launcherScanDelay) {
+                MainActor.assumeIsolated { launcherCatalog.start() }
+            }
+        }
+        if let error = started {
             print("[gio] cannot start: \(error)")
             NSApplication.shared.terminate(nil)
             return
@@ -87,6 +110,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
         bar.stateProvider = { [host] in host.barState() }
         bar.updateTitleProvider = { [updates] in updateMenuTitle(updates.state) }
+        // Read when the menu opens (no wait on the session queue).
+        bar.launcherHotkeyProvider = { [host] in launcherHotkey(in: host.snapshot().config) }
         bar.onUpdate = { [weak self] in
             self?.mainWindow.show()
             self?.updates.notesPresented = true
@@ -97,6 +122,9 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         self.bar = bar
         host.onSummonLauncher = { [weak self] firedAt in self?.showLauncher(source: .hotkey, requestedAt: firedAt) }
         host.onToggleOverview = { [weak self] in self?.overview.toggle() }
+        host.onDwindleRefused = { [weak self] refusal, frame in
+            self?.notices.show(dwindleRefusalNotice(refusal), on: frame)
+        }
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it
@@ -137,19 +165,30 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         overlay.onFlightFinished = { [host] token, frames in host.snapshotLayersFinished(token, frames: frames) }
         overlay.onFlightAborted = { [host] _, reason in host.snapshotFlightAborted(reason) }
         overlay.onDeadlineArmed = { [host] token, deadline in host.snapshotDeadlineArmed(token, at: deadline) }
-        // The tap callback runs on the main run loop; never assume it blindly.
+        // The host calls this on main (the tap runs on its own thread, PF-AB).
         host.overlayAbortForMouseDown = {
             Thread.isMainThread ? MainActor.assumeIsolated { overlay.abortForMouseDown() } : false
         }
         host.overlayBegin = { [host] token, spring, flights, holes, decorations in
+            // PF-AC: session hand-off to the primed first frame on screen.
+            let prime = GioSignpost.begin("overlayPrime")
+            let wait = GioSignpost.begin("primeMainWait")
             DispatchQueue.main.async {
-                let ok = MainActor.assumeIsolated {
-                    overlay.begin(token: token, spring: spring, flights: flights, holes: holes, decorations: decorations)
+                GioSignpost.end("primeMainWait", wait)
+                let ok = GioSignpost.interval("primeBegin") {
+                    MainActor.assumeIsolated {
+                        overlay.begin(token: token, spring: spring, flights: flights, holes: holes, decorations: decorations)
+                    }
                 }
                 // One more main pass after the flush, so the panel's first
                 // frame is committed before the real windows move. On
                 // failure nothing is on screen and the pass runs through AX.
-                DispatchQueue.main.async { host.snapshotPrimed(token, ok: ok) }
+                let pass = GioSignpost.begin("primeSecondPass")
+                DispatchQueue.main.async {
+                    GioSignpost.end("primeSecondPass", pass)
+                    GioSignpost.end("overlayPrime", prime)
+                    host.snapshotPrimed(token, ok: ok)
+                }
             }
         }
         host.overlayFly = { token in
@@ -157,14 +196,19 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { overlay.fly(token: token) }
             }
         }
-        host.overlayRetarget = { token, targets, images, flights, holes, decorations in
+        host.overlayRetarget = { token, targets, images, velocities, flights, holes, decorations in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     overlay.retarget(
-                        token: token, targets: targets, images: images, adding: flights, holes: holes,
-                        decorations: decorations
+                        token: token, targets: targets, images: images, velocities: velocities, adding: flights,
+                        holes: holes, decorations: decorations
                     )
                 }
+            }
+        }
+        host.overlayTrack = { token, frames in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.track(token: token, frames: frames) }
             }
         }
         host.overlayEnd = {
@@ -180,6 +224,16 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.overlayFade = { windows, duration in
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { overlay.fadeOut(windows: windows, duration: duration) }
+            }
+        }
+        host.overlayPop = { token, image, pop in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.pop(token: token, image: image, pop: pop) }
+            }
+        }
+        host.overlayReveal = { token, windows, holes in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.reveal(token: token, windows: windows, holes: holes) }
             }
         }
         // NA-03: the close ghost, a window-sized layer that removes itself.
@@ -229,9 +283,10 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     /// (FI-09: the toggle reads the panel itself and every step is logged).
     private func showLauncher(source: LauncherSummonSource, requestedAt: TimeInterval? = nil) {
         // One published snapshot read (never a wait on the session queue).
-        let facts = host.snapshot().facts
+        let snapshot = host.snapshot()
+        let facts = snapshot.facts
         launcher.summon(
-            source: source, requestedAt: requestedAt,
+            source: source, requestedAt: requestedAt, hotkey: launcherHotkey(in: snapshot.config),
             windows: { facts?.windows ?? [] },
             workspaces: { launcherWorkspaceEntries(from: facts) },
             apps: { [launcherCatalog] in launcherCatalog.apps }

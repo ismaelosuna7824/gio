@@ -127,6 +127,86 @@ necesidad de modificar el config.toml").
   (TESTING.md 10b): recording while the tap runs (a bound combo must reach the recorder, not
   fire), the recorder sheet getting key focus, resume after Cmd+Tab and window close, and the
   live reload of a rebound key and of the log level.
+- [ ] DA-08 (`e4c41ac`) — Report a Problem (user decision 2026-10-15: no token, no server; Gio
+  builds a zip, reveals it in Finder and opens a prefilled GitHub issue the user drags it
+  into; `config.toml` only when a checkbox is ticked, off by default). Diagnostics gains a
+  **Report a Problem** card before Command Line: **What happened?** (required), optional
+  **Title** (default: first line, 80 chars), **Include my config file**, **Create Report…**
+  and a status line. Decisions (pure, Core `Commands/IssueReport.swift`):
+  `makeIssueReportPlan` picks the copies (`gio.log`, `gio.log.1` when present, `config.toml`
+  only when asked and present; nothing else from home), writes `system.txt` (version via
+  `gioVersion`, macOS, architecture, Accessibility, each display's size/scale/refresh, and
+  the checklist lines from `issueReportHealthLines`, GioUI) and `description.txt`, names
+  `gio-report-yyyyMMdd-HHmmss`, and builds
+  `https://github.com/<defaultUpdateRepository>/issues/new?title&body&labels=bug` with
+  unreserved-only percent-encoding (`URLQueryItem` leaves `+`, which GitHub reads as a
+  space). Body: What happened, System, the last 20 `[WARN]`/`[ERROR]` lines fenced, and
+  "Logs: drag `<zip>` here.". Cap 7000 characters: drop the oldest warnings, then cut the
+  description (binary search) with a note pointing to `description.txt`. Adapters:
+  `GioMacOS/System/IssueReportBundle.swift` (stage in temp, `ditto -c -k --keepParent`
+  into the destination, folder removed; display facts), `GioUI/IssueReporter.swift`
+  (gathers facts, writes off the main thread into `~/Downloads`, then
+  `activateFileViewerSelecting` + `NSWorkspace.open`; logs `issue report saved name=...`,
+  no titles), `GioTextEditor` in `SettingsControls.swift`, the card in `DiagnosticsView`.
+  Evidence: RED `swift build --build-tests` failed (`cannot find 'makeIssueReportPlan'`,
+  `'IssueReportInput'`, `'recentWarningLines'`, `'issueReportBody'` ...), then for
+  `writeIssueReportBundle` (GioMacOSTests) and `issueReportHealthLines` (GioUITests); GREEN:
+  IssueReportTests 17, IssueReportBundleTests 2 (temp folders, never `~/Downloads`), the
+  health-lines test. Full `swift test` 2026-10-15: GioUITests 313 (53 skipped),
+  GioSessionTests 515, GioPOCTests 7, GioMacTests 19, GioMacOSTests 90, GioCoreTests 2017,
+  0 failures; `git diff --check` clean. Example link: 3018 characters for a two-line
+  description with 20 warnings. Visual check: opt-in Diagnostics snapshot inspected (card
+  matches the other sections), then deleted. Signed Release build (`xcodebuild ... -configuration
+  Release`) BUILD SUCCEEDED. Not pushed. Follow-up (commit below): a throwaway smoke with the
+  real log (read-only, zip in a temp folder) gave a 5075-character link and a zip with an
+  AppleDouble `._` entry beside every file (`ditto -c -k` stores extended attributes);
+  `writeIssueReportBundle` now passes `--norsrc --noextattr --noacl`. RED
+  `testTheZipHoldsOnlyThePlannedFilesWithoutMetadataEntries` (`._description.txt`, `._gio.log`,
+  `._system.txt` listed by `zipinfo -1`), GREEN 3/3. LIVE PENDING (TESTING.md 10c): Finder
+  reveal, the browser issue page with the prefilled fields, and GitHub accepting the dragged zip.
+- [x] DA-09 (`9c17940`) — Segmented controls keep their own width (2026-10-16, user screenshot:
+  the Rules editor's Mode picker "Any / Tiled / Floating / Fullscreen" ran past the card's right
+  edge). Evidence (throwaway offscreen test, live AppKit control): `NSSegmentedControl` reports
+  346 pt and neither shrinks to nor stretches to SwiftUI's proposal, so in `frame(width: 300)` it
+  overflowed by 46 pt. `GioSegmented` (live branch) now uses `.fixedSize()` +
+  `.frame(minWidth: width, alignment: .trailing)` + `.fixedSize()`: at least `width`, never
+  narrower than the control, trailing. Verified by rendering the live `RuleEditor` to PNG: the
+  picker ends inside the card; the Layout page's preview picker too. No unit test (layout of an
+  AppKit control; AGENTS.md: views have none).
+- [x] DA-10 (`8a1e617`) — Section switches build only what is on screen (2026-10-16, user: "se
+  siente un poco lento en cambiar entre tabs"). Measured (throwaway offscreen test, optimized
+  build, `NSHostingView` create + layout + display per page, median of 5) before -> after:
+  Shortcuts 196 -> 59 ms, Focus 63 -> 38, Layout 58 -> 39, Animations 56 -> 41, Overview 41 -> 25,
+  Diagnostics 43 -> 24, Logs 57 -> 52, Workspaces 14, Rules 10. `GioPage` lays a scrolling page out
+  in a `LazyVStack` (cards are built as they scroll in; static snapshot pages keep the `VStack`),
+  and Shortcuts' category cards are a `LazyVStack` of their own (sampled: ~120 AppKit buttons plus
+  tooltips built eagerly). Tried and reverted: keeping visited pages mounted in a `ZStack`
+  (opacity + `disabled`): a repeat switch still cost 33-180 ms and every refresh 27 ms instead of
+  6, so it was slower. Live pages rendered to PNG (Layout, Shortcuts) look unchanged.
+- [x] DA-11 (`4b8b467`) — The first-run setup covers the whole display (2026-10-16, user: "un
+  setup más bonito, tal vez pantalla completa así como lo hace el macOS ... bonito y
+  minimalista"). `SetupCoverController` (GioUI) shows `OnboardingSheet` in a borderless window
+  over the main window's display, above the menu bar and the Dock while Gio is active, dropping
+  to the normal level when the user goes to System Settings to grant a permission (and back when
+  Gio is active again), fading in and out, re-fitting on screen changes; Gio never manages its own
+  windows. `OnboardingContent` restyled for it: mint and pink glows on the page color, 52 pt
+  welcome title with a 190 pt mascot, 36 pt step titles, capsule buttons (`SetupButtonStyle`),
+  Back bottom left, the dots centered, Continue bottom right. Steps, state and permission logic
+  unchanged. Snapshots at 1512 x 982 (light and dark) reviewed. Live (Release, 2026-10-16,
+  `GioOnboardingCompleted` set false, relaunch, `screencapture`): the setup covers the built-in
+  display including the menu bar and the Dock; the flag was restored and Gio relaunched. LIVE
+  PENDING: going through the steps by hand, System Settings showing above it.
+- [x] DA-12 (`c1e3cb7`) — The Logs page's title bar matches the other pages (2026-10-16, user
+  screenshots: Logs' title bar gray, Rules' the page's navy). Cause: Logs is the only
+  `GioPage(scrolls: false)`; with no scroll view at the top edge AppKit draws the unified
+  toolbar's own backdrop. Reproduced with a throwaway test rendering the real window chrome
+  (`NSHostingController` with `.title, .toolbars` bridging, unified toolbar, full-size content)
+  over Logs and Rules. Tried without effect: `.toolbarBackground(.hidden, for: .windowToolbar)`
+  and the page color ignoring the safe area. Fix: a pinned page sits in a `ScrollView` exactly
+  as tall as the page (`GeometryReader`), so it never scrolls (measured: document 534 pt + top
+  inset 66 = frame 600) while the log list inside still does (document 7800 pt in a 305 pt
+  clip); `scrollDisabled` was rejected because it also froze the inner list. Re-rendered: the
+  Logs title bar is the page color like Rules. LIVE PENDING: the real window.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
@@ -170,3 +250,4 @@ Strategy `ask-on-risk`; one work-unit commit per task on `feat/gio-niri-rewrite`
 - 2026-10-08: DA-07 code-complete (editable Shortcuts with recorder and `"none"` unbind, Log
   file level picker). Uncommitted. Next: signed build and live check 10b.
 - 2026-10-08: DA-07 committed as `d84ca62` and pushed to `main`. LIVE PENDING: check 10b.
+- 2026-10-15: DA-08 (Report a Problem) committed as `e4c41ac`. LIVE PENDING: check 10c.

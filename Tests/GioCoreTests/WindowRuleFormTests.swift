@@ -10,6 +10,8 @@ final class WindowRuleFormTests: XCTestCase {
         WindowRule(app: "Code", columnWidth: .proportion(0.66667), openMaximized: true, minWidth: 400, maxWidth: 1400),
         WindowRule(app: "Mail", workspace: 3, columnWidth: .points(900), openOnDisplay: 2),
         WindowRule(app: "", bundleID: "com.tinyspeck.slackmacgap", follow: .never, openMaximized: true),
+        // FL-01: an explicit `open-focused = true` survives form and file.
+        WindowRule(app: "Slack", openFocused: true),
     ]
 
     func testFormRoundTripsEveryKey() {
@@ -108,7 +110,7 @@ final class WindowRuleFormTests: XCTestCase {
         let rule = form.rule
         XCTAssertEqual(rule.openOnDisplay, 2)
         XCTAssertTrue(rule.openMaximized)
-        XCTAssertFalse(rule.openFocused)
+        XCTAssertEqual(rule.openFocused, false)
         form.openOnDisplay = 0
         XCTAssertEqual(form.problems, ["Display must be 1 or more."])
     }

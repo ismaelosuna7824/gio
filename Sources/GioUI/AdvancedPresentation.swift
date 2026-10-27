@@ -250,11 +250,19 @@ public func diagnosticChecklist(
             id: "configuration", title: "Configuration", symbol: "doc.badge.gearshape.fill", tint: .gray,
             status: .ok, badge: "Valid", summary: "config.toml parsed without problems.", details: [facts.configPath]
         )
+    } else if facts.configRejected {
+        // S6: one error rejects the whole file (ConfigParser), not just the bad value.
+        configuration = DiagnosticCheck(
+            id: "configuration", title: "Configuration", symbol: "doc.badge.gearshape.fill", tint: .gray,
+            status: .error, badge: plural(facts.configMessages.count, "error"),
+            summary: "config.toml was ignored, defaults in use, custom shortcuts included. Fix the errors below, then Reload Config.",
+            details: facts.configMessages
+        )
     } else {
         configuration = DiagnosticCheck(
             id: "configuration", title: "Configuration", symbol: "doc.badge.gearshape.fill", tint: .gray,
-            status: .warning, badge: plural(facts.configMessages.count, "issue"),
-            summary: "Invalid values fall back to defaults; the rest of config.toml still applies.",
+            status: .warning, badge: plural(facts.configMessages.count, "warning"),
+            summary: "config.toml applies; the lines below were ignored or adjusted.",
             details: facts.configMessages
         )
     }
@@ -302,6 +310,22 @@ public func diagnosticChecklist(
         permissions, session, configuration, displays, renderer,
         gesturesCheck(facts.gestures, conflicts: facts.gestureConflicts), logging,
     ]
+}
+
+/// DA-08: the checklist as plain lines for the report's `system.txt`
+/// (status, title, badge, summary). Details stay out: they hold paths.
+public func issueReportHealthLines(_ checks: [DiagnosticCheck]) -> [String] {
+    checks.map { check in
+        let status: String
+        switch check.status {
+        case .ok: status = "ok"
+        case .warning: status = "warning"
+        case .error: status = "error"
+        case .info: status = "info"
+        case .neutral: status = "off"
+        }
+        return "[\(status)] \(check.title): \(check.badge) — \(check.summary)"
+    }
 }
 
 /// TG-03: whether trackpad gestures run, and why not. TG-04: running

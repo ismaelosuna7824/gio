@@ -90,6 +90,26 @@ inline `(?...)`, TOML escape sequences in strings (the parser keeps strings verb
   refresh).
 - [ ] WR-06 (`e564c8d`) — Settings > Rules: rows and editor for every key, form round trips;
   Workspaces section leaves title rules alone.
+- [x] FL-01 (`f40571c`) — Background popups hidden behind the tiles (user report 2026-10-21: Slack and Google
+  Meet popups opened while another app had focus float but sit behind the windows). Repro without
+  Gio (throwaway probe): a non-active app's new titled window lands at on-screen stacking index 1,
+  right under the frontmost app's window (index 0); `AXRaise` on it returns success but leaves it
+  at index 1 and the app inactive, so it cannot be raised without focus. A full-height focused
+  column then hides it completely. User decision (asked, 3 options): per-app opt-in. `open-focused`
+  is now tri-state (`Bool?`: unset = tiled takes focus, popups do not; `false` unchanged; `true`
+  also focuses a floating arrival whose app is not frontmost). `arrivalTakesFocus(...,
+  fromBackgroundApp:)` decides; `registerNew` passes `mayFollow && frontmostPID != pid` and, for
+  such a float on the shown workspace, logs `window focus-on-open` and calls the new
+  `DiscoveryService.Context.focusArrival` -> `FocusCoordinator.requestUncenteredIntent()` (renamed
+  from `requestGestureIntent`, same body: no centering, no warp). The frontmost app's own popups
+  (Chrome's address-bar suggestions) never take focus. Settings > Rules: the Take focus toggle is
+  now a Focus popup (Default / Also popups / Never), badge "Popups take focus".
+  RED: compile failure (`extra argument 'fromBackgroundApp' in call`); GREEN; mutation check
+  (forcing `fromBackgroundApp` false) failed both new FloatingArrivalFocusTests assertions.
+  Bundles UI 330 (53 skipped) / Session 548 / POC 7 / Mac 19 / MacOS 102 / Core 2100, all 0
+  failures; signed Debug build OK; `git diff --check` clean. LIVE PENDING (TESTING row 8c): Gio
+  was not running; the actual focus + raise of a real Slack/Meet popup is not observed. Not
+  addressed: the snapshot renderer still draws tiled windows over floats during an animation.
 
 ## Evidence
 - RED (2026-10-08): new tests written first — `WindowRuleTitleTests`, `WindowRuleConfigTests`,

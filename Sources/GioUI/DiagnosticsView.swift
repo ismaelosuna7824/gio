@@ -27,7 +27,8 @@ struct DiagnosticsView: View {
                     _ = requestScreenRecordingPermission()
                     model.markScreenRecordingRequested()
                     model.refresh()
-                }
+                },
+                createReport: { createIssueReport($0, completion: $1) }
             )
         )
         .onAppear { model.refresh() }
@@ -42,6 +43,8 @@ struct DiagnosticsActions {
     var testSnapshotCapture: (@escaping @MainActor (String) -> Void) -> Void = { $0("") }
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
+    /// DA-08: build the report zip and open the prefilled issue.
+    var createReport: (IssueReportRequest, @escaping @MainActor (Result<URL, Error>) -> Void) -> Void = { _, _ in }
 }
 
 /// Presentational page; the seeds are for snapshot tests.
@@ -55,6 +58,11 @@ struct DiagnosticsPage: View {
     @State private var measurement: String?
     @State private var busy = false
     @State private var confirmQuit = false
+    @State private var reportDescription = ""
+    @State private var reportTitle = ""
+    @State private var reportIncludesConfig = false
+    @State private var reportBusy = false
+    @State private var reportStatus: (kind: StatusKind, text: String)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
@@ -114,6 +122,7 @@ struct DiagnosticsPage: View {
             if let updates {
                 UpdateSettingsCard(controller: updates)
             }
+            reportCard
             commandCard
             Color.clear.frame(height: 60)
         }
@@ -194,6 +203,86 @@ struct DiagnosticsPage: View {
             .textSelection(.enabled)
             .padding(GioSpacing.m - 2)
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// DA-08: describe the problem; Gio saves a zip with the logs and opens
+    /// a prefilled GitHub issue to drag it into.
+    private var reportCard: some View {
+        let hasDescription = !reportDescription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let defaultTitle = issueReportDefaultTitle(description: reportDescription)
+        return SectionCard(
+            "Report a Problem",
+            footer: "Gio saves a .zip with your logs and system info, shows it in Finder and opens a new GitHub issue. "
+                + "Drag the zip into the issue and press Submit. Logs never contain window titles. "
+                + "You need a GitHub account."
+        ) {
+            CardRow {
+                VStack(alignment: .leading, spacing: GioSpacing.xs) {
+                    Text("What happened?").font(GioFont.body)
+                    GioTextEditor(
+                        title: "What happened?", text: $reportDescription,
+                        prompt: "What you did, what you expected, and what Gio did instead."
+                    )
+                }
+            }
+            CardRow {
+                SettingRow("Title", caption: "Optional. Defaults to the first line of the description.") {
+                    GioTextField(
+                        title: "Title", text: $reportTitle,
+                        prompt: defaultTitle.isEmpty ? "Short summary" : defaultTitle, width: 260
+                    )
+                }
+            }
+            CardRow {
+                ToggleRow(
+                    "Include my config file",
+                    caption: "Adds config.toml to the zip. It may contain app names and paths.",
+                    isOn: $reportIncludesConfig
+                )
+            }
+            CardRow(divider: false) {
+                HStack(spacing: GioSpacing.s) {
+                    if let reportStatus {
+                        Label {
+                            Text(reportStatus.text)
+                                .font(GioFont.caption)
+                                .foregroundStyle(GioColor.secondaryText)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .textSelection(.enabled)
+                        } icon: {
+                            Image(systemName: reportStatus.kind.symbol).foregroundStyle(reportStatus.kind.color)
+                        }
+                    }
+                    Spacer(minLength: GioSpacing.s)
+                    if reportBusy {
+                        ProgressView().controlSize(.small)
+                    }
+                    GioButton(title: "Create Report…", systemImage: "ladybug", role: .prominent) { createReport() }
+                        .disabled(!hasDescription || reportBusy)
+                        .help("Save a .zip to Downloads and open a new GitHub issue")
+                }
+            }
+        }
+    }
+
+    private func createReport() {
+        reportBusy = true
+        reportStatus = nil
+        let request = IssueReportRequest(
+            title: reportTitle, description: reportDescription, includeConfig: reportIncludesConfig,
+            configPath: facts?.configPath ?? gioConfigPath(), healthLines: issueReportHealthLines(checks)
+        )
+        actions.createReport(request) { result in
+            reportBusy = false
+            switch result {
+            case .success(let zip):
+                reportStatus = (
+                    .ok, "Report saved to Downloads as \(zip.lastPathComponent). Drag it into the issue page."
+                )
+            case .failure(let error):
+                reportStatus = (.error, "Could not create the report: \(error.localizedDescription)")
+            }
         }
     }
 

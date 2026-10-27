@@ -26,6 +26,8 @@ public final class IPCRouter: @unchecked Sendable {
         /// WO-01: the app opens or closes the workspace overview (the host
         /// hops to the main thread).
         public var toggleOverview: () -> Void
+        /// PF-AI: run an action like its hotkey (session queue).
+        public var applyAction: (HotkeyAction) -> Void
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -34,6 +36,7 @@ public final class IPCRouter: @unchecked Sendable {
             reflow: @escaping () -> Void, publishBar: @escaping () -> Void,
             mainAfter: @escaping (TimeInterval, @escaping @Sendable () -> Void) -> Void,
             restart: @escaping () -> Void, toggleOverview: @escaping () -> Void,
+            applyAction: @escaping (HotkeyAction) -> Void,
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.focusedWindow = focusedWindow
@@ -45,6 +48,7 @@ public final class IPCRouter: @unchecked Sendable {
             self.mainAfter = mainAfter
             self.restart = restart
             self.toggleOverview = toggleOverview
+            self.applyAction = applyAction
             self.log = log
         }
     }
@@ -79,6 +83,8 @@ public final class IPCRouter: @unchecked Sendable {
                 context.reflow()
             case .toggleOverview:
                 context.toggleOverview()
+            case .action(let action):
+                context.applyAction(action)
             default:
                 break
             }

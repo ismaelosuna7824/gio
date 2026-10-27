@@ -10,10 +10,15 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var session: () -> CommandSession
         public var displays: () -> [DisplayState]
         public var visibleFrame: (DisplayID) -> CGRect?
-        public var configMessages: () -> [String]
+        /// The config file's load outcome: messages and whether it was rejected.
+        public var configStatus: () -> ConfigLoadStatus
         public var engine: () -> ScrollableLayoutEngine
         public var tileableModes: () -> [WindowID: WindowMode]
+        /// PA-15b: the cached permission (TTL), read on every publication.
         public var screenRecordingGranted: () -> Bool
+        /// The uncached check (~8 ms tccd IPC), only while the cached
+        /// answer is missing, so a fresh grant shows at once.
+        public var refreshScreenRecording: () -> Bool
         public var accessibilityGranted: () -> Bool
         public var configFileExists: (String) -> Bool
         public var homeDirectory: () -> String
@@ -27,9 +32,10 @@ public final class SessionFactsBuilder: @unchecked Sendable {
 
         public init(
             session: @escaping () -> CommandSession, displays: @escaping () -> [DisplayState],
-            visibleFrame: @escaping (DisplayID) -> CGRect?, configMessages: @escaping () -> [String],
+            visibleFrame: @escaping (DisplayID) -> CGRect?, configStatus: @escaping () -> ConfigLoadStatus,
             engine: @escaping () -> ScrollableLayoutEngine, tileableModes: @escaping () -> [WindowID: WindowMode],
-            screenRecordingGranted: @escaping () -> Bool, accessibilityGranted: @escaping () -> Bool,
+            screenRecordingGranted: @escaping () -> Bool, refreshScreenRecording: @escaping () -> Bool,
+            accessibilityGranted: @escaping () -> Bool,
             configFileExists: @escaping (String) -> Bool, homeDirectory: @escaping () -> String,
             prefetchSnapshotContent: @escaping (Bool) -> Void,
             gestureStatus: @escaping () -> GestureSourceStatus,
@@ -41,10 +47,11 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
-            self.configMessages = configMessages
+            self.configStatus = configStatus
             self.engine = engine
             self.tileableModes = tileableModes
             self.screenRecordingGranted = screenRecordingGranted
+            self.refreshScreenRecording = refreshScreenRecording
             self.accessibilityGranted = accessibilityGranted
             self.configFileExists = configFileExists
             self.homeDirectory = homeDirectory
@@ -93,7 +100,7 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             )
         }
         let path = session.configPath ?? (context.homeDirectory() + "/.config/gio/config.toml")
-        let screenRecording = context.screenRecordingGranted()
+        let screenRecording = context.screenRecordingGranted() || context.refreshScreenRecording()
         if let line = rendererLog.line(config: session.config.animations, permission: screenRecording) {
             context.log(.info, line)
         }
@@ -108,9 +115,11 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         if let line = conflictLog.line(for: conflicts) {
             context.log(conflicts.isEmpty ? .info : .warn, line)
         }
+        let configStatus = context.configStatus()
         return SessionFacts(
             configPath: path, configExists: context.configFileExists(path),
-            configMessages: context.configMessages(), accessibilityGranted: context.accessibilityGranted(),
+            configMessages: configStatus.messages, configRejected: configStatus.rejected,
+            accessibilityGranted: context.accessibilityGranted(),
             currentWorkspace: session.manager.current,
             displays: displayStates.map {
                 DisplayFact(

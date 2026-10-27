@@ -18,8 +18,12 @@ final class ShellSnapshotTests: XCTestCase {
     private func onboarding(
         _ name: String, step: OnboardingStep, ax: Bool, sr: Bool = false, loginItem: LoginItemPresentation? = nil
     ) throws {
-        try SnapshotHarness.render(name, size: CGSize(width: 560, height: 520)) {
-            page(OnboardingContent(accessibilityGranted: ax, screenRecordingGranted: sr, step: step, loginItem: loginItem))
+        // Full screen (the setup covers the display): a 14" laptop's 1512 x 982.
+        try SnapshotHarness.render(name, size: CGSize(width: 1512, height: 982)) {
+            page(OnboardingContent(
+                accessibilityGranted: ax, screenRecordingGranted: sr, screenRecordingAvailable: true, step: step,
+                loginItem: loginItem
+            ))
         }
     }
 

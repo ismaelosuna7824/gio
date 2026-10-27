@@ -57,6 +57,10 @@ public enum GioBrand {
     }
 
     static let navyDeep = rgb(0x1B2036)
+    /// The title bar of the windows the mascot holds (the landing's `--navy`).
+    static let navy = rgb(0x2F3553)
+    /// Text on `navy` in both appearances (the landing's window-bar cream).
+    static let onNavy = rgb(0xF3F0E8)
     static let mint = rgb(0x7FD6B6)
     static let butter = rgb(0xFFD66E)
     static let coral = rgb(0xFF9B85)

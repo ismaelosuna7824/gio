@@ -3,17 +3,20 @@ import Foundation
 import GioCore
 import GioMacOS
 
-/// One captured window image, the frame it was captured at and (SM-27,
-/// SM-30) its fill (`snapshotContentFill`).
+/// One captured window image, the frame it was captured at, (SM-27,
+/// SM-30) its fill (`snapshotContentFill`) and (FX-08) whether part of it
+/// is see-through.
 public struct CapturedImage: @unchecked Sendable {
     public let image: CGImage
     public let frame: CGRect
     public let fill: ThemeColor?
+    public let translucent: Bool
 
-    public init(image: CGImage, frame: CGRect, fill: ThemeColor? = nil) {
+    public init(image: CGImage, frame: CGRect, fill: ThemeColor? = nil, translucent: Bool = false) {
         self.image = image
         self.frame = frame
         self.fill = fill
+        self.translucent = translucent
     }
 }
 
@@ -47,14 +50,16 @@ public struct SnapshotCaptureOutcome: @unchecked Sendable {
 
 /// SM-04/SM-09/SM-11: the pre-captured window images (up to two sizes per
 /// window) and per-display backdrops the overlay flies. Refreshed by
-/// one-shot debounced runs (never a periodic timer): after each settle, and
+/// one-shot debounced runs (never a periodic timer): after each settle that
+/// changed something (PF-AQ, `SettleCaptureGate`), and
 /// on dirty signals (typing in the focused window, a window focused for
 /// 3 s, a new window). A run captures only what is missing, resized, dirty
 /// or older than the soft age, never the whole set; the backdrop only when
-/// missing, past its max age or when the unmanaged on-screen windows
-/// changed. SM-11 coverage: a settle run also captures the windows of every
-/// workspace that have no image yet, at most `maxWindows` per run, staged
-/// until none is missing; each such window is tried once until it
+/// missing, past its max age, marked dirty, or (PF-AL: per display, at most
+/// once per `snapshotBackdropMinAge`) when the unmanaged on-screen windows
+/// on its display changed. SM-11 coverage: a settle run also captures the
+/// windows of every workspace that have no image yet, at most `maxWindows`
+/// per run, staged until none is missing; each such window is tried once until it
 /// registers, moves workspace or shows again. A window that misses while
 /// parked is not retried before it is visible. SM-13: under the cap the
 /// images of windows away from the screen go first; once an eviction ran,
@@ -176,9 +181,18 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     private var pendingFull = false
     /// SM-09: windows whose image changed since it was captured, by reason.
     private(set) var dirty: [WindowID: SnapshotCaptureReason] = [:]
+    /// PF-AK: the last typing hop of each window marked dirty by typing:
+    /// every run holds the mark until the pause after it (and the floor).
+    private var typedAt: [WindowID: TimeInterval] = [:]
+    /// Every backdrop is captured again by the next run, however young
+    /// (`markBackdropDirty`).
     private var backdropDirty = false
-    /// SM-09: unmanaged on-screen windows as of the last backdrop decision.
-    private var unmanagedFingerprint: Set<ServerWindowKey>?
+    /// SM-09: unmanaged on-screen windows on each display as of the last
+    /// settle run (PF-AL: one fingerprint per display).
+    private var unmanagedFingerprints: [(display: CGRect, print: Set<ServerWindowKey>)] = []
+    /// PF-AL: displays whose unmanaged windows changed since their backdrop
+    /// was captured, captured again once it is `snapshotBackdropMinAge` old.
+    private var unmanagedChanged: [CGRect] = []
     /// SM-09: the focused window the last `noteFocus` saw.
     private var lastFocused: WindowID?
     /// SM-11: the pending focus-dwell check; a newer focus cancels it.
@@ -247,6 +261,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         cache.removeAll()
         coverageStopped = false
         dirty.removeAll()
+        typedAt.removeAll()
         tried.removeAll()
         parkedMisses.removeAll()
         undrawnWindows.removeAll()
@@ -254,7 +269,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         nearWorkspaces.removeAll()
         stripPass.removeAll()
         stripCapLogged = false
-        unmanagedFingerprint = nil
+        unmanagedFingerprints.removeAll()
+        unmanagedChanged.removeAll()
     }
 
     /// Purged windows lose their image.
@@ -297,7 +313,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// The image a flight from `startFrame` to `targetFrame` would use at
     /// `now` (see `SnapshotCache.usableEntry`): the one of the start size, or
     /// a fresh one of the other size, and (SM-27) the one of the target size
-    /// to crossfade to. Nil start: any image within the max age. A lookup
+    /// to show instead (SM-32). Nil start: any image within the max age. A lookup
     /// only; SM-13: the flight looks each window up once and flies exactly
     /// that image (`flies`).
     public func flightImage(
@@ -320,9 +336,9 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     }
 
     /// SM-27: a flying layer is retargeted from `from` to `to`: the face of
-    /// `to`'s size it fades to (the one it already shows or fades to when
-    /// the size stays), nil when none is cached (the overlay then fades to
-    /// its closest face). A new size is logged: `crossfade` with a face,
+    /// `to`'s size it shows (the one it already shows when the size
+    /// stays), nil when none is cached (the overlay then shows its closest
+    /// face). A new size is logged: `swap` with a face,
     /// otherwise `fill`/`crop` against the layer's start `image` size.
     public func retargetFace(
         _ id: WindowID, image: CGSize, from: CGRect, to: CGRect, at now: TimeInterval
@@ -333,7 +349,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         }
         let resized = abs(from.width - to.width) > 2 || abs(from.height - to.height) > 2
         if resized,
-           let mode = entry != nil ? .crossfade : snapshotResizeMode(image: image, target: nil, from: from.size, to: to.size) {
+           let mode = entry != nil ? .swap : snapshotResizeMode(image: image, target: nil, from: from.size, to: to.size) {
             logResize(id, mode)
         }
         return entry?.face
@@ -346,7 +362,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     public func storeFresh(_ id: WindowID, _ captured: CapturedImage) {
         cache.store(
             id, image: captured.image, frame: captured.frame, pixels: captured.image.width * captured.image.height,
-            at: context.now(), resolution: .full, fill: captured.fill
+            at: context.now(), resolution: .full, fill: captured.fill, translucent: captured.translucent
         )
         dirty.removeValue(forKey: id)
         undrawnWindows.remove(id)
@@ -362,7 +378,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// nil until one was captured. Age never makes it unusable: a stale
     /// desktop under the flight beats an AX fallback, and the settle run
     /// re-captures it past `snapshotBackdropMaxAge` or when the unmanaged
-    /// windows changed.
+    /// windows on its display changed (`snapshotBackdropDue`).
     public func backdrop(for displayFrame: CGRect) -> CGImage? {
         cache.backdrop(for: displayFrame)?.image
     }
@@ -371,8 +387,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         cache.backdrop(for: displayFrame).map { context.now() - $0.capturedAt }
     }
 
-    /// Display parameters or the Space changed: the backdrop shows
-    /// something else now.
+    /// Display parameters, the wallpaper or the Space changed: every
+    /// backdrop shows something else now and is captured by the next run.
     public func markBackdropDirty() {
         backdropDirty = true
     }
@@ -380,12 +396,18 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     // MARK: Dirty signals (SM-09)
 
     /// The user typed into the focused window (coalesced by the caller to a
-    /// few hops per second): its image changes while nothing moves.
+    /// few hops per second): its image changes while nothing moves. PF-V:
+    /// captured after a pause, never sooner than the floor after its last
+    /// image (`snapshotTypingCaptureDelay`). PF-AK: every run holds the mark
+    /// until then, not only this targeted one.
     public func noteTyping() {
         guard let focused = context.session().manager.currentWorkspace().focusedWindow else {
             return
         }
-        markDirty([focused], reason: .typing)
+        let now = context.now()
+        let delay = snapshotTypingCaptureDelay(capturedAt: cache.entry(focused)?.capturedAt, now: now)
+        typedAt[focused] = now
+        markDirty([focused], reason: .typing, delay: delay)
     }
 
     /// The focus is published. SM-11: a focus change alone changes no
@@ -422,7 +444,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
     /// Dirty signals serve the overlay only; the close ghost (NA-03) lives
     /// with the settle refresh.
     /// SM-11: a window deferred as a parked miss is not marked again.
-    private func markDirty(_ ids: [WindowID], reason: SnapshotCaptureReason) {
+    private func markDirty(_ ids: [WindowID], reason: SnapshotCaptureReason, delay: TimeInterval = dirtyDelay) {
         let ids = ids.filter { !parkedMisses.contains($0) }
         guard !ids.isEmpty, !context.isShuttingDown(), context.rendererAvailable() else {
             return
@@ -430,7 +452,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         for id in ids where dirty[id].map({ Self.rank($0) < Self.rank(reason) }) ?? true {
             dirty[id] = reason
         }
-        scheduleRun(delay: Self.dirtyDelay, full: false)
+        scheduleRun(delay: delay, full: false)
     }
 
     /// More specific reasons replace less specific ones on the same window.
@@ -681,27 +703,42 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         return frames
     }
 
-    /// SM-09: display frames whose backdrop must be captured in this run.
-    /// A settle run captures a missing or expired backdrop and one whose
-    /// unmanaged on-screen windows changed; a dirty-only run only an
-    /// explicitly dirtied one. The renderer alone needs backdrops.
+    /// SM-09: display frames whose backdrop must be captured in this run
+    /// (`snapshotBackdropDue`). A settle run compares each display's
+    /// unmanaged on-screen windows with the previous run's; PF-AL: a change
+    /// is remembered for that display only until its backdrop is captured.
+    /// The renderer alone needs backdrops.
     private func backdropFrames(full: Bool, managed: [WindowID: CGRect], now: TimeInterval) -> [CGRect] {
         guard context.rendererAvailable() else {
             return []
         }
         let frames = context.displays().map(\.frame)
         if full {
-            let print = unmanagedWindowFingerprint(server: context.serverWindows(), managed: managed, ownPid: context.ownPid)
-            if let previous = unmanagedFingerprint, previous != print {
-                backdropDirty = true
+            let server = context.serverWindows()
+            let prints = frames.map { frame in
+                (display: frame, print: unmanagedWindowFingerprint(
+                    server: server, managed: managed, ownPid: context.ownPid, display: frame
+                ))
             }
-            unmanagedFingerprint = print
+            unmanagedChanged.removeAll { !frames.contains($0) }
+            for (frame, print) in prints where !unmanagedChanged.contains(frame) {
+                guard let previous = unmanagedFingerprints.first(where: { $0.display == frame }), previous.print != print
+                else {
+                    continue
+                }
+                unmanagedChanged.append(frame)
+                let age = cache.backdrop(for: frame).map { now - $0.capturedAt } ?? snapshotBackdropMinAge
+                context.log(
+                    .debug, snapshotBackdropChangedLogLine(display: frame, wait: max(0, snapshotBackdropMinAge - age))
+                )
+            }
+            unmanagedFingerprints = prints
         }
         return frames.filter { frame in
-            guard let entry = cache.backdrop(for: frame) else {
-                return full
-            }
-            return backdropDirty || (full && !snapshotBackdropUsable(entry, now: now))
+            snapshotBackdropDue(
+                cache.backdrop(for: frame), markedDirty: backdropDirty,
+                unmanagedChanged: unmanagedChanged.contains(frame), settle: full, now: now
+            )
         }
     }
 
@@ -730,6 +767,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         // set drains (SM-11: marks of minimized, floating or gone windows).
         let capturable = refreshIDs.union(coverage.map(\.id))
         dirty = dirty.filter { capturable.contains($0.key) }
+        typedAt = typedAt.filter { dirty[$0.key] == .typing }
         let wanted = (full ? refresh : refresh.filter { dirty[$0.id] != nil }).filter { !parkedMisses.contains($0.id) }
         // SM-22: the shown strips want full resolution, everything else half.
         let shown = Set(stripPlan().strip.map(\.id))
@@ -746,12 +784,20 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                     || (full && !coverageStopped && lacksFreshImage(item.id, now: now) && !tried.contains(item.id)))
         }.map { (id: $0.id, frame: $0.frame) }
         // SM-21: a coverage stage does not ask again for a window this
-        // pass already asked for (unless it is dirty again).
+        // pass already asked for (unless it is dirty again). PF-AK: a typing
+        // mark counts only once the pause and the floor allow it.
         let selected = Array((
-            snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, now: now, fullResolution: shown)
-                + snapshotStripSelection(cache: cache, strip: strip, dirty: dirty, excluded: parkedMisses, now: now)
-                + snapshotRefreshSelection(cache: cache, wanted: extra, dirty: dirty, now: now, fullResolution: shown)
+            snapshotRefreshSelection(
+                cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+            )
+                + snapshotStripSelection(
+                    cache: cache, strip: strip, dirty: dirty, typedAt: typedAt, excluded: parkedMisses, now: now
+                )
+                + snapshotRefreshSelection(
+                    cache: cache, wanted: extra, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+                )
         ).filter { !full || !stripPass.contains($0.id) || dirty[$0.id] != nil }.prefix(Self.maxWindows))
+        armTypingRun(selected: Set(selected.map(\.id)), now: now)
         let managed = managedFrames()
         let backdrops = backdropFrames(full: full, managed: managed, now: now)
         let (screens, primary) = context.captureScreens()
@@ -780,6 +826,20 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                 self?.finish(outcome, requested: requested, half: half, requestedBackdrops: backdrops)
             }
         }
+    }
+
+    /// PF-AK: typed-in windows this run held keep their mark; the targeted
+    /// typing run (which a settle replaced) is armed for the first of them.
+    private func armTypingRun(selected: Set<WindowID>, now: TimeInterval) {
+        let holds = snapshotTypingHolds(cache: cache, dirty: dirty, typedAt: typedAt, now: now)
+            .filter { !selected.contains($0.key) }
+        guard let due = holds.values.min() else {
+            return
+        }
+        for (id, at) in holds.sorted(by: { $0.key < $1.key }) {
+            context.log(.debug, snapshotTypingHeldLogLine(id: id, wait: at - now))
+        }
+        scheduleRun(delay: due - now, full: false)
     }
 
     /// SM-20: drops what no flight can use (`SnapshotCache.prune`), one
@@ -844,7 +904,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             cache.store(
                 id, image: snapshot.image, frame: snapshot.frame,
                 pixels: snapshot.image.width * snapshot.image.height, at: now,
-                resolution: half.contains(id) ? .half : .full, fill: snapshot.fill
+                resolution: half.contains(id) ? .half : .full, fill: snapshot.fill, translucent: snapshot.translucent
             )
             dirty.removeValue(forKey: id)
             undrawnWindows.remove(id)
@@ -855,6 +915,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
                 image: backdrop.image, displayFrame: backdrop.displayFrame,
                 pixels: backdrop.image.width * backdrop.image.height, at: now
             )
+            unmanagedChanged.removeAll { $0 == backdrop.displayFrame }
         }
         if !requestedBackdrops.isEmpty, requestedBackdrops.allSatisfy({ frame in
             outcome.backdrops.contains { $0.displayFrame == frame }

@@ -40,6 +40,21 @@ las animaciones". Refactor live-validated ("parece que va bien").
   `[animations.window-close]`, `[animations.window-resize]` each with `enabled`, `curve`, spring
   params / duration, inheriting the global `[animations]` defaults; Animations settings UI with an
   expandable per-animation list and preview.
+- [x] NA-05 (`31ff787`, branch `fix/johan-spaces-safari`) — Resizes instant by default (user, 2026-10-15,
+  after SM-32..SM-34 and three 120 fps recordings of `Alt+F` on Postman: no flashing frame left, the content
+  jump from one layout to the other is inherent to animating a size change with window images; tried
+  `[animations.window-resize] enabled = false` in the user's config live, "me parece mejor", default but
+  configurable from the app). `AnimationKind.enabledByDefault` (false only for `window-resize`) is the
+  fallback of `resolved(_:)`, of the Settings row (`AnimationKindForm.kind`, `enabled = own.enabled ??
+  default`; the override writes `enabled` only when it differs from the default, so `true` is written to turn
+  resizes on and the key goes when off again) and of the row preview. Config template and USER_GUIDE document
+  the table and the default; the user's temporary override was removed again (config byte-identical to before).
+  RED: `PerAnimationConfigTests.testResizesAreInstantByDefault...`, `testEveryKindInherits...`,
+  `SettingsPresentationTests.testTheResizeRowIsOffByDefault...` failed; GREEN after; the planning test that used
+  `window-resize` as its animated fallback now uses `window-movement`. Snapshot `na04-animations-per-animation`:
+  "Window resize · Off: instant", switch off. Bundles UI 311 (53 skipped) / Session 481 / POC 7 / Mac 19 /
+  MacOS 95 / Core 1963, 0 failures; signed build OK. LIVE PENDING: Alt+F instant without the config line; the
+  Window resize switch turns the animation back on.
 
 Evidence (route: delegated writer, opus): audit — all transitions already animated via reflowAll;
 open used to fly from the app's frame at app size. NA-02 entry from below at final size (rise <=
@@ -64,3 +79,4 @@ NA-01..NA-04: one delegated writer (audit first, then implementation commits).
 ## Progress
 - 2026-09-30: document created. Next: NA-01..NA-04.
 - 2026-09-30: NA-01..NA-04 done, pushed. Next: named workspaces.
+- 2026-10-17: NA-02 follow-up WP-05 (`odd/tasks/new-window-position.md`, branch `feat/new-window-position`): with the snapshot renderer the entry is no longer shown while the app redraws at its new size; it stays covered under the overlay until a capture at its target reads painted, then its image rises from `windowOpenStartFrame` and fades in on the resolved `window-open` animation (spring or ease-out), at most 400 ms of wait. The AX renderer keeps the NA-02 rise. LIVE PENDING.

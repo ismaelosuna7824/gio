@@ -66,6 +66,10 @@ public final class DiscoveryService: @unchecked Sendable {
         /// host requests the keyboard focus intent (argument: the window
         /// focused before the switch).
         public var followArrival: (WindowID?) -> Void
+        /// FL-01: an opted-in background popup took the strip's focus; the
+        /// host asks the next pass to focus and raise it (macOS opened it
+        /// under the frontmost app's window, and only focus brings it up).
+        public var focusArrival: (WindowID) -> Void
         /// PF-02: classify one appeared element and say why it failed (an
         /// unreadable frame retries sooner). Nil: `discoverOne` decides and
         /// a failure keeps the original retry schedule.
@@ -85,6 +89,8 @@ public final class DiscoveryService: @unchecked Sendable {
         /// WC-11: a registered window's current AX frame (Cocoa), nil when
         /// unreadable.
         public var windowFrame: (WindowID) -> CGRect?
+        /// `[layout] new-window-position`, read at each live arrival.
+        public var newWindowPosition: () -> NewWindowPosition
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -109,18 +115,22 @@ public final class DiscoveryService: @unchecked Sendable {
             windowOpened: @escaping (WindowID) -> Void = { _ in },
             windowsClosing: @escaping ([WindowID]) -> Void = { _ in },
             followArrival: @escaping (WindowID?) -> Void = { _ in },
+            focusArrival: @escaping (WindowID) -> Void = { _ in },
             discoverAttempt: ((AXUIElement, pid_t) -> SingleWindowDiscovery)? = nil,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             windowRegistered: @escaping (WindowOpenTiming) -> Void = { _ in },
             log: @escaping (LogLevel, String) -> Void,
             allowsWindowWork: @escaping () -> Bool = { true },
             listedWindows: @escaping (pid_t) -> [AXUIElement]? = { _ in nil },
-            windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil }
+            windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil },
+            newWindowPosition: @escaping () -> NewWindowPosition = { .end }
         ) {
             self.allowsWindowWork = allowsWindowWork
             self.listedWindows = listedWindows
             self.windowFrame = windowFrame
+            self.newWindowPosition = newWindowPosition
             self.followArrival = followArrival
+            self.focusArrival = focusArrival
             self.discoverAttempt = discoverAttempt
             self.now = now
             self.windowRegistered = windowRegistered
@@ -231,7 +241,9 @@ public final class DiscoveryService: @unchecked Sendable {
             by: \.window.pid
         ).mapValues { $0.map(\.element) }
         // Minimized windows are candidates too: they stay registered (and
-        // keep their column) but sit out of the layout.
+        // keep their column) but sit out of the layout. PA-18a: a known
+        // window's tile and float candidates are treated alike (the host's
+        // `discoverAll` skips their settable probes); keep it that way.
         for candidate in found.windows + found.floating {
             if let known = context.knownWindow(candidate.element, candidate.window.pid) {
                 liveIDs.insert(known)
@@ -426,6 +438,11 @@ public final class DiscoveryService: @unchecked Sendable {
         tabs.isBackground(id)
     }
 
+    /// A member (front or background) of a native tab group.
+    public func isInTabGroup(_ id: WindowID) -> Bool {
+        tabs.group(of: id) != nil
+    }
+
     /// Focus reached a background tab (a tab switch): it becomes its group's
     /// front tab and takes the slot; the tab it replaces goes behind it. True
     /// when it switched (the caller reflows: the slot's frame is written to
@@ -470,9 +487,13 @@ public final class DiscoveryService: @unchecked Sendable {
             let outcome = evaluateRules(
                 context.rules(), app: window.application, bundleID: window.bundleID, title: window.title
             )
-            let takesFocus = arrivalTakesFocus(outcome, mode: window.mode, minimized: window.isMinimized)
+            // A window dragged out of its tab group is not a new popup.
+            let takesFocus = arrivalTakesFocus(
+                outcome, mode: window.mode, minimized: window.isMinimized, fromBackgroundApp: false
+            )
+            let position = context.newWindowPosition()
             context.updateManager { manager in
-                placeArrival(id, outcome: outcome, takesFocus: takesFocus, manager: &manager)
+                placeArrival(id, outcome: outcome, takesFocus: takesFocus, position: position, manager: &manager)
             }
         }
         context.invalidateTrust(id)
@@ -677,6 +698,8 @@ public final class DiscoveryService: @unchecked Sendable {
             // and visible, never moved by the layout.
             window.mode = .floating
             window.floatReason = admitted
+            // MM-12: with its id, so a float that should have tiled is traceable.
+            context.log(.info, "window float id=\(id.pid):\(id.elementID) app=\(window.application) reason=\(admitted.rawValue)")
         }
         context.resetWindowState(id)
         if let member = tabSibling(of: candidate, id: id, frame: window.frame, listing: listing),
@@ -724,7 +747,7 @@ public final class DiscoveryService: @unchecked Sendable {
             outcome, admissionFloat: candidate.floatReason,
             appHasOtherWindows: context.registry().managedWindows().contains { $0.pid == id.pid && $0.id != id }
         )
-        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused
+        let decision: ArrivalFollowDecision = mayFollow && !minimized && outcome.openFocused != false
             && routing.openOnWorkspace != nil
             ? decideArrivalFollow(
                 outcome.follow, windowPID: window.pid, frontmostPID: context.frontmostPID(),
@@ -736,17 +759,23 @@ public final class DiscoveryService: @unchecked Sendable {
         var pending: PendingArrivalFollow?
         var destinationShown = false
         var workspaceLabel = ""
+        let position: NewWindowPosition = mayFollow ? context.newWindowPosition() : .end
+        // FL-01: a live arrival of an app other than the frontmost one.
+        let fromBackgroundApp = mayFollow && context.frontmostPID() != window.pid
+        let takesFocus = arrivalTakesFocus(
+            outcome, mode: window.mode, minimized: minimized, fromBackgroundApp: fromBackgroundApp
+        )
         context.updateManager { manager in
             let display = placement.flatMap { displayFor(frame: window.frame, displays: $0) }
             // A floating arrival (a dialog, or a transient popup such as
             // Chrome's address-bar suggestions, re-created on every key) must
             // not take the strip's focus: closing it would leave the focus on
             // the last column. If the OS focuses it, focus adoption follows.
-            // WR-04: neither does an `open-focused = false` arrival.
+            // WR-04: neither does an `open-focused = false` arrival. FL-01:
+            // an opted-in background popup does (`arrivalTakesFocus`).
             let destID = placeArrival(
-                id, outcome: routing,
-                takesFocus: arrivalTakesFocus(outcome, mode: window.mode, minimized: minimized),
-                onDisplay: display, manager: &manager
+                id, outcome: routing, takesFocus: takesFocus,
+                onDisplay: display, position: position, manager: &manager
             )
             destinationShown = manager.activeIDs.contains(destID)
             workspaceLabel = manager.workspace(id: destID)?.name
@@ -775,6 +804,10 @@ public final class DiscoveryService: @unchecked Sendable {
             }
             // PF-02: the switch starts in the pass this registration runs.
             context.followArrival(previousFocus)
+        }
+        if takesFocus, window.mode == .floating, destinationShown {
+            context.log(.info, "window focus-on-open id=\(id.pid):\(id.elementID) app=\(window.application) reason=rule")
+            context.focusArrival(id)
         }
         context.watchWindow(candidate.element, candidate.window.pid)
         // PF-02: only an arrival on the shown workspace enters from below; a
@@ -810,6 +843,12 @@ public final class DiscoveryService: @unchecked Sendable {
         context.windowRegistered(timing)
     }
 
+    /// PF-W: a re-check is armed for this window, so a title change is
+    /// read at once (otherwise the router coalesces title reads).
+    public func awaitsTitle(_ id: WindowID) -> Bool {
+        titleRechecks.isArmed(id, now: context.now())
+    }
+
     /// WR-01: a registered window's title changed (the record already holds
     /// it). An arrival registered untitled is re-checked once, when its
     /// title first becomes non-empty within `TitleRecheckBook.window`: a
@@ -823,8 +862,9 @@ public final class DiscoveryService: @unchecked Sendable {
             return
         }
         let registry = context.registry()
+        let position = context.newWindowPosition()
         context.updateManager { manager in
-            applyTitleRecheck(id, outcome: outcome, registry: registry, manager: &manager)
+            applyTitleRecheck(id, outcome: outcome, registry: registry, position: position, manager: &manager)
         }
         context.log(.info, "window rule recheck id=\(id.pid):\(id.elementID) reason=titleArrived")
         context.reflowAll()
@@ -842,6 +882,11 @@ public final class DiscoveryService: @unchecked Sendable {
             .filter { !livePIDs.contains($0.pid) && !context.isRunning($0.pid) }
         guard !dead.isEmpty else {
             return
+        }
+        // PF-Z: a missed terminate leaves the app's write lane, name and
+        // EnhancedUI state with the reconciler otherwise.
+        for pid in Set(dead.map(\.pid)) {
+            context.forgetApp(pid)
         }
         purge(dead)
     }

@@ -55,13 +55,17 @@ public func windowServerWindowStates(pid: pid_t, displayHeight: CGFloat) -> [Ser
 }
 
 /// SM-02: every layer-0 window of `pids` with its `CGWindowID` (the same id
-/// as `SCWindow.windowID`) and Cocoa bounds. Off-screen and other-Space
-/// windows are included so parked windows can be matched too. Public API,
-/// no Screen Recording needed. SM-17: the window name (`kCGWindowName`,
-/// listed only with Screen Recording) rides on the candidate for the title
-/// tie-break and is never logged or stored.
+/// as `SCWindow.windowID`) and Cocoa bounds. Parked and hidden-workspace
+/// windows keep a sliver on screen (macOS refuses fully off-screen frames),
+/// so the on-screen list holds every window a capture can ask for. PF-AD:
+/// it used to list every window of every Space (`optionAll`, 157 entries
+/// in the live session: 5 ms and 1.2 ms of Gio CPU per call, on every
+/// capture run and every 30 ms paint check); on screen it is 16 entries,
+/// 0.5 ms. Public API, no Screen Recording needed. SM-17: the window name
+/// (`kCGWindowName`, listed only with Screen Recording) rides on the
+/// candidate for the title tie-break and is never logged or stored.
 public func windowServerSnapshotCandidates(pids: Set<pid_t>, displayHeight: CGFloat) -> [SnapshotCandidate] {
-    let options: CGWindowListOption = [.optionAll, .excludeDesktopElements]
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
     guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
         return []
     }
@@ -112,6 +116,35 @@ func parseWindowServerStacking(_ entries: [[String: Any]], pids: Set<pid_t>) -> 
             return nil
         }
         return UInt32(truncatingIfNeeded: number)
+    }
+}
+
+/// FX-11: every on-screen window, front to back, any layer, with its
+/// alpha and Cocoa bounds: what may cover a window that is captured as the
+/// display shows it. Public API, no titles read.
+public func windowServerStack(displayHeight: CGFloat) -> [StackedServerWindow] {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    guard let raw = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+        return []
+    }
+    return parseWindowServerStack(raw, displayHeight: displayHeight)
+}
+
+func parseWindowServerStack(_ entries: [[String: Any]], displayHeight: CGFloat) -> [StackedServerWindow] {
+    entries.compactMap { entry in
+        guard let pid = entry[kCGWindowOwnerPID as String] as? Int,
+              let number = entry[kCGWindowNumber as String] as? Int,
+              let layer = entry[kCGWindowLayer as String] as? Int,
+              let dictionary = entry[kCGWindowBounds as String] as? NSDictionary,
+              let bounds = CGRect(dictionaryRepresentation: dictionary as CFDictionary)
+        else {
+            return nil
+        }
+        return StackedServerWindow(
+            windowID: UInt32(truncatingIfNeeded: number), pid: pid_t(pid), layer: layer,
+            alpha: entry[kCGWindowAlpha as String] as? Double ?? 1,
+            frame: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight)
+        )
     }
 }
 

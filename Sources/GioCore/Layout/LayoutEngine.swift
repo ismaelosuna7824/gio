@@ -209,16 +209,17 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
                 weights: column.windows.map { column.heightWeights[$0] ?? 1 },
                 minimums: column.windows.map { minimumSizes[$0]?.height ?? 0 }
             )
-            var y = viewport.minY + pad
+            // Cocoa y is up: the column's first window is its top one.
+            var top = viewport.maxY - pad
             for (winID, rawHeight) in zip(column.windows, heights) {
                 let height = max(rawHeight, 1)
                 frames[winID] = CGRect(
                     x: viewport.minX + cursor - offset,
-                    y: y,
+                    y: top - height,
                     width: width,
                     height: height
                 )
-                y += height + gap
+                top -= height + gap
             }
             cursor += width + gap
         }

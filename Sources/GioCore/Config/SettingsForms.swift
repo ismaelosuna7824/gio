@@ -34,6 +34,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     /// NC-08: `preset-window-heights`, the same comma-separated text.
     public var presetHeightsText: String
     public var centerFocusedColumn: CenterFocusedColumnMode
+    /// `[layout] new-window-position`.
+    public var newWindowPosition: NewWindowPosition
     public var maximizeSingleWindow: Bool
     /// NC-13 `always-center-single-column`.
     public var alwaysCenterSingleColumn: Bool
@@ -41,6 +43,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var defaultLayout: WorkspaceLayoutKind
     public var splitRatio: Double
     public var splitWidthMultiplier: Double
+    /// FX-04 `[dwindle] max-windows`.
+    public var maxWindows: Int
 
     public init(config: LayoutSectionConfig, dwindle: DwindleSectionConfig = DwindleSectionConfig()) {
         gaps = Double(config.gaps)
@@ -57,11 +61,13 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         presetsText = Self.text(config.presetColumnWidths)
         presetHeightsText = Self.text(config.presetWindowHeights)
         centerFocusedColumn = config.centerFocusedColumn
+        newWindowPosition = config.newWindowPosition
         maximizeSingleWindow = config.maximizeSingleWindow
         alwaysCenterSingleColumn = config.alwaysCenterSingleColumn
         defaultLayout = config.defaultLayout
         splitRatio = Double(dwindle.defaultSplitRatio)
         splitWidthMultiplier = Double(dwindle.splitWidthMultiplier)
+        maxWindows = dwindle.maxWindows
     }
 
     private static func text(_ value: Double) -> String {
@@ -111,6 +117,9 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         if !DwindleSectionConfig.splitWidthMultiplierRange.contains(splitWidthMultiplier) {
             found.append("Dwindle width multiplier must be 0.1 to 10.")
         }
+        if !DwindleSectionConfig.maxWindowsRange.contains(maxWindows) {
+            found.append("Dwindle maximum windows must be 1 to 32.")
+        }
         return found
     }
 
@@ -123,6 +132,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
                 : .set(table: "layout", key: "fullscreen-gap", value: .number(fullscreenGap)),
             .set(table: "layout", key: "default-column-width", value: .number(widthValue)),
             .set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue)),
+            .set(table: "layout", key: "new-window-position", value: .string(newWindowPosition.rawValue)),
             .set(table: "layout", key: "maximize-single-window", value: .bool(maximizeSingleWindow)),
             .set(table: "layout", key: "always-center-single-column", value: .bool(alwaysCenterSingleColumn)),
             .set(
@@ -136,6 +146,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             .set(table: "layout", key: "default-layout", value: .string(defaultLayout.rawValue)),
             .set(table: "dwindle", key: "default-split-ratio", value: .number(splitRatio)),
             .set(table: "dwindle", key: "split-width-multiplier", value: .number(splitWidthMultiplier)),
+            .set(table: "dwindle", key: "max-windows", value: .int(maxWindows)),
         ]
     }
 }
@@ -314,7 +325,9 @@ public struct RuleForm: Equatable, Sendable {
     public var widthValue: Double
     public var openMaximized: Bool
     public var openOnDisplay: Int?
-    public var openFocused: Bool
+    /// Nil: the default (tiled arrivals take focus, popups do not); see
+    /// `WindowRule.openFocused` (FL-01).
+    public var openFocused: Bool?
     public var minWidth: Double?
     public var maxWidth: Double?
 
@@ -322,7 +335,7 @@ public struct RuleForm: Equatable, Sendable {
         app: String = "", mode: WindowMode? = nil, workspace: Int? = nil,
         bundleID: String? = nil, openOnWorkspace: String? = nil, follow: WorkspaceFollowPolicy = .whenActive,
         title: String = "", widthChoice: RuleWidthChoice = .layoutDefault, widthValue: Double = 0.5,
-        openMaximized: Bool = false, openOnDisplay: Int? = nil, openFocused: Bool = true,
+        openMaximized: Bool = false, openOnDisplay: Int? = nil, openFocused: Bool? = nil,
         minWidth: Double? = nil, maxWidth: Double? = nil
     ) {
         self.app = app

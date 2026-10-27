@@ -25,8 +25,12 @@ public struct SettingsDraft<Value: Equatable>: Equatable {
         current = saved
     }
 
-    /// The session's value changed (reload, another section's Apply).
+    /// The session's value changed (reload, another section's Apply). The
+    /// same value again changes nothing (PA-12).
     public mutating func adopt(saved newSaved: Value) {
+        guard newSaved != saved else {
+            return
+        }
         if !isDirty {
             current = newSaved
         }
@@ -335,7 +339,7 @@ public struct AnimationsForm: Equatable, Sendable {
     public func preview(for kind: AnimationKind) -> MotionPreviewParameters {
         guard let row = kinds[kind], row.custom else {
             var inherited = preview
-            inherited.enabled = enabled && (kinds[kind]?.enabled ?? true)
+            inherited.enabled = enabled && (kinds[kind]?.enabled ?? kind.enabledByDefault)
             return inherited
         }
         return MotionPreviewParameters(
@@ -381,6 +385,7 @@ public struct AnimationsForm: Equatable, Sendable {
 
 /// NA-04: one animation's row: on/off, and its own curve when custom.
 public struct AnimationKindForm: Equatable, Sendable {
+    public let kind: AnimationKind
     public var enabled: Bool
     public var custom: Bool
     public var curve: MotionCurveKind
@@ -389,9 +394,10 @@ public struct AnimationKindForm: Equatable, Sendable {
     public var durationMilliseconds: Double
 
     public init(kind: AnimationKind, config: AnimationsSectionConfig) {
+        self.kind = kind
         let own = config.overrides[kind] ?? AnimationOverride()
         let resolved = config.resolved(kind)
-        enabled = own.enabled ?? true
+        enabled = own.enabled ?? kind.enabledByDefault
         custom = own.hasCustomTiming
         curve = resolved.curve
         dampingRatio = resolved.spring.dampingRatio
@@ -399,11 +405,11 @@ public struct AnimationKindForm: Equatable, Sendable {
         durationMilliseconds = Double(resolved.durationMilliseconds)
     }
 
-    /// Only what this row changes: `enabled = false`, and when custom the
-    /// curve with the parameters it uses (spring: damping and stiffness;
-    /// ease-out: duration).
+    /// Only what this row changes: `enabled` when it differs from the kind's
+    /// default, and when custom the curve with the parameters it uses
+    /// (spring: damping and stiffness; ease-out: duration).
     public var override: AnimationOverride {
-        var result = AnimationOverride(enabled: enabled ? nil : false)
+        var result = AnimationOverride(enabled: enabled == kind.enabledByDefault ? nil : enabled)
         guard custom else {
             return result
         }
@@ -559,8 +565,13 @@ private func ruleOptionBadges(_ rule: WindowRule) -> [RuleBadge] {
     if let display = rule.openOnDisplay {
         badges.append(RuleBadge(label: "Display \(display)", symbol: "display", kind: .neutral))
     }
-    if !rule.openFocused {
+    switch rule.openFocused {
+    case false?:
         badges.append(RuleBadge(label: "Opens unfocused", symbol: "eye.slash", kind: .neutral))
+    case true?:
+        badges.append(RuleBadge(label: "Popups take focus", symbol: "macwindow.on.rectangle", kind: .neutral))
+    case nil:
+        break
     }
     switch (rule.minWidth, rule.maxWidth) {
     case let (low?, high?):

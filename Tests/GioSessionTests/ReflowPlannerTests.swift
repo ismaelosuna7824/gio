@@ -887,9 +887,30 @@ final class ReflowPlannerTests: XCTestCase {
                     animations, mode: resize, capablePids: [7], focused: id, focusedGrow: grow
                 )
                 XCTAssertEqual(new, old, "\(resize) \(grow)")
-                XCTAssertEqual(asked, [7, 8], "capability asked once per animation, in order")
+                XCTAssertEqual(asked, [7, 8], "capability asked once per pid, in order")
             }
         }
+    }
+
+    /// PA-15e: the capability (an app-name lookup per call) is asked once per
+    /// distinct pid, however many of its windows move.
+    func testSizeSchedulesAskTheCapabilityOncePerPid() {
+        let grow = { (pid: pid_t, element: UInt64) in
+            WindowAnimation(id: WindowID(pid: pid, elementID: element), from: CGRect(x: 0, y: 0, width: 400, height: 400),
+                            to: CGRect(x: 0, y: 0, width: 900, height: 700), duration: 0.2)
+        }
+        let animations = [grow(7, 1), grow(8, 2), grow(7, 3), grow(7, 4), grow(8, 5)]
+        var settings = AnimationsSectionConfig()
+        settings.resize = .adaptive
+        var asked: [pid_t] = []
+        let schedules = ReflowPlanner.sizeSchedules(
+            animations, settings: settings, canAnimateSize: { asked.append($0); return $0 == 7 }, focused: nil
+        )
+        XCTAssertEqual(asked, [7, 8])
+        XCTAssertEqual(
+            schedules,
+            planSizeSchedules(animations, mode: .adaptive, capablePids: [7], focused: nil, focusedGrow: settings.focusedGrow)
+        )
     }
 }
 

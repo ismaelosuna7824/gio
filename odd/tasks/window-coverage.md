@@ -181,6 +181,93 @@ Window admission, observation and registration only. Out of scope: animation/per
   LIVE PENDING: not verified on the live desktop; with the Safari dialog floats present,
   one Alt+H/L per tiled column and `focus-column-or-monitor-*` crossing past a float at
   the strip edge are still to confirm.
+- [x] WC-13 (`f43daad`) — A Dock click reveals the app's window on its workspace (2026-10-15,
+  user request "si le damos click a las apps de abajo nos lleve al workspace en el que está y
+  haga el focus"). The reveal already existed for activations (`revealOnOtherWorkspace`), but
+  the live log showed `focus dropped source=activation id=1528:3 frame=1799,-1073 ...
+  click=912,44 reason=focused window not under click`: the user's Dock auto-hides
+  (`com.apple.dock autohide = 1`), so a Dock click lands inside the display's usable area,
+  counted as a window click, and the parked window on another workspace was not under it.
+  Decision: the session classifies every click with one WindowServer query before the
+  activation it causes arrives (`FocusCoordinator.recordClick` hop; `clickIsOnSystemUI`,
+  pure: the frontmost window under the point, Gio's own click-through panels aside, at the
+  Dock's layer 20 or above); a click on the Dock or the menu bar is no window click
+  (`MouseClick.onSystemUI`, `windowAreaClick`), so the activation adopts at once and reveals.
+  The desktop (negative layers) and app panels below the Dock stay window clicks, so a
+  desktop click activating Finder still reveals nothing. Debug `focus click on system UI`.
+  RED (compile): `FocusSettleTests.testAClickOnSystemUIInsideTheVisibleAreaIsNotAWindowClick`,
+  `testSystemUIIsTheDockLayerAndAboveSkippingGiosOwnPanels` and
+  `FocusCoordinatorTests.testADockClickRevealsTheActivatedAppsWindowOnItsWorkspace`. GREEN:
+  all bundles 0 failures (UI 312/53 skipped, Session 487, POC 7, Mac 19, MacOS 98, Core
+  1974); signed build OK; `git diff --check` clean. LIVE PASS (2026-10-15, user + log): six
+  Dock clicks each logged `focus click on system UI`, then `focus adopt source=activation ...
+  changed=true scroll=...` (same workspace, strip scrolled) or `focus reveal id=1528:1
+  workspace=2 source=activation` / `id=17415:4 workspace=1` (other workspace).
+- [x] WC-14 (`c941b20`) — A window is parked by the size its app kept (2026-10-15, user report
+  with screenshot: "la primera vez que lo lancé no ajustó bien el tiling, se ve una ventana y
+  se quita hasta que empiezo a mover"). The screenshot showed ~80 pt of WhatsApp over the left
+  edge of the first visible Code column. WindowServer (throwaway `CGWindowListCopyWindowInfo`
+  probe): WhatsApp is 970 pt wide while every column is 888 (`frameMismatch requested=(8,8,888,
+  1114) actual=(8,8,970,1114)`), and the left park is `display.minX - frame.width + 1` with the
+  column's 888, so x = -887 left 970 - 888 + 1 = 83 pt on screen. Parked writes are not
+  verified, so nothing noticed; it seemed to go away once the user moved because the Code
+  window was raised over the strip. Decision: a parked write that changed the size reads
+  where it landed (one AX read, only then); a landing that does not park is parked again by
+  the kept size (`parkedFrame(_:size:)`, pure: left side by its own width, below by its own
+  height, right and top anchors unchanged) and counts as `parked clamped`, not a failure.
+  Contract change: `ParkedReconcileTests.testSizeChangeIsNotAcceptedAsParked` became
+  `testAWindowThatKeepsAnotherSizeIsParkedByThatSize` (a strip of the kept size on the
+  intended side is a park). RED: `MinimumSizeTests.testAWindowParkedOnTheLeftAtItsClampedWidthKeepsOnlyTheSliver`
+  (`83.0` is not equal to `1.0`, the live 83 pt) and
+  `testAWindowParkedOnTheRightAtItsClampedWidthNeedsNoRefit` (reported failed). GREEN: all
+  bundles 0 failures (UI 312/53 skipped, Session 487, POC 7, Mac 19, MacOS 98, Core 1976);
+  signed build OK; `git diff --check` clean. LIVE PASS (2026-10-15): relaunch with WhatsApp
+  parked left logged `parked clamped id=13396:7` at startup and the user saw no strip.
+- [x] WC-15 (`a03d47d`) — An admission float that now reads as a window rejoins the grid on
+  activation (2026-10-15, user report: "quedaban ventanas detrás de otras ... parecía que era
+  music el de atrás"; they had to quit and reopen Music). Evidence: a WindowServer overlap probe
+  sampling every ~60 ms during the cross-monitor workload found one Music window at CG
+  `(16,55,1784,1114)` over and under the tiles of the Code workspace for 40 of 48 steps; the log
+  had `discovery exclude pid=96011 app=Music float(dialog)` at every relaunch from 22:37 to
+  23:00Z, `96011:14` tiled at 22:48 and written to its own floating frame `(16,0,1784,1114)` at
+  23:02, and `focus adopt ... column=0 unplaced`. After quitting and reopening, Music's new
+  window was admitted as a tile. Admission is decided once at registration, so a window that
+  reported `AXDialog` then floated for the session. Not confirmed: why Music reported a dialog
+  (no Accessibility grant for the terminal; the process was gone). Live, a floating Music hides
+  correctly across workspaces and moves with `move-column-to-monitor-*` (floats over the
+  other display's tile), so the moves are not the defect. Fix: `promotesAdmissionFloat`
+  (Core: floating with an admission reason and a fresh admission of `.tile`; rule, manual and
+  app-controlled floats never), `currentWindowAdmission(of:pid:)` (GioMacOS, never Gio's pid),
+  `FocusCoordinator.Context.promoteAdmissionFloat` called on every resolved activation and
+  followed by a reflow, `SessionHost.promoteAdmissionFloat` (reads AX only for admission
+  floats; `registry.setMode(.tiled)`, `tileability.invalidate`, log `window promoted id=...
+  from=dialog`). The startup float log moved from `discovery exclude pid=` (no window) to
+  `window float id=pid:element app=... reason=...` at registration. RED: compile
+  (`promotesAdmissionFloat`, `promoteAdmissionFloat:` missing). GREEN: all bundles 0 failures
+  (UI 312/53 skipped, Session 515, POC 7, Mac 19, MacOS 88, Core 2000); Release build OK;
+  `git diff --check` clean. Live (Release relaunch 23:20Z): activating Music, Slack, Postman
+  reveals and focuses as before, no floats at startup, nothing promoted. LIVE PENDING: an app
+  whose window was admitted as a dialog and later reads as a standard window (not reproducible
+  on demand).
+- [x] WC-16 (`1c947c8`) — A link clicked in one app reveals the app it opens (2026-10-15,
+  user report with screenshots: links in Slack and in a chat client "te lleva por detrás ... no
+  te lleva al navegador"). Log: `focus dropped source=activation id=1528:3 frame=1799,-1073
+  1784x1114 click=846,732 reason=focused window not under click` (Chrome parked on the
+  Browsers workspace; the click was on the other app's window). Cause: a mouse-driven
+  activation must have its focused window under the click (WC-09), which a hand-off to
+  another app never satisfies. Fix: the per-click WindowServer query (WC-13) now returns a
+  `ClickTarget` (system UI, and the pid of the layer-0 window hit, Gio's panels skipped;
+  `clickTarget(at:frontToBack:ownPID:)` replaces `clickIsOnSystemUI`), stored on
+  `MouseClick.ownerPID`; `clickExplainsFocus` accepts a focus of another app than the clicked
+  one and keeps the under-the-click rule for the clicked app or an unknown one. RED: compile
+  (`ClickTarget`, `clickTarget`, `clickExplainsFocus` missing). GREEN: FocusSettleTests 18,
+  FocusCoordinatorTests 39 (new `testALinkClickedInOneAppRevealsTheWindowOfTheAppItOpened`;
+  `testClickNotOnTheFocusedWindowIsReReadOnceThenDropped` now clicks the same app's window);
+  full suite UI 313 (53 skipped) / Session 516 / POC 7 / Mac 19 / MacOS 91 / Core 2018, 0
+  failures; Release build OK; `git diff --check` clean. No extra WindowServer query (the
+  WC-13 one per click now carries both answers). LIVE PENDING: a link clicked in Slack with
+  the browser on another workspace brings the browser forward (needs a real click; the
+  terminal cannot post mouse events).
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -220,3 +307,8 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-09-29: LIVE PASS (user + log since last start: 53 focus adoptions, all `scroll=no scroll`, 0 `focus dropped`). PHASE 1 CLOSED. Next: phase 2 perf + animation in odd/tasks/motion.md.
 - 2026-10-14: WC-11 native tabs done (`8effe33`, on `main` after SM-31 and FI-09..FI-11). LIVE PENDING: TESTING.md row 1b.
 - 2026-10-14: WC-12 keyboard focus skips floating/minimized columns done (`19bddce`, route: delegated writer). LIVE PENDING.
+- 2026-10-15: WC-13 Dock click reveals the app's workspace done (`f43daad`, branch
+  `fix/dock-click-reveal`). LIVE PASS.
+- 2026-10-15: WC-14 park by the size the app kept done (`c941b20`, same branch). LIVE PASS.
+- 2026-10-15: WC-15 admission floats rejoin the grid on activation done (`a03d47d`, branch
+  `perf/measured-pass`). LIVE PENDING (needs an app that reports a dialog, then a window).

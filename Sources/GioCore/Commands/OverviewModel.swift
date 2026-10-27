@@ -47,6 +47,9 @@ public struct SessionFacts: Equatable, Sendable {
     public let configPath: String
     public let configExists: Bool
     public let configMessages: [String]
+    /// S6: config.toml had errors and was ignored as a whole (defaults run);
+    /// `configMessages` are then errors, otherwise warnings of a file that applies.
+    public let configRejected: Bool
     public let accessibilityGranted: Bool
     /// SM-01: `CGPreflightScreenCaptureAccess()`; needed by the snapshot renderer.
     public let screenRecordingGranted: Bool
@@ -62,7 +65,7 @@ public struct SessionFacts: Equatable, Sendable {
     public let gestureConflicts: [GestureConflict]
 
     public init(
-        configPath: String, configExists: Bool, configMessages: [String],
+        configPath: String, configExists: Bool, configMessages: [String], configRejected: Bool = false,
         accessibilityGranted: Bool, currentWorkspace: Int,
         displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
         strip: WorkspaceStripFact? = nil,
@@ -74,6 +77,7 @@ public struct SessionFacts: Equatable, Sendable {
         self.configPath = configPath
         self.configExists = configExists
         self.configMessages = configMessages
+        self.configRejected = configRejected
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
         self.currentWorkspace = currentWorkspace

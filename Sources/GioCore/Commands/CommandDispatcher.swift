@@ -203,6 +203,9 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
     case .toggleOverview:
         // The panel is the app's; `IPCRouter` hands the toggle to it.
         return "overview toggled"
+    case .action(let action):
+        // PF-AI: the session runs it on its hotkey path (`IPCRouter`).
+        return "action \(action)"
     case .moveWindowToDisplay(let number):
         guard let display = session.manager.display(numbered: number) else {
             return "no display \(number)"
@@ -218,6 +221,10 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
         let current = session.manager.currentWorkspace().layout
         let target = kind ?? current.toggled
         guard session.manager.setLayout(target) else {
+            if target == .dwindle, let refusal = session.manager.dwindleRefusal() {
+                return "layout unchanged (workspace \(session.manager.current) has \(refusal.windows) windows; "
+                    + "dwindle holds at most \(refusal.maximum), [dwindle] max-windows)"
+            }
             return "layout unchanged (workspace \(session.manager.current) is already \(target.rawValue))"
         }
         return "workspace \(session.manager.current) layout=\(target.rawValue)"

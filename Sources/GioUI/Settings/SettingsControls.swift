@@ -71,7 +71,13 @@ struct GioSegmented<Value: Hashable>: View {
             }
             .pickerStyle(.segmented)
             .labelsHidden()
-            .frame(width: width)
+            // AppKit's segmented control never shrinks below (nor stretches
+            // to) the proposed width: in a fixed 300 pt frame the Rules
+            // editor's Mode picker (346 pt) ran past the card's edge. It
+            // keeps its own width, trailing in at least `width`.
+            .fixedSize()
+            .frame(minWidth: width, alignment: .trailing)
+            .fixedSize()
             .accessibilityLabel(title)
         }
     }
@@ -170,6 +176,46 @@ struct GioTextField: View {
                 .font(monospaced ? GioFont.callout.monospaced() : GioFont.body)
                 .multilineTextAlignment(alignment)
                 .frame(width: width)
+                .accessibilityLabel(title)
+        }
+    }
+}
+
+/// Multi-line text with a prompt shown while it is empty.
+struct GioTextEditor: View {
+    let title: String
+    @Binding var text: String
+    var prompt: String = ""
+    var minHeight: CGFloat = 96
+    @Environment(\.gioStaticPage) private var isStatic
+
+    var body: some View {
+        if isStatic {
+            Text(text.isEmpty ? prompt : text)
+                .font(GioFont.body)
+                .foregroundStyle(text.isEmpty ? GioColor.tertiaryText : GioColor.primaryText)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, minHeight: minHeight, alignment: .topLeading)
+                .background(ReplicaSurface(radius: 5))
+        } else {
+            TextEditor(text: $text)
+                .font(GioFont.body)
+                .scrollContentBackground(.hidden)
+                .padding(.horizontal, 2)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, minHeight: minHeight)
+                .background(ReplicaSurface(radius: 5))
+                .overlay(alignment: .topLeading) {
+                    if text.isEmpty {
+                        Text(prompt)
+                            .font(GioFont.body)
+                            .foregroundStyle(GioColor.tertiaryText)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 4)
+                            .allowsHitTesting(false)
+                    }
+                }
                 .accessibilityLabel(title)
         }
     }

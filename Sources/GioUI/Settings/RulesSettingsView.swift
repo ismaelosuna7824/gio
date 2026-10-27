@@ -377,10 +377,16 @@ struct RuleEditor: View {
             }
         }
         CardRow {
-            ToggleRow(
-                "Take focus", caption: "Off: the window opens without taking focus or switching workspace.",
-                isOn: $draft.form.openFocused
-            )
+            SettingRow(
+                "Focus",
+                caption: "Never: opens without taking focus or switching workspace. Also popups: a popup this app opens while you work in another app comes to the front with focus."
+            ) {
+                GioPopup(
+                    title: "Focus", selection: $draft.form.openFocused,
+                    options: [(Bool?.none, "Default"), (Bool?.some(true), "Also popups"), (Bool?.some(false), "Never")],
+                    width: 150
+                )
+            }
         }
     }
 

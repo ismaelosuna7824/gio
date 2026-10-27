@@ -75,6 +75,42 @@ final class MinimumSizeTests: XCTestCase {
         ))
     }
 
+    /// FX-05 (live 23:00:35): a 1 pt wide dwindle tile came back at the
+    /// window's 888 pt column width and was learned as Tern's, Slack's and
+    /// OrbStack's minimum. A request below 100 pt says nothing about the
+    /// minimum on that axis; the other axis still counts.
+    func testARequestTooSmallToMeanAnythingIsNotLearned() {
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: 822, y: 8, width: 1, height: 553),
+            actual: CGRect(x: 822, y: 8, width: 888, height: 553)
+        ))
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 1792, y: 148, width: 1, height: 132),
+            actual: CGRect(x: 1792, y: -70, width: 400, height: 350)
+        ), CGSize(width: 0, height: 350), "the 132 pt height request is real evidence")
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 100, height: 784),
+            actual: CGRect(x: 8, y: 8, width: 360, height: 784)
+        ), CGSize(width: 360, height: 0), "100 pt is a real request")
+    }
+
+    /// MM-11 live (TextEdit sent to the external display five times): each
+    /// landing kept the top at the built-in display's visible top (height
+    /// 1394 -> 1130) and came back 32 pt wider; learning that width made the
+    /// column 32 pt wider on every move (1068, 1100, 1132, 1164, 1196). A
+    /// window that landed smaller in the other dimension was constrained to
+    /// a screen, which says nothing about its minimum size.
+    func testGrowthWhileTheOtherDimensionShrankIsAScreenConstraintNotLearned() {
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: -1076, y: -216, width: 1068, height: 1394),
+            actual: CGRect(x: -1076, y: 0, width: 1100, height: 1130)
+        ))
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 440, height: 784),
+            actual: CGRect(x: 8, y: 8, width: 360, height: 900)
+        ))
+    }
+
     // MARK: Book
 
     func testBookKeepsMaximumAndReportsChange() {
@@ -157,6 +193,23 @@ final class MinimumSizeTests: XCTestCase {
         XCTAssertNotNil(book.learnLate(id(3), requested: requested, actual: actual), "forgotten with the window")
     }
 
+    /// BUG-3 (live 2026-10-21, dwindle with nine windows): a late clamp to a
+    /// minimum already learned is the app at its minimum, not the app taking
+    /// its frame back. It used to count as a snap-back: Figma yielded
+    /// (`appControlled`, floating) and Alt+F stopped working on it.
+    func testALateClampToAKnownMinimumIsExplained() {
+        let requested = CGRect(x: 904, y: 569, width: 440, height: 553)
+        let clamped = CGRect(x: 904, y: 522, width: 900, height: 600)
+        var book = MinimumSizeBook()
+        XCTAssertFalse(book.explains(id(1), requested: requested, actual: clamped), "nothing learned yet")
+        _ = book.learn(id(1), requested: requested, actual: clamped)
+        XCTAssertTrue(book.explains(id(1), requested: requested, actual: clamped))
+        let wider = CGRect(x: 904, y: 522, width: 1000, height: 600)
+        XCTAssertFalse(book.explains(id(1), requested: requested, actual: wider), "beyond the known minimum")
+        let moved = CGRect(x: 1200, y: 100, width: 440, height: 553)
+        XCTAssertFalse(book.explains(id(1), requested: requested, actual: moved), "not a clamp")
+    }
+
     // MARK: Layout
 
     private let viewport = CGRect(x: 0, y: 0, width: 1000, height: 800)
@@ -201,9 +254,9 @@ final class MinimumSizeTests: XCTestCase {
         let result = try engine.calculate(
             workspace: workspace([column(1, width: 400, [id(1), id(2)])]), viewport: viewport
         )
-        // Usable 784 minus one gap = 776: window 1 takes its 600, window 2 the rest.
-        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 8, width: 400, height: 600))
-        XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 616, width: 400, height: 176))
+        // Usable 784 minus one gap = 776: window 1 (the top one) takes its 600, window 2 the rest.
+        XCTAssertEqual(result.frames[id(1)], CGRect(x: 8, y: 192, width: 400, height: 600))
+        XCTAssertEqual(result.frames[id(2)], CGRect(x: 8, y: 8, width: 400, height: 176))
     }
 
     func testStackedHeightsFallBackToProportionalWhenMinimumsCannotFit() throws {
@@ -295,5 +348,48 @@ final class MinimumSizeTests: XCTestCase {
         XCTAssertEqual(third.alreadyCorrect.count, 2)
         XCTAssertEqual(actuator.sets, writesBefore)
         XCTAssertTrue(book.learn(from: third, placement: .instant(nil)).isEmpty)
+    }
+
+    /// WC-14: live (2026-10-15, startup): WhatsApp refuses to be narrower than
+    /// 970 pt, its column is 888, and the left parking frame put it at
+    /// x = -887 for 888 pt, so 83 pt of it stayed on screen over the first
+    /// visible column. A left-parked window is placed by its landed width.
+    func testAWindowParkedOnTheLeftAtItsClampedWidthKeepsOnlyTheSliver() throws {
+        let actuator = ClampingActuator()
+        actuator.minimums = [id(1): CGSize(width: 970, height: 0)]
+        actuator.frames = [id(1): CGRect(x: 100, y: 8, width: 970, height: 1114)]
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let target = ParkedTarget(
+            frame: CGRect(x: display.minX - 888 + parkingSliver, y: 8, width: 888, height: 1114),
+            edge: .left, display: display
+        )
+
+        let report = reconciler.reconcile(frames: [:], parked: [id(1): target], focused: nil, currentlyFocused: nil)
+
+        let landed = try XCTUnwrap(actuator.frames[id(1)])
+        XCTAssertEqual(landed.width, 970)
+        XCTAssertEqual(landed.maxX, display.minX + parkingSliver, accuracy: 0.5)
+        XCTAssertEqual(report.parked, [id(1)])
+        XCTAssertTrue(report.failed.isEmpty)
+    }
+
+    /// WC-14: the right edge parks by the left side of the window, whatever
+    /// width it lands at: nothing to refit, no extra write.
+    func testAWindowParkedOnTheRightAtItsClampedWidthNeedsNoRefit() throws {
+        let actuator = ClampingActuator()
+        actuator.minimums = [id(1): CGSize(width: 970, height: 0)]
+        actuator.frames = [id(1): CGRect(x: 100, y: 8, width: 970, height: 1114)]
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let target = ParkedTarget(
+            frame: CGRect(x: display.maxX - parkingSliver, y: 8, width: 888, height: 1114), edge: .right, display: display
+        )
+
+        let report = reconciler.reconcile(frames: [:], parked: [id(1): target], focused: nil, currentlyFocused: nil)
+
+        XCTAssertEqual(actuator.frames[id(1)]?.minX, display.maxX - parkingSliver)
+        XCTAssertEqual(actuator.sets, 1)
+        XCTAssertEqual(report.parked, [id(1)])
     }
 }

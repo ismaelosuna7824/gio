@@ -236,33 +236,81 @@ func describeAction(_ command: CLICommand) -> String {
     case .toggleOverview: return "overview"
     case .moveWindowToDisplay(let number): return "move-window-to-display \(number)"
     case .setLayout(let kind): return "layout \(kind?.rawValue ?? "toggle")"
+    case .action(let action): return "action \(action)"
+    }
+}
+
+/// One scan of the application folders: the entries, sorted by name, and
+/// each bundle's stamp (`launcherBundleStamp`) keyed by path.
+public struct LauncherAppScan: Equatable, Sendable {
+    public var apps: [LauncherEntry]
+    public var stamps: [String: TimeInterval]
+
+    public init(apps: [LauncherEntry] = [], stamps: [String: TimeInterval] = [:]) {
+        self.apps = apps
+        self.stamps = stamps
     }
 }
 
 /// Scan directories for `.app` bundles (top level only). Name comes from
 /// the bundle filename (deterministic, unlocalized); the bundle ID is read
-/// when its Info.plist parses, else nil. Sorted by name.
-public func scanApplications(directories: [String]) -> [LauncherEntry] {
+/// when its Info.plist parses, else nil. Sorted by name. PA-14: stat
+/// first; a bundle whose stamp matches `previous` keeps its entry, so only
+/// new or changed bundles are parsed and removed ones drop out.
+public func scanApplications(
+    directories: [String],
+    previous: LauncherAppScan = LauncherAppScan(),
+    parseBundleID: (String) -> String? = launcherBundleIdentifier
+) -> LauncherAppScan {
+    var known: [String: LauncherEntry] = [:]
+    for entry in previous.apps {
+        if case .app(_, _, let path) = entry {
+            known[path] = entry
+        }
+    }
     var found: [LauncherEntry] = []
+    var stamps: [String: TimeInterval] = [:]
     for directory in directories {
         guard let items = try? FileManager.default.contentsOfDirectory(atPath: directory) else {
             continue
         }
         for item in items where item.hasSuffix(".app") {
             let path = (directory as NSString).appendingPathComponent(item)
-            let name = String(item.dropLast(".app".count))
-            let plist = (path as NSString).appendingPathComponent("Contents/Info.plist")
-            var bundleID: String?
-            if let data = FileManager.default.contents(atPath: plist),
-               let info = try? PropertyListSerialization.propertyList(from: data, format: nil)
-                as? [String: Any]
-            {
-                bundleID = info["CFBundleIdentifier"] as? String
+            let stamp = launcherBundleStamp(path)
+            if let entry = known[path], previous.stamps[path] == stamp {
+                found.append(entry)
+            } else {
+                let name = String(item.dropLast(".app".count))
+                found.append(.app(name: name, bundleID: parseBundleID(path), path: path))
             }
-            found.append(.app(name: name, bundleID: bundleID, path: path))
+            stamps[path] = stamp
         }
     }
-    return found.sorted { $0.title < $1.title }
+    return LauncherAppScan(apps: found.sorted { $0.title < $1.title }, stamps: stamps)
+}
+
+/// The `CFBundleIdentifier` of the bundle at `path`, when its Info.plist
+/// parses.
+public func launcherBundleIdentifier(_ path: String) -> String? {
+    let plist = (path as NSString).appendingPathComponent("Contents/Info.plist")
+    guard let data = FileManager.default.contents(atPath: plist),
+          let info = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+    else {
+        return nil
+    }
+    return info["CFBundleIdentifier"] as? String
+}
+
+/// The modification time of a bundle's Info.plist (an update rewrites it),
+/// else of the bundle itself; 0 when neither can be read.
+func launcherBundleStamp(_ path: String) -> TimeInterval {
+    let plist = (path as NSString).appendingPathComponent("Contents/Info.plist")
+    for candidate in [plist, path] {
+        if let date = (try? FileManager.default.attributesOfItem(atPath: candidate))?[.modificationDate] as? Date {
+            return date.timeIntervalSince1970
+        }
+    }
+    return 0
 }
 
 public func defaultApplicationDirectories() -> [String] {

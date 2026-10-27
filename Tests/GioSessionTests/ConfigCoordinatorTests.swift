@@ -43,9 +43,9 @@ final class ConfigCoordinatorTests: XCTestCase {
                     world.calls.append("reloadSession")
                     world.session.config = loadGioConfig(at: path).config
                 },
-                loadMessages: {
-                    world.calls.append("loadMessages")
-                    return loadGioConfig(at: path).messages
+                loadStatus: {
+                    world.calls.append("loadStatus")
+                    return loadGioConfigReport(at: path).status
                 },
                 patchFile: { GioCore.applyConfigEdits($0, toFileAt: path) },
                 applyLogLevel: {
@@ -91,7 +91,7 @@ final class ConfigCoordinatorTests: XCTestCase {
             world.calls,
             [
                 "reloadSession", "logLevel", "invalidate", "focusFollowsMouse",
-                "loadMessages", "reapplyRules", "reflow", "publishSnapshot", "publishFocusRing",
+                "loadStatus", "reapplyRules", "reflow", "publishSnapshot", "publishFocusRing",
             ]
         )
         XCTAssertEqual(world.logs, ["config reloaded from the app"])
@@ -100,12 +100,24 @@ final class ConfigCoordinatorTests: XCTestCase {
     func testReloadKeepsTheConfigMessages() throws {
         try write("[layout]\nnot-a-key = 3\n")
         let coordinator = makeCoordinator()
-        XCTAssertTrue(coordinator.messages.isEmpty)
+        XCTAssertEqual(coordinator.status, ConfigLoadStatus())
         coordinator.reloadFromApp()
         scheduler.runPending()
-        XCTAssertFalse(coordinator.messages.isEmpty)
-        coordinator.setMessages(["launch"])
-        XCTAssertEqual(coordinator.messages, ["launch"])
+        XCTAssertFalse(coordinator.status.messages.isEmpty)
+        XCTAssertFalse(coordinator.status.rejected, "warnings keep the file")
+        let launch = ConfigLoadStatus(messages: ["launch"], rejected: true)
+        coordinator.setStatus(launch)
+        XCTAssertEqual(coordinator.status, launch)
+    }
+
+    /// S6: a reload of a file with an error marks it rejected (defaults run).
+    func testReloadOfAnInvalidFileIsRejected() throws {
+        try write("[layout]\ngaps = -1\n")
+        let coordinator = makeCoordinator()
+        coordinator.reloadFromApp()
+        scheduler.runPending()
+        XCTAssertTrue(coordinator.status.rejected)
+        XCTAssertFalse(coordinator.status.messages.isEmpty)
     }
 
     func testInvalidEditsDoNotWriteOrReload() throws {

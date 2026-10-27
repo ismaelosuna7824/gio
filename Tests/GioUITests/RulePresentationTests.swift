@@ -32,6 +32,12 @@ final class RulePresentationTests: XCTestCase {
         XCTAssertFalse(row.isEmpty)
     }
 
+    /// FL-01: an opted-in rule says its background popups come to the front.
+    func testOptedInFocusHasItsOwnBadge() {
+        let row = RuleRowPresentation(rule: WindowRule(app: "Slack", openFocused: true))
+        XCTAssertEqual(row.optionBadges.map(\.label), ["Popups take focus"])
+    }
+
     func testWidthBadgesUsePointsOrFractions() {
         XCTAssertEqual(
             RuleRowPresentation(rule: WindowRule(app: "A", columnWidth: .points(900))).optionBadges.map(\.label),

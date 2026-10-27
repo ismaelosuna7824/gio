@@ -13,7 +13,7 @@ final class WindowAdmissionTests: XCTestCase {
     ) -> WindowAdmissionFacts {
         WindowAdmissionFacts(
             role: role, subrole: subrole,
-            isPositionSettable: position, isSizeSettable: size,
+            isPositionSettable: { position }, isSizeSettable: { size },
             isFullscreen: fullscreen, isMinimized: minimized, hasValidFrame: validFrame
         )
     }
@@ -90,5 +90,72 @@ final class WindowAdmissionTests: XCTestCase {
         XCTAssertEqual(WindowAdmission.float(.notResizable).label, "float(notResizable)")
         XCTAssertEqual(WindowAdmission.ignore(.sheetOrPopover).label, "ignore(sheetOrPopover)")
         XCTAssertEqual(WindowAdmission.suspend(.minimized).label, "suspend(minimized)")
+    }
+
+    /// PA-18a: the settable probes are Accessibility messages; they run only
+    /// when every earlier rule passed, each at most once.
+    func testSettableProbesRunOnlyWhenEveryEarlierRulePassed() {
+        var probes: [String] = []
+        func probed(
+            role: String? = "AXWindow", subrole: String? = "AXStandardWindow", position: Bool = true,
+            fullscreen: Bool = false, minimized: Bool = false, validFrame: Bool = true
+        ) -> WindowAdmission {
+            classifyWindowAdmission(WindowAdmissionFacts(
+                role: role, subrole: subrole,
+                isPositionSettable: {
+                    probes.append("position")
+                    return position
+                },
+                isSizeSettable: {
+                    probes.append("size")
+                    return true
+                },
+                isFullscreen: fullscreen, isMinimized: minimized, hasValidFrame: validFrame
+            ))
+        }
+        XCTAssertEqual(probed(role: "AXSheet"), .ignore(.notAWindow))
+        XCTAssertEqual(probed(subrole: "AXSheet"), .ignore(.sheetOrPopover))
+        XCTAssertEqual(probed(subrole: "AXDialog"), .float(.dialog))
+        XCTAssertEqual(probed(subrole: "AXFloatingWindow"), .float(.floatingSubrole))
+        XCTAssertEqual(probed(validFrame: false), .ignore(.invalidFrame))
+        XCTAssertEqual(probed(fullscreen: true), .suspend(.fullscreen))
+        XCTAssertEqual(probed(minimized: true), .suspend(.minimized))
+        XCTAssertEqual(probes, [], "no probe before the resizability rule")
+
+        XCTAssertEqual(probed(), .tile)
+        XCTAssertEqual(probes, ["position", "size"], "each probe once when reached")
+
+        probes = []
+        XCTAssertEqual(probed(position: false), .float(.notResizable))
+        XCTAssertEqual(probes, ["position"], "a fixed position settles it without the size probe")
+    }
+}
+
+/// MM-12: an admission float (dialog, floating subrole, fixed size) whose
+/// window now reads as a normal resizable window goes back to the grid; a
+/// float the user, a rule or a snap-back chose never does.
+final class AdmissionFloatPromotionTests: XCTestCase {
+    private func window(_ mode: WindowMode, _ reason: FloatReason?) -> ManagedWindow {
+        var window = ManagedWindow(
+            id: WindowID(pid: 1, elementID: 1), pid: 1, application: "Music", title: "",
+            frame: CGRect(x: 16, y: 0, width: 1784, height: 1114), mode: mode
+        )
+        window.floatReason = reason
+        return window
+    }
+
+    func testAnAdmissionFloatThatNowTilesIsPromoted() {
+        for reason in [FloatReason.dialog, .floatingSubrole, .notResizable] {
+            XCTAssertTrue(promotesAdmissionFloat(window(.floating, reason), to: .tile), "\(reason)")
+        }
+    }
+
+    func testAChosenFloatOrAStillFloatingWindowIsNotPromoted() {
+        for reason in [FloatReason.manual, .rule, .appControlled] {
+            XCTAssertFalse(promotesAdmissionFloat(window(.floating, reason), to: .tile), "\(reason)")
+        }
+        XCTAssertFalse(promotesAdmissionFloat(window(.floating, .dialog), to: .float(.dialog)))
+        XCTAssertFalse(promotesAdmissionFloat(window(.floating, .dialog), to: .suspend(.minimized)))
+        XCTAssertFalse(promotesAdmissionFloat(window(.tiled, nil), to: .tile))
     }
 }

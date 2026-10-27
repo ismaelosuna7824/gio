@@ -25,6 +25,10 @@ final class SessionHost: @unchecked Sendable {
     /// Mouse, frontmost app, main screen, running apps and the on-screen
     /// window list, read through one seam (concrete type: static dispatch).
     private let probe = LiveSystemProbe()
+    /// PA-15e: app names for logs and resize-capability keys, resolved once
+    /// per pid (`NSRunningApplication` per call before) and dropped when the
+    /// app terminates (`forgetApp`). Its own lock.
+    private let appNames = AppNameCache(resolve: { LiveSystemProbe().applicationName($0) })
     private var session = CommandSession()
     private var displays = DisplayManager()
     private var actuator: AXWindowActuator?
@@ -84,6 +88,16 @@ final class SessionHost: @unchecked Sendable {
     private var tileability = TileabilityCache()
     /// FI-02: minimum sizes learned from clamped writes (session queue only).
     private var minimumSizes = MinimumSizeBook()
+    /// PA-24: minimums apps showed in earlier launches, per app (session
+    /// queue only); loaded before the first layout, saved when one grows.
+    private var appMinimums = AppMinimumSizes()
+    private let appMinimumStore: AppMinimumSizeStore? = FileManager.default
+        .urls(for: .cachesDirectory, in: .userDomainMask).first
+        .map { caches in
+            AppMinimumSizeStore(url: caches
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "gio")
+                .appendingPathComponent("app-minimum-sizes.json"))
+        }
     /// PA-06: which apps take size writes during motion (keyed by app name).
     private var resizeCapability = ResizeCapability()
     private var fullscreen = FullscreenBook()
@@ -108,6 +122,8 @@ final class SessionHost: @unchecked Sendable {
     /// first layout (launch, `gio restart`), Accessibility regained, and a
     /// mouse-abandoned motion (session queue only).
     private var instantPlacement = InstantPlacementGate()
+    /// PF-AQ: whether an instant pass starts a snapshot settle run.
+    private var settleCapture = SettleCaptureGate()
     /// NA-02: windows registered since the last pass (they enter from below).
     private var openingWindows = WindowOpenBook()
     /// PF-02: per-window open timings, one log line when each settles.
@@ -118,6 +134,10 @@ final class SessionHost: @unchecked Sendable {
     private var renderVerifier: RenderVerifier!
     /// PF-A: one more final pass for windows a busy app made the last one defer.
     private var deferredSettle: DeferredSettle!
+    /// MM-11: windows whose write timed out because their app was busy get
+    /// one more write (session queue only).
+    private var transientRetry = TransientWriteRetry()
+    private var transientRetryPending = false
     /// PA-04: frames Gio placed and verified; the final pass skips their AX
     /// read. Invalidated by non-echo frame events, minimize/restore, purge,
     /// failures, motions and display changes (session queue only).
@@ -139,13 +159,18 @@ final class SessionHost: @unchecked Sendable {
     private var multitouchWatcher: MultitouchDeviceWatcher?
     private var multitouchRunning = false
     private var multitouchGeneration = 0
-    private var multitouchShutDown = false
+    /// Main thread: `shutdown()` began (no touch source, no late start step).
+    private var mainShutDown = false
     /// TG-04, session queue: macOS's own swipe settings, read again at most
     /// every 10 s when the facts are built, and on every config apply.
     private var trackpadPreferences = TrackpadSystemPreferences()
     private var trackpadPreferencesRead: TimeInterval?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
+    /// PF-X: the Screen Recording check is an IPC to tccd (~8 ms); hot
+    /// paths and the polled facts answer from this cache (PA-15b: the facts
+    /// refresh it only while it reads missing, to catch a new grant).
+    private let screenRecording = ScreenRecordingPermissionCache()
     /// SM-04: pre-captured window images (refreshed once after each settle,
     /// no periodic timer) and the running overlay flight.
     private var snapshotRefresher: SnapshotCacheRefresher!
@@ -154,20 +179,27 @@ final class SessionHost: @unchecked Sendable {
     /// are invoked on the session queue and hop to the main thread themselves.
     /// `overlayBegin` primes the overlay and reports back through
     /// `snapshotPrimed`; `overlayFly` starts the tracks after the real writes.
-    /// SM-16: the `[CGRect]` are the holes cut in the backdrops (targets of
-    /// the windows that fly without a layer). SM-27: the retarget's
+    /// SM-16: the `OverlayHoles` are the holes cut in the backdrops (targets
+    /// of the windows that fly without a layer) and, WP-04, in the image
+    /// layers (windows opening in this pass). SM-27: the retarget's
     /// `[WindowID: SnapshotFace<CGImage>]` are the images of the new sizes.
-    var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], [CGRect], OverlayDecorations) -> Void)?
+    var overlayBegin: ((Int, SpringParameters, [SnapshotDisplayFlight], OverlayHoles, OverlayDecorations) -> Void)?
     var overlayFly: ((Int) -> Void)?
     var overlayRetarget: ((
-        Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [SnapshotDisplayFlight], [CGRect], OverlayDecorations
+        Int, [WindowID: CGRect], [WindowID: SnapshotFace<CGImage>], [WindowID: CGPoint], [SnapshotDisplayFlight],
+        OverlayHoles, OverlayDecorations
     ) -> Void)?
+    var overlayTrack: ((Int, [WindowID: CGRect]) -> Void)?
     var overlayEnd: (() -> Void)?
     /// SM-30: a resized layer's fresh image of its landing size (token,
     /// faces), and the hand-off that fades the resized layers out (ids,
     /// duration) instead of `overlayEnd`.
     var overlayFreshen: ((Int, [WindowID: SnapshotFace<CGImage>]) -> Void)?
     var overlayFade: ((Set<WindowID>, TimeInterval) -> Void)?
+    /// WP-05: an opening window's pop (token, image, pop) and the reveal of
+    /// the real windows (token, ids, holes).
+    var overlayPop: ((Int, SnapshotFace<CGImage>, WindowOpenPop) -> Void)?
+    var overlayReveal: ((Int, Set<WindowID>, OverlayHoles) -> Void)?
     /// Main thread: removes a running flight at once (mouse down); true when one ran.
     var overlayAbortForMouseDown: (() -> Bool)?
     /// NA-03 close ghost hooks, set once by the app before `start()`; invoked
@@ -209,6 +241,9 @@ final class SessionHost: @unchecked Sendable {
     /// WO-01: Alt+O or `gio overview`; invoked on the main thread. The app
     /// opens or closes the workspace overview panel.
     var onToggleOverview: (() -> Void)?
+    /// FX-06: a switch to dwindle was refused; the focused display's visible
+    /// frame (Cocoa global) for the notice. Main thread; set before `start()`.
+    var onDwindleRefused: ((DwindleRefusal, CGRect) -> Void)?
     /// UP-06: `gio update [--install]`, answered by the app's updater on the
     /// IPC thread (it may block for the network, so never on `queue`). Set
     /// once before `start()`; read-only afterwards.
@@ -225,6 +260,10 @@ final class SessionHost: @unchecked Sendable {
         space = SpaceCoordinator(context: .init(
             reflowAll: { [unowned self] in reflowAll() },
             discardPendingAdoptions: { [unowned self] in focus.discardPendingAdoptions() },
+            rescan: { [unowned self] in
+                discovery.enumerateAndPlace()
+                events.syncObservers()
+            },
             adoptFrontmostFocus: { [unowned self] in
                 guard let pid = probe.frontmostPID else {
                     return
@@ -266,7 +305,7 @@ final class SessionHost: @unchecked Sendable {
         )
         barPublisher = GatedStatePublisher(gate: BarStateGate(), initial: nil, context: .init(
             isObserved: { [unowned self] in onBarState != nil },
-            makeValue: { [unowned self] in parseBarStatus(queryStatus(session: session)) },
+            makeValue: { [unowned self] in barSessionState(session: session) },
             mainHop: mainQueueHop,
             deliver: { [unowned self] in onBarState?($0) }
         ))
@@ -274,10 +313,11 @@ final class SessionHost: @unchecked Sendable {
             session: { [unowned self] in session },
             displays: { [unowned self] in displays.allDisplays() },
             visibleFrame: { [unowned self] in visibleFrames[$0] },
-            configMessages: { [unowned self] in configCoordinator.messages },
+            configStatus: { [unowned self] in configCoordinator.status },
             engine: { [unowned self] in engine() },
             tileableModes: { [unowned self] in tileableModes() },
-            screenRecordingGranted: { hasScreenRecordingPermission() },
+            screenRecordingGranted: { [unowned self] in screenRecording.granted() },
+            refreshScreenRecording: { [unowned self] in screenRecording.refresh() },
             accessibilityGranted: { hasAXPermission() },
             configFileExists: { FileManager.default.fileExists(atPath: $0) },
             homeDirectory: { FileManager.default.homeDirectoryForCurrentUser.path },
@@ -320,11 +360,11 @@ final class SessionHost: @unchecked Sendable {
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
-                            config: session.config.animations, permission: hasScreenRecordingPermission()
+                            config: session.config.animations, permission: screenRecording.granted()
                         ) == .snapshot
                 },
                 ghostCacheWanted: { [unowned self] in
-                    SnapshotCapturer.isSupported && closeGhostEnabled() && hasScreenRecordingPermission()
+                    SnapshotCapturer.isSupported && closeGhostEnabled() && screenRecording.granted()
                 },
                 captureScreens: { [unowned self] in displayParameters.captureScreens },
                 capture: { [snapshotCapturer] request, done in
@@ -332,7 +372,7 @@ final class SessionHost: @unchecked Sendable {
                         let result = await snapshotCapturer.capture(request)
                         done(SnapshotCaptureOutcome(
                             images: result.snapshots.mapValues {
-                                CapturedImage(image: $0.image, frame: $0.frame, fill: $0.fill)
+                                CapturedImage(image: $0.image, frame: $0.frame, fill: $0.fill, translucent: $0.translucent)
                             },
                             backdrops: result.backdrops.values.map {
                                 CapturedBackdropImage(image: $0.image, displayFrame: $0.frame)
@@ -458,6 +498,7 @@ final class SessionHost: @unchecked Sendable {
         )
         resizeProbes = ResizeProbeRunner(
             context: .init(
+                isEnabled: { GioLog.minimumLevel <= .debug },
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 matchWindows: { [unowned self] managed in
                     let candidates = windowServerSnapshotCandidates(
@@ -520,7 +561,9 @@ final class SessionHost: @unchecked Sendable {
                 manager: { [unowned self] in session.manager },
                 updateManager: { [unowned self] body in body(&session.manager) },
                 rules: { [unowned self] in session.config.rules },
-                discoverAll: { try? discoverSystemWindows(onlyPID: $0) },
+                discoverAll: { [unowned self] pid in
+                    try? discoverSystemWindows(onlyPID: pid, isKnown: { actuator?.id(matching: $0, pid: $1) != nil })
+                },
                 discoverOne: { discoverSystemWindow(element: $0, pid: $1) },
                 knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
                 registerHandles: { [unowned self] id, candidate in
@@ -558,7 +601,10 @@ final class SessionHost: @unchecked Sendable {
                     openTimeline.forget(id)
                     actuator?.forget(elementID: id.elementID)
                 },
-                forgetApp: { [unowned self] in reconciler?.forgetApp(pid: $0) },
+                forgetApp: { [unowned self] pid in
+                    appNames.forget(pid)
+                    reconciler?.forgetApp(pid: pid)
+                },
                 reflowAll: { [unowned self] in reflowAll() },
                 displaySnapshots: { snapshotDisplayList() },
                 knownDisplayIDs: { [unowned self] in displays.allDisplays().map(\.id) },
@@ -599,6 +645,12 @@ final class SessionHost: @unchecked Sendable {
                     motionCauses.note(.workspaceSwitch)
                     focus.requestIntent(if: true, previous: previous)
                 },
+                focusArrival: { [unowned self] _ in
+                    // FL-01: the popup is the strip's focus now; the pass the
+                    // registration runs focuses and raises it (no centering:
+                    // a floating window has no column to scroll to).
+                    focus.requestUncenteredIntent()
+                },
                 discoverAttempt: { discoverSystemWindowAttempt(element: $0, pid: $1) },
                 windowRegistered: { [unowned self] timing in
                     openTimeline.registered(timing)
@@ -607,7 +659,8 @@ final class SessionHost: @unchecked Sendable {
                 log: { GioLog.record($0, $1) },
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 listedWindows: { axWindowElements(pid: $0) },
-                windowFrame: { [unowned self] in try? actuator?.frame(of: $0) }
+                windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
+                newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition }
             ),
             scheduler: scheduler
         )
@@ -662,6 +715,7 @@ final class SessionHost: @unchecked Sendable {
                 isVisibleInViewport: { [unowned self] in isVisibleInViewport($0) },
                 topWindowOwnerPID: { topWindowOwnerPID(atCocoa: $0) },
                 warpCursor: { warpCursor(toCocoa: $0) },
+                clickTarget: { clickTarget(atCocoa: $0, ownPID: ProcessInfo.processInfo.processIdentifier) },
                 mouseFollowsFocus: { [unowned self] in session.config.behavior.mouseFollowsFocus },
                 centerMode: { [unowned self] in session.config.layout.centerFocusedColumn },
                 publishFocusRing: { [unowned self] in publishFocusRing() },
@@ -674,7 +728,8 @@ final class SessionHost: @unchecked Sendable {
                 },
                 log: { GioLog.record($0, $1) },
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
-                bringTabToFront: { [unowned self] in discovery.bringTabToFront($0) }
+                bringTabToFront: { [unowned self] in discovery.bringTabToFront($0) },
+                promoteAdmissionFloat: { [unowned self] in promoteAdmissionFloat($0, element: $1) }
             ),
             scheduler: scheduler
         )
@@ -682,7 +737,7 @@ final class SessionHost: @unchecked Sendable {
             context: .init(
                 session: { [unowned self] in session },
                 reloadSession: { [unowned self] in dispatch(.reload, session: &session) },
-                loadMessages: { loadGioConfig().messages },
+                loadStatus: { loadGioConfigReport().status },
                 patchFile: { GioCore.applyConfigEdits($0) },
                 applyLogLevel: { [unowned self] level in
                     GioLog.minimumLevel = level
@@ -731,6 +786,7 @@ final class SessionHost: @unchecked Sendable {
             toggleOverview: { [weak self] in
                 DispatchQueue.main.async { self?.onToggleOverview?() }
             },
+            applyAction: { [unowned self] in apply($0) },
             log: { GioLog.record($0, $1) }
         ))
         gestures = GestureController(context: .init(
@@ -744,10 +800,19 @@ final class SessionHost: @unchecked Sendable {
                 // The fingers take the strip from wherever a motion left it;
                 // passes wait for the release (`performReflow`).
                 motion.stop()
-                overlayFlight.end()
                 renderVerifier.cancel()
                 focusDim.update()
             },
+            holdOverlay: { [unowned self] frames, display, lost in
+                let settle = session.config.animations.resolved(MotionCause.viewScroll.kind)
+                let transport = overlayFlight.holdGesture(
+                    frames: frames, display: display, spring: settle.spring, animates: settle.isActive, lost: lost
+                )
+                publishFocusRing()
+                return transport
+            },
+            trackOverlay: { [unowned self] in overlayFlight.trackGesture($0) },
+            overlayFrames: { [unowned self] in overlayFlight.drawnFrames() },
             recordSampled: { [unowned self] id, frame, now in
                 physicalFrames[id] = frame
                 echoGate.recordApplied(id, frame: frame, at: now)
@@ -760,7 +825,7 @@ final class SessionHost: @unchecked Sendable {
             publishFocusRing: { [unowned self] in publishFocusRing() },
             settle: { [unowned self] release in
                 if release.focusChanged {
-                    focus.requestGestureIntent()
+                    focus.requestUncenteredIntent()
                 }
                 pendingGestureRelease = release
                 motionCauses.note(.viewScroll)
@@ -771,6 +836,7 @@ final class SessionHost: @unchecked Sendable {
                 // flight: instantly, once the button is up.
                 if reason == .mouse {
                     instantPlacement.arm(.mouse)
+                    overlayFlight.end()
                 }
                 reflowAll()
             },
@@ -795,20 +861,30 @@ final class SessionHost: @unchecked Sendable {
         guardian?.processIdentifier
     }
 
-    func start() -> String? {
+    /// PA-21: returns once the lock, config and IPC are up; the first layout
+    /// (`initialSync`, ~120 ms with AX reads of every app), the observers
+    /// and the publication run on the session queue while main goes on to
+    /// build the menu bar and window (main waited ~215 ms for them before).
+    /// PA-23: the hotkey tap starts before returning, behind both queued
+    /// steps, so a shortcut pressed during them waits its turn instead of
+    /// reaching the frontmost app. `onReady` runs on main after the touch
+    /// source started.
+    func start(onReady: @escaping @MainActor () -> Void = {}) -> String? {
         // A relaunched instance waits a few seconds for its predecessor's lock.
         guard instanceLock.acquire(
             path: defaultLockPath(), wait: .forLaunch(arguments: CommandLine.arguments)
         ) else {
             return "another Gio instance is running"
         }
-        let (config, configMessages) = loadGioConfig()
+        // PF-AF: before any discovery or observer touches another app.
+        applyGlobalAXMessagingTimeout()
+        let (config, configStatus) = loadGioConfigReport()
         session.config = config
         GioLog.minimumLevel = config.logging.level
         publishDisplayRefreshes()
         configCoordinator.refreshDispatcher()
-        configCoordinator.setMessages(configMessages)
-        for message in configMessages {
+        configCoordinator.setStatus(configStatus)
+        for message in configStatus.messages {
             print("[gio] config: \(message)")
         }
         if !hasAXPermission() {
@@ -835,19 +911,40 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "session started")
         GioLog.record(.info, "spaces separate=\(displaysHaveSeparateSpaces())")
         guardian = spawnGuardian()
-        queue.sync {
+        queue.async {
+            guard !self.isShuttingDown else {
+                return
+            }
+            // PA-24: the first layout already gives clamping apps their width.
+            self.appMinimums = self.appMinimumStore?.load() ?? AppMinimumSizes()
             self.initialSync()
         }
+        // Main-thread observers; what they report hops to the queue, behind
+        // the first layout.
         watchDisplays()
         watchDesktopPicture()
         watchMemoryPressure()
         watchManagedSpace()
-        queue.sync {
+        queue.async {
+            guard !self.isShuttingDown else {
+                return
+            }
             self.events.rebuild()
             self.publishSnapshot()
+            GioLog.record(.info, "session ready")
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard !self.mainShutDown else {
+                        return
+                    }
+                    self.startMultitouch(gestures: config.gestures)
+                    onReady()
+                }
+            }
         }
+        // PA-23: a combo's action hops to the queue (`handleCombo`), so it
+        // runs after the first layout and the observer rebuild queued above.
         startTap()
-        startMultitouch(gestures: config.gestures)
         return nil
     }
 
@@ -861,7 +958,7 @@ final class SessionHost: @unchecked Sendable {
         multitouchWatcher = nil
         multitouch?.stop()
         multitouchRunning = false
-        multitouchShutDown = true
+        mainShutDown = true
         queue.sync {
             guard !isShuttingDown else {
                 return
@@ -929,7 +1026,7 @@ final class SessionHost: @unchecked Sendable {
             guard let self else {
                 return
             }
-            guard hasScreenRecordingPermission() else {
+            guard screenRecording.refresh() else {
                 DispatchQueue.main.async { completion("Screen Recording is missing: grant it first.") }
                 return
             }
@@ -1013,6 +1110,38 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// WO-02: a window tile dropped in the overview, applied on the session
+    /// queue to the overview's display (the focused one, as the overview's
+    /// facts use) by the Core use case. A move reflows like any window move,
+    /// passively: no focus intent, nothing follows. Completes on the main
+    /// thread with that display's fresh overview facts (nil without one).
+    func moveWindowFromOverview(
+        _ move: OverviewMove, completion: @escaping @Sendable (WorkspaceOverviewFacts?) -> Void
+    ) {
+        queue.async { [weak self] in
+            guard let self, !isShuttingDown else {
+                DispatchQueue.main.async { completion(nil) }
+                return
+            }
+            // A copy: the modes read touches `session` while the move runs.
+            var manager = session.manager
+            let modes = tileableModes()
+            let result = manager.moveWindowFromOverview(move, on: manager.focusedDisplay, modes: modes)
+            let id = WindowID(text: move.windowID).map { "\($0.pid):\($0.elementID)" } ?? "invalid"
+            GioLog.record(
+                .info,
+                "overview move id=\(id) workspace=\(move.workspace) column=\(move.column) result=\(result.rawValue)"
+            )
+            if result == .moved {
+                session.manager = manager
+                motionCauses.note(.windowMovement)
+                reflowAll()
+            }
+            let facts = factsBuilder.workspaceOverview()
+            DispatchQueue.main.async { completion(facts) }
+        }
+    }
+
     /// MM-04: the overview opens on the display the user is on: the one
     /// holding the focused window (the frontmost app's front window, as the
     /// WindowServer lists it, so focus Gio did not adopt counts too), else
@@ -1034,16 +1163,22 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "overview display id=\(choice.display.rawValue) reason=\(choice.reason.rawValue)")
     }
 
-    /// WO-01: one capture of the given windows (`WindowFact.id`s) at their
-    /// current physical frames, parked ones included, without a backdrop and
-    /// at most `overviewThumbnailScale`. Empty without Screen Recording or
-    /// before macOS 14; the panel then keeps the app icons. Main-thread
-    /// completion; the capture logs its own summary (counts only).
+    /// WO-01: thumbnails of the given windows (`WindowFact.id`s) at their
+    /// current physical frames, parked ones included. PF-AS: a fresh cached
+    /// image of the window's current size (`overviewThumbnailPlan`, read here
+    /// on the session queue) is scaled down to `overviewThumbnailScale` off
+    /// this queue and delivered first (`deliverCachedOverviewThumbnails`);
+    /// only the rest is captured, in one capture without a backdrop and at
+    /// most `overviewThumbnailScale`, and delivered after. `completion` runs
+    /// on main once per batch (twice when both exist; the ids are disjoint).
+    /// Empty without Screen Recording or before macOS 14; the panel then
+    /// keeps the app icons. Logs `overview thumbnails cached=N capture=N
+    /// scaleMs=S` once, the capture its own summary (counts only).
     func captureOverviewThumbnails(
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
         queue.async { [weak self] in
-            guard let self, SnapshotCapturer.isSupported, hasScreenRecordingPermission() else {
+            guard let self, SnapshotCapturer.isSupported, screenRecording.granted() else {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
@@ -1058,9 +1193,26 @@ final class SessionHost: @unchecked Sendable {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
+            let plan = overviewThumbnailPlan(
+                windows: frames, cache: snapshotRefresher.cache, now: ProcessInfo.processInfo.systemUptime,
+                minPixelsPerPoint: overviewThumbnailScale
+            )
+            if plan.fromCache.isEmpty {
+                GioLog.record(.info, overviewThumbnailsLogLine(
+                    cached: 0, captured: plan.toCapture.count, scaleMilliseconds: 0
+                ))
+            } else {
+                deliverCachedOverviewThumbnails(
+                    plan.fromCache.map { (id: $0.key, image: $0.value, size: frames[$0.key]?.size ?? .zero) },
+                    captured: plan.toCapture.count, completion: completion
+                )
+            }
+            guard !plan.toCapture.isEmpty else {
+                return
+            }
             let (screens, primaryHeight) = displayParameters.captureScreens
             let request = SnapshotCaptureRequest(
-                windows: frames,
+                windows: plan.toCapture,
                 displays: screens.map {
                     SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
                 },
@@ -1074,6 +1226,35 @@ final class SessionHost: @unchecked Sendable {
                 }
                 DispatchQueue.main.async { completion(thumbnails) }
             }
+        }
+    }
+
+    /// PF-AS: the cached images (often 2x) drawn down to
+    /// `overviewThumbnailScale` of each window's frame on a detached task
+    /// (never on main, where SwiftUI would draw the full image, PF-AP, nor on
+    /// the session queue), then handed to main as the first batch. Logs the
+    /// open's `overview thumbnails` line with the time the scaling took.
+    private func deliverCachedOverviewThumbnails(
+        _ cached: [(id: WindowID, image: CGImage, size: CGSize)], captured: Int,
+        completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
+    ) {
+        // Immutable images, read by the one task below only.
+        nonisolated(unsafe) let sources = cached
+        Task.detached(priority: .userInitiated) {
+            let start = DispatchTime.now().uptimeNanoseconds
+            var thumbnails: [String: OverviewThumbnail] = [:]
+            for source in sources {
+                if let image = snapshotDownscaled(
+                    source.image, pointSize: source.size, pixelsPerPoint: overviewThumbnailScale
+                ) {
+                    thumbnails[windowFactID(source.id)] = OverviewThumbnail(image: image)
+                }
+            }
+            let milliseconds = Int((DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+            GioLog.record(.info, overviewThumbnailsLogLine(
+                cached: sources.count, captured: captured, scaleMilliseconds: milliseconds
+            ))
+            DispatchQueue.main.async { completion(thumbnails) }
         }
     }
 
@@ -1147,7 +1328,7 @@ final class SessionHost: @unchecked Sendable {
 
     /// Main thread.
     private func setMultitouchRunning(_ running: Bool) {
-        guard let multitouch, running != multitouchRunning, !multitouchShutDown else {
+        guard let multitouch, running != multitouchRunning, !mainShutDown else {
             return
         }
         multitouchRunning = running
@@ -1260,9 +1441,11 @@ final class SessionHost: @unchecked Sendable {
     // MARK: - Sync
 
     /// MM-01: the global AX/WindowServer flip height is the primary
-    /// display's, whichever screen holds the key window.
+    /// display's, whichever screen holds the key window. PA-15c: main
+    /// publishes it with the screen parameters (no `NSScreen` enumeration
+    /// off main per query); the probe only answers before that first reading.
     private func primaryHeight() -> CGFloat {
-        probe.primaryScreenHeight
+        displayParameters.primaryHeight ?? probe.primaryScreenHeight
     }
 
     private func initialSync() {
@@ -1324,6 +1507,23 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// MM-12: an activated admission float (dialog, panel, fixed size) that
+    /// now reads as a normal window rejoins the grid. The AX read happens
+    /// only for admission floats, never for tiles or chosen floats.
+    private func promoteAdmissionFloat(_ id: WindowID, element: AXUIElement) -> Bool {
+        guard let record = session.registry.find(id), record.mode == .floating,
+              let reason = record.floatReason, reason.isAdmission,
+              let admission = currentWindowAdmission(of: element, pid: id.pid),
+              promotesAdmissionFloat(record, to: admission)
+        else {
+            return false
+        }
+        try? session.registry.setMode(.tiled, for: id)
+        tileability.invalidate(id)
+        GioLog.record(.info, "window promoted id=\(id.pid):\(id.elementID) app=\(record.application) from=\(reason.rawValue)")
+        return true
+    }
+
     // MARK: - Reflow
 
     private func engine() -> ScrollableLayoutEngine {
@@ -1331,9 +1531,19 @@ final class SessionHost: @unchecked Sendable {
         // independent (MM-01): default widths resolve per display viewport.
         ScrollableLayoutEngine(
             config: session.config.makeLayoutConfig(),
-            minimumSizes: minimumSizes.sizes,
+            minimumSizes: effectiveMinimumSizes(),
             widthLimits: ruleWidthLimits()
         )
+    }
+
+    /// FI-02 + PA-24: this session's learned minimums, else each window's
+    /// app's confirmed minimum (BUG-2). No registry pass while no app has
+    /// one.
+    private func effectiveMinimumSizes() -> [WindowID: CGSize] {
+        guard appMinimums.hasConfirmed else {
+            return minimumSizes.sizes
+        }
+        return appMinimums.effective(learned: minimumSizes.sizes, windows: session.registry.managedWindows())
     }
 
     /// WR-05: rule width limits of the registered windows. Empty, without a
@@ -1368,9 +1578,17 @@ final class SessionHost: @unchecked Sendable {
 
     /// FI-11: a clamp the app applied after the write's read-back, found by
     /// the router's late re-check (`observed`) against Gio's last write.
+    /// BUG-3: a clamp to a minimum already known is the window at its
+    /// minimum (the layout could not give it more): kept as is, with no
+    /// snap-back count and no relayout, so a crowded dwindle tree does not
+    /// loop or make the app yield.
     private func learnLateClamp(_ id: WindowID, written: CGRect, observed: CGRect) -> Bool {
         guard let size = minimumSizes.learnLate(id, requested: written, actual: observed) else {
-            return false
+            guard minimumSizes.explains(id, requested: written, actual: observed) else {
+                return false
+            }
+            physicalFrames[id] = observed
+            return true
         }
         physicalFrames[id] = observed
         trustedFrames.invalidate(id)
@@ -1381,17 +1599,22 @@ final class SessionHost: @unchecked Sendable {
 
     private func logLearnedMinimum(_ id: WindowID, size: CGSize, late: Bool) {
         noteResizeClamp(pid: id.pid)
+        let window = session.registry.find(id)
+        // PA-24: remembered for the app's windows in later launches.
+        if let window, appMinimums.record(size, for: window) {
+            appMinimumStore?.save(appMinimums)
+        }
         GioLog.record(
             .info,
             "min size learned id=\(id.pid):\(id.elementID) "
-                + "app=\(session.registry.find(id)?.application ?? "pid\(id.pid)") "
+                + "app=\(window?.application ?? "pid\(id.pid)") "
                 + "w=\(Int(size.width.rounded())) h=\(Int(size.height.rounded()))"
                 + (late ? " late=true" : "")
         )
     }
 
     private func resizeKey(_ pid: pid_t) -> String {
-        probe.applicationLabel(pid)
+        appNames.display(pid)
     }
 
     private func logResizeCapability(_ key: String) {
@@ -1424,12 +1647,20 @@ final class SessionHost: @unchecked Sendable {
     private func tileableModes() -> [WindowID: WindowMode] {
         // Verdicts are cached per window; a failed probe makes the window
         // floating(notResizable) in the registry instead of dropping it.
-        reconcileTileability(registry: session.registry, cache: &tileability) { [actuator] id in
+        let now = ProcessInfo.processInfo.systemUptime
+        let result = reconcileTileability(registry: session.registry, cache: &tileability, now: now) { [actuator] id in
             guard let element = actuator?.element(for: id) else {
-                return false
+                return .notTileable
             }
-            return axIsTileable(element)
+            return axTileability(element)
         }
+        for change in result.changes {
+            GioLog.record(.info, change.logLine)
+        }
+        for probe in result.undetermined {
+            GioLog.record(.debug, probe.logLine)
+        }
+        return result.modes
     }
 
     /// Would `id` be inside its display's viewport under the current offset?
@@ -1531,6 +1762,8 @@ final class SessionHost: @unchecked Sendable {
         guard let actuator, space.allowsWindowWork else {
             return
         }
+        let signpost = GioSignpost.begin("reflow")
+        defer { GioSignpost.end("reflow", signpost) }
         // TG-03: while the fingers move a strip, every pass waits; the
         // release (or the abandon) runs one that covers them all.
         guard !gestures.isTracking else {
@@ -1540,6 +1773,7 @@ final class SessionHost: @unchecked Sendable {
         pendingGestureRelease = nil
         // The snap-back reflow after a drag releases the dim hold.
         focusDim.releaseDragHold()
+        events.releaseDragHold()
         // Every exit (animation started or instant pass) refreshes the ring.
         defer {
             publishFocusRing()
@@ -1647,14 +1881,20 @@ final class SessionHost: @unchecked Sendable {
         // screen before that write: `.priming` hands the pass to the flight
         // controller, which runs it once main reports the prime (or the AX
         // motion instead when the overlay never made it). The AX motion is
-        // the fallback. TG-03: a gesture's settle stays on the motion player,
-        // which carries the release velocity (the overlay starts from rest).
+        // the fallback. TG-06: a gesture's settle flies there too, its layers
+        // starting where the fingers left the strip with the release velocity
+        // (TG-07: the held layers retarget from their tracked frames); the AX
+        // fallback keeps that velocity as well.
         var snapshotFlight = false
-        if animating, gestureRelease == nil, snapshotRefresher.rendererUsable(),
-           !animations.isEmpty || overlayFlight.isActive
+        let openPops = planWindowOpenPops(
+            entries: pass.entries, prepositions: pass.prepositions, animation: settings.resolved(.windowOpen)
+        )
+        if animating, snapshotRefresher.rendererUsable(),
+           !animations.isEmpty || overlayFlight.isActive || openPops != nil
         {
             switch overlayFlight.drive(
-                animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps
+                animations: animations, plans: plans, spring: passAnimation.spring, jumps: pass.jumps,
+                release: gestureRelease, entries: pass.entries, pops: openPops
             ) {
             case .ax:
                 break
@@ -1680,6 +1920,13 @@ final class SessionHost: @unchecked Sendable {
                 )
                 return
             }
+        }
+        let heldGestureCannotFly = !snapshotFlight && overlayFlight.isHoldingGesture
+        if heldGestureCannotFly {
+            overlayFlight.endHold {
+                instantPass(plans: plans, zoomJob: zoomJob, snapshotFlight: false, placement: placement, reconciler: reconciler)
+            }
+            return
         }
         if !snapshotFlight {
             overlayFlight.end()
@@ -1718,6 +1965,7 @@ final class SessionHost: @unchecked Sendable {
             }
         }
         motion.start(animations, sink: reconciler)
+        settleCapture.noteMotion()
         openTimeline.wrote(at: ProcessInfo.processInfo.systemUptime, waitedForMotion: waitedForMotion)
         // FI-06: the keyboard follows the logical focus right away instead
         // of after the animation; the final pass only re-asserts a drift.
@@ -1740,8 +1988,8 @@ final class SessionHost: @unchecked Sendable {
     ) {
         motion.stop()
         // Only a keyboard/IPC intent focuses anything (HD-01); passive reflows
-        // pass nil so they never steal focus. The intent reaches the last
-        // plan only, so focus lands after every frame of the pass.
+        // pass nil so they never steal focus. The reconciler applies it after
+        // every frame of the pass.
         let settleFocus = focus.takeSettleFocus(parked: Set(plans.flatMap { $0.parked.keys }))
         let focusTarget = settleFocus.target
         defer {
@@ -1758,29 +2006,45 @@ final class SessionHost: @unchecked Sendable {
             // The writes are on their lanes; the flight settles once its
             // layers land too, and folds their outcome then.
             overlayFlight.passSettled()
+            // The flight's settle schedules its own capture run.
+            settleCapture.noteFlight(shown: Set(displays.allDisplays().map(\.workspace)))
             return
         }
-        var zoomWriteFailures: Set<WindowID> = []
-        var deferred: [WindowID] = []
-        for (planIndex, plan) in plans.enumerated() {
-            let planFocus = planIndex == plans.count - 1 ? focusTarget : nil
-            let report = reconciler.reconcile(
-                frames: plan.visible, parked: plan.parked,
-                focused: planFocus, currentlyFocused: nil,
-                trusted: trustedFrames
-            )
-            foldSettle(report, visible: plan.visible, parked: plan.parked, focusTarget: planFocus, placement: placement)
-            zoomWriteFailures.formUnion(report.failed)
-            deferred += report.deferred
+        // PF-AO: every plan in one reconcile, so the session queue waits for
+        // the slowest app of the pass once, not once per plan.
+        let writes = mergePassWrites(plans, focus: focusTarget)
+        // FX-01: a target that stays put shows its ring now, not after the
+        // app's activation returns (the reconcile below waits for it).
+        if focusRingLeadsFocus(
+            target: writes.focus, planned: writes.plan.visible, parked: Set(writes.plan.parked.keys),
+            physical: writes.focus.flatMap { physicalFrames[$0] }
+        ) {
+            focusRing.publish()
         }
+        let report = reconciler.reconcile(
+            frames: writes.plan.visible, parked: writes.plan.parked,
+            focused: writes.focus, currentlyFocused: nil,
+            trusted: trustedFrames
+        )
+        foldSettle(
+            report, visible: writes.plan.visible, parked: writes.plan.parked, focusTarget: writes.focus,
+            placement: placement
+        )
         if let zoomJob {
             nativeZoom.start(zoomJob)
         }
-        finishSettle(deferred: deferred, zoomWriteFailures: zoomWriteFailures)
+        finishSettle(deferred: report.deferred, zoomWriteFailures: Set(report.failed))
         if renderVerifier.hasCandidates {
             renderVerifier.schedule()
         }
-        snapshotRefresher.schedule()
+        // PF-AQ: a pass that changed nothing captures nothing.
+        if settleCapture.decide(
+            report: report, placement: placement, shown: Set(displays.allDisplays().map(\.workspace))
+        ) != nil {
+            snapshotRefresher.schedule()
+        } else {
+            GioLog.record(.debug, settleCaptureSkippedLogLine)
+        }
     }
 
     /// SM-12: the real windows' one write under a snapshot overlay. All
@@ -1794,12 +2058,9 @@ final class SessionHost: @unchecked Sendable {
     private func dispatchUnderOverlay(
         plans: [ParkingPlan], focusTarget: WindowID?, reconciler: WindowReconciler<AXWindowActuator>
     ) {
-        var visible: [WindowID: CGRect] = [:]
-        var parked: [WindowID: ParkedTarget] = [:]
-        for plan in plans {
-            visible.merge(plan.visible) { _, new in new }
-            parked.merge(plan.parked) { _, new in new }
-        }
+        let writes = mergePassWrites(plans, focus: focusTarget)
+        let visible = writes.plan.visible
+        let parked = writes.plan.parked
         let pass = reconciler.dispatch(
             frames: visible, parked: parked, focused: focusTarget, currentlyFocused: nil, trusted: trustedFrames
         )
@@ -1826,6 +2087,9 @@ final class SessionHost: @unchecked Sendable {
     /// SM-12: fold every pass dispatched under the overlay, oldest first
     /// (the newest outcome wins). Bounded: a lane with no progress for the
     /// stall timeout fails its windows with "timeout", as in `reconcile`.
+    /// FX-07: a window whose last write failed only because its app was busy
+    /// is written again now, while the overlay still covers it, instead of
+    /// leaving its slot empty until the backoff retry.
     private func collectDispatchedWrites() {
         guard !dispatchedWrites.isEmpty, let reconciler else {
             dispatchedWrites = []
@@ -1835,14 +2099,31 @@ final class SessionHost: @unchecked Sendable {
         dispatchedWrites = []
         var failures: Set<WindowID> = []
         var deferred: [WindowID] = []
+        var outcomes: [DispatchedOutcome] = []
         for entry in passes {
             let report = reconciler.collect(entry.pass)
             // Passes dispatched under an overlay belong to an animated pass.
             foldSettle(
-                report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget, placement: .animate
+                report, visible: entry.visible, parked: entry.parked, focusTarget: entry.focusTarget, placement: .animate,
+                retryLater: false
             )
+            outcomes.append(DispatchedOutcome(report: report, visible: entry.visible, parked: entry.parked))
             failures.formUnion(report.failed)
             deferred += report.deferred
+        }
+        let retry = retryBeforeHandOver(outcomes)
+        if !retry.visible.isEmpty || !retry.parked.isEmpty {
+            let ids = (Array(retry.visible.keys) + Array(retry.parked.keys)).sorted()
+            GioLog.record(
+                .info,
+                "reconcile retry now windows=\(ids.count) ids=\(ids.map { "\($0.pid):\($0.elementID)" }.joined(separator: ",")) reason=busy"
+            )
+            let report = reconciler.reconcile(
+                frames: retry.visible, parked: retry.parked, focused: nil, currentlyFocused: nil, trusted: trustedFrames
+            )
+            foldSettle(report, visible: retry.visible, parked: retry.parked, focusTarget: nil, placement: .animate)
+            failures.subtract(report.applied + report.alreadyCorrect + report.parked)
+            failures.formUnion(report.failed)
         }
         finishSettle(deferred: deferred, zoomWriteFailures: failures)
     }
@@ -1850,10 +2131,11 @@ final class SessionHost: @unchecked Sendable {
     /// One settled report into the session's memory: minimum sizes, physical
     /// frames (failed, vanished and deferred windows are forgotten), trust,
     /// render-check candidates. SM-31: vanished windows lose their snapshot
-    /// images and get one proof scan of their pid.
+    /// images and get one proof scan of their pid. `retryLater`: busy writes
+    /// get a backoff retry (MM-11); off while a caller retries them itself.
     private func foldSettle(
         _ report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget],
-        focusTarget: WindowID?, placement: InstantPlacementDecision
+        focusTarget: WindowID?, placement: InstantPlacementDecision, retryLater: Bool = true
     ) {
         // PF-I: a refused focus is logged by the reconciler, with its reason,
         // once per window per minute (one fails per key press onto it).
@@ -1887,6 +2169,11 @@ final class SessionHost: @unchecked Sendable {
         snapshotRefresher.noteVanished(report.vanished)
         discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
+        // MM-11: writes their busy app timed out are retried with backoff.
+        if retryLater, let delay = transientRetry.settle(report) {
+            let ids = report.failed.filter { report.failures[$0]?.isTransient == true }
+            scheduleTransientRetry(ids, after: delay)
+        }
         // FI-09: a floating restore this settle attempted is not repeated.
         reflowPlanner.restoreSettled(visible: visible, deferred: report.deferred)
         // Only visible windows written here are worth a render check;
@@ -1896,6 +2183,29 @@ final class SessionHost: @unchecked Sendable {
         }
         renderVerifier.recordSettled(from: report.settledFrames)
         GioLog.record(.debug, "settle skippedReads=\(report.skippedReads)")
+    }
+
+    /// MM-11: one deferred, non-animated pass for windows whose app did not
+    /// answer in time; the failed windows are untrusted, so it writes them.
+    private func scheduleTransientRetry(_ ids: [WindowID], after delay: TimeInterval) {
+        guard !transientRetryPending else {
+            return
+        }
+        transientRetryPending = true
+        GioLog.record(
+            .info,
+            "reconcile retry windows=\(ids.count) ids=\(ids.map { "\($0.pid):\($0.elementID)" }.joined(separator: ",")) reason=busy ms=\(Int((delay * 1000).rounded()))"
+        )
+        scheduler.asyncAfter(delay) { [weak self] in
+            guard let self else {
+                return
+            }
+            transientRetryPending = false
+            guard !isShuttingDown else {
+                return
+            }
+            performReflow(animate: false)
+        }
     }
 
     /// Every window of the pass is on its final frame (or failed). A zoom
@@ -1940,7 +2250,7 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func appName(_ pid: pid_t) -> String {
-        probe.applicationLabel(pid)
+        appNames.display(pid)
     }
 
     // MARK: - Workspace visibility (NC-06)
@@ -2099,9 +2409,13 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// Tap thread (PF-AB).
     private func recordClick(at location: CGPoint) {
-        // Clicks must hit real windows: an overlay in the air comes down now.
-        _ = overlayAbortForMouseDown?()
+        // Clicks must hit real windows: an overlay in the air comes down
+        // (on main; its panels ignore the mouse, so the click is not held).
+        DispatchQueue.main.async { [weak self] in
+            _ = self?.overlayAbortForMouseDown?()
+        }
         // A click is the user choosing the focus: drop any pending keyboard intent.
         focus.recordClick(at: location)
     }
@@ -2109,7 +2423,7 @@ final class SessionHost: @unchecked Sendable {
     private func startTap() {
         let observeMouseMoved = focus.focusFollowsMouse
         // Only subscribed while focus-follows-mouse is on: otherwise every
-        // mouse move would cost a main-thread callback.
+        // mouse move would cost a tap callback.
         var moveHandler: (@Sendable (CGPoint) -> Void)?
         if observeMouseMoved {
             moveHandler = { [weak self] location in
@@ -2137,8 +2451,9 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// SM-09: typing changes the focused window's image. Runs in the tap
-    /// callback on main for every key; only the first key per half second
-    /// hops to the session queue (`typingLock` guards the timestamp).
+    /// callback (tap thread, PF-AB) for every key; only the first key per
+    /// half second hops to the session queue (`typingLock` guards the
+    /// timestamp).
     private func noteTyping() {
         let now = ProcessInfo.processInfo.systemUptime
         typingLock.lock()
@@ -2181,8 +2496,13 @@ final class SessionHost: @unchecked Sendable {
                 self?.onToggleOverview?()
             }
         case .action(let action):
+            // PF-AC: tap to session queue, then the action and its reflow.
+            let hop = GioSignpost.begin("hotkeyHop")
             queue.async { [weak self] in
-                self?.apply(action)
+                GioSignpost.end("hotkeyHop", hop)
+                GioSignpost.interval("action") {
+                    self?.apply(action)
+                }
             }
         }
         return true
@@ -2216,6 +2536,13 @@ final class SessionHost: @unchecked Sendable {
         if let frame = effect.warpsToDisplay {
             focus.warpCursor(toDisplay: frame)
         }
+        if let refusal = effect.dwindleRefusal,
+           let frame = visibleFrames[session.manager.focusedDisplay] ?? probe.primaryScreenVisibleFrame
+        {
+            DispatchQueue.main.async { [weak self] in
+                self?.onDwindleRefused?(refusal, frame)
+            }
+        }
         reflowAll()
     }
 }
@@ -2247,9 +2574,10 @@ private final class HostOverlayPort: OverlayPort {
 
     func beginFlight(
         token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
-        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init), Array(holes.values), decorations)
+        let overlayHoles = OverlayHoles(holes: holes, entries: entryHoles)
+        host.overlayBegin?(token, spring, flights.map(SnapshotDisplayFlight.init), overlayHoles, decorations)
     }
 
     func flyFlight(token: Int) {
@@ -2257,12 +2585,18 @@ private final class HostOverlayPort: OverlayPort {
     }
 
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
+        let overlayHoles = OverlayHoles(holes: holes, entries: entryHoles)
         host.overlayRetarget?(
-            token, targets, images, adds.map(SnapshotDisplayFlight.init), Array(holes.values), decorations
+            token, targets, images, velocities, adds.map(SnapshotDisplayFlight.init), overlayHoles, decorations
         )
+    }
+
+    func trackFlight(token: Int, frames: [WindowID: CGRect]) {
+        host.overlayTrack?(token, frames)
     }
 
     func endFlight() {
@@ -2276,6 +2610,14 @@ private final class HostOverlayPort: OverlayPort {
     func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval) {
         host.overlayFade?(windows, duration)
     }
+
+    func popFlight(token: Int, image: SnapshotFace<CGImage>, pop: WindowOpenPop) {
+        host.overlayPop?(token, image, pop)
+    }
+
+    func revealFlight(token: Int, windows: Set<WindowID>, holes: [WindowID: CGRect], entryHoles: Set<WindowID>) {
+        host.overlayReveal?(token, windows, OverlayHoles(holes: holes, entries: entryHoles))
+    }
 }
 
 private extension SnapshotDisplayFlight {
@@ -2283,7 +2625,10 @@ private extension SnapshotDisplayFlight {
         self.init(
             displayFrame: flight.displayFrame, usableFrame: flight.usableFrame, backdrop: flight.backdrop,
             items: flight.items.map {
-                SnapshotOverlayItem(id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to)
+                SnapshotOverlayItem(
+                    id: $0.id, image: $0.image, target: $0.target, from: $0.from, to: $0.to, velocity: $0.velocity,
+                    seeThrough: $0.seeThrough
+                )
             }
         )
     }

@@ -7,16 +7,13 @@ public enum KeybindingTarget: Equatable, Sendable {
     case none
 }
 
-/// Alt+Space summons the launcher; the app handles it before the table and
-/// the recorder refuses it.
-public let launcherHotkey = HotkeyCombo(modifiers: [.alt], key: "Space")
-
 // MARK: - Routing
 
 /// Where a combo seen by the tap goes.
 public enum HotkeyRoute: Equatable, Sendable {
     /// Not a Gio shortcut (or hotkeys are suspended): the key reaches apps.
     case passThrough
+    /// `toggle-launcher` is a panel the app shows.
     case launcher
     /// `toggle-overview` is a panel the app shows.
     case overview
@@ -29,13 +26,14 @@ public func routeHotkey(_ combo: HotkeyCombo, dispatcher: HotkeyDispatcher, susp
     if suspended {
         return .passThrough
     }
-    if combo == launcherHotkey {
-        return .launcher
-    }
     guard let action = dispatcher.action(for: combo) else {
         return .passThrough
     }
-    return action == .toggleOverview ? .overview : .action(action)
+    switch action {
+    case .toggleLauncher: return .launcher
+    case .toggleOverview: return .overview
+    default: return .action(action)
+    }
 }
 
 /// DA-07: the "hotkeys suspended" flag. Set from the main thread (the
@@ -80,6 +78,20 @@ public func effectiveHotkeyBindings(
     return effective
 }
 
+/// The combo that opens the launcher under `config` (nil: unbound), for the
+/// hints in the launcher's title bar and the menu bar item. A combo the user
+/// bound wins over the default; ties go to the canonical text order.
+public func launcherHotkey(in config: GioConfig) -> HotkeyCombo? {
+    effectiveHotkeyBindings(configKeybindings: config.keybindings, unbound: config.unboundKeys)
+        .filter { $0.value.action == .toggleLauncher }
+        .min { lhs, rhs in
+            if (lhs.value.source == .config) != (rhs.value.source == .config) {
+                return lhs.value.source == .config
+            }
+            return lhs.key.describe() < rhs.key.describe()
+        }?.key
+}
+
 private func defaultAction(for combo: HotkeyCombo) -> HotkeyAction? {
     defaultHotkeyBindings().last { $0.0 == combo }?.1
 }
@@ -90,7 +102,6 @@ private func defaultAction(for combo: HotkeyCombo) -> HotkeyAction? {
 public enum ShortcutProblem: Equatable, Sendable {
     case noModifier
     case unsupportedKey(String)
-    case reservedForLauncher
 }
 
 /// What binding a recorded combo to an action would do.
@@ -110,9 +121,6 @@ public func checkShortcut(_ combo: HotkeyCombo, for action: HotkeyAction, config
     }
     guard canonicalKeyName(combo.key) == combo.key else {
         return .invalid(.unsupportedKey(combo.key))
-    }
-    if combo == launcherHotkey {
-        return .invalid(.reservedForLauncher)
     }
     let effective = effectiveHotkeyBindings(configKeybindings: config.keybindings, unbound: config.unboundKeys)
     guard let current = effective[combo] else {

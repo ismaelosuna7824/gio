@@ -64,19 +64,25 @@ struct ShortcutsView: View {
                         }
                     }
                 }
-            } else if cheatSheet {
-                ForEach(sections) { CheatSheetSection(section: $0, config: config) }
             } else {
-                ForEach(sections) { section in
-                    SectionCard(section.category.title) {
-                        ForEach(Array(section.entries.enumerated()), id: \.element.id) { index, entry in
-                            CardRow(divider: index < section.entries.count - 1) {
-                                ShortcutRow(
-                                    row: shortcutRowModel(entry, config: config),
-                                    onAdd: { recording = ShortcutRecorder(entry: entry).map(RecordingTarget.init) },
-                                    onRemove: { remove($0, from: entry, config: config) },
-                                    onReset: { reset(entry, config: config) }
-                                )
+                // Built as they scroll into view: every row eagerly (about
+                // 60, each with AppKit buttons and tooltips) took ~200 ms.
+                LazyVStack(alignment: .leading, spacing: GioSpacing.xl) {
+                    if cheatSheet {
+                        ForEach(sections) { CheatSheetSection(section: $0, config: config) }
+                    } else {
+                        ForEach(sections) { section in
+                            SectionCard(section.category.title) {
+                                ForEach(Array(section.entries.enumerated()), id: \.element.id) { index, entry in
+                                    CardRow(divider: index < section.entries.count - 1) {
+                                        ShortcutRow(
+                                            row: shortcutRowModel(entry, config: config),
+                                            onAdd: { recording = RecordingTarget(recorder: ShortcutRecorder(entry: entry)) },
+                                            onRemove: { remove($0, from: entry, config: config) },
+                                            onReset: { reset(entry, config: config) }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -172,15 +178,7 @@ private struct ShortcutRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityElement(children: .combine)
             keys
-            if row.isEditable {
-                actions
-            } else {
-                Text("Fixed")
-                    .font(GioFont.caption)
-                    .foregroundStyle(GioColor.tertiaryText)
-                    .frame(width: 118, alignment: .leading)
-                    .help("Alt+Space always opens the launcher")
-            }
+            actions
         }
     }
 
@@ -190,8 +188,6 @@ private struct ShortcutRow: View {
             Text("Unbound")
                 .font(GioFont.caption)
                 .foregroundStyle(GioColor.tertiaryText)
-        } else if !row.isEditable {
-            BindingKeys(bindings: row.bindings.map { ShortcutBinding(combo: $0.combo, source: $0.source) })
         } else if row.isRange {
             // A long family reads first…last; its removals live in a menu.
             HStack(spacing: GioSpacing.xs) {

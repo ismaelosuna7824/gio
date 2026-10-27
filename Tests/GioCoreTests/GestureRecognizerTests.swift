@@ -62,18 +62,105 @@ final class GestureRecognizerTests: XCTestCase {
         XCTAssertEqual(dx, 0.01, accuracy: 1e-9)
     }
 
-    func testVerticalMovementEmitsOneSwipeUntilTheFingersLift() {
+    /// TG-08: a vertical swipe needs a deliberate stroke: it fires once, at
+    /// the frame its vertical travel reaches the swipe distance, and nothing
+    /// more until the fingers lift.
+    func testADeliberateVerticalSwipeEmitsOnceAtTheSwipeDistance() {
+        var recognizer = GestureRecognizer(settings: settings)
+        let early = feed(&recognizer, [
+            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.36),
+            frame(0.02, fingers: 3, x: 0.5, y: 0.42),
+        ])
+        XCTAssertEqual(early, [], "locked vertically but short of the swipe distance")
+        let events = feed(&recognizer, [
+            frame(0.03, fingers: 3, x: 0.5, y: 0.46), frame(0.04, fingers: 3, x: 0.5, y: 0.7),
+            frame(0.05, fingers: 3, x: 0.5, y: 0.2),
+        ])
+        XCTAssertEqual(swipes(events), [VerticalSwipe(fingers: 3, direction: .up)])
+        if case .verticalSwipe(_, _, let distance) = events.first {
+            XCTAssertEqual(distance, 0.16, accuracy: 1e-6)
+        }
+        let next = feed(&recognizer, [
+            frame(0.06, fingers: 0, x: 0), frame(0.07, fingers: 3, x: 0.5, y: 0.6),
+            frame(0.08, fingers: 3, x: 0.5, y: 0.5), frame(0.09, fingers: 3, x: 0.5, y: 0.4),
+        ])
+        XCTAssertEqual(swipes(next), [VerticalSwipe(fingers: 3, direction: .down)])
+    }
+
+    /// TG-08: about 3 mm of vertical drift (resting fingers, the start of a
+    /// scroll) used to switch workspace.
+    func testASmallVerticalDriftEmitsNothing() {
         var recognizer = GestureRecognizer(settings: settings)
         let events = feed(&recognizer, [
-            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.36),
-            frame(0.02, fingers: 3, x: 0.5, y: 0.5), frame(0.03, fingers: 3, x: 0.5, y: 0.7),
+            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.335),
+            frame(0.02, fingers: 3, x: 0.5, y: 0.34), frame(0.03, fingers: 0, x: 0),
         ])
-        XCTAssertEqual(events, [.verticalSwipe(fingers: 3, direction: .up)])
-        let next = feed(&recognizer, [
-            frame(0.04, fingers: 0, x: 0), frame(0.05, fingers: 3, x: 0.5, y: 0.6),
-            frame(0.06, fingers: 3, x: 0.5, y: 0.5),
+        XCTAssertEqual(events, [])
+    }
+
+    func testADiagonalStrokeEmitsNothing() {
+        var recognizer = GestureRecognizer(settings: settings)
+        let events = feed(&recognizer, [
+            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.52, y: 0.33),
+            frame(0.02, fingers: 3, x: 0.65, y: 0.6), frame(0.03, fingers: 3, x: 0.8, y: 0.9),
         ])
-        XCTAssertEqual(next, [.verticalSwipe(fingers: 3, direction: .down)])
+        XCTAssertEqual(events, [], "|dy| below twice |dx| at the lock is not a swipe")
+    }
+
+    func testLiftingBeforeTheSwipeDistanceEmitsNothing() {
+        var recognizer = GestureRecognizer(settings: settings)
+        let events = feed(&recognizer, [
+            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.4),
+            frame(0.02, fingers: 0, x: 0), frame(0.03, fingers: 3, x: 0.5, y: 0.5),
+        ])
+        XCTAssertEqual(events, [])
+    }
+
+    func testAFingerChangeBeforeTheSwipeDistanceEmitsNothing() {
+        var recognizer = GestureRecognizer(settings: settings)
+        let events = feed(&recognizer, [
+            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.4),
+            frame(0.02, fingers: 4, x: 0.5, y: 0.4), frame(0.03, fingers: 4, x: 0.5, y: 0.8),
+        ])
+        XCTAssertEqual(events, [])
+    }
+
+    func testASwipeThatTurnsDiagonalEmitsNothing() {
+        var recognizer = GestureRecognizer(settings: settings)
+        let events = feed(&recognizer, [
+            frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 3, x: 0.5, y: 0.38),
+            frame(0.02, fingers: 3, x: 0.6, y: 0.42), frame(0.03, fingers: 3, x: 0.6, y: 0.8),
+        ])
+        XCTAssertEqual(events, [])
+    }
+
+    func testTheSwipeDistanceIsASetting() {
+        var custom = settings
+        custom.swipeDistance = 0.3
+        var recognizer = GestureRecognizer(settings: custom)
+        let short = feed(&recognizer, [
+            frame(0, fingers: 3, x: 0.5, y: 0.2), frame(0.01, fingers: 3, x: 0.5, y: 0.45),
+        ])
+        XCTAssertEqual(short, [])
+        XCTAssertEqual(GestureRecognizerSettings.defaultSwipeDistance, 0.15)
+        XCTAssertEqual(GestureRecognizerSettings.verticalDominance, 2.0)
+        let long = feed(&recognizer, [frame(0.02, fingers: 3, x: 0.5, y: 0.55)])
+        XCTAssertEqual(swipes(long), [VerticalSwipe(fingers: 3, direction: .up)])
+    }
+
+    private struct VerticalSwipe: Equatable {
+        var fingers: Int
+        var direction: SwipeDirection
+    }
+
+    /// Every event as a vertical swipe (others become a sentinel so they fail).
+    private func swipes(_ events: [TrackpadGestureEvent]) -> [VerticalSwipe] {
+        events.map {
+            guard case .verticalSwipe(let fingers, let direction, _) = $0 else {
+                return VerticalSwipe(fingers: -1, direction: .up)
+            }
+            return VerticalSwipe(fingers: fingers, direction: direction)
+        }
     }
 
     func testAnAxisWithoutAGestureConsumesTheTouchesUntilLift() {
@@ -110,9 +197,9 @@ final class GestureRecognizerTests: XCTestCase {
         var recognizer = GestureRecognizer(settings: settings)
         let events = feed(&recognizer, [
             frame(0, fingers: 3, x: 0.5, y: 0.3), frame(0.01, fingers: 4, x: 0.5, y: 0.3),
-            frame(0.02, fingers: 4, x: 0.5, y: 0.4),
+            frame(0.02, fingers: 4, x: 0.5, y: 0.4), frame(0.03, fingers: 4, x: 0.5, y: 0.5),
         ])
-        XCTAssertEqual(events, [.verticalSwipe(fingers: 4, direction: .up)])
+        XCTAssertEqual(swipes(events), [VerticalSwipe(fingers: 4, direction: .up)])
     }
 
     func testAnExtraFingerCancelsAScroll() {

@@ -30,12 +30,15 @@ public enum GestureAbandon: String, Equatable, Sendable {
 ///
 /// - Scroll: while the fingers are down the strip of the display under them
 ///   follows the fingers. Each batch of frames lays the strip out at the
-///   gesture's offset (no reveal) and hands the frames to the reconciler's
-///   motion sink: every changed window on its app's Accessibility motion
-///   lane (latest frame wins). State does not move meanwhile. On release
-///   the snap is committed to State (offset and focus) and the session runs
-///   an animated pass on the motion player whose springs start with the
-///   release velocity.
+///   gesture's offset (no reveal). TG-07: when the snapshot overlay holds
+///   the strip's images the frames move those layers and no window is
+///   written; otherwise (or once the overlay is lost) they go to the
+///   reconciler's motion sink: every changed window on its app's
+///   Accessibility motion lane (latest frame wins). State does not move
+///   meanwhile. On release the snap is committed to State (offset and
+///   focus) and the session runs an animated pass whose springs start with
+///   the release velocity (on the snapshot overlay when it can fly, else on
+///   the motion player).
 /// - An extra finger or a mouse button abandons the scroll: State is
 ///   untouched and the session lays the strip out as State says.
 /// - Vertical swipes switch workspace (`focus-workspace-up/down`) or toggle
@@ -50,8 +53,11 @@ public final class GestureController: @unchecked Sendable {
         /// The reconciler (invariant 3); nil before the first pass.
         public var sink: () -> MotionFrameSink?
         public var updateManager: ((inout WorkspaceManager) -> Void) -> Void
-        /// The fingers took the strip: stop the running motion and overlay.
+        /// The fingers took the strip: stop the running motion.
         public var beginTracking: () -> Void
+        public var holdOverlay: ([WindowID: CGRect], CGRect, @escaping () -> Void) -> GestureTransport
+        public var trackOverlay: ([WindowID: CGRect]) -> Void
+        public var overlayFrames: () -> [WindowID: CGRect]
         /// A frame a window is being moved to (physical frame, echo record).
         public var recordSampled: (WindowID, CGRect, TimeInterval) -> Void
         /// A window joined the gesture: its frame is unverified from now on.
@@ -73,6 +79,9 @@ public final class GestureController: @unchecked Sendable {
             sink: @escaping () -> MotionFrameSink?,
             updateManager: @escaping ((inout WorkspaceManager) -> Void) -> Void,
             beginTracking: @escaping () -> Void,
+            holdOverlay: @escaping ([WindowID: CGRect], CGRect, @escaping () -> Void) -> GestureTransport,
+            trackOverlay: @escaping ([WindowID: CGRect]) -> Void,
+            overlayFrames: @escaping () -> [WindowID: CGRect],
             recordSampled: @escaping (WindowID, CGRect, TimeInterval) -> Void,
             markUnverified: @escaping (WindowID) -> Void, focusedWindow: @escaping () -> WindowID?,
             publishFocusRing: @escaping () -> Void, settle: @escaping (GestureRelease) -> Void,
@@ -87,6 +96,9 @@ public final class GestureController: @unchecked Sendable {
             self.sink = sink
             self.updateManager = updateManager
             self.beginTracking = beginTracking
+            self.holdOverlay = holdOverlay
+            self.trackOverlay = trackOverlay
+            self.overlayFrames = overlayFrames
             self.recordSampled = recordSampled
             self.markUnverified = markUnverified
             self.focusedWindow = focusedWindow
@@ -109,6 +121,8 @@ public final class GestureController: @unchecked Sendable {
         let windows: Set<WindowID>
         var touched: Set<WindowID> = []
         var moved = false
+        var overlay = false
+        var trackedAt: TimeInterval = 0
 
         init(surface: GestureSurface, strip: GestureStrip, tracker: GestureScrollTracker, pump: GestureFramePump, windows: Set<WindowID>) {
             self.surface = surface
@@ -176,13 +190,17 @@ public final class GestureController: @unchecked Sendable {
             if scroll != nil {
                 abandon(.cancelled)
             }
-        case .verticalSwipe(let count, let direction):
+        case .verticalSwipe(let count, let direction, let distance):
+            let travelled = String(format: "%.2f", distance)
             if settings.workspaceSwipe, count == settings.workspaceFingers {
                 let action = workspaceSwipeAction(direction, natural: settings.natural)
-                context.log(.info, "gesture swipe fingers=\(count) direction=\(direction.rawValue) action=\(action)")
+                context.log(
+                    .info,
+                    "gesture swipe fingers=\(count) direction=\(direction.rawValue) distance=\(travelled) action=\(action)"
+                )
                 context.perform(action)
             } else if settings.overview, count == settings.overviewFingers, direction == .up {
-                context.log(.info, "gesture swipe fingers=\(count) direction=up action=toggle-overview")
+                context.log(.info, "gesture swipe fingers=\(count) direction=up distance=\(travelled) action=toggle-overview")
                 context.toggleOverview()
             }
         }
@@ -199,29 +217,49 @@ public final class GestureController: @unchecked Sendable {
         }
         context.beginTracking()
         let physical = context.physicalFrames()
+        let drawn = physical.merging(context.overlayFrames()) { _, layer in layer }
         let committed = gestureFrames(surface, offset: strip.committedOffset)
         let base = gestureVisualOffset(
-            committed: strip.committedOffset, visible: committed?.visible ?? [:], physical: physical,
+            committed: strip.committedOffset, visible: committed?.visible ?? [:], physical: drawn,
             prefer: surface.workspace.focusedWindow
         )
         let windows = Set(tilingWorkspace(from: surface.workspace, modes: surface.modes).columns.flatMap(\.windows))
         var start: [WindowID: CGRect] = [:]
+        var held: [WindowID: CGRect] = [:]
         for id in windows {
-            start[id] = physical[id] ?? committed?.visible[id] ?? committed?.parked[id]?.frame
+            let laidOut = committed?.visible[id] ?? committed?.parked[id]?.frame
+            start[id] = physical[id] ?? laidOut
+            held[id] = drawn[id] ?? laidOut
         }
-        scroll = Scroll(
+        let scroll = Scroll(
             surface: surface, strip: strip, tracker: GestureScrollTracker(base: base, maxOffset: strip.maxOffset),
             pump: GestureFramePump(sink: sink, start: start), windows: windows
         )
+        self.scroll = scroll
+        scroll.trackedAt = context.now()
+        let transport = context.holdOverlay(held, surface.displayFrame) { [weak self, weak scroll] in
+            guard let self, let scroll else {
+                return
+            }
+            overlayLost(scroll)
+        }
+        if case .overlay = transport {
+            scroll.overlay = true
+        }
+        let transportName = scroll.overlay ? "overlay" : "ax"
         context.log(
             .info,
-            "gesture scroll begin display=\(surface.display.rawValue) fingers=\(fingers) offset=\(Int(base.rounded())) columns=\(strip.columns.count)"
+            "gesture scroll begin display=\(surface.display.rawValue) fingers=\(fingers) offset=\(Int(base.rounded())) columns=\(strip.columns.count) transport=\(transportName)"
         )
     }
 
     /// Writes the strip at the gesture's offset, once per drain.
     private func render() {
-        guard let scroll, scroll.moved else {
+        guard let scroll else {
+            return
+        }
+        guard scroll.moved else {
+            keepOverlayAlive(scroll)
             return
         }
         scroll.moved = false
@@ -231,6 +269,11 @@ public final class GestureController: @unchecked Sendable {
         var targets = plan.visible
         for (id, parked) in plan.parked {
             targets[id] = parked.frame
+        }
+        if scroll.overlay {
+            context.trackOverlay(targets)
+            scroll.trackedAt = context.now()
+            return
         }
         let written = scroll.pump.pump(targets)
         let now = context.now()
@@ -243,6 +286,30 @@ public final class GestureController: @unchecked Sendable {
         if let focused = context.focusedWindow(), written[focused] != nil {
             context.publishFocusRing()
         }
+    }
+
+    private func keepOverlayAlive(_ scroll: Scroll) {
+        let now = context.now()
+        let idle = now - scroll.trackedAt
+        guard scroll.overlay, idle >= gestureOverlayKeepAlive else {
+            return
+        }
+        context.trackOverlay([:])
+        scroll.trackedAt = now
+    }
+
+    private func overlayLost(_ lost: Scroll) {
+        guard let scroll, scroll === lost, scroll.overlay else {
+            return
+        }
+        scroll.overlay = false
+        context.log(.info, gestureTransportLine(.accessibility(reason: .overlayLost, missing: [])))
+        guard !context.isMouseDown() else {
+            abandon(.mouse)
+            return
+        }
+        scroll.moved = true
+        render()
     }
 
     private func release(fingerVelocity: Double, settings: GesturesSectionConfig) {

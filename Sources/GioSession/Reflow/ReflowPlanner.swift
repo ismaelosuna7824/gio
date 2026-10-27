@@ -451,12 +451,17 @@ public final class ReflowPlanner: @unchecked Sendable {
 
     /// PA-06 / FI-03: size schedules. Growing windows follow the flight when
     /// their app keeps up; the focused window that grows gets its final size
-    /// in the first frame (`focusedGrow`).
+    /// in the first frame (`focusedGrow`). PA-15e: `canAnimateSize` is asked
+    /// once per distinct pid, in first-seen order.
     public static func sizeSchedules(
         _ animations: [WindowAnimation], settings: AnimationsSectionConfig,
         canAnimateSize: (pid_t) -> Bool, focused: WindowID?
     ) -> [WindowAnimation] {
-        let capablePids = Set(animations.map(\.id.pid).filter { canAnimateSize($0) })
+        var seen: Set<pid_t> = []
+        var capablePids: Set<pid_t> = []
+        for pid in animations.map(\.id.pid) where seen.insert(pid).inserted && canAnimateSize(pid) {
+            capablePids.insert(pid)
+        }
         return planSizeSchedules(
             animations, mode: settings.resize, capablePids: capablePids,
             focused: focused, focusedGrow: settings.focusedGrow

@@ -33,6 +33,9 @@ public struct CapturedSnapshot: @unchecked Sendable {
     /// SM-27/SM-30: the flat fill a resize shows where the frame outgrows the
     /// image (`snapshotContentFill` of its right half); nil when see-through.
     public let fill: ThemeColor?
+    /// FX-08: part of the window is see-through (`snapshotLooksTranslucent`
+    /// of the coarse 64x64 scan).
+    public let translucent: Bool
 }
 
 /// A display image without the animated windows and Gio's own windows.
@@ -116,6 +119,8 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// Guarded by `lock`. SM-09: windows whose blank capture was logged, so
     /// a window that stays blank logs once.
     private var blankLogged: Set<WindowID> = []
+    /// Guarded by `lock`. FX-10: windows logged as see-through, once each.
+    private var translucentLogged: Set<WindowID> = []
     /// Guarded by `lock`. SM-13: CGWindowIDs learned while windows were on
     /// screen, so same-size windows parked at one frame are told apart.
     private var windowIDs = SnapshotWindowIDBook()
@@ -151,10 +156,17 @@ public final class SnapshotCapturer: @unchecked Sendable {
         lock.withLock { blankLogged.insert(id).inserted }
     }
 
+    /// True the first time `id` captures see-through.
+    private func noteTranslucent(_ id: WindowID) -> Bool {
+        lock.withLock { translucentLogged.insert(id).inserted }
+    }
+
     /// Never throws and never blocks past the budget (plus scheduling): work
     /// that has not finished by then is reported as a miss and dropped.
     public func capture(_ request: SnapshotCaptureRequest) async -> SnapshotCaptureResult {
         let start = DispatchTime.now().uptimeNanoseconds
+        let signpost = GioSignpost.begin("capture")
+        defer { GioSignpost.end("capture", signpost) }
         let result: SnapshotCaptureResult
         if #available(macOS 14.0, *) {
             result = await captureSCK(request, start: start)
@@ -414,6 +426,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         }
         return SnapshotFreshRead(
             image: image, fill: snapshotContentFill(samples: snapshotContentSamples(of: image)), windowSize: windowSize,
+            translucent: snapshotLooksTranslucent(samples: snapshotDenseSamples(of: image)),
             paint: paint, samples: samples, startRegion: startRegion, freshRegion: freshRegion,
             cached: probe.cached.map { snapshotSamples(of: $0.image) }
         )
@@ -604,6 +617,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
             )
         ).sorted()
         let excludedWindowIDs = Set(excludedMatches)
+        // FX-11: uncovered windows wholly on one display are captured as the
+        // display shows them (materials and vibrancy included).
+        let onScreen = snapshotOnScreenCaptures(
+            frames: request.windows,
+            windowNumbers: matches.compactMapValues { if case .matched(let number) = $0 { return number } else { return nil } },
+            stack: windowServerStack(displayHeight: request.primaryDisplayHeight),
+            displays: request.displays.map(\.frame), ownPid: ownPid, half: request.halfResolution
+        )
         let collector = Collector()
         let timings = Timings()
         let budget = request.measure ? SnapshotCaptureRequest.measureCapMilliseconds : request.budgetMilliseconds
@@ -615,7 +636,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
             Task {
                 await self.runJobs(
                     request: request, ids: ids, matches: matches, excludedWindowIDs: excludedWindowIDs,
-                    backdropDisplays: backdropDisplays, collector: collector, timings: timings
+                    backdropDisplays: backdropDisplays, onScreen: onScreen, collector: collector, timings: timings
                 )
             }
         }
@@ -625,9 +646,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
         for (id, image) in out.images {
             let frame = request.windows[id] ?? .zero
             let scale = captureScale(request, id: id, frame: frame)
+            let translucent = snapshotLooksTranslucent(samples: snapshotDenseSamples(of: image))
+            if translucent, noteTranslucent(id) {
+                GioLog.record(.debug, "snapshot window translucent id=\(id.pid):\(id.elementID)")
+            }
             snapshots[id] = CapturedSnapshot(
                 id: id, image: image, frame: frame, scale: scale,
-                fill: snapshotContentFill(samples: snapshotContentSamples(of: image))
+                fill: snapshotContentFill(samples: snapshotContentSamples(of: image)),
+                translucent: translucent
             )
         }
         var backdrops: [UInt32: CapturedBackdrop] = [:]
@@ -675,7 +701,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
     @available(macOS 14.0, *)
     private func runJobs(
         request: SnapshotCaptureRequest, ids: [WindowID], matches: [WindowID: SnapshotMatch],
-        excludedWindowIDs: Set<UInt32>, backdropDisplays: [UInt32], collector: Collector,
+        excludedWindowIDs: Set<UInt32>, backdropDisplays: [UInt32], onScreen: [WindowID: Int], collector: Collector,
         timings: Timings
     ) async {
         let managed = Set(ids).union(request.backdropExclusions.keys)
@@ -688,11 +714,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
         // overlay, main window; created lazily, so they may postdate the
         // last fetch): one WindowServer read, a refetch only when one is
         // missing. A captured window is only ever needed itself.
+        let ownWindows = backdropDisplays.isEmpty && onScreen.isEmpty ? [] : windowServerOnScreenWindowIDs(pid: ownPid)
         let needed = backdropDisplays.isEmpty
-            ? captured
-            : captured.union(excludedWindowIDs).union(windowServerOnScreenWindowIDs(pid: ownPid))
+            ? captured.union(ownWindows)
+            : captured.union(excludedWindowIDs).union(ownWindows)
         let fetchBegan = DispatchTime.now().uptimeNanoseconds
-        let lookup = await ensureCache(managed: managed, needed: needed, needsDisplays: !backdropDisplays.isEmpty)
+        let lookup = await ensureCache(
+            managed: managed, needed: needed, needsDisplays: !backdropDisplays.isEmpty || !onScreen.isEmpty
+        )
         timings.setFetch(Double(DispatchTime.now().uptimeNanoseconds - fetchBegan) / 1_000_000, cached: lookup.cached)
         guard let cache = lookup.cache, !collector.isFinished
         else {
@@ -708,6 +737,9 @@ public final class SnapshotCapturer: @unchecked Sendable {
             candidates: own, animated: captured.union(excludedWindowIDs), ownPid: ownPid
         )
         let excluded = excludedIDs.compactMap { cache.windows[$0] }
+        // FX-11: an on-screen capture leaves Gio's own panels (ring, dim,
+        // overlay, main window) out and nothing else.
+        let ownPanels = ownWindows.compactMap { cache.windows[$0] }
 
         struct WindowJob {
             let id: WindowID
@@ -729,9 +761,26 @@ public final class SnapshotCapturer: @unchecked Sendable {
             let frame = request.windows[job.id] ?? .zero
             let scale = captureScale(request, id: job.id, frame: frame)
             let boxed = Box(value: window)
+            let shown = onScreen[job.id].flatMap { index -> (SCDisplay, CGRect)? in
+                guard request.displays.indices.contains(index),
+                      let display = cache.displays[request.displays[index].id]
+                else {
+                    return nil
+                }
+                return (display, snapshotDisplayCrop(window: frame, display: request.displays[index].frame))
+            }
+            let boxedShown = Box(value: shown)
+            let boxedPanels = Box(value: ownPanels)
             Task {
                 let began = DispatchTime.now().uptimeNanoseconds
-                let image = try? await Self.captureWindow(boxed.value, size: frame.size, scale: scale)
+                let image: CGImage?
+                if let (display, crop) = boxedShown.value {
+                    image = try? await Self.captureShown(
+                        display, crop: crop, excluding: boxedPanels.value, size: frame.size, scale: scale
+                    )
+                } else {
+                    image = try? await Self.captureWindow(boxed.value, size: frame.size, scale: scale)
+                }
                 let millis = Double(DispatchTime.now().uptimeNanoseconds - began) / 1_000_000
                 // SM-09: a blank capture (unpainted or stale window) is a miss;
                 // the cache keeps the previous image. SM-10: the sparse grid's
@@ -739,7 +788,11 @@ public final class SnapshotCapturer: @unchecked Sendable {
                 let blank = image.map { captured in
                     snapshotLooksBlank(samples: snapshotSamples(of: captured), dense: { snapshotDenseSamples(of: captured) })
                 } ?? false
-                GioLog.record(.debug, "snapshot window id=\(job.id.pid):\(job.id.elementID) ms=\(Int(millis.rounded())) ok=\(image != nil)")
+                GioLog.record(
+                    .debug,
+                    "snapshot window id=\(job.id.pid):\(job.id.elementID) ms=\(Int(millis.rounded())) ok=\(image != nil)"
+                        + (boxedShown.value != nil ? " shown=true" : "")
+                )
                 if blank, self.noteBlank(job.id) {
                     GioLog.record(.debug, "snapshot window blank id=\(job.id.pid):\(job.id.elementID)")
                 }
@@ -821,8 +874,31 @@ public final class SnapshotCapturer: @unchecked Sendable {
         configuration.width = pixels.width
         configuration.height = pixels.height
         configuration.showsCursor = false
+        configuration.colorSpaceName = snapshotColorSpaceName as CFString
         configuration.capturesShadowsOnly = false
         configuration.ignoreShadowsSingleWindow = true
+        // FX-10: keep the window's own transparency. The default black
+        // background was composited under a see-through window (live: Tern's
+        // translucent pane came out flat grey, the real one shows the
+        // wallpaper through it), so its image never matched it on screen.
+        configuration.backgroundColor = CGColor.clear
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    /// FX-11: the window as the display shows it: a crop of the composited
+    /// display (`crop`, the display's top-left points) without Gio's panels.
+    @available(macOS 14.0, *)
+    private static func captureShown(
+        _ display: SCDisplay, crop: CGRect, excluding panels: [SCWindow], size: CGSize, scale: CGFloat
+    ) async throws -> CGImage {
+        let filter = SCContentFilter(display: display, excludingWindows: panels)
+        let pixels = snapshotPixelSize(points: size, scale: scale)
+        let configuration = SCStreamConfiguration()
+        configuration.sourceRect = crop
+        configuration.width = pixels.width
+        configuration.height = pixels.height
+        configuration.showsCursor = false
+        configuration.colorSpaceName = snapshotColorSpaceName as CFString
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 
@@ -836,6 +912,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         configuration.width = pixels.width
         configuration.height = pixels.height
         configuration.showsCursor = false
+        configuration.colorSpaceName = snapshotColorSpaceName as CFString
         return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
     }
 }
@@ -910,11 +987,20 @@ func snapshotRegionSamples(of image: CGImage, in region: CGRect) -> [UInt32] {
     return snapshotSamples(of: crop)
 }
 
+/// The image drawn into a `width` x `height` bitmap (nearest neighbour) as
+/// packed RGBA in `space`. PF-T (2026-10-15 profile: 13 % of Gio's CPU while
+/// in use): drawing a capture into another colour space converts the whole
+/// image first (12-25 ms for a 3600x2300 capture, once per space and per
+/// crop, and CoreGraphics keeps the converted copy). So the samples are taken
+/// in the image's own colour space and layout (no conversion, ~0.1 ms), and
+/// only those few pixels are converted to `space`: the same pixels, the same
+/// colours, as drawing the whole image there.
 private func snapshotDrawSamples(
     _ image: CGImage, width: Int, height: Int, space: CGColorSpace = CGColorSpaceCreateDeviceRGB()
 ) -> [UInt32] {
     let count = width * height
     var pixels = [UInt8](repeating: 0, count: count * 4)
+    let source = snapshotNativeSamples(image, width: width, height: height) ?? image
     let drawn = pixels.withUnsafeMutableBytes { buffer -> Bool in
         guard let context = CGContext(
             data: buffer.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
@@ -923,7 +1009,7 @@ private func snapshotDrawSamples(
             return false
         }
         context.interpolationQuality = .none
-        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        context.draw(source, in: CGRect(x: 0, y: 0, width: width, height: height))
         return true
     }
     guard drawn else {
@@ -934,6 +1020,24 @@ private func snapshotDrawSamples(
         return UInt32(pixels[base]) << 24 | UInt32(pixels[base + 1]) << 16
             | UInt32(pixels[base + 2]) << 8 | UInt32(pixels[base + 3])
     }
+}
+
+/// The `width` x `height` nearest-neighbour samples of an 8-bit, 32-bit
+/// pixel image as a small image in its own colour space and layout, nil when
+/// the image is in another format (the caller then draws it as before).
+private func snapshotNativeSamples(_ image: CGImage, width: Int, height: Int) -> CGImage? {
+    guard image.bitsPerComponent == 8, image.bitsPerPixel == 32, let space = image.colorSpace,
+          space.model == .rgb,
+          let context = CGContext(
+              data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+              space: space, bitmapInfo: image.bitmapInfo.rawValue
+          )
+    else {
+        return nil
+    }
+    context.interpolationQuality = .none
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    return context.makeImage()
 }
 
 /// SM-20: the app's windows in its `kAXWindowsAttribute` order, mapped to

@@ -187,7 +187,7 @@ final class SettingsPresentationTests: XCTestCase {
         XCTAssertEqual(form.kinds.count, AnimationKind.allCases.count)
         for kind in AnimationKind.allCases {
             let row = form.kinds[kind]!
-            XCTAssertTrue(row.enabled)
+            XCTAssertEqual(row.enabled, kind.enabledByDefault, "\(kind)")
             XCTAssertFalse(row.custom, "\(kind) inherits global")
         }
         XCTAssertEqual(form.openOffset, 24)
@@ -210,6 +210,24 @@ final class SettingsPresentationTests: XCTestCase {
 
         XCTAssertEqual(patched.config.animations, config)
         XCTAssertEqual(patched.warnings, [])
+    }
+
+    func testTheResizeRowIsOffByDefaultAndTurningItOnWritesTheTable() throws {
+        var form = AnimationsForm(config: AnimationsSectionConfig())
+        XCTAssertFalse(form.kinds[.windowResize]!.enabled)
+        XCTAssertTrue(form.kinds[.windowMovement]!.enabled)
+        XCTAssertFalse(form.preview(for: .windowResize).enabled)
+        let untouched = try patchGioConfig("", edits: form.edits).get()
+        XCTAssertFalse(untouched.text.contains("[animations.window-resize]"), "the default writes nothing")
+
+        form.kinds[.windowResize]!.enabled = true
+        let on = try patchGioConfig(untouched.text, edits: form.edits).get()
+        XCTAssertTrue(on.config.animations.resolved(.windowResize).isActive)
+
+        form.kinds[.windowResize]!.enabled = false
+        let back = try patchGioConfig(on.text, edits: form.edits).get()
+        XCTAssertFalse(back.config.animations.resolved(.windowResize).isActive)
+        XCTAssertFalse(back.text.contains("[animations.window-resize]"), "off again is the default: the key goes")
     }
 
     func testTurningCustomOnStartsFromTheGlobalValuesAndOffRemovesTheKeys() throws {
@@ -261,6 +279,27 @@ final class SettingsPresentationTests: XCTestCase {
         edited.adopt(saved: 3)
         XCTAssertEqual(edited.current, 7, "unsaved edits survive a config refresh")
         XCTAssertEqual(edited.saved, 3)
+    }
+
+    /// PA-12: a refresh that brings the same saved value leaves the draft as
+    /// it is (here a value whose `stamp` does not take part in ==).
+    func testAdoptWithAnEqualValueLeavesTheDraftUntouched() {
+        struct Tagged: Equatable {
+            var value: Int
+            var stamp: Int
+            static func == (lhs: Tagged, rhs: Tagged) -> Bool { lhs.value == rhs.value }
+        }
+        var clean = SettingsDraft(saved: Tagged(value: 1, stamp: 1))
+        clean.adopt(saved: Tagged(value: 1, stamp: 2))
+        XCTAssertEqual(clean.saved.stamp, 1)
+        XCTAssertEqual(clean.current.stamp, 1)
+
+        var edited = SettingsDraft(saved: Tagged(value: 1, stamp: 1))
+        edited.current = Tagged(value: 7, stamp: 1)
+        edited.adopt(saved: Tagged(value: 1, stamp: 2))
+        XCTAssertEqual(edited.saved.stamp, 1)
+        XCTAssertEqual(edited.current, Tagged(value: 7, stamp: 1))
+        XCTAssertTrue(edited.isDirty)
     }
 
     func testCommitMakesTheCurrentValueTheSavedOne() {
@@ -323,6 +362,7 @@ final class SettingsPresentationTests: XCTestCase {
     /// TG-02: gesture problems block Apply like any other field.
     func testFocusDraftCountsGestureProblems() {
         var draft = FocusSectionDraft(config: GioConfig())
+        draft.gestures.workspaceSwipe = true
         draft.gestures.overview = true
         draft.gestures.overviewFingers = draft.gestures.workspaceFingers
         XCTAssertEqual(draft.problems, draft.gestures.problems)

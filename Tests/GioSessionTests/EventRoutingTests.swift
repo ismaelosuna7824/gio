@@ -66,6 +66,8 @@ final class EventWorld: @unchecked Sendable {
     var opened: [WindowID] = []
     /// NW-02: follow requests (the focus before the switch).
     var follows: [WindowID?] = []
+    /// FL-01: opted-in background popups that asked to be focused.
+    var arrivalFocus: [WindowID] = []
     /// NA-03: (ids, still registered when reported).
     var closing: [([WindowID], Bool)] = []
     var reflows = 0
@@ -89,6 +91,7 @@ final class EventWorld: @unchecked Sendable {
     var frameReads: [WindowID] = []
     var tileabilityInvalidated: [WindowID] = []
     var titles: [pid_t: String] = [:]
+    var titleReads = 0
     var console: [String] = []
     var logs: [(LogLevel, String)] = []
     var port: FakeEventPort?
@@ -160,7 +163,9 @@ final class EventWorld: @unchecked Sendable {
                 self.closing.append((ids, ids.allSatisfy { self.session.registry.find($0) != nil }))
             },
             followArrival: { self.follows.append($0) },
-            log: { self.logs.append(($0, $1)) }
+            focusArrival: { self.arrivalFocus.append($0) },
+            log: { self.logs.append(($0, $1)) },
+            newWindowPosition: { self.session.config.layout.newWindowPosition }
         )
     }
 
@@ -172,6 +177,7 @@ final class EventWorld: @unchecked Sendable {
                 self.port = port
                 return port
             },
+            ownPID: Self.ownPID,
             runningRegularPIDs: { self.regular },
             isRegularApplication: { self.regular.contains($0) },
             isTapMissing: { self.tapMissing },
@@ -195,7 +201,10 @@ final class EventWorld: @unchecked Sendable {
             isEcho: { id, _, _ in self.echoes.contains(id) },
             invalidateTrust: { self.trustInvalidated.append($0) },
             invalidateTileability: { self.tileabilityInvalidated.append($0) },
-            title: { _ in self.titles.values.first },
+            title: { _ in
+                self.titleReads += 1
+                return self.titles.values.first
+            },
             registry: { self.session.registry },
             console: { self.console.append($0) },
             log: { self.logs.append(($0, $1)) },
@@ -382,6 +391,9 @@ final class DiscoveryServiceTests: XCTestCase {
         world.running = []
         discovery.enumerateAndPlace()
         XCTAssertTrue(world.registered.isEmpty)
+        // PF-Z: a missed terminate must not leave the app's write lane,
+        // name and EnhancedUI state behind for the rest of the session.
+        XCTAssertEqual(world.forgottenApps, [7])
     }
 
     func testRulesAndAdmissionDecideTheMode() {
@@ -676,6 +688,21 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.scheduledReflows, [true])
     }
 
+    /// PF-U: Gio turns `.regular` while its main window is open, so the
+    /// running set, launch and activation all name its own pid. Observing
+    /// it is AX on in-process elements (rule 4: AppKit runs on the calling
+    /// thread and crashes) and subscribes Gio to its own overlay panels.
+    func testOwnPidIsNeverObserved() {
+        world.regular = [7, EventWorld.ownPID]
+        router.syncObservers()
+        send(.appActivated, pid: EventWorld.ownPID)
+        send(.appLaunched, pid: EventWorld.ownPID)
+        scheduler.advance(by: 10)
+
+        XCTAssertFalse(world.port!.attachCalls.contains(EventWorld.ownPID))
+        XCTAssertTrue(world.console.isEmpty, "not a refusal either")
+    }
+
     // MARK: Window events
 
     func testOwnPidWindowsAreNeverRegisteredFromEvents() {
@@ -751,6 +778,60 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.tileabilityInvalidated, [id])
     }
 
+    /// PA-18c: a user drag raises ~60 moved events a second. The first one
+    /// holds the dim, drops trust and asks for the pass that runs after the
+    /// mouse-up; the others are not even read.
+    func testADragIsReadAndRelayoutOncePerDrag() {
+        let trustDrops = world.trustInvalidated.count
+        world.mouseDown = true
+        for _ in 0..<20 {
+            send(.window(.moved), element: element)
+        }
+        XCTAssertEqual(world.frameReads, [id], "one read per drag, not per event")
+        XCTAssertEqual(world.scheduledReflows, [false], "the pass after the mouse-up is still asked for")
+        XCTAssertEqual(world.dragHolds, 1)
+        XCTAssertEqual(world.trustInvalidated.count, trustDrops + 1)
+        XCTAssertEqual(world.zoomForgotten, [id])
+
+        // Released, before the pass: a move is handled in full again.
+        world.mouseDown = false
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.frameReads, [id, id])
+        XCTAssertEqual(world.scheduledReflows, [false, false])
+    }
+
+    func testThePassAfterADragLetsTheNextDragBeNotedAgain() {
+        world.mouseDown = true
+        send(.window(.moved), element: element)
+        send(.window(.moved), element: element)
+        router.releaseDragHold()
+        send(.window(.moved), element: element)
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.frameReads, [id, id])
+        XCTAssertEqual(world.dragHolds, 2)
+        XCTAssertEqual(world.scheduledReflows, [false, false])
+    }
+
+    func testAResizeDuringANotedDragStillInvalidatesTileabilityOnce() {
+        world.mouseDown = true
+        send(.window(.moved), element: element)
+        send(.window(.resized), element: element)
+        send(.window(.resized), element: element)
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.tileabilityInvalidated, [id])
+        XCTAssertEqual(world.frameReads, [id, id])
+    }
+
+    func testEchoSuppressedDragEventsAreNeverNoted() {
+        world.mouseDown = true
+        world.suppressed = [id]
+        send(.window(.moved), element: element)
+        world.suppressed = []
+        send(.window(.moved), element: element)
+        XCTAssertEqual(world.frameReads, [id], "the first event Gio did not cause is read")
+        XCTAssertEqual(world.dragHolds, 1)
+    }
+
     func testMinimizeAndRestore() {
         send(.window(.miniaturized), element: element)
         XCTAssertEqual(world.registered.first?.isMinimized, true)
@@ -762,10 +843,27 @@ final class WindowEventRouterTests: XCTestCase {
     func testTitleUpdatesTheRecordWithoutLoggingIt() {
         world.titles[7] = "new secret"
         send(.window(.titleChanged), element: element)
+        scheduler.advance(by: WindowEventRouter.titleCoalesce)
 
         XCTAssertEqual(world.registered.first?.title, "new secret")
         XCTAssertFalse(world.logs.contains { $0.1.contains("secret") })
         XCTAssertFalse(world.console.contains { $0.contains("secret") })
+    }
+
+    /// PF-W: terminals and pages retitle themselves several times a second
+    /// (spinners, counters), all day. Each change was one AX read into the
+    /// app; now a window's title is read at most once per `titleCoalesce`,
+    /// with the value it has then.
+    func testTitleChangesAreReadOncePerCoalesceWindowWithTheLatestValue() {
+        for step in 0..<10 {
+            world.titles[7] = "secret \(step)"
+            send(.window(.titleChanged), element: element)
+            scheduler.advance(by: 0.1)
+        }
+        XCTAssertEqual(world.titleReads, 1)
+        XCTAssertEqual(world.registered.first?.title, "secret 9")
+        scheduler.advance(by: 10)
+        XCTAssertEqual(world.titleReads, 1, "nothing pending once read")
     }
 
     func testFocusedWindowChangeRequestsAdoption() {
@@ -838,7 +936,7 @@ final class WindowEventRouterTests: XCTestCase {
             snapBack(after: 2)
         }
         XCTAssertEqual(world.registered.first?.mode, .tiled)
-        XCTAssertEqual(world.scheduledReflows.count, 10, "every move is still laid out again")
+        XCTAssertEqual(world.scheduledReflows.count, 6, "the drag asks once, every later move again")
     }
 
     func testForgettingAWindowDropsItsSnapBacks() {

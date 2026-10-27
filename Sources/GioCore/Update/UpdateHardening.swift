@@ -1,17 +1,5 @@
 import Foundation
 
-/// UP-17: the GitHub token only ever goes to the GitHub REST API over
-/// HTTPS (default port, no user info). Release-list requests, asset
-/// downloads and every redirect obey this; anything else is sent without
-/// the token.
-public func updateTokenAllowed(for url: URL?) -> Bool {
-    guard let url, url.scheme?.lowercased() == "https", url.host?.lowercased() == "api.github.com",
-          url.user == nil, url.password == nil else {
-        return false
-    }
-    return url.port == nil || url.port == 443
-}
-
 /// What a staged entry is, for `stagedEntryDecision` (from `lstat`).
 public enum StagedEntryKind: Equatable, Sendable {
     case file

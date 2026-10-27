@@ -58,6 +58,11 @@ final class LeanWriteTests: XCTestCase {
             return vanishOnRead ? nil : size
         }
 
+        func readFrame() throws -> CGRect? {
+            ops.append("readFrame")
+            return vanishOnRead ? nil : CGRect(origin: position, size: size)
+        }
+
         func writePosition(_ point: CGPoint) throws {
             ops.append("writePosition")
             position = landing?(point) ?? point
@@ -86,14 +91,43 @@ final class LeanWriteTests: XCTestCase {
         let io = FakeIO(base)
         let target = CGRect(x: 0, y: 0, width: 900, height: 400)
         try writeFrame(current: base, target: target, verify: true, io: io)
-        XCTAssertEqual(io.ops, ["writePosition", "writeSize", "readPosition", "readSize"])
+        XCTAssertEqual(io.ops, ["writePosition", "writeSize", "readFrame"])
     }
 
     func testShrinkingWriteKeepsSizeFirstOrder() throws {
         let io = FakeIO(base)
         let target = CGRect(x: 0, y: 0, width: 300, height: 200)
         try writeFrame(current: base, target: target, verify: true, io: io)
-        XCTAssertEqual(io.ops, ["writeSize", "writePosition", "readPosition", "readSize"])
+        XCTAssertEqual(io.ops, ["writeSize", "writePosition", "readFrame"])
+    }
+
+    /// PA-18b: a verified write of both attributes reads them back in one
+    /// call (one Accessibility message), not one per attribute.
+    func testVerifyingBothAttributesIsOneRead() throws {
+        let io = FakeIO(base)
+        let target = CGRect(x: 0, y: 0, width: 900, height: 500)
+        try writeFrame(current: base, target: target, verify: true, io: io)
+        XCTAssertEqual(io.ops.filter { $0.hasPrefix("read") }, ["readFrame"])
+    }
+
+    func testBothAttributesMismatchReportsTheLandedFrame() {
+        let io = FakeIO(base)
+        io.landing = { CGPoint(x: $0.x - 50, y: $0.y) }
+        let target = CGRect(x: 0, y: 0, width: 900, height: 400)
+        XCTAssertThrowsError(try writeFrame(current: base, target: target, verify: true, io: io)) { error in
+            XCTAssertEqual(
+                error as? FrameWriteError, .mismatch(actual: CGRect(x: -50, y: 0, width: 900, height: 400))
+            )
+        }
+    }
+
+    func testVanishedDuringABothAttributesVerifyReportsZeroFrame() {
+        let io = FakeIO(base)
+        io.vanishOnRead = true
+        let target = CGRect(x: 0, y: 0, width: 300, height: 200)
+        XCTAssertThrowsError(try writeFrame(current: base, target: target, verify: true, io: io)) { error in
+            XCTAssertEqual(error as? FrameWriteError, .mismatch(actual: .zero))
+        }
     }
 
     func testUnverifiedWriteNeverReadsBack() throws {
@@ -132,6 +166,7 @@ final class LeanWriteTests: XCTestCase {
         final class Failing: FrameAttributeIO {
             func readPosition() throws -> CGPoint? { nil }
             func readSize() throws -> CGSize? { nil }
+            func readFrame() throws -> CGRect? { nil }
             func writePosition(_ point: CGPoint) throws { throw FakeError.boom }
             func writeSize(_ size: CGSize) throws {}
         }

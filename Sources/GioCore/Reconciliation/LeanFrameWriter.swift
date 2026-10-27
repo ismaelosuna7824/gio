@@ -43,6 +43,8 @@ public func planFrameWrite(current: CGRect, target: CGRect, tolerance: CGFloat =
 public protocol FrameAttributeIO {
     func readPosition() throws -> CGPoint?
     func readSize() throws -> CGSize?
+    /// PA-18b: position and size together, for a read-back of both.
+    func readFrame() throws -> CGRect?
     func writePosition(_ point: CGPoint) throws
     func writeSize(_ size: CGSize) throws
 }
@@ -80,13 +82,17 @@ public func writeFrame(
     let checksPosition = plan != .sizeOnly
     let checksSize = plan != .positionOnly
     var actual = current
-    if checksPosition {
+    if checksPosition, checksSize {
+        guard let frame = try io.readFrame() else {
+            throw FrameWriteError.mismatch(actual: .zero)
+        }
+        actual = frame
+    } else if checksPosition {
         guard let position = try io.readPosition() else {
             throw FrameWriteError.mismatch(actual: .zero)
         }
         actual.origin = position
-    }
-    if checksSize {
+    } else {
         guard let size = try io.readSize() else {
             throw FrameWriteError.mismatch(actual: .zero)
         }

@@ -41,6 +41,91 @@ public struct ReconcileFailure: Equatable, Sendable {
     }
 
     public static let frameMismatchKind = "frameMismatch"
+
+    /// MM-11: the app did not answer in time (lane stall `timeout`, or the
+    /// Accessibility call ended with `kAXErrorCannotComplete`, -25204): the
+    /// same write may land a moment later. A refusal (mismatch, not
+    /// settable, other errors) is not transient.
+    public var isTransient: Bool {
+        kind == "timeout" || kind.hasSuffix(",-25204)")
+    }
+}
+
+/// MM-11: a write that failed only because its app was busy is tried again
+/// (the window would otherwise stay where it was, on the wrong display after
+/// a monitor move, until the next action touched it). Retries back off over
+/// `delays` and then stop, so a hung app never loops; a successful write of
+/// the window starts the backoff over.
+public struct TransientWriteRetry: Sendable {
+    /// The first lands after a short busy moment (a display change redraws
+    /// the app); the last gives an app busy for ~3.5 s its window back.
+    public static let delays: [TimeInterval] = [0.5, 1.0, 2.0]
+
+    private var attempts: [WindowID: Int] = [:]
+
+    public init() {}
+
+    /// When to run the next retry pass for `report`'s busy windows, or
+    /// `nil` when none is due (no transient failure, or backoff exhausted).
+    public mutating func settle(_ report: ReconcileReport) -> TimeInterval? {
+        for id in report.applied + report.alreadyCorrect + report.parked {
+            attempts.removeValue(forKey: id)
+        }
+        var next: TimeInterval?
+        for id in report.failed where report.failures[id]?.isTransient == true {
+            let attempt = attempts[id, default: 0]
+            guard attempt < Self.delays.count else {
+                continue
+            }
+            attempts[id] = attempt + 1
+            next = min(next ?? .infinity, Self.delays[attempt])
+        }
+        return next
+    }
+}
+
+/// FX-07: one pass written under a snapshot overlay and its outcome.
+public struct DispatchedOutcome: Sendable {
+    public var report: ReconcileReport
+    public var visible: [WindowID: CGRect]
+    public var parked: [WindowID: ParkedTarget]
+
+    public init(report: ReconcileReport, visible: [WindowID: CGRect], parked: [WindowID: ParkedTarget] = [:]) {
+        self.report = report
+        self.visible = visible
+        self.parked = parked
+    }
+}
+
+/// FX-07: the windows whose last write under the overlay failed only because
+/// their app was busy (`isTransient`), with that pass's target, written
+/// again before the overlay comes down. The busy moment (live: OrbStack
+/// activating, ~200 ms) has usually passed by the end of the flight, while
+/// the backoff retry (`TransientWriteRetry`, 0.5 s) left the window's slot
+/// empty after the hand-over. Passes in dispatch order; a later outcome
+/// wins, so a window a later pass placed is not retried.
+public func retryBeforeHandOver(_ passes: [DispatchedOutcome]) -> ParkingPlan {
+    var retry = ParkingPlan()
+    for pass in passes {
+        let report = pass.report
+        for id in report.applied + report.alreadyCorrect + report.parked + report.vanished + report.deferred {
+            retry.visible.removeValue(forKey: id)
+            retry.parked.removeValue(forKey: id)
+        }
+        for id in report.failed {
+            retry.visible.removeValue(forKey: id)
+            retry.parked.removeValue(forKey: id)
+            guard report.failures[id]?.isTransient == true else {
+                continue
+            }
+            if let target = pass.parked[id] {
+                retry.parked[id] = target
+            } else if let frame = pass.visible[id] {
+                retry.visible[id] = frame
+            }
+        }
+    }
+    return retry
 }
 
 /// `(x,y,w,h)` in whole points; non-finite or absurd values never crash.

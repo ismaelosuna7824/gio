@@ -28,6 +28,9 @@ public struct ActionEffect: Equatable, Sendable {
     /// its usable frame, for `mouse-follows-focus` to put the cursor there
     /// (a focused window takes the cursor after the pass as usual).
     public var warpsToDisplay: CGRect?
+    /// FX-06: a switch to dwindle refused for too many windows (the host
+    /// shows it on screen).
+    public var dwindleRefusal: DwindleRefusal?
 }
 
 /// `SessionHost.apply(_:)`: maps a hotkey action onto the pure Core use
@@ -159,9 +162,9 @@ public enum ActionApplier {
                 ),
                 over: workspace, manager: &manager
             )
-        case .toggleOverview:
-            // The app's panel; `SessionHost.handleCombo` hands it over before
-            // this table, and the session state stays as it is.
+        case .toggleOverview, .toggleLauncher:
+            // The app's panels; `SessionHost.handleCombo` hands them over
+            // before this table, and the session state stays as it is.
             break
         case .focusMonitor(let direction):
             effect.syncsShownWorkspace = toNeighbour(direction, manager: &manager, context: context) {
@@ -268,14 +271,31 @@ public enum ActionApplier {
                 direction, frames: displayFrames(context), geometry: geometry
             ) == .crossedDisplay
         case .toggleWorkspaceLayout:
-            manager.toggleLayout()
+            if !manager.toggleLayout() {
+                effect.dwindleRefusal = dwindleRefusal(manager)
+            }
         case .setWorkspaceLayout(let kind):
-            manager.setLayout(kind)
+            if !manager.setLayout(kind), kind == .dwindle {
+                effect.dwindleRefusal = dwindleRefusal(manager)
+            }
         case .dwindleToggleSplit, .dwindleSwapSplit, .dwindleBalance, .dwindlePreselect, .dwindlePreselectClear:
             // DW-02: dwindle only (`applyDwindle`); a scrolling workspace has no tree.
             break
         }
         return finish(action, effect: effect, startDisplay: startDisplay, manager: manager, context: context)
+    }
+
+    /// FX-04: the workspace stayed scrolling because it holds more windows
+    /// than `[dwindle] max-windows`; logged and returned for the notice.
+    private static func dwindleRefusal(_ manager: WorkspaceManager) -> DwindleRefusal? {
+        guard manager.currentWorkspace().layout == .scrolling, let refusal = manager.dwindleRefusal() else {
+            return nil
+        }
+        GioLog.record(
+            .info,
+            "dwindle refused workspace=\(manager.currentWorkspace().id.rawValue) windows=\(refusal.windows) max=\(refusal.maximum)"
+        )
+        return refusal
     }
 
     /// The effects every action reports once its change is stored.
@@ -402,7 +422,7 @@ public enum ActionApplier {
             break
         case .workspace, .moveToWorkspace, .focusWorkspaceDown, .focusWorkspaceUp,
              .moveWindowToWorkspaceDown, .moveWindowToWorkspaceUp, .toggleFloating, .fullscreen,
-             .toggleOverview, .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
+             .toggleOverview, .toggleLauncher, .focusMonitor, .moveColumnToMonitor, .moveWindowToMonitor, .moveWorkspaceToMonitor,
              .moveColumnToWorkspace, .moveColumnToWorkspaceDown, .moveColumnToWorkspaceUp,
              .focusWorkspacePrevious, .moveWorkspaceDown, .moveWorkspaceUp,
              .toggleWorkspaceLayout, .setWorkspaceLayout:

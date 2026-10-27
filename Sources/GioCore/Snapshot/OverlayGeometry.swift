@@ -89,6 +89,11 @@ public struct LayerVelocity: Equatable, Sendable {
     }
 }
 
+public func overlayLayerVelocity(origin velocity: CGPoint, flipped: Bool) -> LayerVelocity {
+    let vertical = flipped ? -velocity.y : velocity.y
+    return LayerVelocity(position: CGVector(dx: velocity.x, dy: vertical), size: .zero)
+}
+
 /// One layer's flight: where it started, where it lands and how fast it was
 /// going when this flight (re)started. Each axis (x, y, width, height) is
 /// Gio's own spring (`SpringParameters.state`), the model the AX renderer
@@ -214,6 +219,21 @@ public func overlayBackdropMask(holes: [CGRect], in display: CGRect, flipped: Bo
     mask.addRect(CGRect(origin: .zero, size: display.size))
     mask.addPath(merged)
     return mask
+}
+
+/// WP-04: the holes one flight cuts, sorted by window: every hole in the
+/// backdrop (`backdrop`), the entry holes (windows opening in this pass) in
+/// the image layers as well (`images`). Each set is masked with
+/// `overlayBackdropMask`.
+public struct OverlayHoles: Equatable, Sendable {
+    public let backdrop: [CGRect]
+    public let images: [CGRect]
+
+    public init(holes: [WindowID: CGRect] = [:], entries: Set<WindowID> = []) {
+        let ids = holes.keys.sorted()
+        backdrop = ids.map { holes[$0]! }
+        images = ids.filter(entries.contains).map { holes[$0]! }
+    }
 }
 
 // MARK: shadow, ring and dim

@@ -55,20 +55,20 @@ final class FloatingManagementTests: XCTestCase {
         var cache = TileabilityCache()
         var probes = 0
         let id = window(1).id
-        XCTAssertTrue(cache.resolve(id) { probes += 1; return true })
-        XCTAssertTrue(cache.resolve(id) { probes += 1; return false })
+        XCTAssertEqual(cache.resolve(id, now: 0) { probes += 1; return .tileable }, .tileable)
+        XCTAssertEqual(cache.resolve(id, now: 0) { probes += 1; return .notTileable }, .tileable)
         XCTAssertEqual(probes, 1)
     }
 
     func testCacheInvalidateOneReprobesOnlyThatWindow() {
         var cache = TileabilityCache()
         let a = window(1).id, b = window(2).id
-        _ = cache.resolve(a) { true }
-        _ = cache.resolve(b) { true }
+        _ = cache.resolve(a, now: 0) { .tileable }
+        _ = cache.resolve(b, now: 0) { .tileable }
         cache.invalidate(a)
         var probedA = false, probedB = false
-        _ = cache.resolve(a) { probedA = true; return false }
-        _ = cache.resolve(b) { probedB = true; return false }
+        _ = cache.resolve(a, now: 0) { probedA = true; return .notTileable }
+        _ = cache.resolve(b, now: 0) { probedB = true; return .notTileable }
         XCTAssertTrue(probedA)
         XCTAssertFalse(probedB)
     }
@@ -76,16 +76,16 @@ final class FloatingManagementTests: XCTestCase {
     func testCacheInvalidateAll() {
         var cache = TileabilityCache()
         let a = window(1).id
-        _ = cache.resolve(a) { true }
+        _ = cache.resolve(a, now: 0) { .tileable }
         cache.invalidateAll()
-        XCTAssertFalse(cache.resolve(a) { false })
+        XCTAssertEqual(cache.resolve(a, now: 0) { .notTileable }, .notTileable)
     }
 
     func testCacheRetainDropsVanishedWindows() {
         var cache = TileabilityCache()
         let a = window(1).id, b = window(2).id
-        _ = cache.resolve(a) { true }
-        _ = cache.resolve(b) { true }
+        _ = cache.resolve(a, now: 0) { .tileable }
+        _ = cache.resolve(b, now: 0) { .tileable }
         cache.retain(keeping: [a])
         XCTAssertNil(cache.verdict(for: b))
         XCTAssertEqual(cache.verdict(for: a), true)
@@ -98,7 +98,7 @@ final class FloatingManagementTests: XCTestCase {
         try registry.register(window(1))
         try registry.register(window(2))
         var cache = TileabilityCache()
-        let modes = reconcileTileability(registry: registry, cache: &cache) { $0.elementID == 1 }
+        let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { $0.elementID == 1 ? .tileable : .notTileable }.modes
         XCTAssertEqual(modes[window(1).id], .tiled)
         XCTAssertEqual(modes[window(2).id], .floating)
         XCTAssertEqual(registry.find(window(2).id)?.floatReason, .notResizable)
@@ -109,7 +109,7 @@ final class FloatingManagementTests: XCTestCase {
         try registry.register(window(1, mode: .floating, reason: .rule))
         var cache = TileabilityCache()
         var probed = false
-        let modes = reconcileTileability(registry: registry, cache: &cache) { _ in probed = true; return true }
+        let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in probed = true; return .tileable }.modes
         XCTAssertFalse(probed)
         XCTAssertEqual(modes[window(1).id], .floating)
         XCTAssertEqual(registry.find(window(1).id)?.floatReason, .rule)
@@ -123,7 +123,7 @@ final class FloatingManagementTests: XCTestCase {
         try registry.setFloating(.appControlled, for: window(1).id)
         var cache = TileabilityCache()
         var probed = false
-        let modes = reconcileTileability(registry: registry, cache: &cache) { _ in probed = true; return true }
+        let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in probed = true; return .tileable }.modes
         XCTAssertFalse(probed)
         XCTAssertEqual(modes[window(1).id], .floating)
         var session = CommandSession()
@@ -137,7 +137,7 @@ final class FloatingManagementTests: XCTestCase {
         let registry = WindowRegistry()
         try registry.register(window(1, mode: .floating, reason: .notResizable))
         var cache = TileabilityCache()
-        let modes = reconcileTileability(registry: registry, cache: &cache) { _ in true }
+        let modes = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in .tileable }.modes
         XCTAssertEqual(modes[window(1).id], .tiled)
         XCTAssertEqual(registry.find(window(1).id)?.mode, .tiled)
         XCTAssertNil(registry.find(window(1).id)?.floatReason)
@@ -148,8 +148,8 @@ final class FloatingManagementTests: XCTestCase {
         try registry.register(window(1))
         var cache = TileabilityCache()
         var probes = 0
-        _ = reconcileTileability(registry: registry, cache: &cache) { _ in probes += 1; return true }
-        _ = reconcileTileability(registry: registry, cache: &cache) { _ in probes += 1; return true }
+        _ = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in probes += 1; return .tileable }
+        _ = reconcileTileability(registry: registry, cache: &cache, now: 0) { _ in probes += 1; return .tileable }
         XCTAssertEqual(probes, 1)
     }
 

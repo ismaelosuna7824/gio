@@ -10,13 +10,13 @@ Contents: [Overview](#overview) · [Versioning](#versioning) · [One-time setup:
 
 | Piece | What it does |
 | --- | --- |
-| Actions > **Prepare Release** (`.github/workflows/prepare-release.yml`) | The only thing a maintainer starts by hand, on `dev`: choose the bump, **patch** (0.1.0 → 0.1.1), **minor** (→ 0.2.0) or **major** (→ 1.0.0). It opens (or updates) the pull request `dev` → `main` titled `Release v<next>`, labeled `release:<bump>`, whose body lists the commits since the latest release and becomes the release notes. Merging it is the release. |
-| `.github/workflows/release.yml` | On every push to `main` (the merge of a release pull request), four jobs: **version** (read-only: the latest stable `v*` tag, the merged pull request's `release:*` label, no label meaning patch, and its number), **test** (`swift test`, no secrets; a failure stops the release), **build** (in the `release` environment: a Release build with the Hardened Runtime signed with the **Apple Development** identity from the environment secrets, then the signed DMG, uploaded as an artifact) and **publish** (the only job with `contents: write`; downloads the artifact, checks its SHA-256 and runs `gh release create`, which creates the tag on the merged commit, with the pull request's body as notes). Releases are always stable (a prerelease version only exists as a dry run). The macOS jobs run on the `xcode-27` runner image (arm64, macOS 27) with its newest stable Xcode: older toolchains (`macos-15`'s Xcode 16.4) do not compile the sources and cannot build the Icon Composer app icon. |
+| Actions > **Prepare Release** (`.github/workflows/prepare-release.yml`) | The only thing a maintainer starts by hand, on `dev`: choose the bump, **patch** (0.1.0 → 0.1.1), **minor** (→ 0.2.0) or **major** (→ 1.0.0). It opens (or updates) the pull request `dev` → `main` titled `Release v<next>`, labeled `release:<bump>`, whose body becomes the release notes: a fixed first line (Apple silicon, macOS 13 or later, not notarized, see Install in the README), then the subjects of the non-merge commits since the latest release, without internal ones (subjects starting with `docs(odd)`, `test`, `ci`, `chore` or `build`; `feat`, `fix`, `perf`, `refactor` and other `docs` stay). Merging it is the release. |
+| `.github/workflows/release.yml` | On every push to `main` (the merge of a release pull request), four jobs: **version** (read-only: the latest stable `v*` tag, the merged pull request's `release:*` label, no label meaning patch, and its number), **test** (`swift test`, no secrets; a failure stops the release; it restores, never saves, the newest SwiftPM `.build` cache that CI saved with the same Xcode), **build** (in the `release` environment, no cache: a stripped Release build with the Hardened Runtime signed with the **Apple Development** identity from the environment secrets, then the signed DMG, uploaded as the artifact `Gio-<version>`, and the build's `Gio.app.dSYM` zipped as the artifact `Gio-<version>-dSYM`) and **publish** (the only job with `contents: write`; downloads the DMG artifact, checks its SHA-256 and runs `gh release create`, which creates the tag on the merged commit, with the pull request's body as notes). Releases are always stable (a prerelease version only exists as a dry run). The macOS jobs run on the `xcode-27` runner image (arm64, macOS 27) with its newest stable Xcode: older toolchains (`macos-15`'s Xcode 16.4) do not compile the sources and cannot build the Icon Composer app icon. |
 | `scripts/release-version.sh` | The version step of both workflows: on a merge to `main`, the latest tag plus the bump (`patch`/`minor`/`major`) to `tag`/`version`/`publish`/`prerelease`; a dispatch input for a dry run. Refuses another branch, an unknown bump, a malformed tag or version, and a commit that already carries a `v*` tag (a re-run never publishes twice), without echoing the input. Tests: `scripts/test-release-version.sh`. |
 | `scripts/make-dmg.sh` | Verifies the app signature (`codesign --verify --deep --strict`, prints the team), requires an Apple-issued identity and the Hardened Runtime flag, checks the bundle version, writes `Gio-<version>.dmg` (volume `Gio <version>`: `Gio.app` plus an `Applications` link), signs the DMG with the app's identity and verifies that signature, then writes `Gio-<version>.dmg.sha256` (`<hex>  Gio-<version>.dmg`). |
 | Release assets | `Gio-<version>.dmg`, `Gio-<version>.dmg.sha256` (what the in-app updater reads), and `Gio.dmg`, the same DMG under a fixed name so `https://github.com/ismaelosuna7824/gio/releases/latest/download/Gio.dmg` always serves the newest stable release (the landing page's Download buttons). The release body is the release pull request's body, or GitHub's generated notes when it is empty. |
 
-There is no Apple Developer Program membership, so builds are **not notarized**. They are signed with the maintainer's `Apple Development` certificate so the code signature's designated requirement stays the same across versions, which keeps the Accessibility and Screen Recording grants across updates. Builds are Apple silicon only (`ARCHS = arm64`).
+There is no Apple Developer Program membership, so builds are **not notarized**. They are signed with the maintainer's `Apple Development` certificate so the code signature's designated requirement stays the same across versions, which keeps the Accessibility and Screen Recording grants across updates. Builds are Apple silicon only (`ARCHS = arm64`). The `Release` configuration dead-strips and strips the binary (`DEAD_CODE_STRIPPING`, `DEPLOYMENT_POSTPROCESSING`, `STRIP_INSTALLED_PRODUCT`, `STRIP_STYLE = all`) before Xcode signs it; its symbols are in `Gio.app.dSYM` (`DEBUG_INFORMATION_FORMAT = dwarf-with-dsym`) next to `Gio.app`, which the release workflow keeps as a workflow artifact for symbolicating crash reports (it is not a release asset).
 
 ## Versioning
 
@@ -29,7 +29,7 @@ One source: the `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` build settings
 | `GioUpdateRepository` | `GIO_UPDATE_REPOSITORY` | `ismaelosuna7824/gio` | `ismaelosuna7824/gio` |
 
 - `Config/Version.xcconfig` is the project-level base configuration; the target's `Signing.xcconfig` and your git-ignored `Signing.local.xcconfig` can override it, and `xcodebuild` command-line settings override everything (that is how CI sets the release values).
-- The Xcode build phase **Stamp dev version** (`scripts/stamp-dev-version.sh`) only acts when `MARKETING_VERSION` is still `0.0.0-dev`: it writes `<last tag>+dev` (for example `0.2.0+dev`) into the built Info.plist. The `+dev` build metadata does not change semver precedence, so a dev build is never offered the release it was built after, and `isDevBuildVersion` (GioCore) recognizes it.
+- The Xcode build phase **Stamp dev version** (`scripts/stamp-dev-version.sh`, the target's first phase) writes the Info.plist the target processes (`INFOPLIST_FILE = $(DERIVED_FILE_DIR)/Gio-Info.plist`) from the tracked `Gio.xcodeproj/Gio-Info.plist`; edit the tracked file, never the generated one. When `MARKETING_VERSION` is still `0.0.0-dev` it sets `<last tag>+dev` (for example `0.2.0+dev`); otherwise (releases) and without a tag the copy is unchanged. The `+dev` build metadata does not change semver precedence, so a dev build is never offered the release it was built after, and `isDevBuildVersion` (GioCore) recognizes it. The phase runs only when one of its inputs changes (the source plist, the script, `.git/HEAD`, `.git/logs/HEAD`, `.git/packed-refs`, `.git/refs/tags`: a checkout, commit, merge, fetch or new tag) and rewrites its output only when the content differs, so an incremental build does not re-process the Info.plist or re-sign the app. Tests: `scripts/test-stamp-dev-version.sh`.
 - In code, read `gioVersion` (GioCore): the bundle's `CFBundleShortVersionString`, else the build-time `gioBuildVersion` (`0.0.0-dev`) for SwiftPM builds such as the `gio` CLI. Never hard-code a version string.
 
 ## One-time setup: signing secrets
@@ -97,7 +97,7 @@ LIVE PENDING until the first hardened release: launch, Accessibility, Screen Rec
 
 1. Work lands on `dev` (the default branch); its CI must be green.
 2. **Actions > Prepare Release > Run workflow**, branch `dev`, pick the bump (**patch**, **minor** or **major**). Or from a terminal: `gh workflow run prepare-release.yml --repo ismaelosuna7824/gio --ref dev -f bump=minor`. It opens the pull request `Release v0.2.0` (`dev` → `main`); running it again with another bump relabels and retitles the same pull request.
-3. Edit the pull request's body if you want different release notes, then merge it with **Create a merge commit**.
+3. Edit the pull request's body if you want different release notes (for example to drop a commit the filter kept, or to add one it dropped), then merge it with **Create a merge commit**.
 4. The merge starts **Release**: `gh run watch --repo ismaelosuna7824/gio` (or the **Actions** tab). The version is computed again at the merge from the latest tag and the label, so the title never decides it. The release appears under **Releases** with `Gio-0.2.0.dmg`, `Gio-0.2.0.dmg.sha256` and `Gio.dmg`, and the apps out there offer it within a day.
 5. If the run fails, nothing is published and no tag exists: fix on `dev` and prepare a new release pull request (or re-run the failed jobs when the failure was the runner's).
 
@@ -116,11 +116,11 @@ LIVE PENDING until the first hardened release: launch, Accessibility, Screen Rec
   ```
 
   `make-dmg.sh` refuses a bundle whose version differs from the argument, an ad-hoc signed or non-hardened bundle, and with `GIO_EXPECTED_TEAM` set, one signed by another team. It signs the DMG with the app's identity from your keychains (`GIO_KEYCHAIN` selects one keychain, as in CI); macOS may ask once to allow `codesign` to use the key.
-- **Version step tests**: `scripts/test-release-version.sh` (no network, no secrets).
+- **Version step tests**: `scripts/test-release-version.sh` (no network, no secrets). **Dev version stamp tests**: `scripts/test-stamp-dev-version.sh` (throwaway git repositories under `TMPDIR`).
 
 ## What users see the first time
 
-Because the app is not notarized, the first install from a browser download goes through Gatekeeper once:
+Because the app is not notarized, the first install from a browser download goes through Gatekeeper once (the same steps, for users, are under [Install](../README.md#install) in the README and the user guide; keep them in sync):
 
 1. Download `Gio-<version>.dmg` from the release page (optionally check it: `shasum -a 256 -c Gio-<version>.dmg.sha256` in the download folder).
 2. Open the DMG and drag **Gio** onto **Applications**.
@@ -158,7 +158,7 @@ Renewal steps (before the expiry date):
 
 ## Public repository
 
-The repository is public (since RL-10): the app finds releases through `GioUpdateRepository` and the public GitHub API without a token, the workflow publishes with the job's own `GITHUB_TOKEN`, and anyone can download the DMG without signing in. The updater's token field only matters for a private fork.
+The repository is public (since RL-10): the app finds releases through `GioUpdateRepository` and the public GitHub API anonymously (UP-18 removed the updater's token support), the workflow publishes with the job's own `GITHUB_TOKEN`, and anyone can download the DMG without signing in.
 
 ## Troubleshooting
 

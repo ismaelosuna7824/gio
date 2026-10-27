@@ -4,22 +4,13 @@ import XCTest
 
 /// SM-27: a layer whose frame changes size never stretches its window. The
 /// images are drawn at their own size, anchored top-left and clipped to the
-/// animated frame; the start-size image crossfades into the target-size one
-/// along the resize; without a target-size image the start image stays
-/// unscaled over a fill of its most common colour (growing; SM-30) or is
-/// cropped (shrinking).
+/// animated frame; SM-32: the target-size image replaces the start-size one
+/// at the start of the resize (no dissolve); without a target-size image the
+/// start image stays unscaled over a fill of its most common colour
+/// (growing; SM-30) or is cropped (shrinking).
 final class OverlayResizeTests: XCTestCase {
     private let column = CGSize(width: 800, height: 900)
     private let maximized = CGSize(width: 1600, height: 900)
-
-    private func track(from: CGSize, to: CGSize, dx: CGFloat = 0) -> FlightTrack {
-        FlightTrack(
-            start: LayerGeometry(position: CGPoint(x: 400, y: 450), bounds: CGRect(origin: .zero, size: from)),
-            end: LayerGeometry(
-                position: CGPoint(x: to.width / 2 + dx, y: to.height / 2), bounds: CGRect(origin: .zero, size: to)
-            )
-        )
-    }
 
     // MARK: mode
 
@@ -32,9 +23,9 @@ final class OverlayResizeTests: XCTestCase {
         )
     }
 
-    func testBothSizesCrossfadeOneSizeFillsWhenGrowingAndCropsWhenShrinking() {
-        XCTAssertEqual(snapshotResizeMode(image: column, target: maximized, from: column, to: maximized), .crossfade)
-        XCTAssertEqual(snapshotResizeMode(image: maximized, target: column, from: maximized, to: column), .crossfade)
+    func testBothSizesSwapOneSizeFillsWhenGrowingAndCropsWhenShrinking() {
+        XCTAssertEqual(snapshotResizeMode(image: column, target: maximized, from: column, to: maximized), .swap)
+        XCTAssertEqual(snapshotResizeMode(image: maximized, target: column, from: maximized, to: column), .swap)
         XCTAssertEqual(snapshotResizeMode(image: column, target: nil, from: column, to: maximized), .fill)
         XCTAssertEqual(snapshotResizeMode(image: maximized, target: nil, from: maximized, to: column), .crop)
         XCTAssertEqual(
@@ -55,119 +46,43 @@ final class OverlayResizeTests: XCTestCase {
         XCTAssertEqual(snapshotResizeMode(image: column, target: nil, from: maximized, to: maximized), .fill)
     }
 
-    // MARK: crossfade curve
+    // MARK: faces
 
-    func testTheCrossfadeIsDoneAtSixtyPercentOfTheResizeAndEasesBothEnds() {
-        XCTAssertEqual(overlayCrossfadeSpan, 0.6)
-        XCTAssertEqual(overlayCrossfadeWeight(progress: 0), 0)
-        XCTAssertEqual(overlayCrossfadeWeight(progress: -0.2), 0)
-        XCTAssertEqual(overlayCrossfadeWeight(progress: 0.3), 0.5, accuracy: 1e-12)
-        XCTAssertEqual(overlayCrossfadeWeight(progress: 0.6), 1)
-        XCTAssertEqual(overlayCrossfadeWeight(progress: 1.3), 1)
-        XCTAssertLessThan(overlayCrossfadeWeight(progress: 0.01), 0.002, "no visible start: zero slope")
-        XCTAssertGreaterThan(overlayCrossfadeWeight(progress: 0.59), 0.998, "no visible stop: zero slope")
-        var previous = -1.0
-        for step in 0...100 {
-            let weight = overlayCrossfadeWeight(progress: Double(step) / 100)
-            XCTAssertGreaterThanOrEqual(weight, previous)
-            previous = weight
-        }
-    }
-
-    func testProgressFollowsTheLargestSizeChangeAndClamps() {
-        let grow = track(from: column, to: maximized, dx: 300)
-        var geometry = grow.start
-        XCTAssertEqual(overlayResizeProgress(track: grow, geometry: geometry), 0)
-        geometry.bounds.size.width = 1200
-        geometry.position.x = 9999
-        XCTAssertEqual(overlayResizeProgress(track: grow, geometry: geometry), 0.5, "size, not position")
-        geometry.bounds.size.width = 1650
-        XCTAssertEqual(overlayResizeProgress(track: grow, geometry: geometry), 1, "overshoot clamps")
-        geometry.bounds.size.width = 700
-        XCTAssertEqual(overlayResizeProgress(track: grow, geometry: geometry), 0, "a carried velocity away clamps")
-        XCTAssertEqual(overlayResizeProgress(track: grow, geometry: grow.end), 1)
-    }
-
-    func testWithoutASizeChangeProgressFollowsTheMoveAndANullTrackIsDone() {
-        let move = track(from: column, to: column, dx: 200)
-        var geometry = move.start
-        geometry.position.x += 50
-        XCTAssertEqual(overlayResizeProgress(track: move, geometry: geometry), 0.25, accuracy: 1e-12)
-        let still = track(from: column, to: column)
-        XCTAssertEqual(overlayResizeProgress(track: still, geometry: still.start), 1)
-    }
-
-    // MARK: crossfade state
-
-    func testANewTargetImageFadesInOverTheOpaqueStartImage() {
-        let base = OverlayCrossfade()
+    /// Live 2026-10-15 (60 fps recording of Alt+F on Postman): the dissolve
+    /// between the start image and the image of the new size showed both
+    /// layouts on top of each other for a few frames, which reads as a blink.
+    /// The image of the new size replaces the start image at once: no frame
+    /// ever mixes two images of different sizes.
+    func testShowingTheImageOfTheNewSizeHidesEveryOtherFaceAtOnce() {
+        let base = OverlayFaces()
         XCTAssertEqual(base.count, 1)
-        XCTAssertEqual(base.opacities(at: 0), [1])
-        XCTAssertEqual(base.opacities(at: 1), [1])
-        let fade = base.retargeted(at: 0, toward: 1)
-        XCTAssertEqual(fade.count, 2)
-        XCTAssertEqual(fade.opacities(at: 0), [1, 0])
-        XCTAssertEqual(fade.opacities(at: 0.3)[1], 0.5, accuracy: 1e-12)
-        XCTAssertEqual(fade.opacities(at: 0.6), [1, 1])
-        XCTAssertEqual(fade.opacities(at: 1), [1, 1], "the last frame shows the target image (no pop at the hand-off)")
-        XCTAssertEqual(base.retargeted(at: 0, toward: 0), base, "the start image is the target: nothing fades")
+        XCTAssertEqual(base.opacities, [1])
+        let grow = base.showing(1)
+        XCTAssertEqual(grow.count, 2)
+        XCTAssertEqual(grow.opacities, [0, 1], "no intermediate opacity: never two layouts at once")
+        XCTAssertEqual(grow.showing(0).opacities, [1, 0], "back to the start image, at once")
+        XCTAssertEqual(grow.showing(2).opacities, [0, 0, 1], "a third image replaces the shown one")
+        XCTAssertEqual(base.showing(0), base, "the start image is the target: nothing changes")
     }
 
-    func testARetargetBackToTheStartImageFadesOutFromWhereItIs() {
-        let fade = OverlayCrossfade().retargeted(at: 0, toward: 1)
-        let back = fade.retargeted(at: 0.3, toward: 0)
-        XCTAssertEqual(back.opacities(at: 0)[1], 0.5, accuracy: 1e-12, "continuous: no pop")
-        XCTAssertEqual(back.opacities(at: 1), [1, 0])
-    }
-
-    func testARetargetToTheSameImageContinuesTheFade() {
-        let fade = OverlayCrossfade().retargeted(at: 0, toward: 1)
-        let now = fade.opacities(at: 0.15)[1]
-        let onward = fade.retargeted(at: 0.15, toward: 1)
-        XCTAssertEqual(onward.opacities(at: 0)[1], now, accuracy: 1e-12)
-        XCTAssertEqual(onward.opacities(at: 1), [1, 1])
-    }
-
-    func testAThirdImageFadesInOnTopAndTheOthersStay() {
-        let fade = OverlayCrossfade().retargeted(at: 0, toward: 1)
-        let third = fade.retargeted(at: 0.3, toward: 2)
-        XCTAssertEqual(third.count, 3)
-        let start = third.opacities(at: 0)
-        XCTAssertEqual(start[0], 1)
-        XCTAssertEqual(start[1], 0.5, accuracy: 1e-12)
-        XCTAssertEqual(start[2], 0)
-        XCTAssertEqual(third.opacities(at: 1)[2], 1)
-        let middle = fade.retargeted(at: 0.3, toward: 1).retargeted(at: 0.6, toward: 0)
-        XCTAssertEqual(middle.opacities(at: 1), [1, 0], "every face above the target fades out")
-    }
-
-    func testAGrowingTargetThatCoversTheFlightIsOpaqueUnderTheFadingStartImage() {
-        // Live: growing with the target image fading in on top showed the
-        // backdrop (a black box) beside the start image until the fade ended.
-        let grow = OverlayCrossfade().retargeted(at: 0, toward: 1, underlay: true)
-        XCTAssertEqual(grow.order, [1, 0], "the target image is drawn under the start image")
-        XCTAssertEqual(grow.opacities(at: 0), [1, 1], "every point of the growing frame is covered from the first frame")
-        XCTAssertEqual(grow.opacities(at: 0.3)[0], 0.5, accuracy: 1e-12)
-        XCTAssertEqual(grow.opacities(at: 0.6), [0, 1])
-        XCTAssertEqual(grow.opacities(at: 1), [0, 1], "the last frame shows the target image alone")
-    }
-
-    func testShrinkingBackOverAnUnderlaidTargetFadesTheStartImageInOnTop() {
-        let grow = OverlayCrossfade().retargeted(at: 0, toward: 1, underlay: true)
-        let back = grow.retargeted(at: 0.3, toward: 0)
-        XCTAssertEqual(back.order, [1, 0])
-        XCTAssertEqual(back.opacities(at: 0)[0], 0.5, accuracy: 1e-12, "continuous: no pop")
-        XCTAssertEqual(back.opacities(at: 0)[1], 1, "the larger image keeps covering the shrinking frame")
-        XCTAssertEqual(back.opacities(at: 1), [1, 1])
-        let again = back.retargeted(at: 0.3, toward: 1)
-        XCTAssertEqual(again.opacities(at: 1), [0, 1], "growing again fades the image above it out")
-    }
-
-    func testOnlyAnImageAsLargeAsEveryFrameOfTheFlightCoversIt() {
-        XCTAssertTrue(overlayFaceCovers(image: maximized, start: column, end: maximized))
-        XCTAssertFalse(overlayFaceCovers(image: column, start: maximized, end: column), "shrinking: the start image covers")
-        XCTAssertTrue(overlayFaceCovers(image: CGSize(width: maximized.width - 1, height: maximized.height), start: column, end: maximized),
-                      "within the cache's 2 pt")
+    /// Live 2026-10-15 (third recording, after SM-32/33): un-maximizing showed
+    /// the narrow image over a flat fill across the rest of the still-wide
+    /// frame for the first frames, a dark block that read as a blink. A
+    /// larger image that covers the whole flight stays under the new one
+    /// (side by side, never blended), so the part of the frame being cut
+    /// off keeps real content instead of a fill.
+    func testShrinkingKeepsTheLargerImageUnderTheNewOne() {
+        XCTAssertEqual(overlayUnderlay(sizes: [maximized, column], shown: 1, start: maximized, end: column), 0)
+        XCTAssertNil(overlayUnderlay(sizes: [column, maximized], shown: 1, start: column, end: maximized), "growing: the new image covers")
+        XCTAssertNil(overlayUnderlay(sizes: [column], shown: 0, start: maximized, end: column), "no larger image: the fill")
+        let shrink = OverlayFaces().showing(1, over: 0)
+        XCTAssertEqual(shrink.opacities, [1, 1])
+        XCTAssertEqual(shrink.order, [0, 1], "the larger image under the new one")
+        XCTAssertEqual(shrink.underlay, 0)
+        let backAgain = shrink.showing(1).showing(0, over: 1)
+        XCTAssertEqual(backAgain.order.last, 0, "the shown face is always on top")
+        XCTAssertEqual(backAgain.order.dropLast().last, 1)
+        XCTAssertEqual(OverlayFaces().showing(1).underlay, nil)
     }
 
     func testWithoutAnImageOfTheNewSizeTheClosestFaceWins() {
@@ -175,49 +90,6 @@ final class OverlayResizeTests: XCTestCase {
         XCTAssertEqual(overlayClosestFace([column, maximized], to: CGSize(width: 900, height: 900)), 0)
         XCTAssertEqual(overlayClosestFace([column], to: maximized), 0)
         XCTAssertEqual(overlayClosestFace([column, column], to: column), 0, "ties keep the lower face")
-    }
-
-    // MARK: keyframes
-
-    func testOpacityKeyframesFollowTheSpringAndLandOnTheTarget() throws {
-        let grow = track(from: column, to: maximized)
-        let keyframes = flightKeyframes(track: grow, spring: .niri, rate: 120)
-        let values = overlayCrossfadeKeyframes(
-            OverlayCrossfade().retargeted(at: 0, toward: 1), track: grow, keyframes: keyframes
-        )
-        XCTAssertEqual(values.count, 2)
-        XCTAssertEqual(values[0], Array(repeating: 1, count: keyframes.times.count), "the base stays opaque")
-        let fade = values[1]
-        XCTAssertEqual(fade.count, keyframes.times.count)
-        XCTAssertEqual(fade.first, 0)
-        XCTAssertEqual(fade.last, 1)
-        for (index, value) in fade.enumerated().dropFirst() {
-            XCTAssertGreaterThanOrEqual(value, fade[index - 1] - 1e-12)
-        }
-        let opaque = try XCTUnwrap(fade.firstIndex { $0 >= 1 })
-        XCTAssertLessThan(
-            keyframes.times[opaque], 0.35, "the spring covers 60 % of the resize early: the target image shows for most of the flight"
-        )
-        XCTAssertGreaterThan(fade.filter { $0 > 0 && $0 < 1 }.count, 4, "a dissolve over several frames, not a pop")
-    }
-
-    func testARetargetMidFlightKeepsTheOpacityContinuous() {
-        let grow = track(from: column, to: maximized)
-        let crossfade = OverlayCrossfade().retargeted(at: 0, toward: 1)
-        let elapsed = 0.03
-        let now = grow.state(at: elapsed, spring: .niri).geometry
-        let progress = overlayResizeProgress(track: grow, geometry: now)
-        let before = crossfade.opacities(at: progress)
-        // Alt+L during the maximize: same size, the column moves on.
-        var end = grow.end
-        end.position.x += 400
-        let next = grow.retargeted(to: end, at: elapsed, spring: .niri)
-        let continued = crossfade.retargeted(at: progress, toward: 1)
-        let values = overlayCrossfadeKeyframes(
-            continued, track: next, keyframes: flightKeyframes(track: next, spring: .niri, rate: 120)
-        )
-        XCTAssertEqual(values[1].first ?? -1, before[1], accuracy: 1e-9)
-        XCTAssertEqual(values[1].last, 1)
     }
 
     // MARK: drawing
@@ -292,21 +164,14 @@ final class OverlayResizeTests: XCTestCase {
 
     // MARK: SM-30 fresh face
 
-    /// A fresh capture of the landing size arrives mid-flight: it goes on top
-    /// and its fade is timed, not tied to the resize (nearly done by then);
-    /// afterwards a retarget starts from it, continuous.
-    func testAFreshFaceGoesOnTopOpaqueAndARetargetContinuesFromIt() {
-        let fade = OverlayCrossfade().retargeted(at: 0, toward: 1, underlay: true)
-        let fresh = fade.freshened(at: 0.3)
+    /// A fresh capture of the landing size arrives mid-flight: it goes on top,
+    /// opaque (the overlay fades it in over the shown image of the same size);
+    /// a later retarget shows one face alone again.
+    func testAFreshFaceGoesOnTopOpaqueAndARetargetShowsOneFaceAlone() {
+        let fresh = OverlayFaces().showing(1).freshened()
         XCTAssertEqual(fresh.count, 3)
-        XCTAssertEqual(fresh.order, [1, 0, 2], "on top of every face")
-        let held = fresh.opacities(at: 0)
-        XCTAssertEqual(held[0], 0.5, accuracy: 1e-12, "the faces under it keep where they were")
-        XCTAssertEqual(held[2], 1)
-        XCTAssertEqual(fresh.opacities(at: 0.9), held, "nothing else fades along the resize")
-        let back = fresh.retargeted(at: 0.95, toward: 0)
-        XCTAssertEqual(back.opacities(at: 0)[2], 1, "a retarget starts where the fresh face is")
-        XCTAssertEqual(back.opacities(at: 1)[2], 0, "and fades it out like any face above the target")
+        XCTAssertEqual(fresh.opacities, [0, 1, 1], "on top, the shown face stays under it")
+        XCTAssertEqual(fresh.showing(0).opacities, [1, 0, 0])
     }
 
     func testAFaceIsTheImageAtItsCapturedSizeWithItsFill() {

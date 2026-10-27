@@ -11,23 +11,36 @@ import Foundation
 /// stayed where it was asked to be. If both edges moved the window was
 /// pushed (position clamping), which says nothing about its minimum size.
 /// A window that landed smaller, or the same size somewhere else, is never
-/// learned from. Returns 0 for a dimension without evidence, nil when there
+/// learned from; neither is one that grew in one dimension while the other
+/// landed smaller: a screen constrained it (MM-11: a window sent to a
+/// taller display kept its top at the other display's visible top and came
+/// back wider). FX-05: a request below `minimumEvidenceExtent` says nothing
+/// on its axis (a 1 pt dwindle tile came back at the window's column
+/// width). Returns 0 for a dimension without evidence, nil when there
 /// is none at all. Works in either vertical orientation.
 public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat = 1) -> CGSize? {
     func clamped(
         _ requestedMin: CGFloat, _ requestedMax: CGFloat, _ actualMin: CGFloat, _ actualMax: CGFloat
     ) -> CGFloat {
+        guard requestedMax - requestedMin >= minimumEvidenceExtent else {
+            return 0
+        }
         let grew = (actualMax - actualMin) - (requestedMax - requestedMin) > tolerance
         let anchored = abs(actualMin - requestedMin) <= tolerance || abs(actualMax - requestedMax) <= tolerance
         return grew && anchored ? actualMax - actualMin : 0
     }
-    guard requested.isFinite, actual.isFinite else {
+    guard requested.isFinite, actual.isFinite,
+          requested.width - actual.width <= tolerance, requested.height - actual.height <= tolerance
+    else {
         return nil
     }
     let width = clamped(requested.minX, requested.maxX, actual.minX, actual.maxX)
     let height = clamped(requested.minY, requested.maxY, actual.minY, actual.maxY)
     return width > 0 || height > 0 ? CGSize(width: width, height: height) : nil
 }
+
+/// FX-05: the smallest request a clamp is learned from.
+public let minimumEvidenceExtent: CGFloat = 100
 
 private extension CGRect {
     var isFinite: Bool {
@@ -114,6 +127,20 @@ public struct MinimumSizeBook: Equatable, Sendable {
             return nil
         }
         return learn(id, requested: requested, actual: actual)
+    }
+
+    /// BUG-3: `actual` is a clamp of `requested` that the window's known
+    /// minimum already accounts for (each clamped dimension within
+    /// `tolerance` of it): the app sits at its minimum because the layout
+    /// could not give it more (a crowded dwindle tree), not taking its frame
+    /// back. The caller neither counts it as a snap-back nor relayouts.
+    public func explains(_ id: WindowID, requested: CGRect, actual: CGRect, tolerance: CGFloat = 1) -> Bool {
+        guard let known = sizes[id],
+              let clamp = learnedMinimum(requested: requested, actual: actual, tolerance: tolerance)
+        else {
+            return false
+        }
+        return clamp.width <= known.width + tolerance && clamp.height <= known.height + tolerance
     }
 
     public mutating func forget(_ id: WindowID) {

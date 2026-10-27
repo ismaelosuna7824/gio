@@ -43,6 +43,9 @@ public final class FocusCoordinator: @unchecked Sendable {
         /// The pid owning the topmost on-screen window at a point.
         public var topWindowOwnerPID: (CGPoint) -> pid_t?
         public var warpCursor: (CGPoint) -> Void
+        /// What the click at this point landed on (one WindowServer query,
+        /// `clickTarget`): WC-13 the Dock or menu bar, WC-16 the clicked app.
+        public var clickTarget: (CGPoint) -> ClickTarget
         public var mouseFollowsFocus: () -> Bool
         public var centerMode: () -> CenterFocusedColumnMode
         public var publishFocusRing: () -> Void
@@ -58,6 +61,9 @@ public final class FocusCoordinator: @unchecked Sendable {
         /// WC-11: the focused window is a background native tab: it becomes
         /// its group's front tab and takes the slot. True when it switched.
         public var bringTabToFront: (WindowID) -> Bool
+        /// MM-12: the activated window is an admission float that now reads
+        /// as a normal window: it rejoined the grid (the caller reflows).
+        public var promoteAdmissionFloat: (WindowID, AXUIElement) -> Bool
 
         public init(
             isShuttingDown: @escaping () -> Bool, isMouseDown: @escaping () -> Bool,
@@ -74,6 +80,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             isVisibleInViewport: @escaping (WindowID) -> Bool?,
             topWindowOwnerPID: @escaping (CGPoint) -> pid_t?,
             warpCursor: @escaping (CGPoint) -> Void,
+            clickTarget: @escaping (CGPoint) -> ClickTarget = { _ in ClickTarget(onSystemUI: false, ownerPID: nil) },
             mouseFollowsFocus: @escaping () -> Bool,
             centerMode: @escaping () -> CenterFocusedColumnMode,
             publishFocusRing: @escaping () -> Void, reflowAll: @escaping () -> Void,
@@ -82,7 +89,8 @@ public final class FocusCoordinator: @unchecked Sendable {
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
             allowsWindowWork: @escaping () -> Bool = { true },
-            bringTabToFront: @escaping (WindowID) -> Bool = { _ in false }
+            bringTabToFront: @escaping (WindowID) -> Bool = { _ in false },
+            promoteAdmissionFloat: @escaping (WindowID, AXUIElement) -> Bool = { _, _ in false }
         ) {
             self.isShuttingDown = isShuttingDown
             self.isMouseDown = isMouseDown
@@ -101,6 +109,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.isVisibleInViewport = isVisibleInViewport
             self.topWindowOwnerPID = topWindowOwnerPID
             self.warpCursor = warpCursor
+            self.clickTarget = clickTarget
             self.mouseFollowsFocus = mouseFollowsFocus
             self.centerMode = centerMode
             self.publishFocusRing = publishFocusRing
@@ -111,6 +120,7 @@ public final class FocusCoordinator: @unchecked Sendable {
             self.now = now
             self.allowsWindowWork = allowsWindowWork
             self.bringTabToFront = bringTabToFront
+            self.promoteAdmissionFloat = promoteAdmissionFloat
         }
     }
 
@@ -174,18 +184,35 @@ public final class FocusCoordinator: @unchecked Sendable {
         }
     }
 
-    /// Main thread (tap): a mouse-down. A click is the user choosing the
+    /// Tap thread (PF-AB): a mouse-down. A click is the user choosing the
     /// focus: any pending keyboard intent is dropped on the session queue.
+    /// WC-13/WC-16: there, before the activation it causes arrives, the
+    /// click is marked with what it landed on: the Dock or the menu bar (no
+    /// window click) or the app whose window it hit.
     public func recordClick(at location: CGPoint) {
+        let click = MouseClick(location: location, time: context.now())
         clickLock.lock()
-        tappedClick = MouseClick(location: location, time: context.now())
+        tappedClick = click
         clickLock.unlock()
         scheduler.async { [weak self] in
-            self?.focusIntent.cancel()
+            guard let self else {
+                return
+            }
+            focusIntent.cancel()
+            let target = context.clickTarget(location)
+            clickLock.lock()
+            if tappedClick == click {
+                tappedClick?.onSystemUI = target.onSystemUI
+                tappedClick?.ownerPID = target.ownerPID
+            }
+            clickLock.unlock()
+            if target.onSystemUI {
+                context.log(.debug, "focus click on system UI x=\(Int(location.x)) y=\(Int(location.y))")
+            }
         }
     }
 
-    /// Main thread (tap). Hands the latest pointer location to the session
+    /// Tap thread (PF-AB). Hands the latest pointer location to the session
     /// queue, coalesced to one look per 30 ms.
     public func pointerMoved(_ location: CGPoint) {
         hoverLock.lock()
@@ -262,6 +289,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// focused-window event of one click therefore adopt once.
     public func requestAdoption(_ source: FocusSource, pid: pid_t, element: AXUIElement?) {
         guard context.allowsWindowWork() else {
+            if source != .focusChanged {
+                logDrop(source, subject: "pid=\(pid)", reason: "window work not allowed")
+            }
             return
         }
         // Gio's own window (main window, launcher) is never a tiling focus.
@@ -277,9 +307,11 @@ public final class FocusCoordinator: @unchecked Sendable {
         let event = FocusEvent(source: source, pid: pid, element: element)
         switch focusSettle.request(event, click: currentClick()) {
         case .adoptNow(let event):
-            if let element = focusedElement(for: event, fresh: false) {
-                adoptResolved(element, event: event)
+            guard let element = focusedElement(for: event, fresh: false) else {
+                logDrop(event.source, subject: "pid=\(event.pid)", reason: "focused window unreadable")
+                return
             }
+            adoptResolved(element, event: event)
         case .wait(let delay):
             scheduleFocusPoll(after: delay)
         case .coalesced:
@@ -328,7 +360,8 @@ public final class FocusCoordinator: @unchecked Sendable {
         var frame: CGRect?
         if let known {
             frame = context.frame(known)
-            matches = focusMatchesClick(frame: frame, click: click.location)
+            // WC-16: a click that brought another app forward handed off.
+            matches = clickExplainsFocus(click, focusPID: event.pid, frame: frame)
         } else if element != nil {
             // Unknown window: single-window admission decides, nothing to compare.
             matches = true
@@ -367,9 +400,13 @@ public final class FocusCoordinator: @unchecked Sendable {
     /// slot first (whatever the intent says) and the slot is written to it.
     private func adoptResolved(_ element: AXUIElement, event: FocusEvent) {
         guard context.allowsWindowWork() else {
+            logDrop(event.source, subject: "pid=\(event.pid)", reason: "window work not allowed")
             return
         }
-        guard event.pid == context.frontmostPID() else {
+        let frontmost = context.frontmostPID()
+        guard event.pid == frontmost else {
+            let frontmostLabel = frontmost.map(String.init) ?? "none"
+            logDrop(event.source, subject: "pid=\(event.pid) frontmost=\(frontmostLabel)", reason: "app not frontmost")
             return
         }
         guard let id = context.knownWindow(element, event.pid) else {
@@ -378,13 +415,17 @@ public final class FocusCoordinator: @unchecked Sendable {
             return
         }
         if context.isMinimized(id) {
+            logDrop(event.source, subject: "id=\(id.pid):\(id.elementID)", reason: "window minimized")
             return
         }
         let switchedTab = context.bringTabToFront(id)
+        // MM-12: a window floated at admission that now reads as a normal
+        // window rejoins the grid; the reflow places it.
+        let promoted = context.promoteAdmissionFloat(id, element)
         // Trailing activation events of a focus Gio just moved must not undo it.
         if focusIntent.shouldIgnoreAdoption(of: id, now: context.now()) {
             context.log(.debug, "focus adopt ignored (superseded by keyboard intent) id=\(id.pid):\(id.elementID)")
-            if switchedTab {
+            if switchedTab || promoted {
                 context.reflowAll()
             }
             return
@@ -393,9 +434,13 @@ public final class FocusCoordinator: @unchecked Sendable {
             return
         }
         adoptFocus(id, source: event.source)
-        if switchedTab || context.pendingScroll() != nil {
+        if switchedTab || promoted || context.pendingScroll() != nil {
             context.reflowAll()
         }
+    }
+
+    private func logDrop(_ source: FocusSource, subject: String, reason: String) {
+        context.log(.debug, "focus dropped source=\(source.rawValue) \(subject) reason=\(reason)")
     }
 
     private func revealOnOtherWorkspace(_ id: WindowID, source: FocusSource) -> Bool {
@@ -429,11 +474,12 @@ public final class FocusCoordinator: @unchecked Sendable {
         focusIntent.request(context.currentWorkspace().focusedWindow, now: context.now())
     }
 
-    /// TG-03: a trackpad scroll settled on another column: the next pass
-    /// raises its window like a keyboard focus change (niri moves the focus
-    /// with the gesture), without centering (the snap chose the offset) or a
-    /// cursor warp (the hand is on the trackpad, not on the pointer).
-    public func requestGestureIntent() {
+    /// The next pass focuses and raises the current workspace's focused
+    /// window like a keyboard focus change, without centering or a cursor
+    /// warp. TG-03: a trackpad scroll settled on another column (the snap
+    /// chose the offset; the hand is on the trackpad, not on the pointer).
+    /// FL-01: an opted-in background popup arrived (the pointer stays put).
+    public func requestUncenteredIntent() {
         focusIntent.request(context.currentWorkspace().focusedWindow, now: context.now())
     }
 
@@ -565,8 +611,9 @@ public final class FocusCoordinator: @unchecked Sendable {
     }
 
     private func hoveredWindow(at location: CGPoint) -> WindowID? {
-        // Cheap geometry first; the window-server lookup only near a managed window.
-        guard hoverFrames.values.contains(where: { $0.contains(location) }) else {
+        // PF-AA: cheap geometry first; the WindowServer lookup only when a
+        // managed window other than the focused one is under the pointer.
+        guard hoverNeedsLookup(at: location, frames: hoverFrames, focused: hoverFocused()) else {
             return nil
         }
         return hoverTarget(
@@ -575,13 +622,18 @@ public final class FocusCoordinator: @unchecked Sendable {
         )
     }
 
+    /// The focused window as hover sees it: the logical focus, when its app
+    /// is frontmost.
+    private func hoverFocused() -> WindowID? {
+        let frontPID = context.frontmostPID()
+        return context.currentWorkspace().focusedWindow.flatMap { $0.pid == frontPID ? $0 : nil }
+    }
+
     private func fireHoverFocus() {
         guard !context.isShuttingDown() else {
             return
         }
-        let frontPID = context.frontmostPID()
-        let logical = context.currentWorkspace().focusedWindow
-        let focused = logical.flatMap { $0.pid == frontPID ? $0 : nil }
+        let focused = hoverFocused()
         guard let id = hoverFocus.due(
             now: context.now(),
             buttonDown: context.isMouseDown(), focused: focused

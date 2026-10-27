@@ -40,19 +40,6 @@ final class UpdateControllerTests: XCTestCase {
         }
     }
 
-    final class FakeTokens: UpdateTokenStoring, @unchecked Sendable {
-        var token: String?
-        func read() -> String? { token }
-        func save(_ token: String) -> Bool {
-            self.token = token
-            return true
-        }
-        func clear() -> Bool {
-            token = nil
-            return true
-        }
-    }
-
     /// A virtual clock the fakes share.
     final class Clock: @unchecked Sendable {
         private let lock = NSLock()
@@ -68,7 +55,6 @@ final class UpdateControllerTests: XCTestCase {
     private let source = FakeSource()
     private let preparer = FakePreparer()
     private let installer = FakeInstaller()
-    private let tokens = FakeTokens()
     private var quits = 0
     private let clock = Clock()
     private var now: Date {
@@ -100,11 +86,35 @@ final class UpdateControllerTests: XCTestCase {
         return UpdateController(
             dependencies: UpdateDependencies(
                 runningVersion: version, source: source, preparer: preparer, installer: installer,
-                tokens: tokens, eligibility: { eligibility }, waitPIDs: { [111, 222] },
+                eligibility: { eligibility }, waitPIDs: { [111, 222] },
                 now: { clock.now }
             ),
             defaults: defaults, quit: { [unowned self] in quits += 1 }
         )
+    }
+
+    /// PA-16: the install eligibility (code-signature and folder facts) is
+    /// read on first use, not when the controller is made at launch.
+    func testEligibilityIsReadOnFirstUseOnly() {
+        final class Counter: @unchecked Sendable {
+            var calls = 0
+        }
+        let counter = Counter()
+        let updates = UpdateController(
+            dependencies: UpdateDependencies(
+                runningVersion: "0.2.0", source: source, preparer: preparer, installer: installer,
+                eligibility: {
+                    counter.calls += 1
+                    return .notifyOnly(.buildFolder)
+                },
+                waitPIDs: { [] }
+            ),
+            defaults: defaults, quit: {}
+        )
+        XCTAssertEqual(counter.calls, 0)
+        XCTAssertEqual(updates.eligibility, .notifyOnly(.buildFolder))
+        _ = updates.presentation
+        XCTAssertEqual(counter.calls, 1)
     }
 
     func testManualCheckFindsAnUpdateAndRemembersTheTime() async {
@@ -210,18 +220,6 @@ final class UpdateControllerTests: XCTestCase {
         await updates.updateAndRestart()
         XCTAssertEqual(updates.state, .failed(.installerFailed("spawn error 1"), update: updates.state.update))
         XCTAssertEqual(quits, 0)
-    }
-
-    func testTokenIsSavedAndClearedButNeverExposed() {
-        let updates = controller()
-        XCTAssertFalse(updates.hasToken)
-        XCTAssertTrue(updates.saveToken("  fake-test-token \n"))
-        XCTAssertTrue(updates.hasToken)
-        XCTAssertEqual(tokens.token, "fake-test-token")
-        XCTAssertFalse(updates.saveToken("   "))
-        updates.clearToken()
-        XCTAssertFalse(updates.hasToken)
-        XCTAssertNil(tokens.token)
     }
 
     func testCLICheckAnswersFromABackgroundThread() async {

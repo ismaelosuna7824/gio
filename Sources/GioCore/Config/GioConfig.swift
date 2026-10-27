@@ -33,6 +33,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// DW-03 `default-layout`: the layout new workspaces start with;
     /// consumed by `WorkspaceManager.applyLayoutDefaults`.
     public var defaultLayout: WorkspaceLayoutKind
+    /// `new-window-position`: where a live arrival's column lands in a
+    /// scrolling strip; consumed by `placeArrival` through `DiscoveryService`.
+    public var newWindowPosition: NewWindowPosition
 
     public init(
         gaps: CGFloat = 8,
@@ -45,7 +48,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         maximizeSingleWindow: Bool = true,
         presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights,
         alwaysCenterSingleColumn: Bool = false,
-        defaultLayout: WorkspaceLayoutKind = .scrolling
+        defaultLayout: WorkspaceLayoutKind = .scrolling,
+        newWindowPosition: NewWindowPosition = .end
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -58,24 +62,29 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
         self.defaultLayout = defaultLayout
+        self.newWindowPosition = newWindowPosition
     }
 }
 
 /// DW-03 `[dwindle]`: consumed by the dwindle engine (`makeLayoutConfig`)
-/// and the tree's insertion (`layoutDefaults`).
+/// and the tree's insertion and size limit (`layoutDefaults`).
 public struct DwindleSectionConfig: Equatable, Sendable {
     public static let splitRatioRange = 0.1...1.9
     public static let splitWidthMultiplierRange = 0.1...10.0
+    public static let maxWindowsRange = 1...32
 
     /// `default-split-ratio`: a new split's ratio (the first, existing
     /// window's share times two; 1 = half and half).
     public var defaultSplitRatio: CGFloat
     /// `split-width-multiplier`: side by side when `width >= height * m`.
     public var splitWidthMultiplier: CGFloat
+    /// FX-04 `max-windows`: the most windows a dwindle workspace holds.
+    public var maxWindows: Int
 
-    public init(defaultSplitRatio: CGFloat = 1, splitWidthMultiplier: CGFloat = 1) {
+    public init(defaultSplitRatio: CGFloat = 1, splitWidthMultiplier: CGFloat = 1, maxWindows: Int = 6) {
         self.defaultSplitRatio = defaultSplitRatio
         self.splitWidthMultiplier = splitWidthMultiplier
+        self.maxWindows = maxWindows
     }
 }
 
@@ -197,7 +206,7 @@ public struct GioConfig: Sendable {
     public var animations: AnimationsSectionConfig
     /// NF-01: consumed by the session host (focus ring overlay).
     public var focusRing: FocusRingSectionConfig
-    /// NF-06: which focus indicator runs (dim by default) and its strength.
+    /// NF-06: which focus indicator runs (the ring by default, NF-08) and the dim strength.
     public var focus: FocusSectionConfig
     public var logging: LoggingSectionConfig
     /// Ordered file bindings; applied over dispatcher defaults. A combo set
@@ -245,7 +254,7 @@ public struct GioConfig: Sendable {
 
     /// DW-03: what `WorkspaceManager.applyLayoutDefaults` receives.
     public var layoutDefaults: WorkspaceLayoutDefaults {
-        WorkspaceLayoutDefaults(kind: layout.defaultLayout, splitRatio: dwindle.defaultSplitRatio)
+        WorkspaceLayoutDefaults(kind: layout.defaultLayout, splitRatio: dwindle.defaultSplitRatio, maxWindows: dwindle.maxWindows)
     }
 
     /// Engine input, independent of any display: a fraction stays a
@@ -283,21 +292,57 @@ public struct GioConfig: Sendable {
     }
 }
 
+/// PA-12: written out because `keybindings` holds tuples, which are not
+/// Equatable; they compare element-wise, in order. Every stored property
+/// takes part (`GioConfigEqualityTests` counts them).
+extension GioConfig: Equatable {
+    public static func == (lhs: GioConfig, rhs: GioConfig) -> Bool {
+        guard lhs.layout == rhs.layout, lhs.behavior == rhs.behavior, lhs.animations == rhs.animations,
+              lhs.focusRing == rhs.focusRing, lhs.focus == rhs.focus, lhs.logging == rhs.logging,
+              lhs.unboundKeys == rhs.unboundKeys, lhs.rules == rhs.rules, lhs.workspaces == rhs.workspaces,
+              lhs.dwindle == rhs.dwindle, lhs.gestures == rhs.gestures
+        else {
+            return false
+        }
+        return lhs.keybindings.elementsEqual(rhs.keybindings) { $0.0 == $1.0 && $0.1 == $1.1 }
+    }
+}
+
 public func defaultGioConfig() -> GioConfig {
     GioConfig()
 }
 
+/// S6: the outcome of loading config.toml for the UI. `rejected`: the file
+/// had errors, so none of it applies (custom shortcuts included) and the
+/// defaults run; `messages` are then the errors. Otherwise `messages` are the
+/// warnings of a file that still applies.
+public struct ConfigLoadStatus: Equatable, Sendable {
+    public var messages: [String]
+    public var rejected: Bool
+
+    public init(messages: [String] = [], rejected: Bool = false) {
+        self.messages = messages
+        self.rejected = rejected
+    }
+}
+
 /// Missing file means first run: silent defaults. Present-but-invalid means
 /// defaults plus the error messages — an invalid config never breaks the WM.
-public func loadGioConfig(at path: String? = nil) -> (config: GioConfig, messages: [String]) {
+public func loadGioConfigReport(at path: String? = nil) -> (config: GioConfig, status: ConfigLoadStatus) {
     let resolved = path ?? (FileManager.default.homeDirectoryForCurrentUser.path + "/.config/gio/config.toml")
     guard let text = try? String(contentsOfFile: resolved, encoding: .utf8) else {
-        return (defaultGioConfig(), [])
+        return (defaultGioConfig(), ConfigLoadStatus())
     }
     switch parseGioConfig(text) {
     case .success(let (parsed, warnings)):
-        return (parsed, warnings)
+        return (parsed, ConfigLoadStatus(messages: warnings))
     case .failure(let errors):
-        return (defaultGioConfig(), errors.messages)
+        return (defaultGioConfig(), ConfigLoadStatus(messages: errors.messages, rejected: true))
     }
+}
+
+/// `loadGioConfigReport` without the rejected flag (CLI, reload, doctor).
+public func loadGioConfig(at path: String? = nil) -> (config: GioConfig, messages: [String]) {
+    let report = loadGioConfigReport(at: path)
+    return (report.config, report.status.messages)
 }

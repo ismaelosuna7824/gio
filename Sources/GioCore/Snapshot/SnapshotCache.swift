@@ -5,6 +5,14 @@ import Foundation
 // the image so Core stays free of platform image types; the session stores
 // CGImages. Session queue only, no locking.
 
+/// PF-AH: every capture comes back in this one colour space, the one the
+/// overlay panels are drawn in, so Core Animation never converts an image on
+/// the main thread at commit. A window captured on one display and flown on
+/// another (another colour profile) cost ~23 ms of CMS conversion per image
+/// per flight there; the WindowServer now matches the panel to each display
+/// on the GPU instead.
+public let snapshotColorSpaceName = CGColorSpace.displayP3 as String
+
 public struct SnapshotCacheEntry<Image> {
     public let image: Image
     /// Frame the window had when captured (Cocoa).
@@ -17,10 +25,13 @@ public struct SnapshotCacheEntry<Image> {
     /// SM-27/SM-30: the fill a resize shows where the frame outgrows the
     /// image (`snapshotContentFill`); nil for a see-through capture.
     public let fill: ThemeColor?
+    /// FX-08: part of the window is see-through (`snapshotLooksTranslucent`);
+    /// its layer fades out at the hand-off.
+    public let translucent: Bool
 
     public init(
         image: Image, frame: CGRect, capturedAt: TimeInterval, lastUsed: TimeInterval, pixels: Int,
-        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil
+        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil, translucent: Bool = false
     ) {
         self.image = image
         self.frame = frame
@@ -29,6 +40,7 @@ public struct SnapshotCacheEntry<Image> {
         self.pixels = pixels
         self.resolution = resolution
         self.fill = fill
+        self.translucent = translucent
     }
 
     /// SM-27: the image as a layer draws it, at the size it was captured at.
@@ -111,8 +123,19 @@ public let snapshotMaxAge: TimeInterval = 180
 public let snapshotSoftAge: TimeInterval = 30
 
 /// SM-09: the per-display backdrop (desktop, icons, unmanaged windows) is
-/// re-captured after this age, or sooner when the unmanaged window set changes.
+/// re-captured after this age, or sooner when the unmanaged windows on its
+/// display change (PF-AL: no sooner than `snapshotBackdropMinAge`).
 public let snapshotBackdropMaxAge: TimeInterval = 300
+
+/// PF-AL: youngest backdrop a change of the unmanaged windows on its
+/// display re-captures. Live, Chrome's omnibox popups (managed floating
+/// windows, kept in the backdrop) changed the fingerprint on most
+/// keystrokes: 50 backdrop captures an hour, p50 2 s apart, ~27 % of every
+/// captured pixel. A burst now costs at most one capture per display per
+/// interval; the change is remembered and captured once the backdrop is
+/// this old. A wallpaper, Space or display change (`markBackdropDirty`)
+/// is not limited.
+public let snapshotBackdropMinAge: TimeInterval = 30
 
 /// Why a capture ran: the settle refresh, a dirty signal, or a debug use.
 public enum SnapshotCaptureReason: String, Equatable, Sendable {
@@ -140,12 +163,43 @@ public func snapshotBackdropUsable<Image>(
     now - entry.capturedAt <= maxAge
 }
 
+/// PF-AL: whether a run captures one display's backdrop (`entry`, nil when
+/// none was captured). A settle run captures a missing or expired one, and
+/// one whose display's unmanaged windows changed since it was captured once
+/// it is `snapshotBackdropMinAge` old; any run one marked dirty (wallpaper,
+/// Space, display parameters), however young.
+public func snapshotBackdropDue<Image>(
+    _ entry: SnapshotBackdropEntry<Image>?, markedDirty: Bool, unmanagedChanged: Bool, settle: Bool,
+    now: TimeInterval
+) -> Bool {
+    guard let entry else {
+        return settle
+    }
+    if markedDirty {
+        return true
+    }
+    guard settle else {
+        return false
+    }
+    return !snapshotBackdropUsable(entry, now: now)
+        || (unmanagedChanged && now - entry.capturedAt >= snapshotBackdropMinAge)
+}
+
+/// PF-AL: `snapshot backdrop unmanaged changed display=X,Y wait=S.S`, the
+/// unmanaged windows on the display at origin X,Y changed; its backdrop is
+/// captured by the first settle run after `wait` seconds (debug, once per
+/// change until that capture).
+public func snapshotBackdropChangedLogLine(display: CGRect, wait: TimeInterval) -> String {
+    "snapshot backdrop unmanaged changed display=\(Int(display.minX)),\(Int(display.minY)) "
+        + "wait=\(String(format: "%.1f", wait))"
+}
+
 func snapshotSameSize(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
     abs(a.width - b.width) <= tolerance && abs(a.height - b.height) <= tolerance
 }
 
 /// SM-11: the image a flight uses. SM-27: with the image of the target size
-/// (crossfaded to) and how the layer shows the window without stretching it.
+/// (shown instead, SM-32) and how the layer shows the window without stretching it.
 public struct SnapshotCacheUse<Image> {
     public let entry: SnapshotCacheEntry<Image>
     /// Captured at another size than the start frame (only while younger
@@ -225,7 +279,7 @@ public struct SnapshotCache<Image> {
     /// replaces the least recently used one of the window.
     public mutating func store(
         _ id: WindowID, image: Image, frame: CGRect, pixels: Int, at now: TimeInterval,
-        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil
+        resolution: SnapshotResolution = .full, fill: ThemeColor? = nil, translucent: Bool = false
     ) {
         var list = entries[id] ?? []
         list.removeAll { snapshotSameSize($0.frame, frame, tolerance: 2) }
@@ -236,7 +290,7 @@ public struct SnapshotCache<Image> {
         }
         list.append(SnapshotCacheEntry(
             image: image, frame: frame, capturedAt: now, lastUsed: now, pixels: pixels, resolution: resolution,
-            fill: fill
+            fill: fill, translucent: translucent
         ))
         entries[id] = list
     }
@@ -574,17 +628,21 @@ public func snapshotCaptureSet(
 /// size (none at all, only another size, or one past `maxAge`). The soft
 /// age is the refresh set's rule, not the strip's. Whether a window was
 /// tried before does not matter; `excluded` (known blank/unmatchable
-/// parked windows) never is. Strip order.
+/// parked windows) never is. Strip order. PF-AK: a typing mark the typing
+/// rule holds (`snapshotTypingHolds`, `typedAt`) does not count, and the
+/// window is captured only for a missing image or a new size.
 public func snapshotStripSelection<Image>(
     cache: SnapshotCache<Image>, strip: [(id: WindowID, frame: CGRect)],
-    dirty: [WindowID: SnapshotCaptureReason], excluded: Set<WindowID>, now: TimeInterval,
+    dirty: [WindowID: SnapshotCaptureReason], typedAt: [WindowID: TimeInterval] = [:],
+    excluded: Set<WindowID>, now: TimeInterval,
     maxAge: TimeInterval = snapshotMaxAge, tolerance: CGFloat = 2
 ) -> [(id: WindowID, cause: SnapshotRefreshCause)] {
     strip.compactMap { item in
         guard !excluded.contains(item.id) else {
             return nil
         }
-        if let reason = dirty[item.id] {
+        let held = typingHeld(item.id, cache: cache, dirty: dirty, typedAt: typedAt, now: now)
+        if let reason = dirty[item.id], !held {
             return (item.id, .dirty(reason))
         }
         guard cache.entry(item.id) != nil else {
@@ -592,6 +650,9 @@ public func snapshotStripSelection<Image>(
         }
         guard let entry = cache.entry(item.id, matching: item.frame, tolerance: tolerance) else {
             return (item.id, .sizeChanged)
+        }
+        if held {
+            return nil
         }
         if now - entry.capturedAt > maxAge {
             return (item.id, .stale)
@@ -619,19 +680,25 @@ public enum SnapshotRefreshCause: Equatable, Sendable {
 /// frame). Wanted order. A missing image that was marked dirty (a new
 /// window) reports the mark, so the run is logged with its reason. SM-22:
 /// a window in `fullResolution` (a shown strip) whose image of its size is
-/// half resolution is captured again; any other keeps it.
+/// half resolution is captured again; any other keeps it. PF-AK: a typing
+/// mark the typing rule holds (`snapshotTypingHolds`, `typedAt`) does not
+/// count, and the window is captured only for a missing image or a new size.
 public func snapshotRefreshSelection<Image>(
     cache: SnapshotCache<Image>, wanted: [(id: WindowID, frame: CGRect)],
-    dirty: [WindowID: SnapshotCaptureReason], now: TimeInterval,
+    dirty: [WindowID: SnapshotCaptureReason], typedAt: [WindowID: TimeInterval] = [:], now: TimeInterval,
     softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2, fullResolution: Set<WindowID> = []
 ) -> [(id: WindowID, cause: SnapshotRefreshCause)] {
     wanted.compactMap { item in
+        let held = typingHeld(item.id, cache: cache, dirty: dirty, typedAt: typedAt, now: now)
         guard cache.entry(item.id) != nil else {
-            return (item.id, dirty[item.id].map { .dirty($0) } ?? .missing)
+            return (item.id, held ? .missing : dirty[item.id].map { .dirty($0) } ?? .missing)
         }
         // SM-11: an image of either kept size counts.
         guard let entry = cache.entry(item.id, matching: item.frame, tolerance: tolerance) else {
             return (item.id, .sizeChanged)
+        }
+        if held {
+            return nil
         }
         if let reason = dirty[item.id] {
             return (item.id, .dirty(reason))
@@ -644,6 +711,18 @@ public func snapshotRefreshSelection<Image>(
         }
         return nil
     }
+}
+
+/// PF-AK: the window's typing mark is not due yet.
+private func typingHeld<Image>(
+    _ id: WindowID, cache: SnapshotCache<Image>, dirty: [WindowID: SnapshotCaptureReason],
+    typedAt: [WindowID: TimeInterval], now: TimeInterval
+) -> Bool {
+    guard dirty[id] == .typing else {
+        return false
+    }
+    let due = snapshotTypingCaptureDue(typedAt: typedAt[id], capturedAt: cache.entry(id)?.capturedAt)
+    return due - now > snapshotTypingSlack
 }
 
 /// The reason logged for one capture run: the most specific cause wins
@@ -667,6 +746,45 @@ public func snapshotRefreshReason(causes: [SnapshotRefreshCause], backdrop: Bool
     case 1?: return .settle
     default: return backdrop ? .backdrop : .settle
     }
+}
+
+// MARK: - PF-AS overview thumbnails
+
+/// PF-AS: which overview thumbnails come from the cache (shown first,
+/// scaled down to the thumbnail density) and which windows are captured.
+public struct OverviewThumbnailPlan<Image> {
+    public let fromCache: [WindowID: Image]
+    public let toCapture: [WindowID: CGRect]
+}
+
+/// PF-AS (PF-AP revived): a window's first thumbnail is its cached image of
+/// its current size (`tolerance`; a move keeps it) while younger than
+/// `softAge` and at least `minPixelsPerPoint` dense (the overview capture's
+/// own scale, so a half-resolution image on a 1x display is captured
+/// again); every other window, the image of another size or none at all,
+/// is captured. The ax renderer keeps no images: everything is captured.
+public func overviewThumbnailPlan<Image>(
+    windows: [WindowID: CGRect], cache: SnapshotCache<Image>, now: TimeInterval,
+    softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2, minPixelsPerPoint: CGFloat = 0
+) -> OverviewThumbnailPlan<Image> {
+    var fromCache: [WindowID: Image] = [:]
+    var toCapture: [WindowID: CGRect] = [:]
+    for (id, frame) in windows {
+        if let entry = cache.entry(id, matching: frame, tolerance: tolerance), now - entry.capturedAt <= softAge,
+           CGFloat(entry.pixels) >= entry.frame.width * entry.frame.height * minPixelsPerPoint * minPixelsPerPoint
+        {
+            fromCache[id] = entry.image
+        } else {
+            toCapture[id] = frame
+        }
+    }
+    return OverviewThumbnailPlan(fromCache: fromCache, toCapture: toCapture)
+}
+
+/// PF-AS: `overview thumbnails cached=N capture=N scaleMs=S`, once per
+/// overview open (`scaleMs`: scaling the cached images down).
+public func overviewThumbnailsLogLine(cached: Int, captured: Int, scaleMilliseconds: Int) -> String {
+    "overview thumbnails cached=\(cached) capture=\(captured) scaleMs=\(scaleMilliseconds)"
 }
 
 // MARK: - SM-09 blank guard
@@ -697,6 +815,20 @@ public func snapshotLooksBlank(samples: [UInt32], dense: () -> [UInt32]) -> Bool
     snapshotLooksBlank(samples: samples) && snapshotLooksBlank(samples: dense())
 }
 
+// MARK: - FX-08 see-through windows
+
+/// FX-08: whether a capture has a see-through part (a vibrant sidebar, a
+/// terminal's background opacity): at least 3 % of `samples` (packed RGBA,
+/// alpha in the low byte; the ~64x64 coarse scan of the whole image) are
+/// less than ~94 % opaque. A window's rounded corners stay well under that.
+public func snapshotLooksTranslucent(samples: [UInt32]) -> Bool {
+    guard !samples.isEmpty else {
+        return false
+    }
+    let seeThrough = samples.reduce(0) { $0 + ($1 & 0xFF < 0xF0 ? 1 : 0) }
+    return Double(seeThrough) >= Double(samples.count) * 0.03
+}
+
 // MARK: - SM-09 typing signal
 
 /// The hotkey tap sees every key-down on main; the session hears about
@@ -705,6 +837,58 @@ public let snapshotTypingHopInterval: TimeInterval = 0.5
 
 public func snapshotTypingHopDue(now: TimeInterval, lastHop: TimeInterval?, interval: TimeInterval) -> Bool {
     lastHop.map { now - $0 >= interval } ?? true
+}
+
+/// PF-V: quiet time after the last typing hop before the typed-in window is
+/// captured. Longer than two hops, so steady typing (a hop every ~0.5 s)
+/// keeps pushing it back and only a real pause captures (the old 0.6 s was
+/// shorter than the gap between hops: a capture every second or two).
+public let snapshotTypingQuiet: TimeInterval = 1.5
+/// PF-V: a typing capture never comes sooner than this after the window's
+/// last image (typing all day captured several times a minute). Only the
+/// outgoing window of a flight right after typing can show content up to
+/// this old, for the length of the slide.
+public let snapshotTypingFloor: TimeInterval = 5
+
+/// PF-V: how long a typing capture waits from now: the pause, or longer
+/// while the window's newest image (`capturedAt`) is younger than the floor.
+public func snapshotTypingCaptureDelay(capturedAt: TimeInterval?, now: TimeInterval) -> TimeInterval {
+    snapshotTypingCaptureDue(typedAt: now, capturedAt: capturedAt) - now
+}
+
+/// PF-AK: when a window marked dirty by typing may be captured: the pause
+/// after its last typing hop (`typedAt`, nil: long ago) and the floor after
+/// its newest image (`capturedAt`, nil: none), whichever ends later.
+public func snapshotTypingCaptureDue(typedAt: TimeInterval?, capturedAt: TimeInterval?) -> TimeInterval {
+    max((typedAt ?? -.infinity) + snapshotTypingQuiet, (capturedAt ?? -.infinity) + snapshotTypingFloor)
+}
+
+/// PF-AK: a typing capture this close to its due time counts as due (the
+/// timer armed for it fires at the due time, give or take rounding).
+let snapshotTypingSlack: TimeInterval = 0.001
+
+/// PF-AK: the typing marks the typing rule holds at `now` (every run, not
+/// only the targeted typing run: a settle run used to capture the window
+/// through its mark), each with the time it may be captured. A held window
+/// keeps its mark; its run is armed for that time.
+public func snapshotTypingHolds<Image>(
+    cache: SnapshotCache<Image>, dirty: [WindowID: SnapshotCaptureReason],
+    typedAt: [WindowID: TimeInterval], now: TimeInterval
+) -> [WindowID: TimeInterval] {
+    var holds: [WindowID: TimeInterval] = [:]
+    for (id, reason) in dirty where reason == .typing {
+        let due = snapshotTypingCaptureDue(typedAt: typedAt[id], capturedAt: cache.entry(id)?.capturedAt)
+        if due - now > snapshotTypingSlack {
+            holds[id] = due
+        }
+    }
+    return holds
+}
+
+/// PF-AK: `snapshot typing held id=P:E wait=S.S`, a run left a typed-in
+/// window out until the pause and the floor allow it (debug).
+public func snapshotTypingHeldLogLine(id: WindowID, wait: TimeInterval) -> String {
+    "snapshot typing held id=\(id.pid):\(id.elementID) wait=\(String(format: "%.1f", wait))"
 }
 
 // MARK: - SM-09 backdrop staleness
@@ -728,20 +912,24 @@ public struct ServerWindowKey: Hashable, Sendable {
 }
 
 /// The on-screen windows Gio does not manage (other apps' palettes and
-/// unmanaged windows, desktop widgets): what the backdrop shows besides the
-/// wallpaper. Gio's own windows and every managed window (matched by pid
-/// and a frame within the render tolerance) are left out, so Gio moving its
-/// own layout never changes the fingerprint; anything else appearing,
-/// closing or moving does, and the backdrop is captured again.
+/// unmanaged windows, desktop widgets) on one display: what its backdrop
+/// shows besides the wallpaper. Gio's own windows and every managed window
+/// (matched by pid and a frame within the render tolerance) are left out,
+/// so Gio moving its own layout never changes the fingerprint; anything
+/// else appearing, closing or moving does, and that display's backdrop is
+/// captured again (PF-AL: only that display's). PF-AJ: so is every window
+/// that shows no more than a parking sliver on `display` (it is not in the
+/// picture; parked windows macOS clamped or whose app kept its own size
+/// used to change it on every re-park).
 public func unmanagedWindowFingerprint(
-    server: [ServerWindow], managed: [WindowID: CGRect], ownPid: pid_t
+    server: [ServerWindow], managed: [WindowID: CGRect], ownPid: pid_t, display: CGRect
 ) -> Set<ServerWindowKey> {
     var byPid: [pid_t: [CGRect]] = [:]
     for (id, frame) in managed {
         byPid[id.pid, default: []].append(frame)
     }
     var result: Set<ServerWindowKey> = []
-    for window in server where window.pid != ownPid {
+    for window in server where window.pid != ownPid && showsMoreThanASliver(window.bounds, on: display) {
         if let frames = byPid[window.pid], frames.contains(where: { near($0, window.bounds) }) {
             continue
         }
@@ -751,6 +939,11 @@ public func unmanagedWindowFingerprint(
         ))
     }
     return result
+}
+
+private func showsMoreThanASliver(_ frame: CGRect, on display: CGRect) -> Bool {
+    let inside = frame.intersection(display)
+    return !inside.isNull && inside.width > parkingSliver * 2 && inside.height > parkingSliver * 2
 }
 
 /// Whether a managed window is cut out of the backdrop: only windows that

@@ -49,9 +49,15 @@ public struct DwindleLayout: Equatable, Sendable {
 /// AX requirement). Pure: same inputs, same frames.
 public struct DwindleLayoutEngine: Sendable {
     public let config: LayoutConfig
+    /// BUG-3: learned minimum sizes (`MinimumSizeBook`, per app across
+    /// launches). A split gives each side at least what its windows need
+    /// along the split's axis when both fit; when they cannot, the space is
+    /// shared in proportion to the two needs (something has to overlap).
+    public let minimumSizes: [WindowID: CGSize]
 
-    public init(config: LayoutConfig = LayoutConfig()) {
+    public init(config: LayoutConfig = LayoutConfig(), minimumSizes: [WindowID: CGSize] = [:]) {
         self.config = config
+        self.minimumSizes = minimumSizes
     }
 
     public func layout(
@@ -75,13 +81,16 @@ public struct DwindleLayoutEngine: Sendable {
         }
         var result = DwindleLayout(frames: [:], splits: [:])
         if let root = state.root {
-            place(root, in: area, path: [], tiled: { modes[$0, default: .tiled] == .tiled }, into: &result)
+            place(root, in: area, nominal: area, path: [], tiled: { modes[$0, default: .tiled] == .tiled }, into: &result)
         }
         return result
     }
 
+    /// `nominal` is where the split would sit without minimums: an unpinned
+    /// split takes its shape from it, so a side a minimum widened keeps the
+    /// orientation its needs were measured with (`requirement`).
     private func place(
-        _ node: DwindleNode, in rect: CGRect, path: DwindlePath,
+        _ node: DwindleNode, in rect: CGRect, nominal: CGRect, path: DwindlePath,
         tiled: (WindowID) -> Bool, into result: inout DwindleLayout
     ) {
         switch node {
@@ -92,22 +101,24 @@ public struct DwindleLayoutEngine: Sendable {
                 )
             }
         case .split(let split):
-            let orientation = split.orientation ?? shape(of: rect)
+            let orientation = split.orientation ?? shape(of: nominal)
             result.splits[path] = DwindleSplitPlacement(rect: rect, orientation: orientation)
             let firstShown = split.first.windows.contains(where: tiled)
             let secondShown = split.second.windows.contains(where: tiled)
             guard firstShown, secondShown else {
                 // One side shows nothing: the other side gets the whole split.
                 if firstShown {
-                    place(split.first, in: rect, path: path + [.first], tiled: tiled, into: &result)
+                    place(split.first, in: rect, nominal: nominal, path: path + [.first], tiled: tiled, into: &result)
                 } else if secondShown {
-                    place(split.second, in: rect, path: path + [.second], tiled: tiled, into: &result)
+                    place(split.second, in: rect, nominal: nominal, path: path + [.second], tiled: tiled, into: &result)
                 }
                 return
             }
-            let (first, second) = divide(rect, orientation: orientation, ratio: split.ratio)
-            place(split.first, in: first, path: path + [.first], tiled: tiled, into: &result)
-            place(split.second, in: second, path: path + [.second], tiled: tiled, into: &result)
+            let fraction = minimumAwareFraction(split, in: rect, nominal: nominal, orientation: orientation, tiled: tiled)
+            let (first, second) = divide(rect, orientation: orientation, fraction: fraction)
+            let nominalHalves = divide(nominal, orientation: orientation, fraction: clampedDwindleRatio(split.ratio) / 2)
+            place(split.first, in: first, nominal: nominalHalves.first, path: path + [.first], tiled: tiled, into: &result)
+            place(split.second, in: second, nominal: nominalHalves.second, path: path + [.second], tiled: tiled, into: &result)
         }
     }
 
@@ -117,12 +128,78 @@ public struct DwindleLayoutEngine: Sendable {
         rect.width >= rect.height * config.dwindle.splitWidthMultiplier ? .horizontal : .vertical
     }
 
+    /// The first child's share of the split (0...1): `ratio / 2`, moved just
+    /// enough to give each side its minimum along the axis when both fit,
+    /// else the two needs' proportion, each need at least its side's
+    /// nominal extent (FX-04: a side with no known minimum is not squeezed
+    /// to nothing by a crowded neighbour).
+    private func minimumAwareFraction(
+        _ split: DwindleSplit, in rect: CGRect, nominal: CGRect, orientation: DwindleOrientation,
+        tiled: (WindowID) -> Bool
+    ) -> CGFloat {
+        let fraction = clampedDwindleRatio(split.ratio) / 2
+        guard !minimumSizes.isEmpty else {
+            return fraction
+        }
+        let (first, second) = divide(nominal, orientation: orientation, fraction: fraction)
+        let firstNeed = requirement(split.first, in: first, tiled: tiled)
+        let secondNeed = requirement(split.second, in: second, tiled: tiled)
+        let horizontal = orientation == .horizontal
+        let needA = horizontal ? firstNeed.width : firstNeed.height
+        let needB = horizontal ? secondNeed.width : secondNeed.height
+        let available = max((horizontal ? rect.width : rect.height) - config.gap, 0)
+        guard available > 0, needA > 0 || needB > 0 else {
+            return fraction
+        }
+        guard needA + needB <= available else {
+            let weightA = max(needA, horizontal ? first.width : first.height)
+            let weightB = max(needB, horizontal ? second.width : second.height)
+            return weightA / (weightA + weightB)
+        }
+        let extent = min(max(available * fraction, needA), available - needB)
+        return extent / available
+    }
+
+    /// What a subtree needs: side by side, the widths add up (plus the gap)
+    /// and the tallest counts; stacked, the other way round. Orientations
+    /// are the ones `place` would use in `rect`.
+    private func requirement(_ node: DwindleNode, in rect: CGRect, tiled: (WindowID) -> Bool) -> CGSize {
+        switch node {
+        case .leaf(let id):
+            return tiled(id) ? (minimumSizes[id] ?? .zero) : .zero
+        case .split(let split):
+            let firstShown = split.first.windows.contains(where: tiled)
+            let secondShown = split.second.windows.contains(where: tiled)
+            guard firstShown, secondShown else {
+                return firstShown ? requirement(split.first, in: rect, tiled: tiled)
+                    : secondShown ? requirement(split.second, in: rect, tiled: tiled) : .zero
+            }
+            let orientation = split.orientation ?? shape(of: rect)
+            let (first, second) = divide(rect, orientation: orientation, fraction: clampedDwindleRatio(split.ratio) / 2)
+            let a = requirement(split.first, in: first, tiled: tiled)
+            let b = requirement(split.second, in: second, tiled: tiled)
+            switch orientation {
+            case .horizontal:
+                return CGSize(width: a.width + b.width + (a.width > 0 && b.width > 0 ? config.gap : 0),
+                              height: max(a.height, b.height))
+            case .vertical:
+                return CGSize(width: max(a.width, b.width),
+                              height: a.height + b.height + (a.height > 0 && b.height > 0 ? config.gap : 0))
+            }
+        }
+    }
+
     /// The two children's rectangles: the first takes `ratio / 2` of what
     /// is left after the gap (left, or top in Cocoa's y-up space).
     func divide(
         _ rect: CGRect, orientation: DwindleOrientation, ratio: CGFloat
     ) -> (first: CGRect, second: CGRect) {
-        let fraction = clampedDwindleRatio(ratio) / 2
+        divide(rect, orientation: orientation, fraction: clampedDwindleRatio(ratio) / 2)
+    }
+
+    private func divide(
+        _ rect: CGRect, orientation: DwindleOrientation, fraction: CGFloat
+    ) -> (first: CGRect, second: CGRect) {
         let gap = config.gap
         switch orientation {
         case .horizontal:

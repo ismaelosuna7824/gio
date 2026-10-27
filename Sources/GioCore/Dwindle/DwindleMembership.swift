@@ -1,15 +1,29 @@
 import CoreGraphics
 import Foundation
 
-/// DW-01: what a workspace starts with (`[layout] default-layout`) and the
-/// ratio new dwindle splits take (`[dwindle] default-split-ratio`).
+/// DW-01: what a workspace starts with (`[layout] default-layout`), the
+/// ratio new dwindle splits take (`[dwindle] default-split-ratio`) and the
+/// most windows a dwindle workspace holds (FX-04 `[dwindle] max-windows`).
 public struct WorkspaceLayoutDefaults: Equatable, Sendable {
     public var kind: WorkspaceLayoutKind
     public var splitRatio: CGFloat
+    public var maxWindows: Int
 
-    public init(kind: WorkspaceLayoutKind = .scrolling, splitRatio: CGFloat = 1) {
+    public init(kind: WorkspaceLayoutKind = .scrolling, splitRatio: CGFloat = 1, maxWindows: Int = 6) {
         self.kind = kind
         self.splitRatio = clampedDwindleRatio(splitRatio)
+        self.maxWindows = max(maxWindows, 1)
+    }
+}
+
+/// FX-04: why a workspace cannot become dwindle (too many windows).
+public struct DwindleRefusal: Equatable, Sendable {
+    public var windows: Int
+    public var maximum: Int
+
+    public init(windows: Int, maximum: Int) {
+        self.windows = windows
+        self.maximum = maximum
     }
 }
 

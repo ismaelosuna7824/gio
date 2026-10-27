@@ -130,6 +130,23 @@ final class ConfigTests: XCTestCase {
         XCTAssertFalse(messages.isEmpty)
     }
 
+    /// S6: an error rejects the whole file (defaults, custom shortcuts
+    /// included); warnings keep the file. The report says which.
+    func testLoaderReportSaysWhetherTheFileWasRejected() {
+        let invalid = loadGioConfigReport(at: writeTemp("[keybindings]\n\"Ctrl+Alt+F9\" = \"center-column\"\n[layout]\ngaps = -1\n"))
+        XCTAssertTrue(invalid.status.rejected)
+        XCTAssertFalse(invalid.status.messages.isEmpty)
+        XCTAssertEqual(invalid.config, defaultGioConfig())
+
+        let warned = loadGioConfigReport(at: writeTemp("[layout]\ngaps = 4\ngasp = 4\n"))
+        XCTAssertFalse(warned.status.rejected)
+        XCTAssertEqual(warned.status.messages, ["line 3: unknown layout key 'gasp', ignored"])
+        XCTAssertEqual(warned.config.layout.gaps, 4)
+
+        let missing = loadGioConfigReport(at: "/nonexistent/gio-test-config.toml")
+        XCTAssertEqual(missing.status, ConfigLoadStatus())
+    }
+
     func testUnknownKeysWarnWithoutFailing() throws {
         let doc = "[layout]\ngaps = 4\ngasp = 4\n[future]\nthing = 1\n"
         let (config, warnings) = try parseGioConfig(doc).get()
@@ -145,6 +162,48 @@ final class ConfigTests: XCTestCase {
         let (config, warnings) = try parseGioConfig(doc).get()
         XCTAssertTrue(config.behavior.focusFollowsMouse)
         XCTAssertEqual(warnings, ["line 2: unknown behavior key 'skylight', ignored"])
+    }
+
+    func testNewWindowPositionDefaultsToEnd() throws {
+        XCTAssertEqual(LayoutSectionConfig().newWindowPosition, .end)
+        let (config, _) = try parseGioConfig("[layout]\ngaps = 8\n").get()
+        XCTAssertEqual(config.layout.newWindowPosition, .end)
+    }
+
+    func testNewWindowPositionParsesEachValue() throws {
+        let values: [(String, NewWindowPosition)] = [
+            ("end", .end), ("start", .start), ("right-of-focused", .rightOfFocused), ("left-of-focused", .leftOfFocused),
+        ]
+        for (text, position) in values {
+            let (config, warnings) = try parseGioConfig("[layout]\nnew-window-position = \"\(text)\"\n").get()
+            XCTAssertEqual(config.layout.newWindowPosition, position)
+            XCTAssertTrue(warnings.isEmpty)
+        }
+    }
+
+    func testUnknownNewWindowPositionIsRejectedWithAMessage() {
+        guard case .failure(let errors) = parseGioConfig("[layout]\nnew-window-position = \"middle\"\n") else {
+            return XCTFail("expected a validation error")
+        }
+        XCTAssertEqual(
+            errors.messages,
+            [
+                "line 2: layout.new-window-position expects \"end\", \"start\", \"right-of-focused\" or \"left-of-focused\"",
+            ]
+        )
+    }
+
+    func testTheLayoutFormWritesTheNewWindowPosition() throws {
+        var form = LayoutSettingsForm(config: LayoutSectionConfig(newWindowPosition: .start))
+        XCTAssertEqual(form.newWindowPosition, .start)
+        form.newWindowPosition = .leftOfFocused
+        XCTAssertTrue(
+            form.edits.contains(.set(table: "layout", key: "new-window-position", value: .string("left-of-focused")))
+        )
+        guard case .success(let patched) = patchGioConfig("", edits: form.edits) else {
+            return XCTFail("patch failed")
+        }
+        XCTAssertEqual(patched.config.layout.newWindowPosition, .leftOfFocused)
     }
 
     func testMissingFileIsSilentDefaults() {

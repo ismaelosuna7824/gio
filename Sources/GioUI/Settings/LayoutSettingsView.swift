@@ -115,12 +115,25 @@ struct LayoutSettingsView: View {
                     isOn: form.maximizeSingleWindow
                 )
             }
-            CardRow(divider: false) {
+            CardRow {
                 ToggleRow(
                     "Center a lone column",
                     caption: "A workspace with a single column shows it in the middle instead of at the left edge.",
                     isOn: form.alwaysCenterSingleColumn
                 )
+            }
+            CardRow(divider: false) {
+                SettingRow("New windows open", caption: "Where a newly opened window's column lands in the strip.") {
+                    GioPopup(
+                        title: "New windows open", selection: form.newWindowPosition,
+                        options: [
+                            (.end, "At the end"), (.start, "At the start"),
+                            (.rightOfFocused, "Right of the focused column"),
+                            (.leftOfFocused, "Left of the focused column"),
+                        ],
+                        width: 220
+                    )
+                }
             }
             problems(matching: ["Default width", "Preset widths"])
         }
@@ -163,7 +176,7 @@ struct LayoutSettingsView: View {
     private var dwindleCard: some View {
         SectionCard(
             "Workspace Layout",
-            footer: "New workspaces open in this layout; Alt+Shift+T switches the current one and Workspaces can set one per named workspace. Dwindle keeps every window on screen: each new window splits the focused one."
+            footer: "New workspaces open in this layout; Alt+Shift+T switches the current one and Workspaces can set one per named workspace. Dwindle keeps every window on screen: each new window splits the focused one. A workspace with more windows than the maximum stays scrolling, and a dwindle workspace that gets one too many returns to scrolling."
         ) {
             CardRow {
                 SegmentedRow(
@@ -177,10 +190,20 @@ struct LayoutSettingsView: View {
                     format: { String(format: "%.0f%% kept", $0 * 50) }
                 )
             }
-            CardRow(divider: false) {
+            CardRow {
                 SliderRow(
                     "Dwindle width multiplier", value: form.splitWidthMultiplier, in: 0.1...3, step: 0.05,
                     format: { String(format: "%.2fx", $0) }
+                )
+            }
+            CardRow(divider: false) {
+                SliderRow(
+                    "Dwindle maximum windows",
+                    value: Binding(
+                        get: { Double(draft.current.maxWindows) },
+                        set: { draft.current.maxWindows = Int($0.rounded()) }
+                    ),
+                    in: 1...12, step: 1, format: { "\(Int($0.rounded()))" }
                 )
             }
             problems(matching: ["Dwindle"])

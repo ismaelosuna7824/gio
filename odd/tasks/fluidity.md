@@ -262,6 +262,123 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   drain, latest frame wins); the release settle stays on the motion player with the release
   velocity whatever the renderer. PF-R stays for AX runs (`missed=`/`hitches=`); PF-Q is
   unchanged.
+- PF-T (2026-10-15, user: "a WM running all day must not slow the Mac down or use many
+  resources"): measured first, fixed only the two biggest in-process costs. Baseline (Debug
+  build, ~100 s of normal use): 7.6 % of a core; at rest ~0.1-1.5 %, ~0.1 wakeups/s, 67 MB
+  footprint plus ~140 MB reclaimable "Malloc Large". `sample` (90 s, running self-time only):
+  13 % in `snapshotDrawSamples`, 8.5 % in `LauncherAppCatalog.scan` (5 % drawing icons), the
+  rest SwiftUI/Core Animation of the open Settings window, captures and AX.
+  1. Snapshot sampling drew each capture into another colour space (deviceRGB for the blank
+     grid, sRGB for the fill and strips). CoreGraphics converts the WHOLE image first (12-25 ms
+     for a 3600x2300 capture, once per space and per crop) and keeps the converted copy (~33 MB
+     per capture in the footprint: throwaway benchmark, 8 captures 3 MB -> 269 MB). Now the
+     samples are drawn in the image's own colour space and layout (no conversion) and only the
+     few sampled pixels are converted. Same pixels and colours (benchmark: 32x64 sRGB samples
+     identical; one of 25 grid samples picked a neighbouring pixel at a rectangle edge, which
+     the blank test does not care about); 31.7 ms -> 0.23 ms per capture, 269 MB -> 19 MB.
+  2. Every app launch redrew the icon of every installed app. A refresh now draws only bundles
+     that are new or whose Info.plist changed (`launcherIconsToDraw`); the others keep their
+     icon. Log: `launcher appsReady ... drawn=N`.
+  Not changed (measured small or inherent): typing captures (SCK, 159 samples/90 s after the
+  fix; a per-window floor would trade freshness of the flight image), the multitouch callback
+  (frames are already gated by finger count in the mailbox), SwiftUI work (only while Gio's
+  window is open; `pollWhileVisible` stops with it).
+- PF-U..PF-AB (2026-10-15, follow-up; user: older builds left running for hours made the Mac
+  slow and hot, "it must work very well and consume very little"). Four read-only audits
+  (input, Accessibility traffic, capture and compositing, timers and growth) plus
+  measurements. Gio does no periodic work at rest (the only timer is the 30 s tap watchdog);
+  memory is flat (footprint 65-67 MB after 50 min and after 9 h). What was fixed:
+  - PF-U: Gio observed itself. While its main window is open Gio is `.regular`, and the
+    router attached an AX observer to its own pid on activation, launch and observer sync
+    (rule 4: AX on in-process elements runs AppKit on the calling thread) and subscribed to
+    its own overlay panels. The router now never attaches `ownPID`.
+  - PF-V: the typing capture did not debounce. A hop reaches the session at most every
+    0.5 s and each reset a 0.6 s wait, so steady typing still captured the focused window
+    every second or two (log: 318 typing runs in 79 min, half of all captured pixels). Now
+    a typing capture waits for a 1.5 s pause (`snapshotTypingQuiet`) and never comes sooner
+    than 5 s after the window's newest image (`snapshotTypingFloor`). Trade-off: only the
+    outgoing window of a flight right after typing can show content up to 5 s old, for the
+    length of the slide. Focus-dwell and settle ages are unchanged (image freshness).
+  - PF-W: every `kAXTitleChanged` was one AX read into the app, all day for terminals and
+    pages that retitle themselves (spinners, counters). Reads are coalesced per window to
+    one per second (`WindowEventRouter.titleCoalesce`) with the latest value; a window whose
+    rule re-check waits for its first title is read at once.
+  - PF-X: `CGPreflightScreenCaptureAccess` is an IPC to tccd: ~8 ms wall per call (throwaway
+    benchmark: 7.9-9.1 ms, 0.07 ms of own CPU). The session asked it several times per typing
+    hop and per capture run. `ScreenRecordingPermissionCache` answers for 10 s; the facts the
+    UI polls and the Diagnostics capture refresh it. A revoke reaches the snapshot path
+    within 10 s. `AXIsProcessTrusted` measured 16 us per call: left alone.
+  - PF-Y: the IPC accept loop retried every failure at once; a lasting one (EMFILE, ENFILE,
+    ENOBUFS) would spin a thread at full CPU for the rest of the session. Other failures now
+    wait 100 ms (`ipcAcceptRetryDelay`).
+  - PF-Z: a full scan that reaped a dead app (missed terminate) kept its reconciler state
+    (write lane queue, name, EnhancedUI); every display resolution or arrangement change kept
+    a display-sized dim panel alive. Both are released.
+  - PF-AA: with focus-follows-mouse (off by default), every pointer move over a managed window
+    copied the whole on-screen window list (~33 a second) and resting in the focused window
+    re-armed a no-op hover check every ~110 ms. The lookup now runs only when another
+    managed window is under the pointer (`hoverNeedsLookup`).
+  - PF-AB: the active event tap's source was on the main run loop, so every keystroke and
+    click of every app waited for Gio's main thread (overlay frames, AX callbacks with the
+    default 6 s messaging timeout, SwiftUI); a hitch there was input lag for the whole Mac.
+    The tap runs on its own user-interactive thread; locations come from the event
+    (`tapCocoaLocation`), the overlay abort on a click hops to main.
+  Measured and not changed: the focus dim/ring panels. Throwaway experiment (a 1000x700
+  panel repainting at 60 fps, WindowServer CPU averaged with `top` over 18 s per phase):
+  none 49.1 / display-sized dim panel 45.1 / none 43.5 / window-sized ring panel 47.2 /
+  none 41.1 / four edge panels 38.1 / none 35.3 %: the panels are inside the noise, so they
+  were not redesigned. Not done (low or niche, from the audits): `AXEnhancedUserInterface`
+  toggling per write batch (only for apps another tool switched it on; no log line in the
+  user's sessions), O(N^2) reads for native tab groups, the 30 s settle soft age, a global
+  AX messaging timeout, the multitouch callback allocation (36-169 samples per 90-150 s).
+  Daily-use note: `[logging] level = "debug"` costs CPU itself (`LogFileSink.drain` 171
+  samples in the 150 s live run); the default is `info`.
+- PF-AC..PF-AG (2026-10-15, user brief: a measured performance pass, "medir antes de tocar
+  nada", every change re-measured, reverted when it does not help). Method: signed Release
+  build, a fixed IPC workload (8 focus right, 8 left, 4 workspace switches, twice: 40 actions
+  in ~25 s), 60 s idle with `top` (CPU-time and idle-wakeup deltas), `xctrace` Time Profiler
+  attached for the workload, `os_signpost` intervals (PF-AC) exported from the trace,
+  `footprint`, `leaks`. Baseline (window closed, launched by the user): idle 0.01 s CPU in
+  60 s, 0.0 wakeups/s, 8 threads, 62 MB; workload 1.5 s CPU; reflow p50 2.4 / p95 9.1 ms;
+  overlay prime p50 10.8 / p95 40 ms; no potential hangs. Ranked findings (time profile):
+  1. With Gio's main window open, SwiftUI re-rendered the whole window twice per action
+     (AttributeGraph 600-728 ms and view layout 234-547 ms of a ~2 s workload): every
+     flight's overlay covers the window and flipped its occlusion state (PF-AG).
+  2. `windowServerSnapshotCandidates`: `optionAll` listed every window of every Space (157
+     entries, 5 ms wall / 1.2 ms CPU per call) on every capture and 30 ms paint check (PF-AD).
+  3. Frame reads were two Accessibility messages (PF-AE).
+  4. Elements without their own messaging timeout used the system default (PF-AF).
+  Measured and left alone: QoS (72 % of Gio's samples already on efficiency cores, captures
+  79 %), the multitouch and tap callbacks (a few ms per run), idle (no timers firing,
+  0 wakeups/s), memory (56-63 MB across runs, `leaks`: 0 leaks after the workload),
+  discovery classification (`classify ms=1` per window in the logs). Not done, needs a
+  design decision: the overlay prime (p50 13 ms, p95 ~30 ms after PF-AG) is two
+  synchronous main-thread steps with the WindowServer (order the panels in and flush,
+  then one more main pass so the first frame is committed before real windows move,
+  SM-08); keeping the panels ordered in between flights or committing with a CA
+  transaction completion would change a live-verified ordering guarantee.
+- PF-AH..PF-AJ (2026-10-15, user: "otro flujo de prueba pero ahora con dos monitores, ahí es
+  donde se degrada más", then "también moverte entre monitores y mover ventanas entre
+  monitores"). Setup: built-in 1800x1169 @2x 120 Hz ("Color LCD" profile) plus an external
+  2160x1440 @1x 60 Hz on the left ("Display" profile). Three workloads, same harness:
+  W1 the single-display workload unchanged, W2 `move-window-to-display 2/1` six times,
+  W3 monitor navigation (`gio action focus-monitor-*`, `move-column-to-monitor-*`,
+  `move-window-to-monitor-*`, focus inside the external display, workspace switches; needed
+  PF-AI). Findings: W1 costs the same CPU with two displays (1.44-1.45 s vs 1.50 s on one)
+  but latency tails grow (overlay prime p95 30 -> 61 ms, reflow p95 13 -> 28 ms: the commit
+  waits for the 60 Hz display, the final pass waits for apps). W2 found the real
+  degradation: `SnapshotOverlay.begin` 294 ms, 197 ms of it `CGColorTransformConvertUsingCMSConverter`
+  under `CA::Layer::prepare_contents` (Core Animation converting images captured on the
+  built-in display to the external display's profile, main thread, at every commit), overlay
+  prime p50 42.6 ms (PF-AH). W3: backdrops recaptured on 17 of 19 capture runs because
+  parked windows with a clamped or app-kept frame entered the unmanaged fingerprint and
+  churned it on every re-park (temporary diagnostic log, pids and sizes only: Code,
+  WhatsApp 970x1114, Tern, Zed, OrbStack, Xcode at x=1799) (PF-AJ). Not changed, measured:
+  W3 final passes wait 50-170 ms on apps redrawing at the other display's scale and on the
+  focus call (`reflow timing ... slowest=Code 60ms`, `focus=165ms`), a synchronous settle
+  on the session queue (dispatching the settle would be an architecture change); the first
+  flight on each display creates its overlay panel (`SnapshotOverlay.init`, once per display
+  after launch).
 
 ## Tasks
 - [x] PF-A — Motion end and final pass no longer block on a slow app. Commit `74cafb4`.
@@ -546,6 +663,171 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
   LIVE PENDING: checklist 15b (snapshot default), 15i (gestures
   through Accessibility: the strip follows the fingers, no `render mismatch` after a settle) and
   row 5 (PF-Q/PF-R on `renderer = "ax"`).
+- [x] PF-T (`ca602f8`) — Resource use: snapshot sampling without whole-image colour
+  conversion (`snapshotDrawSamples` + `snapshotNativeSamples`, GioMacOS) and launcher icons
+  drawn only for new or changed bundles (`launcherIconsToDraw`, `LauncherScanResult.stamps`,
+  GioUI; `drawn=` in `launcher appsReady`, docs/TESTING.md). RED (compile):
+  `LauncherCatalogRefreshTests.testARefreshDrawsOnlyNewOrChangedIcons` ("cannot find
+  'launcherIconsToDraw' in scope"). The sampling change keeps its results (existing
+  `GioMacOSTests` green; equality and timing proved by a throwaway benchmark, Decisions PF-T).
+  GREEN: `swift test` all bundles 0 failures: UI 312 (53 skipped), Session 481, POC 7, Mac 19,
+  MacOS 95, Core 1963; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
+  Live (Debug build, Gio window closed, ~90 s of normal use, same `sample` method): Gio CPU
+  7.6 % -> 2.7 % of a core (2.54 s in ~93 s); `snapshotDrawSamples` 669 -> 31 samples,
+  colour conversion (`vImageConvert_AnyToAny`) 580 -> 2, launcher scan 442 -> 0; footprint
+  67 MB with no reclaimable "Malloc Large" left (was ~140 MB). The baseline had Settings open,
+  so the overall CPU figure is not like for like; the per-function samples are.
+- [x] PF-U (`7b57923`) — The router never attaches an AX observer to Gio's own pid. RED:
+  `WindowEventRouterTests.testOwnPidIsNeverObserved` (attach calls contained the own pid).
+- [x] PF-V (`4f179c9`) — Typing captures after a 1.5 s pause, at most every 5 s per window.
+  RED (compile): `SnapshotCacheTests.testTypingCaptureWaitsForAPauseAndTheFloor` and
+  `SnapshotCacheRefresherTests.testTypingCapturesTheFocusedWindowOnlyAfterAPauseAndAtMostOncePerFloor`
+  ("cannot find 'snapshotTypingCaptureDelay'"); four refresher tests now wait
+  `snapshotTypingFloor` instead of 0.6 s. Docs: ARCHITECTURE (cache freshness, diagram).
+- [x] PF-W (`1606bc3`) — Title reads coalesced to one per window per second. RED (compile):
+  `WindowEventRouterTests.testTitleChangesAreReadOncePerCoalesceWindowWithTheLatestValue`;
+  the title re-check tests (`RichRuleArrivalTests`) still pass unchanged (read at once).
+- [x] PF-X (`f125bbc`) — `ScreenRecordingPermissionCache` (GioMacOS) for the snapshot path.
+  RED (compile): `ScreenRecordingPermissionCacheTests` (ttl boundary, refresh).
+- [x] PF-Y (`6afb219`) — IPC accept backs off on lasting errors. RED (compile):
+  `IPCTests.testAcceptFailuresBackOffUnlessTransient`.
+- [x] PF-Z (`20c96c9`) — Reaped apps forgotten by the reconciler; dim panels of gone displays
+  closed. RED: `DiscoveryServiceTests.testDeadPidsAreReapedOnFullScansOnly` (forgotten apps
+  empty). The dim panel pruning is UI (`FocusDimController`, no unit tests): not observed live.
+- [x] PF-AA (`e9a0390`) — Hover lookups only over another managed window. RED:
+  `FocusCoordinatorTests.testMovingInsideTheFocusedWindowAsksTheWindowServerNothing` (20
+  lookups, expected 0).
+- [x] PF-AB (`2c7dc72`) — Event tap on its own thread. RED (compile):
+  `TapLocationTests.testAClickIsReportedInCocoaCoordinates`. Thread lifecycle is adapter
+  code without unit tests; observed live (below).
+  GREEN (all of PF-U..PF-AB): `swift test` all bundles 0 failures: UI 312 (53 skipped),
+  Session 484, POC 7, Mac 19, MacOS 98, Core 1965; signed `xcodebuild` BUILD SUCCEEDED;
+  `git diff --check` clean. Live (Debug build, 150 s of the user's heaviest use: 357 hotkeys,
+  typing, clicks, launcher, overview, trackpad): the user reports keyboard and clicks normal;
+  no `tap re-enabled` line; 0 samples in `CGPreflightScreenCaptureAccess`, 55 in
+  `snapshotDrawSamples`; captures by reason: typing 4, settle 11, focus 6, size 8,
+  overview 3; Gio CPU 8.78 s (5.9 % of a core, proportional to the actions: reflows,
+  overlay retargets, focus); footprint 66 MB. NOT verified live: PF-Z panel pruning (needs a
+  display change), PF-AA (focus-follows-mouse is off in the user's config), PF-U (open
+  Gio's window, then check no AX observer for Gio's pid; no log line exists for it).
+- [x] PF-AC (`b3db88d`) — `os_signpost` intervals (`GioSignpost`, Points of Interest):
+  hotkeyHop, action, reflow, reconcile, dispatch, overlayPrime (primeMainWait, primeBegin,
+  primeSecondPass), capture. Instrumentation only (no behaviour; static names, no titles).
+  Procedure in docs/TESTING.md "Measuring performance".
+- [x] PF-AD (`6f2b795`) — Snapshot candidates from the on-screen window list. Benchmark
+  (throwaway, 200 calls): `optionAll` 157 entries 4.99 ms wall / 1.18 ms CPU,
+  `optionOnScreenOnly` 16 entries 0.48 / 0.07 ms. Workload (same launch):
+  `windowServerSnapshotCandidates` 99 -> 22 ms, `paintCheck` 133 -> 61 ms (window closed
+  pair) and 73 -> 17 / 89 -> 52 ms (window open pair). Adapter change, no unit test
+  possible (WindowServer); parse tests unchanged and green.
+- [x] PF-AE (`30d1a6d`) — One `AXUIElementCopyMultipleAttributeValues` per frame read
+  (actuator and discovery `axFrame`). Paired A/B in one live workload (alternating reads,
+  scaffold removed after): median 0.71 -> 0.50 ms, p25 0.39 -> 0.26, p75 3.10 -> 1.45,
+  10 % trimmed mean 1.58 -> 0.85 ms (n = 88 / 87). Startup reflow `axCalls` 40 -> 28 for
+  the same 10 windows.
+- [x] PF-AF (`48a5769`) — Global 1 s Accessibility messaging timeout. Experiment: a
+  throwaway app frozen with SIGSTOP during a Gio restart: session start to first layout
+  1.71 -> 1.13 s, observer refusal at +3.31 -> +2.24 s.
+- [x] PF-AG (`7f2afc8`) — `OcclusionGate`: the main window counts as covered only after 1 s.
+  RED (compile): `IdlePolicyTests.testBriefOcclusionKeepsTheWindowVisibleAndALongOneHidesIt`.
+  Workload with the main window open (same launch): Gio CPU 2.40 -> 1.50 s, main thread
+  1547 -> 825 ms, AttributeGraph 728 -> 182 ms, view layout 547 -> 189 ms, overlay prime
+  p50 16.3 -> 13.3 ms, max 75.7 -> 49.6 ms, reflow max 45.5 -> 18.8 ms.
+  GREEN (all of PF-AC..PF-AG): `swift test` all bundles 0 failures (UI 313/53 skipped,
+  Session 512, POC 7, Mac 19, MacOS 98, Core 1992); signed Debug and Release `xcodebuild`
+  BUILD SUCCEEDED; `git diff --check` clean. Final vs baseline (both launched by `open`, main
+  window open): workload CPU 2.22 -> 1.50 s (-32 %), main thread 1335 -> 825 ms, idle 0.20 ->
+  0.19 s per 60 s, wakeups 0.0 -> 0.0/s, footprint 56-57 -> 57-58 MB, reflow p95 17.4 ->
+  12.8 ms, overlay prime p50 17.2 -> 13.3 ms and p95 47.3 -> 30.2 ms, 0 potential hangs.
+  NOT verified live by the user: PF-AF only matters with a hung app (covered by the
+  experiment above).
+- [x] PF-AI (`0e93c84`) — `gio action NAME`: any keybinding action over IPC, run on the
+  host's hotkey path (`IPCRouter.Context.applyAction`). RED (compile):
+  `MultiDisplayRepairTests.testActionVerbParsesEveryConfigActionName`,
+  `IPCRouterTests.testActionsRunThroughTheHotkeyPath`. Docs: USER_GUIDE CLI table.
+- [x] PF-AJ (`0cc10ce`) — `unmanagedWindowFingerprint(..., displays:)` ignores windows showing
+  no more than a parking sliver on every display. RED (compile):
+  `SnapshotCacheTests.testWindowsOffEveryDisplayDoNotEnterTheFingerprint`. W3: backdrop runs
+  17 -> 6 (`reason=backdrop` 9 -> 2), `captureBackdrop` CPU 133 / 103 -> 38 ms.
+- [x] PF-AH (`205adcb`) — Captures (`SCStreamConfiguration.colorSpaceName`) and flight panels
+  (`NSWindow.colorSpace`) share `snapshotColorSpaceName` (Display P3). No unit test possible
+  (Core Animation and ScreenCaptureKit); measured. W2: `SnapshotOverlay.begin` 294 -> 44 ms,
+  CMS conversion 197 -> 2 ms, primeBegin p50 35.5 -> 15.8 ms, overlay prime p50 42.6 -> 24.8
+  and p95 59 -> 33 ms. W1 repeat (two runs): workload CPU 1.44 s vs 1.45 s before, CA commit
+  265 vs 262 ms (a first run read 1.95 s: run-to-run noise, not the change).
+  GREEN (PF-AH..PF-AJ): `swift test` all bundles 0 failures (UI 313/53 skipped, Session 513,
+  POC 7, Mac 19, MacOS 98, Core 1994); signed Debug and Release builds succeeded; `git diff
+  --check` clean. LIVE PENDING (user eyes): flight colours on both displays look like the
+  real windows (the WindowServer now matches P3 to each profile).
+- Audit 2026-10-16 (user choice: the Swift Performance Optimization skill, evidence first).
+  Field log `gio.log` + `.1`, 5.37 h, debug, renderer snapshot, two displays: 68 of 276
+  `reason=typing` captures came < 5 s apart (PF-V floor bypassed by settle runs); 267 backdrop
+  recaptures (50/h, gap p50 2 s, 27 % of all captured pixels: Chrome's omnibox popups are
+  managed floating windows and change the fingerprint per keystroke, and the change dirtied
+  every display); every no-op pass scheduled a settle run; `reflow timing focus=` was 53 % of
+  summed pass time but counted lock waits and stale steps; instant passes reconciled one plan
+  at a time; the overview captured every window per open (127 runs). Not chosen yet (need a
+  decision or a trace): trimming the ~250 MB snapshot cache at rest, AX observers on their own
+  thread, an asynchronous `collect`.
+- [x] PF-AK (`eb24946`) — Typing marks wait for the pause and the floor in every run
+  (`snapshotTypingHolds`, `snapshotTypingCaptureDue`); a held window keeps its mark and re-arms
+  the typing run. RED: compile (`snapshotTypingHolds`, `typedAt:`), then
+  `SnapshotCacheRefresherTests.testSettleRunsHoldTheTypedInWindowUntilThePauseAndTheFloor`.
+  Log: debug `snapshot typing held id= wait=`.
+- [x] PF-AL (`239777a`) — One unmanaged fingerprint per display; a change re-captures only that
+  display's backdrop, and only once it is `snapshotBackdropMinAge` (30 s) old
+  (`snapshotBackdropDue`); `markBackdropDirty()` still re-captures every display at once. RED:
+  compile, then the old union logic failed
+  `testUnmanagedChangeRecapturesOnlyItsDisplayAtMostOncePerInterval`. Log: debug
+  `snapshot backdrop unmanaged changed display=x,y wait=`.
+- [x] PF-AM (`e059c29`) — `reflow timing` appends `focusWait=Wms path=reconcile|dispatch`;
+  `focus=` is the focus call only, a stale step reports 0 and no longer stretches `total`, a
+  timed-out lane in `collect` ends at its stall bound, not at collect time (the 509 ms
+  artifact). RED: compile (`ReflowTimingFocusTests`).
+- [x] PF-AN (`f5b7513`) — `focusSoon` keeps only the newest queued focus (generation from its
+  own `DispatchFocusBook`); skipped calls log debug `focus superseded id=`. RED: compile, then
+  the ordering test (`["focus 2","focus 3"]` vs all three);
+  `MotionStartFocusTests.testABurstOfMotionStartFocusesRunsOnlyTheNewest`.
+- [x] PF-AO (`44e7488`) — An instant pass merges its plans (`mergePassWrites`, later plan wins,
+  focus once, parked before visible per app) into one `reconcile`, one `foldSettle`; the
+  overlay dispatch uses the same merge. RED: compile (`PassWritesMergeTests`).
+- [x] PF-AQ (`dd99f31`) — `SettleCaptureGate`: an instant pass schedules the settle capture only
+  when it wrote, ended an AX motion, placed instantly, or changed the shown workspaces; else
+  debug `snapshot settle skipped reason=noop`. RED: compile (`SettleCaptureGateTests`).
+- [ ] PF-AP (`10ac99d`, reverted `d8df5ad`) — The overview took thumbnails from the snapshot
+  cache (fresh, same size, >= 0.75 px/pt) and captured only the rest. Reverted after the A/B
+  below: Gio CPU for 4 opens 0.72-0.76 s before, 0.95-0.96 s with the cached 2x images, 0.83 s
+  with them scaled to 0.75 px/pt first (PF-AR, never committed); replayd 0.17-0.18 -> 0.11-0.13
+  s; WindowServer not measurable from the test host. No proven gain for more Gio CPU.
+  GREEN (PF-AK..PF-AQ, PF-AP reverted): `swift test` all bundles 0 failures (UI 313/53 skipped,
+  Session 519, POC 7, Mac 19, MacOS 91, Core 2051); signed Release `0.1.3-rc.3` built and
+  packaged by `make-dmg.sh`; `git diff --check` clean.
+  LIVE 2026-10-17 (signed Release `0.1.3-rc.1` from `make-dmg.sh`, installed in `/Applications`,
+  one display, driven by `gio action` / `gio overview`): every `reflow timing` line ends with
+  `focusWait=... path=reconcile|dispatch`; 12 moves of a floating Finder window gave 12 no-op
+  passes, each `snapshot settle skipped reason=noop`, no capture and no backdrop run (before:
+  one settle run each, and a backdrop on each fingerprint change); the next workspace switch
+  still ran its `reason=settle` capture. Overview: `cached=5 capture=2` and `cached=4
+  capture=3` right after a settle, `cached=0 capture=7` once the images were > 30 s old; the
+  cached thumbnails look like captured ones (screenshot). Renderer ax, 4 `focus-left` in 50 ms:
+  `focus superseded id=5138:2`, the last target landed (frontmost app = Gio's focused window).
+  No crash, one known warn (LoopOps ADE min width). NOT verified live: the typing hold (PF-AK:
+  the test host may not send keystrokes, `osascript ... not allowed to send keystrokes`),
+  per-display backdrops and the merged pass on two displays (PF-AL, PF-AO: one display
+  connected).
+  A/B 2026-10-17 (same method as PF-T: signed Release builds, one display, launched by `open`,
+  main window open, `ps` CPU deltas per phase; before = `7794db1` x4, after = `0.1.3-rc.3`
+  (PF-AK..PF-AQ without PF-AP) x3, alternated). Workload per run: W1 (2 x 8 focus right, 8
+  left, 4 workspace switches), 3 focus bursts (4 actions in 50 ms), 12 moves of a floating
+  Finder window, 4 overview opens, 60 s idle. Means (range):
+  Gio CPU W1 0.91 (0.82-1.00) -> 0.86 (0.83-0.89) s; bursts 0.29 -> 0.32 s; floating churn
+  0.26 (0.24-0.27) -> 0.16 (0.15-0.17) s; overview 0.74 -> 0.72 s; idle 0.17 -> 0.19 s.
+  replayd churn 0.17 -> 0.04 s. Captures per run 29.8 -> 14.7, captured pixels 233 -> 116 Mpx,
+  backdrop runs 15 -> 1.7, `reflow timing` lines 124 -> 83, no-op settle runs skipped 0 -> 39,
+  flight frames dropped 62 -> 54, hitches 8.2 -> 5.3. Unchanged within noise: summed
+  `reflow timing` 2292 -> 2521 ms (merged passes report bigger single totals), footprint
+  67-71 -> 71 MB (the images are IOSurfaces, outside `footprint`). Idle of 2 of 5 after-runs
+  was discarded: the user pressed keys during it.
 
 ## Evidence
 - RED observed: PF-A `MotionPlayerTests.testSummaryLineNamesSlowestAppByWorstSingleWrite`
@@ -583,3 +865,15 @@ frames now go through the Accessibility motion lanes), Dwindle, MM-06 and NC-14 
 - 2026-10-12: PF-S (`3511e90`, SkyLight and the live renderer removed, snapshot default again)
   committed on `main`, not pushed; all bundles green, signed build succeeded; LIVE PENDING
   (checklists 15b, 15i, row 5).
+- 2026-10-15: PF-T (resource use: sampling without colour conversion, launcher icons drawn only
+  when new or changed) committed on `fix/johan-spaces-safari`; all bundles green, signed build
+  succeeded, measured live (Decisions and Tasks, PF-T).
+- 2026-10-15: PF-U..PF-AB (own-pid observer, typing capture pause and floor, title read
+  coalescing, permission cache, IPC backoff, reaped-app and dim-panel release, hover lookups,
+  tap thread) committed on `fix/johan-spaces-safari`; all bundles green, signed build
+  succeeded, live run normal (Tasks, PF-AB).
+- 2026-10-15: PF-AC..PF-AG (signposts, on-screen candidates, batched frame reads, global AX
+  timeout, occlusion gate) committed on `perf/measured-pass`; all bundles green, signed
+  builds succeeded, measured before/after (Tasks).
+- 2026-10-15: PF-AH..PF-AJ (two displays: one colour space for flights, `gio action`,
+  backdrop fingerprint) committed on `perf/measured-pass`; measured before/after (Tasks).

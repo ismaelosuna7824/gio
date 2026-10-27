@@ -19,6 +19,10 @@ public func defaultConfigTemplate() -> String {
     # column on every keyboard focus change, "on-overflow" centers only when it
     # does not fit next to the previously focused column.
     center-focused-column = "never"
+    # Where a new window's column opens in the strip: "end", "start",
+    # "right-of-focused" or "left-of-focused" (the focused column of the
+    # workspace it opens on). Windows found at startup keep their order.
+    new-window-position = "end"
     # Widths Alt+R cycles through: fractions of the screen (<= 1) or points.
     preset-column-widths = [0.33333, 0.5, 0.66667]
     # Heights Alt+Shift+R cycles the focused window of a stacked column
@@ -42,6 +46,10 @@ public func defaultConfigTemplate() -> String {
     # A split puts its halves side by side when its area is at least this many
     # times wider than tall, else stacks them (0.1-10; above 1 favours stacking).
     split-width-multiplier = 1.0
+    # The most windows a dwindle workspace holds (1-32). Alt+Shift+T leaves a
+    # workspace with more windows scrolling; one window too many returns a
+    # dwindle workspace to scrolling.
+    max-windows = 6
 
     [behavior]
     # Focus the window the pointer rests on (~100 ms); never scrolls.
@@ -116,12 +124,14 @@ public func defaultConfigTemplate() -> String {
 
     [animations.window-resize]
     # Maximize, fullscreen and width changes (native zoom neighbours too).
+    # Off by default: the window takes its new size at once. true animates it.
+    # enabled = false
 
     [focus]
-    # How the focused window stands out: "dim" (default) darkens the other
-    # visible tiled windows while nothing moves; "ring" draws the outline set
-    # up in [focus-ring]; "none" shows nothing.
-    indicator = "dim"
+    # How the focused window stands out: "ring" (default) draws the outline
+    # set up in [focus-ring]; "dim" darkens the other visible tiled windows
+    # while nothing moves; "none" shows nothing.
+    indicator = "ring"
     # Opacity of the dim over unfocused windows (0.0-0.5).
     dim-strength = 0.15
 
@@ -142,24 +152,28 @@ public func defaultConfigTemplate() -> String {
     level = "info"
 
     [gestures]
-    # Trackpad swipes (3-5 fingers). macOS uses three and four fingers for its
-    # own swipes by default: turn those off or move them in System Settings >
-    # Trackpad > More Gestures, or both act (Diagnostics lists collisions).
+    # Trackpad swipes (3-5 fingers), all off until you turn them on. macOS
+    # uses three and four fingers for its own swipes by default: turn those
+    # off or move them in System Settings > Trackpad > More Gestures, or both
+    # act (Diagnostics lists collisions).
     # Horizontal swipe scrolls the strip with the fingers and snaps to a
     # column on release.
-    scroll = true
+    scroll = false
     scroll-fingers = 3
     # Strip travel per trackpad width, in screen widths (0.1-5.0).
     scroll-sensitivity = 1.0
     # Content follows the fingers; false inverts scroll and workspace swipe.
     natural = true
     # Vertical swipe switches workspace, one per swipe.
-    workspace-swipe = true
+    workspace-swipe = false
     workspace-fingers = 3
     # Swipe up toggles the workspace overview (off: macOS Mission Control
     # uses four fingers up unless moved). Not on workspace-fingers.
     overview = false
     overview-fingers = 4
+    # How far a vertical swipe travels before it fires, as a fraction of the
+    # trackpad height (0.05-0.5). It must be a clear up or down stroke.
+    swipe-distance = 0.15
 
     [keybindings]
     "Alt+H" = "focus-left"
@@ -183,6 +197,9 @@ public func defaultConfigTemplate() -> String {
     # column instead.
     # "toggle-overview" (Alt+O) shows every workspace of the display as a row
     # of window thumbnails (thumbnails need Screen Recording).
+    # "toggle-launcher" (Alt+Space) opens or closes the launcher; move it like
+    # any action, e.g. "Ctrl+Alt+P" = "toggle-launcher" and "Alt+Space" =
+    # "none" to leave Option+Space to other apps.
     # Multiple displays: "focus-monitor-left|right|up|down" (Ctrl+Alt+H / L /
     # K / J) focuses the neighbouring display; "move-column-to-monitor-..."
     # (Ctrl+Alt+Shift+H / L / K / J) sends the focused column there and
@@ -246,10 +263,11 @@ public func defaultConfigTemplate() -> String {
     # title = "<regex>" narrows the match to window titles (case-insensitive;
     # alone it matches any app). How the window opens: default-column-width
     # (fraction <= 1 or points), open-maximized, open-on-display = N (1 is
-    # the main display), open-focused = false (no focus, no follow), and
-    # min-width / max-width (points) for its column.
+    # the main display), open-focused = false (no focus, no follow) or true
+    # (also focus the app's popups that open while another app is in front:
+    # macOS puts them behind it), and min-width / max-width (points).
     [[window-rules]]
-    app = "Calculator"
+    bundle-id = "com.apple.calculator"
     mode = "floating"
 
     # [[window-rules]]
@@ -268,5 +286,9 @@ public func defaultConfigTemplate() -> String {
     # open-on-display = 2
     # open-focused = false
     # min-width = 600
+    #
+    # [[window-rules]]
+    # app = "Slack"
+    # open-focused = true
     """
 }

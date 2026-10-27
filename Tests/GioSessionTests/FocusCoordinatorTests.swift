@@ -21,6 +21,8 @@ final class FocusCoordinatorTests: XCTestCase {
         var registered: [pid_t] = []
         var scroll: (from: CGFloat, to: CGFloat)?
         var topPID: pid_t?
+        var topLookups = 0
+        var clickTarget = ClickTarget(onSystemUI: false, ownerPID: nil)
         var warps: [CGPoint] = []
         var mouseFollowsFocus = true
         var centerMode = CenterFocusedColumnMode.never
@@ -30,6 +32,9 @@ final class FocusCoordinatorTests: XCTestCase {
         var revealCauses: [MotionCause] = []
         var windowWorkAllowed = true
         var logs: [(LogLevel, String)] = []
+        /// MM-12: windows whose fresh admission says tile (admission floats).
+        var promotable: Set<WindowID> = []
+        var promoted: [WindowID] = []
 
         func id(of element: AXUIElement) -> WindowID? {
             known.first { CFEqual($0.0, element) }?.1
@@ -87,8 +92,12 @@ final class FocusCoordinatorTests: XCTestCase {
                 registerAppeared: { _, pid in world.registered.append(pid) },
                 pendingScroll: { world.scroll },
                 isVisibleInViewport: { _ in true },
-                topWindowOwnerPID: { _ in world.topPID },
+                topWindowOwnerPID: { _ in
+                    world.topLookups += 1
+                    return world.topPID
+                },
                 warpCursor: { world.warps.append($0) },
+                clickTarget: { _ in world.clickTarget },
                 mouseFollowsFocus: { world.mouseFollowsFocus },
                 centerMode: { world.centerMode },
                 publishFocusRing: { world.ringPublishes += 1 },
@@ -101,7 +110,14 @@ final class FocusCoordinatorTests: XCTestCase {
                 },
                 log: { world.logs.append(($0, $1)) },
                 now: { scheduler.now },
-                allowsWindowWork: { world.windowWorkAllowed }
+                allowsWindowWork: { world.windowWorkAllowed },
+                promoteAdmissionFloat: { id, _ in
+                    guard world.promotable.contains(id) else {
+                        return false
+                    }
+                    world.promoted.append(id)
+                    return true
+                }
             ),
             scheduler: scheduler
         )
@@ -250,6 +266,32 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertTrue(world.logs.contains { $0.1.contains("scroll=0->600") })
     }
 
+    /// MM-12 live (2026-10-15): Music's main window was admitted as a dialog
+    /// at startup and floated, so it sat over and under the tiles at its own
+    /// frame until the app was quit; when it is activated and now reads as a
+    /// normal window it rejoins the grid, which needs a reflow to place it.
+    func testActivationPromotesAnAdmissionFloatThatNowReadsAsAWindowAndReflows() {
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+        world.promotable = [ids[1]]
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(world.promoted, [ids[1]])
+        XCTAssertEqual(focused, ids[1])
+        XCTAssertEqual(world.reflows, 1)
+    }
+
+    func testActivationOfAWindowThatStaysAsItIsDoesNotReflow() {
+        world.frontmost = 2
+        world.focusedElements[2] = element(1)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(world.promoted, [])
+        XCTAssertEqual(world.reflows, 0)
+    }
+
     private func moveToHiddenWorkspace(_ index: Int) {
         _ = fixture.session.manager.moveWindow(ids[index], to: 2)
     }
@@ -271,6 +313,52 @@ final class FocusCoordinatorTests: XCTestCase {
         })
         let settle = focus.takeSettleFocus(parked: [])
         XCTAssertNil(settle.target)
+    }
+
+    /// WC-13: live (2026-10-15, auto-hidden Dock): clicking an app in the
+    /// Dock activated it, but the click was inside the usable area (the
+    /// Dock hides), so it counted as a window click and the parked window
+    /// on another workspace was dropped (`focused window not under click`).
+    /// A click on the Dock or the menu bar (the frontmost window under it,
+    /// Gio's own aside, is above the normal layers) explains no focus: the
+    /// activation reveals the app's window on its workspace.
+    func testADockClickRevealsTheActivatedAppsWindowOnItsWorkspace() {
+        moveToHiddenWorkspace(2)
+        world.clickTarget = ClickTarget(onSystemUI: true, ownerPID: nil)
+        focus.recordClick(at: CGPoint(x: 900, y: 40))
+        scheduler.runPending()
+        XCTAssertNil(focus.currentClick(), "the Dock is not a window")
+
+        world.frontmost = 2
+        world.focusedElements[2] = element(2)
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+        scheduler.advance(by: 1)
+
+        XCTAssertEqual(fixture.session.manager.current, 2)
+        XCTAssertEqual(focused, ids[2])
+        XCTAssertTrue(world.logs.contains { $0.1 == "focus reveal id=2:3 workspace=2 source=activation" })
+    }
+
+    /// WC-16 live (2026-10-15): a link clicked in Slack opened in Chrome on
+    /// another workspace; the activation was checked against the click
+    /// point and dropped, so the browser stayed behind. A click on one app's
+    /// window followed by another app taking the focus is a hand-off: the
+    /// activation reveals that app's window like a Dock click.
+    func testALinkClickedInOneAppRevealsTheWindowOfTheAppItOpened() {
+        moveToHiddenWorkspace(2)
+        world.clickTarget = ClickTarget(onSystemUI: false, ownerPID: 1)
+        focus.recordClick(at: center(0))
+        scheduler.runPending()
+
+        world.frontmost = 2
+        world.focusedElements[2] = element(2)
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+        scheduler.advance(by: 1)
+
+        XCTAssertEqual(fixture.session.manager.current, 2)
+        XCTAssertEqual(focused, ids[2])
+        XCTAssertTrue(world.logs.contains { $0.1 == "focus reveal id=2:3 workspace=2 source=activation" })
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("focus dropped") })
     }
 
     func testRevealOnAnotherDisplaysShownWorkspaceIsNotAWorkspaceSwitch() {
@@ -369,6 +457,60 @@ final class FocusCoordinatorTests: XCTestCase {
         XCTAssertEqual(world.registered, [2], "unknown windows go to single-window admission")
     }
 
+    // MARK: Dropped activations
+
+    private var dropLines: [String] {
+        world.logs.filter { $0.0 == .debug && $0.1.hasPrefix("focus dropped") }.map(\.1)
+    }
+
+    func testActivationWithAnUnreadableFocusedWindowIsLogged() {
+        world.frontmost = 2
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(dropLines, ["focus dropped source=activation pid=2 reason=focused window unreadable"])
+    }
+
+    func testActivationOfAMinimizedWindowIsLogged() {
+        world.frontmost = 2
+        world.minimized = [ids[1]]
+        world.focusedElements[2] = element(1)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        let minimizedID = "\(ids[1].pid):\(ids[1].elementID)"
+        XCTAssertEqual(dropLines, ["focus dropped source=activation id=\(minimizedID) reason=window minimized"])
+    }
+
+    func testActivationOfAnAppNoLongerFrontmostIsLogged() {
+        world.frontmost = 1
+        world.focusedElements[2] = element(1)
+
+        focus.requestAdoption(.activation, pid: 2, element: nil)
+
+        XCTAssertEqual(focused, ids[0])
+        XCTAssertEqual(dropLines, ["focus dropped source=activation pid=2 frontmost=1 reason=app not frontmost"])
+    }
+
+    func testActivationWhileWindowWorkIsNotAllowedIsLoggedButKeyWindowChangesAreNot() {
+        world.windowWorkAllowed = false
+        world.frontmost = 3
+
+        focus.requestAdoption(.activation, pid: 3, element: nil)
+        focus.requestAdoption(.focusChanged, pid: 3, element: element(1))
+
+        XCTAssertEqual(dropLines, ["focus dropped source=activation pid=3 reason=window work not allowed"])
+    }
+
+    func testBackgroundKeyWindowChangeAndOwnPidAreNotLogged() {
+        world.frontmost = 1
+
+        focus.requestAdoption(.focusChanged, pid: 2, element: element(1))
+        focus.requestAdoption(.activation, pid: Self.ownPID, element: nil)
+
+        XCTAssertEqual(dropLines, [])
+    }
+
     func testClickSettlesAfterReleaseAndMatchesTheClickPoint() {
         world.frontmost = 2
         world.focusedElements[2] = element(1)
@@ -391,7 +533,10 @@ final class FocusCoordinatorTests: XCTestCase {
     func testClickNotOnTheFocusedWindowIsReReadOnceThenDropped() {
         world.frontmost = 2
         world.focusedElements[2] = element(1)
+        // The clicked window is the same app's: no hand-off.
+        world.clickTarget = ClickTarget(onSystemUI: false, ownerPID: 2)
         focus.recordClick(at: center(2))
+        scheduler.runPending()
 
         focus.requestAdoption(.activation, pid: 2, element: nil)
         scheduler.advance(by: 0.15)
@@ -536,7 +681,7 @@ final class FocusCoordinatorTests: XCTestCase {
     func testGestureIntentRaisesWithoutCenteringOrWarp() {
         world.centerMode = .always
         focusLogically(2)
-        focus.requestGestureIntent()
+        focus.requestUncenteredIntent()
         XCTAssertEqual(focus.takeCenterRequest(), .none)
         let settle = focus.takeSettleFocus(parked: [])
         XCTAssertEqual(settle.target, ids[2])
@@ -604,5 +749,30 @@ final class FocusCoordinatorTests: XCTestCase {
         focus.pointerMoved(center(1))
         scheduler.advance(by: 0.3)
         XCTAssertEqual(focused, ids[1])
+    }
+
+    /// PF-AA: every pointer move over a managed window copied the whole
+    /// on-screen window list (~33 a second), and resting in the focused
+    /// window re-armed a no-op hover check every ~110 ms. Over the focused
+    /// window alone there is nothing to focus: no lookup, nothing armed.
+    func testMovingInsideTheFocusedWindowAsksTheWindowServerNothing() {
+        focus.focusFollowsMouse = true
+        focus.setHoverFrames([ids[0]: frames[0], ids[1]: frames[1], ids[2]: frames[2]])
+        world.frontmost = 1
+        world.topPID = 1
+        for step in 0..<20 {
+            world.mouseLocation = CGPoint(x: frames[0].minX + 10 + CGFloat(step), y: frames[0].midY)
+            focus.pointerMoved(world.mouseLocation)
+            scheduler.advance(by: 0.05)
+        }
+        XCTAssertEqual(world.topLookups, 0)
+        XCTAssertEqual(scheduler.pendingCount, 0)
+
+        world.topPID = 2
+        world.mouseLocation = center(1)
+        focus.pointerMoved(center(1))
+        scheduler.advance(by: 0.2)
+        XCTAssertEqual(focused, ids[1], "another window still takes the focus")
+        XCTAssertGreaterThan(world.topLookups, 0)
     }
 }

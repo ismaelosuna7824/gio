@@ -25,6 +25,9 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     /// item) and what choosing it does (the app shows the release notes).
     public var updateTitleProvider: (() -> String?)?
     public var onUpdate: (() -> Void)?
+    /// The combo that opens the launcher now (nil: unbound), read when the
+    /// menu is built; never waits on the session queue.
+    public var launcherHotkeyProvider: (() -> HotkeyCombo?)?
 
     public override init() {
         super.init()
@@ -90,7 +93,11 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
             menu.addItem(actionItem(title, symbol: "arrow.down.circle", key: "", modifiers: [], action: #selector(openUpdate)))
         }
         menu.addItem(actionItem("Open Gio", symbol: "macwindow", key: ",", modifiers: .command, action: #selector(openMain)))
-        menu.addItem(actionItem("Launcher", symbol: "magnifyingglass", key: " ", modifiers: .option, action: #selector(openLauncher)))
+        let launcherKey = menuKeyEquivalent(for: launcherHotkeyProvider?())
+        menu.addItem(actionItem(
+            "Launcher", symbol: "magnifyingglass", key: launcherKey?.key ?? "", modifiers: launcherKey?.modifiers ?? [],
+            action: #selector(openLauncher)
+        ))
         let reload = actionItem("Reload Config", symbol: "arrow.clockwise", key: "r", modifiers: .command, action: #selector(reloadConfig))
         reload.isEnabled = connected
         menu.addItem(reload)
@@ -111,7 +118,7 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
         }
         let rows = moveToDisplayItems(
             displays: displays, current: latest?.stacks.first(where: \.focused)?.display,
-            hasFocusedWindow: connected && latest?.focused != nil
+            hasFocusedWindow: connected && latest?.hasFocusedWindow == true
         )
         guard !rows.isEmpty else {
             return nil
@@ -213,6 +220,31 @@ public final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func openUpdate() {
         onUpdate?()
     }
+}
+
+/// A combo as an `NSMenuItem` key equivalent, for display only: typable keys
+/// (letters, digits, punctuation, Space) with their modifiers; nil for an
+/// unbound combo or a key a menu cannot show as one character.
+public func menuKeyEquivalent(for combo: HotkeyCombo?) -> (key: String, modifiers: NSEvent.ModifierFlags)? {
+    guard let combo else {
+        return nil
+    }
+    let key: String
+    if combo.key == "Space" {
+        key = " "
+    } else if let symbol = keycapSymbols[combo.key], symbol.count == 1, symbol.unicodeScalars.allSatisfy(\.isASCII) {
+        key = symbol
+    } else if combo.key.count == 1 {
+        key = combo.key.lowercased()
+    } else {
+        return nil
+    }
+    var modifiers: NSEvent.ModifierFlags = []
+    if combo.modifiers.contains(.ctrl) { modifiers.insert(.control) }
+    if combo.modifiers.contains(.alt) { modifiers.insert(.option) }
+    if combo.modifiers.contains(.shift) { modifiers.insert(.shift) }
+    if combo.modifiers.contains(.cmd) { modifiers.insert(.command) }
+    return (key, modifiers)
 }
 
 /// The status glyph: three columns with the focused middle one filled, and

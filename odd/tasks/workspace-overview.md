@@ -80,6 +80,32 @@ window titles (titles appear only in the panel).
   instead of `(300, 400)`; GREEN; `swift test` all bundles 0 failures (UI 250/53 skipped,
   Session 272, POC 7, Mac 19, MacOS 40, Core 1264); signed build SUCCEEDED. LIVE PENDING:
   open the launcher with `Alt+Space` on the signed app.
+- [x] WO-02 — Faster-feeling open (user 2026-10-21: "que sea más fluida cuando se abre, tarda un
+  poco"; log: `overview shown ms=32-74`, then `snapshot capture ... ms=143-227 reason=overview`,
+  thumbnails popping in over the app icons). PF-AP revived WITH downscaling (it was reverted
+  because full 2x cached images drawn at tile size cost Gio CPU): `overviewThumbnailPlan`
+  (fresh, same size, >= 0.75 px/pt) splits cached from captured; cached images are shrunk to
+  0.75 px/pt off the session queue (`snapshotDownscaled`, one CGContext draw) and delivered
+  first, the rest is captured as before and delivered second (the completion may run twice;
+  the model merges batches, later wins). Log `overview thumbnails cached=N capture=M scaleMs=S`.
+  A thumbnail crossfades over its placeholder (0.18 s, none under Reduce Motion); rows and
+  tiles are Equatable value views, so hover/drag no longer re-render every tile.
+- [x] WO-03 — Drag to move (user: "reordenar las ventanas y mover entre workspaces con un
+  dragmove"). Core `OverviewMove` + `WorkspaceManager.moveWindowFromOverview(_:on:modes:)`
+  (`OverviewWindowMove.swift`): a lone window moves its whole column (width, heights) to the
+  drop index; a stacked one leaves its column as its own column at the source width; target
+  focus unchanged unless empty; source focus repaired; no follow, no FocusIntent; refusals for
+  floating/fullscreen/minimized/unknown/other display; dwindle: the tree places it (a reorder
+  inside a dwindle strip is `unchanged`). Host `moveWindowFromOverview` logs `overview move
+  id=P:E workspace=N column=C result=` and completes with fresh facts. UI: DragGesture (6 pt)
+  in the panel space, floating copy, accent insertion bar from the pure
+  `overviewDropTarget(windowID:at:rows:)`, Esc cancels, rows refresh in place with a spring.
+  Tests: `OverviewMoveTests` (18), `OverviewDropTargetTests`, `WorkspaceOverviewModelTests`
+  additions, `OverviewThumbnailPlanTests` (11), `SnapshotDownscaleTests` (5). RED not observed
+  for the delegated slices (no builds mid-flight); one dwindle test failed at integration
+  (the manager renews the spare workspace id on every write) and was fixed. LIVE PENDING: open
+  timing (`overview thumbnails cached=`), drag between and across rows, Esc during a drag.
+  Known: dwindle rows still show the insertion bar; no autoscroll while dragging.
 
 ## Evidence (WO-01)
 - RED: `swift test --filter GioCoreTests...` failed to compile (`CLICommand` has no member

@@ -40,6 +40,34 @@ public enum OverviewStep: Equatable, Sendable {
     case left, right, up, down
 }
 
+/// WO-02: a window tile dropped in the overview. `workspace` is the 1-based
+/// stack position on the overview's display (`WorkspaceStripFact.workspace`);
+/// `column` is the insertion index among that strip's columns as shown
+/// before the move (0 = first, the column count = after the last).
+/// Applied by `WorkspaceManager.moveWindowFromOverview(_:on:modes:)`.
+public struct OverviewMove: Equatable, Sendable {
+    /// `WindowFact.id`: `pid:elementID`.
+    public var windowID: String
+    public var workspace: Int
+    public var column: Int
+
+    public init(windowID: String, workspace: Int, column: Int) {
+        self.windowID = windowID
+        self.workspace = workspace
+        self.column = column
+    }
+}
+
+/// WO-02: what an overview drop did (logged as `result=`).
+public enum OverviewMoveResult: String, Equatable, Sendable {
+    case moved
+    /// Dropped where it already was (or a dwindle tree kept its order).
+    case unchanged
+    /// Unknown, minimized, floating or fullscreen window, a target outside
+    /// the stack, or a window not on the overview's display.
+    case refused
+}
+
 /// Window ids of a strip in reading order: columns left to right, each
 /// column top to bottom.
 public func overviewWindowOrder(_ strip: WorkspaceStripFact) -> [String] {

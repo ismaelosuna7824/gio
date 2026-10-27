@@ -266,6 +266,6 @@ final class MoveEdgeTests: XCTestCase {
         XCTAssertEqual(motionCause(for: .moveColumnRightOrToMonitorRight), .windowMovement)
         XCTAssertEqual(motionCause(for: .focusColumnOrMonitorLeft), .viewScroll)
         XCTAssertEqual(motionCause(for: .focusColumnOrMonitorRight), .viewScroll)
-        XCTAssertEqual(HotkeyDispatcher().bindingCount, 79, "NC-14 added two")
+        XCTAssertEqual(HotkeyDispatcher().bindingCount, 80, "NC-14 added two, the launcher one")
     }
 }

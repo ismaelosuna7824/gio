@@ -49,3 +49,33 @@ public func topWindowOwnerPID(atCocoa point: CGPoint) -> pid_t? {
     }
     return nil
 }
+
+/// What a click at a Cocoa point landed on (`clickTarget` over the on-screen
+/// windows, front to back, in CoreGraphics global space): WC-13 the Dock or
+/// the menu bar, WC-16 the app whose window it hit. Gio's own panels are
+/// skipped there. One WindowServer query; nothing known when it fails.
+public func clickTarget(atCocoa point: CGPoint, ownPID: pid_t) -> ClickTarget {
+    guard let primary = NSScreen.screens.first,
+          let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
+    else {
+        return ClickTarget(onSystemUI: false, ownerPID: nil)
+    }
+    let windows: [PointWindow] = info.compactMap { entry in
+        if let alpha = entry[kCGWindowAlpha as String] as? Double, alpha <= 0.01 {
+            return nil
+        }
+        if (entry[kCGWindowOwnerName as String] as? String) == "Window Server" {
+            return nil
+        }
+        guard let bounds = entry[kCGWindowBounds as String] as? [String: CGFloat],
+              let rect = CGRect(dictionaryRepresentation: bounds as CFDictionary),
+              let layer = entry[kCGWindowLayer as String] as? Int,
+              let pid = entry[kCGWindowOwnerPID as String] as? Int32
+        else {
+            return nil
+        }
+        return PointWindow(pid: pid, layer: layer, bounds: rect)
+    }
+    let global = globalDisplayPoint(fromCocoa: point, primaryHeight: primary.frame.height)
+    return clickTarget(at: global, frontToBack: windows, ownPID: ownPID)
+}

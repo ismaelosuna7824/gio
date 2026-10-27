@@ -5,10 +5,22 @@ import Foundation
 // windows that appear before their title (Chrome, Electron apps).
 
 /// Whether an arriving window becomes its workspace's focused window: never
-/// a minimized or floating arrival (a dialog or a transient popup must not
-/// take the strip's focus), and never against `open-focused = false`.
-public func arrivalTakesFocus(_ outcome: RuleOutcome, mode: WindowMode, minimized: Bool) -> Bool {
-    outcome.openFocused && !minimized && mode != .floating
+/// a minimized arrival, never against `open-focused = false`. A floating
+/// arrival (a dialog or a transient popup) does not either, except FL-01: an
+/// explicit `open-focused = true` lets a background app's popup take focus,
+/// because macOS opens it under the frontmost app's window where the focused
+/// column hides it. The frontmost app's own popups (Chrome's address-bar
+/// suggestions, re-created on every key) never take it.
+public func arrivalTakesFocus(
+    _ outcome: RuleOutcome, mode: WindowMode, minimized: Bool, fromBackgroundApp: Bool
+) -> Bool {
+    guard !minimized else {
+        return false
+    }
+    if mode == .floating {
+        return outcome.openFocused == true && fromBackgroundApp
+    }
+    return outcome.openFocused != false
 }
 
 /// Where a rule may send an arriving window. A window discovery floated (a
@@ -43,34 +55,43 @@ func shapeArrivalColumn(_ column: inout Column, outcome: RuleOutcome) {
     }
 }
 
-func appendArrivalColumn(_ id: WindowID, outcome: RuleOutcome, to workspace: inout Workspace, focus: Bool) {
+func appendArrivalColumn(
+    _ id: WindowID, outcome: RuleOutcome, to workspace: inout Workspace, focus: Bool,
+    position: NewWindowPosition = .end
+) {
     var column = Column(
         id: ColumnID((workspace.columns.map(\.id.rawValue).max() ?? 0) + 1),
         width: 0, windows: [id]
     )
     column.focusedWindowIndex = 0
     shapeArrivalColumn(&column, outcome: outcome)
-    workspace.columns.append(column)
+    let effectivePosition = workspace.layout == .dwindle ? .end : position
+    let previousCount = workspace.columns.count
+    let index = effectivePosition.insertionIndex(columnCount: previousCount, focusedColumn: workspace.focusedColumn)
+    let shiftsFocusedColumn = index <= workspace.focusedColumn && workspace.focusedColumn < previousCount
+    workspace.columns.insert(column, at: index)
     if focus {
-        workspace.focusedColumn = workspace.columns.count - 1
+        workspace.focusedColumn = index
         workspace.focusedWindow = id
+    } else if shiftsFocusedColumn {
+        workspace.focusedColumn += 1
     }
 }
 
-/// Put an arriving window in a new last column of its destination
-/// (`arrivalDestination`), shaped by the rule. `takesFocus` makes it the
-/// destination's focused window; the focused display never changes here
-/// (following is the caller's decision). Returns the destination.
+/// Put an arriving window in a new column of its destination
+/// (`arrivalDestination`) at `position`, shaped by the rule. `takesFocus`
+/// makes it the destination's focused window; the focused display never
+/// changes here (following is the caller's decision). Returns the destination.
 @discardableResult
 public func placeArrival(
     _ id: WindowID, outcome: RuleOutcome, takesFocus: Bool, onDisplay display: DisplayID? = nil,
-    manager: inout WorkspaceManager
+    position: NewWindowPosition = .end, manager: inout WorkspaceManager
 ) -> WorkspaceID {
     let destID = manager.arrivalDestination(outcome, onDisplay: display)
     guard var dest = manager.workspace(id: destID) else {
         return destID
     }
-    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: takesFocus)
+    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: takesFocus, position: position)
     manager.update(dest)
     return destID
 }
@@ -97,6 +118,11 @@ public struct TitleRecheckBook: Sendable {
             return false
         }
         return now - armedAt <= Self.window
+    }
+
+    /// PF-W: armed and inside the window (its title is wanted right away).
+    public func isArmed(_ id: WindowID, now: TimeInterval) -> Bool {
+        armed[id].map { now - $0 <= Self.window } ?? false
     }
 
     public mutating func forget(_ id: WindowID) {
@@ -126,7 +152,8 @@ public func titleRecheckOutcome(_ rules: [WindowRule], window: ManagedWindow) ->
 /// current workspace and the strip's focused window stay unless the window
 /// itself leaves (its workspace's focus then falls to a neighbour).
 public func applyTitleRecheck(
-    _ id: WindowID, outcome: RuleOutcome, registry: WindowRegistry, manager: inout WorkspaceManager
+    _ id: WindowID, outcome: RuleOutcome, registry: WindowRegistry, position: NewWindowPosition = .end,
+    manager: inout WorkspaceManager
 ) {
     if var record = registry.find(id) {
         record.widthLimits = outcome.widthLimits
@@ -165,6 +192,6 @@ public func applyTitleRecheck(
     guard var dest = manager.workspace(id: manager.ruleDestination(placement) ?? destID) else {
         return
     }
-    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: false)
+    appendArrivalColumn(id, outcome: outcome, to: &dest, focus: false, position: position)
     manager.update(dest)
 }

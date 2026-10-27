@@ -225,12 +225,26 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertFalse(snapshotLooksBlank(samples: []), "no samples: keep the image")
     }
 
+    /// FX-08: a window with a see-through part (sidebar vibrancy, terminal
+    /// background opacity) reads translucent; rounded corners do not.
+    func testATranslucentCaptureHasASeeThroughShareBeyondItsCorners() {
+        let opaque: UInt32 = 0x2020_20FF
+        let clear: UInt32 = 0x0000_0000
+        let tinted: UInt32 = 0x1010_10B0
+        let corners = Array(repeating: clear, count: 4) + Array(repeating: opaque, count: 4092)
+        XCTAssertFalse(snapshotLooksTranslucent(samples: corners), "only the rounded corners")
+        let sidebar = Array(repeating: tinted, count: 800) + Array(repeating: opaque, count: 3296)
+        XCTAssertTrue(snapshotLooksTranslucent(samples: sidebar), "a vibrant sidebar, a fifth of the window")
+        XCTAssertTrue(snapshotLooksTranslucent(samples: Array(repeating: 0x1010_10E6, count: 4096)), "terminal at 90 %")
+        XCTAssertFalse(snapshotLooksTranslucent(samples: []))
+    }
+
     func testRefreshSelectionIsOnlyMissingResizedDirtyOrSoftStale() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "fresh", frame: frame, pixels: 1, at: 100)
         cache.store(id(2), image: "moved", frame: frame, pixels: 1, at: 100)
         cache.store(id(3), image: "resized", frame: frame, pixels: 1, at: 100)
-        cache.store(id(4), image: "dirty", frame: frame, pixels: 1, at: 100)
+        cache.store(id(4), image: "dirty", frame: frame, pixels: 1, at: 90)
         cache.store(id(5), image: "old", frame: frame, pixels: 1, at: 60)
         let wanted: [(id: WindowID, frame: CGRect)] = [
             (id(1), frame), (id(2), frame.offsetBy(dx: 900, dy: 0)),
@@ -261,12 +275,88 @@ final class SnapshotCacheTests: XCTestCase {
             ServerWindow(pid: 77, bounds: CGRect(x: 0, y: 0, width: 1000, height: 800)),
             ServerWindow(pid: 20, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
         ]
-        let print = unmanagedWindowFingerprint(server: server, managed: [id(1): managed], ownPid: 77)
+        let print = unmanagedWindowFingerprint(
+            server: server, managed: [id(1): managed], ownPid: 77, display: CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        )
         XCTAssertEqual(
             print, [ServerWindowKey(pid: 10, x: 900, y: 0, width: 300, height: 200), ServerWindowKey(pid: 20, x: 100, y: 100, width: 50, height: 50)]
         )
         let moved = server.map { $0.pid == 20 ? ServerWindow(pid: 20, bounds: $0.bounds.offsetBy(dx: 10, dy: 0)) : $0 }
-        XCTAssertNotEqual(unmanagedWindowFingerprint(server: moved, managed: [id(1): managed], ownPid: 77), print)
+        XCTAssertNotEqual(
+            unmanagedWindowFingerprint(
+                server: moved, managed: [id(1): managed], ownPid: 77, display: CGRect(x: 0, y: 0, width: 1800, height: 1169)
+            ),
+            print
+        )
+    }
+
+    /// PF-AJ: live with two displays, parked and hidden-workspace windows
+    /// whose WindowServer frame is not the one Gio recorded (macOS clamps
+    /// them; an app keeps its own width) counted as unmanaged windows, so
+    /// every re-park changed the fingerprint and recaptured both backdrops
+    /// (9 of 17 backdrop runs in the monitor workload). A window showing no
+    /// more than a parking sliver on any display is not in the picture.
+    func testWindowsOffEveryDisplayDoNotEnterTheFingerprint() {
+        let display = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let server = [
+            ServerWindow(pid: 10, bounds: CGRect(x: 1799, y: 8, width: 970, height: 1114)),
+            ServerWindow(pid: 11, bounds: CGRect(x: 1799, y: -1113, width: 888, height: 1114)),
+            ServerWindow(pid: 12, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
+        ]
+        XCTAssertEqual(
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, display: display),
+            [ServerWindowKey(pid: 12, x: 100, y: 100, width: 50, height: 50)]
+        )
+    }
+
+    /// PF-AL: live, one popup re-captured every display's backdrop. Each
+    /// display has its own fingerprint: only the windows showing more than a
+    /// sliver on it (one spanning two displays is in both).
+    func testEachDisplayHasItsOwnFingerprint() {
+        let left = CGRect(x: 0, y: 0, width: 1800, height: 1169)
+        let right = CGRect(x: 1800, y: 0, width: 1800, height: 1169)
+        let server = [
+            ServerWindow(pid: 20, bounds: CGRect(x: 100, y: 100, width: 50, height: 50)),
+            ServerWindow(pid: 21, bounds: CGRect(x: 2000, y: 100, width: 300, height: 200)),
+            ServerWindow(pid: 22, bounds: CGRect(x: 1700, y: 100, width: 200, height: 200)),
+        ]
+        XCTAssertEqual(
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, display: left),
+            [ServerWindowKey(pid: 20, x: 100, y: 100, width: 50, height: 50),
+             ServerWindowKey(pid: 22, x: 1700, y: 100, width: 200, height: 200)]
+        )
+        XCTAssertEqual(
+            unmanagedWindowFingerprint(server: server, managed: [:], ownPid: 77, display: right),
+            [ServerWindowKey(pid: 21, x: 2000, y: 100, width: 300, height: 200),
+             ServerWindowKey(pid: 22, x: 1700, y: 100, width: 200, height: 200)]
+        )
+    }
+
+    /// PF-AL: which backdrops a run captures. A missing one (settle runs),
+    /// one marked dirty (any run, at once), an expired one (settle runs);
+    /// one whose display's unmanaged windows changed only once it is
+    /// `snapshotBackdropMinAge` old (a burst of popups: at most one capture
+    /// per display per interval).
+    func testBackdropDueRateLimitsUnmanagedChanges() {
+        let entry = SnapshotBackdropEntry(image: "b", displayFrame: frame, capturedAt: 100, pixels: 1)
+        XCTAssertGreaterThan(snapshotBackdropMinAge, 0)
+        XCTAssertLessThan(snapshotBackdropMinAge, snapshotBackdropMaxAge)
+        XCTAssertTrue(snapshotBackdropDue(nil as SnapshotBackdropEntry<String>?, markedDirty: false, unmanagedChanged: false, settle: true, now: 100))
+        XCTAssertFalse(snapshotBackdropDue(nil as SnapshotBackdropEntry<String>?, markedDirty: true, unmanagedChanged: true, settle: false, now: 100))
+        XCTAssertTrue(snapshotBackdropDue(entry, markedDirty: true, unmanagedChanged: false, settle: false, now: 101))
+        XCTAssertTrue(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: false, settle: true, now: 401))
+        XCTAssertFalse(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: false, settle: false, now: 401))
+        XCTAssertFalse(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: false, settle: true, now: 200))
+        XCTAssertFalse(
+            snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: true, settle: true, now: 100 + snapshotBackdropMinAge - 1),
+            "too young: remembered"
+        )
+        XCTAssertTrue(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: true, settle: true, now: 100 + snapshotBackdropMinAge))
+        XCTAssertFalse(snapshotBackdropDue(entry, markedDirty: false, unmanagedChanged: true, settle: false, now: 200))
+        XCTAssertEqual(
+            snapshotBackdropChangedLogLine(display: CGRect(x: 1800, y: 0, width: 1800, height: 1169), wait: 24.66),
+            "snapshot backdrop unmanaged changed display=1800,0 wait=24.7"
+        )
     }
 
     func testBackdropExcludesOnlyWindowsThatCanFly() {
@@ -283,6 +373,76 @@ final class SnapshotCacheTests: XCTestCase {
         XCTAssertTrue(snapshotTypingHopDue(now: 10, lastHop: nil, interval: 0.5), "first key")
         XCTAssertFalse(snapshotTypingHopDue(now: 10.3, lastHop: 10, interval: 0.5))
         XCTAssertTrue(snapshotTypingHopDue(now: 10.5, lastHop: 10, interval: 0.5))
+    }
+
+    /// PF-V: a typing capture waits for a pause longer than the hop
+    /// interval (steady typing never fires it) and for the floor since the
+    /// window's last image.
+    func testTypingCaptureWaitsForAPauseAndTheFloor() {
+        XCTAssertGreaterThan(snapshotTypingQuiet, snapshotTypingHopInterval * 2)
+        XCTAssertEqual(snapshotTypingCaptureDelay(capturedAt: nil, now: 10), snapshotTypingQuiet, "no image")
+        XCTAssertEqual(snapshotTypingCaptureDelay(capturedAt: 0, now: 10), snapshotTypingQuiet, "old image")
+        XCTAssertEqual(
+            snapshotTypingCaptureDelay(capturedAt: 9, now: 10), snapshotTypingFloor - 1, accuracy: 1e-9,
+            "an image 1 s old waits for the floor"
+        )
+    }
+
+    /// PF-AK: live, a settle run before the targeted typing run captured
+    /// the typed-in window through its dirty mark, bypassing the floor and
+    /// the pause (three 16.4 Mpx captures of one Chrome window 0.6 s apart).
+    /// A typing mark counts only once the typing rule allows it: the pause
+    /// after the last hop and the floor after the window's newest image.
+    /// Held, the window is left out of the run (a missing image or a new
+    /// size is still captured); other marks keep their behavior.
+    func testTypingMarkCountsOnlyAfterThePauseAndTheFloor() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "young", frame: frame, pixels: 1, at: 100)
+        cache.store(id(2), image: "old", frame: frame, pixels: 1, at: 90)
+        cache.store(id(4), image: "other size", frame: frame, pixels: 1, at: 90)
+        cache.store(id(5), image: "stale", frame: frame, pixels: 1, at: 60)
+        cache.store(id(6), image: "focused", frame: frame, pixels: 1, at: 100)
+        let wanted: [(id: WindowID, frame: CGRect)] = [
+            (id(1), frame), (id(2), frame), (id(3), frame), (id(4), CGRect(x: 0, y: 0, width: 700, height: 600)),
+            (id(5), frame), (id(6), frame),
+        ]
+        let dirty: [WindowID: SnapshotCaptureReason] = [
+            id(1): .typing, id(2): .typing, id(3): .typing, id(4): .typing, id(5): .typing, id(6): .focus,
+        ]
+        let typedAt: [WindowID: TimeInterval] = [id(1): 95, id(2): 100.5, id(3): 100.5, id(4): 100.5, id(5): 100.5]
+        let held = snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: 101)
+        XCTAssertEqual(held.map(\.id), [id(3), id(4), id(6)], "floor (1), pause (2) and stale (5) held")
+        XCTAssertEqual(held.map(\.cause), [.missing, .sizeChanged, .dirty(.focus)])
+        let strip = snapshotStripSelection(
+            cache: cache, strip: wanted, dirty: dirty, typedAt: typedAt, excluded: [], now: 101
+        )
+        XCTAssertEqual(strip.map(\.id), [id(3), id(4), id(6)])
+        XCTAssertEqual(strip.map(\.cause), [.missing, .sizeChanged, .dirty(.focus)])
+
+        let allowed = snapshotRefreshSelection(cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: 105)
+        XCTAssertEqual(allowed.map(\.id), [id(1), id(2), id(3), id(4), id(5), id(6)])
+        XCTAssertEqual(allowed.map(\.cause).prefix(2), [.dirty(.typing), .dirty(.typing)])
+        XCTAssertEqual(
+            snapshotStripSelection(cache: cache, strip: wanted, dirty: dirty, typedAt: typedAt, excluded: [], now: 105)
+                .map(\.cause).prefix(2),
+            [.dirty(.typing), .dirty(.typing)]
+        )
+    }
+
+    /// PF-AK: the held typing marks and when each may be captured: the
+    /// later of the pause after the last hop and the floor after the newest image.
+    func testTypingHoldsReportWhenEachWindowMayBeCaptured() {
+        var cache = SnapshotCache<String>()
+        cache.store(id(1), image: "young", frame: frame, pixels: 1, at: 100)
+        cache.store(id(2), image: "old", frame: frame, pixels: 1, at: 90)
+        cache.store(id(3), image: "allowed", frame: frame, pixels: 1, at: 90)
+        let holds = snapshotTypingHolds(
+            cache: cache, dirty: [id(1): .typing, id(2): .typing, id(3): .typing, id(4): .focus],
+            typedAt: [id(1): 95, id(2): 100.5, id(3): 90], now: 101
+        )
+        XCTAssertEqual(holds, [id(1): 100 + snapshotTypingFloor, id(2): 100.5 + snapshotTypingQuiet])
+        XCTAssertEqual(snapshotTypingCaptureDue(typedAt: nil, capturedAt: nil), -.infinity, "nothing holds it")
+        XCTAssertEqual(snapshotTypingHeldLogLine(id: id(1), wait: 1.24), "snapshot typing held id=10:1 wait=1.2")
     }
 
     // MARK: SM-11 two sizes per window, other-size fallback, off-screen, miss log
@@ -339,19 +499,19 @@ final class SnapshotCacheTests: XCTestCase {
     // MARK: SM-27 resize without stretching
 
     /// Alt+F with both sizes cached: the layer starts on the column image and
-    /// crossfades into the maximized one; back again the other way round.
-    func testAResizeFlightGetsTheImageOfItsTargetSizeToCrossfadeTo() {
+    /// swaps to the maximized one; back again the other way round.
+    func testAResizeFlightGetsTheImageOfItsTargetSizeToSwapTo() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "column", frame: frame, pixels: 1, at: 1)
         cache.store(id(1), image: "maximized", frame: maximized, pixels: 1, at: 2)
         let grow = cache.usableEntry(id(1), startFrame: frame, targetFrame: maximized, now: 10)
         XCTAssertEqual(grow?.entry.image, "column")
         XCTAssertEqual(grow?.target?.image, "maximized")
-        XCTAssertEqual(grow?.resize, .crossfade)
+        XCTAssertEqual(grow?.resize, .swap)
         let shrink = cache.usableEntry(id(1), startFrame: maximized, targetFrame: frame.offsetBy(dx: 40, dy: 0), now: 10)
         XCTAssertEqual(shrink?.entry.image, "maximized")
         XCTAssertEqual(shrink?.target?.image, "column")
-        XCTAssertEqual(shrink?.resize, .crossfade)
+        XCTAssertEqual(shrink?.resize, .swap)
     }
 
     /// The first maximize of a window (never captured at that size): no

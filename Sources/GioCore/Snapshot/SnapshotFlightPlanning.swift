@@ -12,7 +12,9 @@ import Foundation
 // an `undrawn` window (its AX element vanished, or a capture found no
 // WindowServer window for it on screen) has nothing to show: no layer, no
 // hole, never a miss; a motion that moves only undrawn windows moves
-// nothing visible.
+// nothing visible. WP-04: the hole of a window opening in this pass is an
+// entry hole: it cuts the image layers too, so the neighbours it displaces
+// slide out from under the real window instead of covering it.
 
 public enum SnapshotFallbackReason: String, Equatable, Sendable {
     case cacheMiss = "cache-miss"
@@ -38,33 +40,41 @@ public struct SnapshotFlightItem: Equatable, Sendable {
 
 /// SM-16: a window that flies without a layer and is visible at its target
 /// on an overlaid display: the backdrop is cut at `frame` (its target) so
-/// the real window shows through.
+/// the real window shows through. WP-04: an `entry` hole (a window opening
+/// in this pass) cuts the image layers as well.
 public struct SnapshotHole: Equatable, Sendable {
     public let id: WindowID
     public let frame: CGRect
     public let displayIndex: Int
+    public let entry: Bool
 
-    public init(id: WindowID, frame: CGRect, displayIndex: Int) {
+    public init(id: WindowID, frame: CGRect, displayIndex: Int, entry: Bool = false) {
         self.id = id
         self.frame = frame
         self.displayIndex = displayIndex
+        self.entry = entry
     }
 }
 
 public enum SnapshotFlightDecision: Equatable, Sendable {
     /// `items` fly an image; `holes` are the windows without one that land
-    /// visible (SM-16).
-    case snapshot(items: [SnapshotFlightItem], holes: [SnapshotHole])
+    /// visible (SM-16). WP-05: `covered` are opening windows that land
+    /// visible but neither fly nor show through a hole (the backdrop covers
+    /// them until they redrew and pop in), from their entry start.
+    case snapshot(items: [SnapshotFlightItem], holes: [SnapshotHole], covered: [SnapshotFlightItem] = [])
     case fallback(reason: SnapshotFallbackReason, missing: [WindowID])
 
     /// The one write each real window gets, at motion start.
     public var finalFrames: [WindowID: CGRect] {
-        guard case .snapshot(let items, let holes) = self else {
+        guard case .snapshot(let items, let holes, let covered) = self else {
             return [:]
         }
         var frames = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0.to) })
         for hole in holes {
             frames[hole.id] = hole.frame
+        }
+        for item in covered {
+            frames[item.id] = item.to
         }
         return frames
     }
@@ -81,21 +91,33 @@ private func moves(_ a: CGRect, _ b: CGRect) -> Bool {
 /// this pass ends with (visible and parked alike), Cocoa coordinates.
 /// MM-10: `pinnedDisplays` puts a window's layer on that display's overlay
 /// whatever its frames overlap (a layer sliding out by an edge another
-/// display shares; its own overlay clips it there).
+/// display shares; its own overlay clips it there). WP-04: `opening` are the
+/// windows opening in this pass (NA-02 entries); their holes are entry holes.
+/// WP-05: the `covered` windows visible at their target are covered instead
+/// (no layer, no hole); their displays get an overlay even when nothing else
+/// moves there, so an open alone is an overlay flight too.
 public func planSnapshotFlight(
     starts: [WindowID: CGRect], targets: [WindowID: CGRect], displays: [CGRect],
     hasImage: (WindowID) -> Bool, backdropReady: (Int) -> Bool, undrawn: Set<WindowID> = [],
-    pinnedDisplays: [WindowID: Int] = [:]
+    pinnedDisplays: [WindowID: Int] = [:], opening: Set<WindowID> = [], covered: Set<WindowID> = []
 ) -> SnapshotFlightDecision {
     var entries: [SnapshotFlightItem] = []
+    var coveredItems: [SnapshotFlightItem] = []
     for id in targets.keys.sorted() where !undrawn.contains(id) {
         let to = targets[id]!
         let from = starts[id] ?? to
+        if covered.contains(id) {
+            if let index = overlayDisplayIndex(from: to, to: to, displays: displays) {
+                coveredItems.append(SnapshotFlightItem(id: id, from: from, to: to, displayIndex: index))
+            }
+            continue
+        }
         if let index = pinnedDisplays[id] ?? overlayDisplayIndex(from: from, to: to, displays: displays) {
             entries.append(SnapshotFlightItem(id: id, from: from, to: to, displayIndex: index))
         }
     }
     let animatedDisplays = Set(entries.filter { moves($0.from, $0.to) }.map(\.displayIndex))
+        .union(coveredItems.map(\.displayIndex))
     guard !animatedDisplays.isEmpty else {
         return .fallback(reason: .nothingVisible, missing: [])
     }
@@ -110,17 +132,33 @@ public func planSnapshotFlight(
         }
     }
     // SM-16: holes show the rest, but something must fly.
-    guard items.contains(where: { moves($0.from, $0.to) }) else {
+    guard items.contains(where: { moves($0.from, $0.to) }) || !coveredItems.isEmpty else {
         return .fallback(reason: .cacheMiss, missing: missing)
     }
     guard animatedDisplays.allSatisfy(backdropReady) else {
         return .fallback(reason: .noBackdrop, missing: [])
     }
     let holes = snapshotHoles(
-        layered: Set(items.map(\.id)), targets: targets, displays: displays, activeDisplays: animatedDisplays,
-        undrawn: undrawn
+        layered: Set(items.map(\.id)).union(coveredItems.map(\.id)), targets: targets, displays: displays,
+        activeDisplays: animatedDisplays, undrawn: undrawn, opening: opening
     )
-    return .snapshot(items: items, holes: holes)
+    return .snapshot(items: items, holes: holes, covered: coveredItems)
+}
+
+/// FX-09: the layered windows that keep their frame through the flight
+/// (within `flightMoveTolerance`), opening ones aside. Their layer keeps
+/// only its shadow, dim and ring; the backdrop is cut at their frame so the
+/// real window shows through: nothing swaps the window for an image that
+/// may not match it (live: OrbStack's active and inactive looks, repainted
+/// ~200 ms after a focus change).
+public func snapshotStillWindows(_ items: [SnapshotFlightItem], opening: Set<WindowID>) -> Set<WindowID> {
+    Set(items.filter { !moves($0.from, $0.to) && !opening.contains($0.id) }.map(\.id))
+}
+
+/// FX-09: whether a window's frame changes between `from` and `to` (more
+/// than `flightMoveTolerance` on any edge).
+public func snapshotFrameMoves(from: CGRect, to: CGRect) -> Bool {
+    moves(from, to)
 }
 
 /// SM-16: every window without a layer that is visible at its target on an
@@ -128,10 +166,11 @@ public func planSnapshotFlight(
 /// 1 pt sliver included) and windows on displays without an overlay have no
 /// hole, nor (SM-31) undrawn ones. Recomputed on every retarget with the
 /// latest targets: a window that got a layer loses its hole, one uncovered
-/// at the retarget gains one.
+/// at the retarget gains one. WP-04: the holes of `opening` windows are
+/// entry holes.
 public func snapshotHoles(
     layered: Set<WindowID>, targets: [WindowID: CGRect], displays: [CGRect], activeDisplays: Set<Int>,
-    undrawn: Set<WindowID> = []
+    undrawn: Set<WindowID> = [], opening: Set<WindowID> = []
 ) -> [SnapshotHole] {
     targets.keys.sorted().compactMap { id in
         let frame = targets[id]!
@@ -141,13 +180,14 @@ public func snapshotHoles(
         else {
             return nil
         }
-        return SnapshotHole(id: id, frame: frame, displayIndex: index)
+        return SnapshotHole(id: id, frame: frame, displayIndex: index, entry: opening.contains(id))
     }
 }
 
-/// `snapshot holes ids=N` (debug): windows shown through the backdrop.
-public func snapshotHolesLine(count: Int) -> String {
-    "snapshot holes ids=\(count)"
+/// `snapshot holes ids=N entries=E` (debug): windows shown through the
+/// backdrop, E of them (WP-04) through the image layers too.
+public func snapshotHolesLine(count: Int, entries: Int) -> String {
+    "snapshot holes ids=\(count) entries=\(entries)"
 }
 
 public struct SnapshotRetargetPlan: Equatable, Sendable {

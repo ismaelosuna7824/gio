@@ -69,22 +69,31 @@ final class GatedStatePublisherTests: XCTestCase {
 final class SessionFactsBuilderTests: XCTestCase {
     private func make(
         _ fixture: SessionFixture, logs: Recorder<String>, prefetches: Recorder<Bool>,
-        screenRecording: Bool = true, exists: Bool = false,
+        screenRecording: Bool = true, refreshedScreenRecording: Bool? = nil,
+        permissionChecks: Recorder<String> = Recorder(), exists: Bool = false,
         gestures: GestureSourceStatus = gestureSourceStatus(enabled: true, missingSymbols: [], devices: 1),
-        conflicts: [GestureConflict] = []
+        conflicts: [GestureConflict] = [],
+        configStatus: ConfigLoadStatus = ConfigLoadStatus(messages: ["warning: x"])
     ) -> SessionFactsBuilder {
         SessionFactsBuilder(context: .init(
             session: { fixture.session },
             displays: { fixture.displays.allDisplays() },
             visibleFrame: { fixture.visibleFrames[$0] },
-            configMessages: { ["warning: x"] },
+            configStatus: { configStatus },
             engine: {
                 ScrollableLayoutEngine(config: fixture.session.config.makeLayoutConfig())
             },
             tileableModes: {
                 Dictionary(uniqueKeysWithValues: fixture.session.registry.managedWindows().map { ($0.id, $0.mode) })
             },
-            screenRecordingGranted: { screenRecording },
+            screenRecordingGranted: {
+                permissionChecks.append("cached")
+                return screenRecording
+            },
+            refreshScreenRecording: {
+                permissionChecks.append("refresh")
+                return refreshedScreenRecording ?? screenRecording
+            },
             accessibilityGranted: { true },
             configFileExists: { _ in exists },
             homeDirectory: { "/Users/test" },
@@ -116,6 +125,7 @@ final class SessionFactsBuilderTests: XCTestCase {
         XCTAssertEqual(facts.configPath, "/Users/test/.config/gio/config.toml")
         XCTAssertFalse(facts.configExists)
         XCTAssertEqual(facts.configMessages, ["warning: x"])
+        XCTAssertFalse(facts.configRejected)
         XCTAssertTrue(facts.accessibilityGranted)
         XCTAssertTrue(facts.screenRecordingGranted)
         XCTAssertEqual(facts.currentWorkspace, fixture.session.manager.current)
@@ -124,6 +134,15 @@ final class SessionFactsBuilderTests: XCTestCase {
         XCTAssertEqual(facts.windows.first?.workspaceIsShown, true)
         XCTAssertEqual(facts.displays.map(\.id), [1])
         XCTAssertNotNil(facts.strip)
+    }
+
+    /// S6: a config rejected for errors reaches Diagnostics as rejected.
+    func testPublishesARejectedConfig() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let status = ConfigLoadStatus(messages: ["line 2: layout.gaps expects a non-negative number"], rejected: true)
+        let facts = make(fixture, logs: Recorder(), prefetches: Recorder(), configStatus: status).facts()
+        XCTAssertEqual(facts.configMessages, status.messages)
+        XCTAssertTrue(facts.configRejected)
     }
 
     func testConfiguredPathWinsOverTheDefault() {
@@ -165,6 +184,31 @@ final class SessionFactsBuilderTests: XCTestCase {
             missingLogs.values.filter { $0.hasPrefix("renderer ") }, ["renderer effective=ax reason=screen-recording-missing"]
         )
         XCTAssertEqual(missingPrefetches.values, [false])
+    }
+
+    /// PA-15b: the polled facts answer from the cached permission; the
+    /// uncached tccd check runs only while it is missing, to catch a grant.
+    func testGrantedScreenRecordingIsReadFromTheCacheOnly() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let checks = Recorder<String>()
+        let builder = make(fixture, logs: Recorder(), prefetches: Recorder(), permissionChecks: checks)
+        XCTAssertTrue(builder.facts().screenRecordingGranted)
+        XCTAssertTrue(builder.facts().screenRecordingGranted)
+        XCTAssertEqual(checks.values, ["cached", "cached"])
+    }
+
+    func testMissingScreenRecordingIsRecheckedToCatchANewGrant() {
+        let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
+        let checks = Recorder<String>()
+        let granted = make(
+            fixture, logs: Recorder(), prefetches: Recorder(), screenRecording: false, refreshedScreenRecording: true,
+            permissionChecks: checks
+        )
+        XCTAssertTrue(granted.facts().screenRecordingGranted)
+        XCTAssertEqual(checks.values, ["cached", "refresh"])
+
+        let stillMissing = make(fixture, logs: Recorder(), prefetches: Recorder(), screenRecording: false)
+        XCTAssertFalse(stillMissing.facts().screenRecordingGranted)
     }
 
     /// TG-03: whether trackpad gestures run is logged once (again only when

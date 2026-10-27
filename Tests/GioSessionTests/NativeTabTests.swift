@@ -312,4 +312,21 @@ final class NativeTabTests: XCTestCase {
         XCTAssertTrue(discovery.isBackgroundTab(terminalID))
         XCTAssertEqual(world.scheduledReflows, [false], "the slot snaps back as for any window")
     }
+
+    /// PA-18c: a drag reads an ordinary window once, but a tab every time:
+    /// the group dragged as a whole may turn into a tab dragged out.
+    func testATabDraggedOutMidDragIsStillSeen() throws {
+        let (tab, id) = try pressCommandT()
+        world.mouseDown = true
+        facts.frames[id] = Self.group.offsetBy(dx: 300, dy: 0)
+        send(.moved, element: tab.element)
+        XCTAssertEqual(columns, [[id], [editorID]], "the whole group moves first")
+
+        facts.frames[id] = Self.group.offsetBy(dx: 300, dy: -120)
+        facts.listed[7] = [terminal.element, tab.element]
+        send(.moved, element: tab.element)
+
+        XCTAssertTrue(logged("tab left id=\(label(id)) reason=draggedOut"))
+        XCTAssertEqual(columns, [[terminalID], [editorID], [id]])
+    }
 }

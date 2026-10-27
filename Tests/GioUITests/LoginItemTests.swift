@@ -1,3 +1,4 @@
+import Combine
 import GioCore
 @testable import GioUI
 import XCTest
@@ -98,5 +99,19 @@ final class LoginItemTests: XCTestCase {
         XCTAssertEqual(model.status, .enabled)
         XCTAssertNil(model.error)
         XCTAssertTrue(model.presentation.isOn)
+    }
+
+    /// PA-12: polling an unchanged login item publishes nothing.
+    func testRefreshWithAnUnchangedStatusPublishesNothing() {
+        let model = model(FakeLoginItem(.enabled))
+        var changes = 0
+        let subscription = model.objectWillChange.sink { changes += 1 }
+        defer { subscription.cancel() }
+
+        model.refresh()
+        model.refresh()
+
+        XCTAssertEqual(changes, 0)
+        XCTAssertEqual(model.status, .enabled)
     }
 }

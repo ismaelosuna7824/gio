@@ -358,6 +358,14 @@ func applyLayoutKey(
                 "line \(line): layout.center-focused-column expects \"never\", \"always\" or \"on-overflow\""
             )
         }
+    case "new-window-position":
+        if case .string(let text) = value, let position = NewWindowPosition(rawValue: text) {
+            config.layout.newWindowPosition = position
+        } else {
+            errors.append(
+                "line \(line): layout.new-window-position expects \"end\", \"start\", \"right-of-focused\" or \"left-of-focused\""
+            )
+        }
     case "maximize-single-window":
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
             config.layout.maximizeSingleWindow = $0
@@ -726,6 +734,12 @@ func applyDwindleKey(
         if let multiplier = number(in: DwindleSectionConfig.splitWidthMultiplierRange, describing: "0.1 to 10") {
             config.dwindle.splitWidthMultiplier = multiplier
         }
+    case "max-windows":
+        if case .int(let count) = value, DwindleSectionConfig.maxWindowsRange.contains(count) {
+            config.dwindle.maxWindows = count
+        } else {
+            warnings.append("line \(line): dwindle.max-windows expects a whole number from 1 to 32, default kept")
+        }
     case "smart-split":
         warnings.append(
             "line \(line): dwindle.smart-split is not supported (Gio has no pointer position when a window opens; use dwindle-preselect-*), ignored"
@@ -874,7 +888,7 @@ func buildRule(
         }
         openMaximized = flag
     }
-    var openFocused = true
+    var openFocused: Bool?
     if let raw = draft["open-focused"] {
         guard case .bool(let flag) = raw else {
             errors.append("line \(line): window-rules open-focused expects true or false")
@@ -950,6 +964,7 @@ public func parseActionName(_ text: String) -> HotkeyAction? {
     case "move-window-to-workspace-down": return .moveWindowToWorkspaceDown
     case "move-window-to-workspace-up": return .moveWindowToWorkspaceUp
     case "toggle-overview": return .toggleOverview
+    case "toggle-launcher": return .toggleLauncher
     case "focus-monitor-left": return .focusMonitor(.left)
     case "focus-monitor-right": return .focusMonitor(.right)
     case "focus-monitor-up": return .focusMonitor(.up)
@@ -1029,7 +1044,7 @@ public func validActionNames() -> [String] {
         "move-up", "move-down",
         "workspace N", "move-to-workspace N",
         "focus-workspace-down", "focus-workspace-up",
-        "move-window-to-workspace-down", "move-window-to-workspace-up", "toggle-overview",
+        "move-window-to-workspace-down", "move-window-to-workspace-up", "toggle-overview", "toggle-launcher",
         "toggle-floating", "fullscreen",
         "switch-preset-column-width", "set-column-width-minus", "set-column-width-plus",
         "maximize-column", "center-column",

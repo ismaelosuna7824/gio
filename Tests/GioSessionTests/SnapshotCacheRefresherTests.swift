@@ -25,6 +25,8 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         var imageSize = (width: 4, height: 2)
         /// SM-20: images sized like the window (points x this) instead of `imageSize`.
         var imageScale: CGFloat?
+        /// PF-AL: displays captured besides the fixture's screen (id 1).
+        var extraScreens: [SnapshotDisplay] = []
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -62,7 +64,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
                 rendererAvailable: { world.rendererAvailable },
                 ghostCacheWanted: { world.ghostWanted },
                 captureScreens: {
-                    ([SnapshotDisplay(id: 1, frame: SessionFixture.screen, scale: world.captureScale)], SessionFixture.screen.height)
+                    ([SnapshotDisplay(id: 1, frame: SessionFixture.screen, scale: world.captureScale)] + world.extraScreens, SessionFixture.screen.height)
                 },
                 capture: { request, done in
                     world.captures.append(request)
@@ -266,6 +268,8 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertEqual(lastRequest?.backdropDisplayIDs, [1])
     }
 
+    /// PF-AL: a change of the unmanaged windows is remembered and the
+    /// backdrop captured again once it is `snapshotBackdropMinAge` old.
     func testBackdropIsRecapturedWhenTheUnmanagedWindowsChange() {
         world.serverWindows = [ServerWindow(pid: 1, bounds: a), ServerWindow(pid: 2, bounds: b)]
         refresh([idA: a, idB: b])
@@ -276,15 +280,107 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         world.serverWindows.append(ServerWindow(pid: 50, bounds: CGRect(x: 100, y: 100, width: 300, height: 200)))
         cache.schedule()
         scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 1, "the backdrop is too young: remembered")
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("snapshot backdrop unmanaged changed display=0,0 wait=") })
+        scheduler.advance(by: snapshotBackdropMinAge)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
         XCTAssertEqual(world.captures.count, 2)
-        XCTAssertEqual(lastRequest?.windows.count, 0)
         XCTAssertEqual(lastRequest?.backdropDisplayIDs, [1])
-        XCTAssertEqual(lastRequest?.reason, .backdrop)
-        complete([:])
+        completeAll()
 
         cache.schedule()
         scheduler.advance(by: 0.3)
         XCTAssertEqual(world.captures.count, 2, "captured: clean again")
+    }
+
+    private let right = CGRect(x: 1800, y: 0, width: 1800, height: 1169)
+
+    /// PF-AL: a second display right of the fixture's screen (id 2).
+    private func addRightDisplay() throws {
+        let id = DisplayID(2)
+        fixture.session.manager.syncDisplays([SessionFixture.display, id])
+        fixture.displays.connect(id, frame: right, workspace: try XCTUnwrap(fixture.session.manager.activeID(on: id)))
+        world.extraScreens = [SnapshotDisplay(id: 2, frame: right, scale: world.captureScale)]
+    }
+
+    /// Completes the last capture with `images` and the backdrops of `frames`.
+    private func complete(_ images: [WindowID: CGRect], backdrops frames: [CGRect]) {
+        let done = world.completions.removeLast()
+        done(SnapshotCaptureOutcome(
+            images: images.mapValues { CapturedImage(image: image(for: $0), frame: $0) },
+            backdrops: frames.map { CapturedBackdropImage(image: image(for: $0), displayFrame: $0) },
+            misses: [:]
+        ))
+        scheduler.runPending()
+    }
+
+    /// PF-AL: live, 267 backdrop captures in 5.4 h (p50 2 s apart): every
+    /// popup that changed the unmanaged windows re-captured every display.
+    /// Now only the display whose part changed, at most once per
+    /// `snapshotBackdropMinAge`; a burst in between is remembered.
+    func testUnmanagedChangeRecapturesOnlyItsDisplayAtMostOncePerInterval() throws {
+        try addRightDisplay()
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(lastRequest?.backdropDisplayIDs, [1, 2], "missing: both")
+        complete([idA: a, idB: b], backdrops: [screen, right])
+
+        let popup = CGRect(x: 2000, y: 100, width: 300, height: 200)
+        world.serverWindows = [ServerWindow(pid: 50, bounds: popup)]
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 1, "the right backdrop is too young")
+        for step in 1...5 {
+            world.serverWindows = [ServerWindow(pid: 50, bounds: popup.offsetBy(dx: 0, dy: CGFloat(step) * 20))]
+            cache.schedule()
+            scheduler.advance(by: 2)
+        }
+        XCTAssertEqual(world.captures.count, 1, "a burst of popups: nothing yet")
+        XCTAssertEqual(
+            world.logs.filter { $0.1.hasPrefix("snapshot backdrop unmanaged changed") }.map(\.1),
+            ["snapshot backdrop unmanaged changed display=1800,0 wait=29.7"], "logged once per pending change"
+        )
+
+        scheduler.advance(by: snapshotBackdropMinAge)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 2)
+        XCTAssertEqual(lastRequest?.backdropDisplayIDs, [2], "only the display that changed")
+        complete(lastRequest?.windows ?? [:], backdrops: [right])
+
+        world.serverWindows = [ServerWindow(pid: 50, bounds: popup)]
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 2, "a second change within the interval: not yet")
+        scheduler.advance(by: snapshotBackdropMinAge)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 3)
+        XCTAssertEqual(lastRequest?.backdropDisplayIDs, [2], "after the interval: captured")
+    }
+
+    /// PF-AL: wallpaper, Space or display changes still re-capture every
+    /// backdrop at once, however young.
+    func testMarkedDirtyRecapturesEveryBackdropAtOnce() throws {
+        try addRightDisplay()
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        complete([idA: a, idB: b], backdrops: [screen, right])
+
+        world.serverWindows = [ServerWindow(pid: 50, bounds: CGRect(x: 2000, y: 100, width: 300, height: 200))]
+        cache.markBackdropDirty()
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 2)
+        XCTAssertEqual(lastRequest?.backdropDisplayIDs, [1, 2])
+        XCTAssertEqual(lastRequest?.windows.count, 0)
+        XCTAssertEqual(lastRequest?.reason, .backdrop)
+        complete([:], backdrops: [screen, right])
+        scheduler.advance(by: snapshotBackdropMinAge)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(lastRequest?.backdropDisplayIDs ?? [], [], "the change was captured with them")
     }
 
     func testMarkedDirtyBackdropIsCapturedAndStaysDirtyUntilDelivered() {
@@ -313,19 +409,70 @@ final class SnapshotCacheRefresherTests: XCTestCase {
 
     // MARK: Dirty signals (SM-09)
 
-    func testTypingCapturesOnlyTheFocusedWindowAfterTheDebounce() {
+    /// PF-V: the typing hop resets the wait at most every 0.5 s, so with the
+    /// old 0.6 s debounce steady typing still captured every second or two.
+    /// Now a typing capture waits for a real pause (`snapshotTypingQuiet`)
+    /// and never comes sooner than `snapshotTypingFloor` after the window's
+    /// last image: one capture per pause, at most one per floor.
+    func testTypingCapturesTheFocusedWindowOnlyAfterAPauseAndAtMostOncePerFloor() {
         refresh([idA: a, idB: b])
-        cache.noteTyping()
-        scheduler.advance(by: 0.5)
-        cache.noteTyping()
-        scheduler.advance(by: 0.5)
-        XCTAssertEqual(world.captures.count, 1, "still typing")
-        scheduler.advance(by: 0.1)
-        XCTAssertEqual(world.captures.count, 2)
+        for _ in 0..<20 {
+            cache.noteTyping()
+            scheduler.advance(by: 0.5)
+        }
+        XCTAssertEqual(world.captures.count, 1, "steady typing: no capture")
+        scheduler.advance(by: snapshotTypingQuiet - 0.5)
+        XCTAssertEqual(world.captures.count, 2, "the pause")
         XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA])
         XCTAssertEqual(lastRequest?.reason, .typing)
         XCTAssertEqual(lastRequest?.backdropDisplayIDs, [])
         complete([idA: a])
+
+        cache.noteTyping()
+        scheduler.advance(by: snapshotTypingQuiet)
+        XCTAssertEqual(world.captures.count, 2, "a pause right after a capture waits for the floor")
+        scheduler.advance(by: snapshotTypingFloor - snapshotTypingQuiet)
+        XCTAssertEqual(world.captures.count, 3)
+        complete([idA: a])
+        XCTAssertEqual(scheduler.pendingCount, 0)
+    }
+
+    /// PF-AK: live, a settle run before the targeted typing run captured the
+    /// typed-in window through its typing mark (68 of 276 typing captures
+    /// under the 5 s floor). Every run now holds a typing mark until the
+    /// pause and the floor allow it; the window keeps its mark and the
+    /// targeted typing run is armed again (the settle had replaced it).
+    func testSettleRunsHoldTheTypedInWindowUntilThePauseAndTheFloor() {
+        refresh([idA: a, idB: b])
+        scheduler.advance(by: snapshotTypingFloor + 1)
+        cache.noteTyping()
+        scheduler.advance(by: 0.5)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 1, "the pause: held by the settle run")
+        XCTAssertEqual(cache.dirty[idA], .typing, "the mark stays")
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("snapshot typing held id=1:") })
+        scheduler.advance(by: snapshotTypingQuiet - 0.8 + 0.01)
+        XCTAssertEqual(world.captures.count, 2, "the typing run fires once the pause is over")
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA])
+        XCTAssertEqual(lastRequest?.reason, .typing)
+        complete([idA: a], backdrop: false)
+
+        cache.noteTyping()
+        scheduler.advance(by: snapshotTypingQuiet)
+        let resized = CGRect(x: 820, y: 100, width: 600, height: 900)
+        fixture.physicalFrames[idB] = resized
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, 3)
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idB], "the floor: only the resized window")
+        complete([idB: resized], backdrop: false)
+        XCTAssertEqual(cache.dirty[idA], .typing)
+        scheduler.advance(by: snapshotTypingFloor - snapshotTypingQuiet - 0.3 + 0.01)
+        XCTAssertEqual(world.captures.count, 4, "captured once the floor allows it")
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), [idA])
+        complete([idA: a], backdrop: false)
+        XCTAssertNil(cache.dirty[idA])
         XCTAssertEqual(scheduler.pendingCount, 0)
     }
 
@@ -397,7 +544,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a, idB: b])
         cache.noteTyping()
         world.motion = true
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         XCTAssertEqual(world.captures.count, 1, "motion: not now")
         world.motion = false
         cache.schedule()
@@ -409,7 +556,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a, idB: b])
         cache.noteTyping()
         cache.evict([idA])
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         XCTAssertEqual(world.captures.count, 1, "a purged window is not captured")
     }
 
@@ -950,7 +1097,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         let line = (LogLevel.debug, "snapshot cache cap exceeded by strip images=10")
         XCTAssertEqual(world.logs.filter { $0 == line }.count, 1)
         cache.noteTyping()
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         complete([idA: a])
         XCTAssertEqual(cache.cache.ids, Set([idA, idB] + strip))
         XCTAssertEqual(world.logs.filter { $0 == line }.count, 1, "logged once")
@@ -1102,9 +1249,9 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     }
 
     /// A capture's edge fill is kept with its image; with both sizes the
-    /// layer crossfades, and a retarget to a new size is told the face of
+    /// layer swaps images, and a retarget to a new size is told the face of
     /// that size (or none) and logged once.
-    func testCapturedFillsAreKeptAndBothSizesCrossfade() throws {
+    func testCapturedFillsAreKeptAndBothSizesSwap() throws {
         let wide = CGRect(x: 0, y: 100, width: 1600, height: 900)
         let white = ThemeColor(red: 1, green: 1, blue: 1)
         cache.schedule()
@@ -1122,13 +1269,13 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         refresh([idA: a])
         let grow = try XCTUnwrap(cache.flightImage(idA, startFrame: a, targetFrame: wide, at: scheduler.now))
         XCTAssertEqual(grow.target?.fill, white)
-        XCTAssertEqual(grow.resize, .crossfade)
+        XCTAssertEqual(grow.resize, .swap)
         cache.flies(idA, grow, at: scheduler.now)
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
 
         let back = cache.retargetFace(idA, image: a.size, from: wide, to: a.offsetBy(dx: 20, dy: 0), at: scheduler.now)
         XCTAssertEqual(back?.size, a.size)
-        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") }.count, 2)
+        XCTAssertEqual(world.logs.filter { $0 == (.debug, "snapshot resize id=1:1 mode=swap") }.count, 2)
         let onward = cache.retargetFace(idB, image: b.size, from: b, to: b.offsetBy(dx: 20, dy: 0), at: scheduler.now)
         XCTAssertEqual(onward?.size, b.size, "same size: the face it is fading to, no log")
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
@@ -1174,7 +1321,7 @@ final class SnapshotCacheRefresherTests: XCTestCase {
     func testNoTimersAtRest() {
         refresh([idA: a, idB: b])
         cache.noteTyping()
-        scheduler.advance(by: 0.6)
+        scheduler.advance(by: snapshotTypingFloor)
         complete([idA: a])
         XCTAssertEqual(scheduler.pendingCount, 0)
         scheduler.advance(by: 600)

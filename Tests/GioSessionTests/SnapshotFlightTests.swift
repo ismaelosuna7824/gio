@@ -6,26 +6,33 @@ import XCTest
 @testable import GioSession
 
 /// Records every call in order (`prime:N`, `fly:N`, `retarget:N`, `end`,
-/// `fresh:N`, `fade`); the tests append `writes`, `fallback` and `publish`
-/// to the same list.
+/// `fresh:N`, `fade`, `track:N`, `pop:N`, `reveal:N`); the tests append
+/// `writes`, `fallback` and `publish` to the same list.
 final class FakeOverlay: OverlayPort, @unchecked Sendable {
     var events: [String] = []
-    var begins: [(token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], decorations: OverlayDecorations)] = []
-    var retargets: [(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+    var begins: [(
+        token: Int, flights: [OverlayFlight], holes: [WindowID: CGRect], entryHoles: Set<WindowID>,
+        decorations: OverlayDecorations
     )] = []
+    var retargets: [(
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
+    )] = []
+    var tracks: [(token: Int, frames: [WindowID: CGRect])] = []
     var flies: [Int] = []
     var ends = 0
     var freshens: [(token: Int, faces: [WindowID: SnapshotFace<CGImage>])] = []
     var fades: [(windows: Set<WindowID>, duration: TimeInterval)] = []
+    var pops: [(token: Int, image: SnapshotFace<CGImage>, pop: WindowOpenPop)] = []
+    var reveals: [(token: Int, windows: Set<WindowID>, holes: [WindowID: CGRect], entryHoles: Set<WindowID>)] = []
 
     func beginFlight(
         token: Int, spring: SpringParameters, flights: [OverlayFlight], holes: [WindowID: CGRect],
-        decorations: OverlayDecorations
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
         events.append("prime:\(token)")
-        begins.append((token, flights, holes, decorations))
+        begins.append((token, flights, holes, entryHoles, decorations))
     }
 
     func flyFlight(token: Int) {
@@ -34,11 +41,17 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     }
 
     func retargetFlight(
-        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>], adds: [OverlayFlight],
-        holes: [WindowID: CGRect], decorations: OverlayDecorations
+        token: Int, targets: [WindowID: CGRect], images: [WindowID: SnapshotFace<CGImage>],
+        velocities: [WindowID: CGPoint], adds: [OverlayFlight], holes: [WindowID: CGRect],
+        entryHoles: Set<WindowID>, decorations: OverlayDecorations
     ) {
         events.append("retarget:\(token)")
-        retargets.append((token, targets, images, adds, holes, decorations))
+        retargets.append((token, targets, images, velocities, adds, holes, entryHoles, decorations))
+    }
+
+    func trackFlight(token: Int, frames: [WindowID: CGRect]) {
+        events.append("track:\(token)")
+        tracks.append((token, frames))
     }
 
     func endFlight() {
@@ -54,6 +67,16 @@ final class FakeOverlay: OverlayPort, @unchecked Sendable {
     func fadeOutFlight(windows: Set<WindowID>, duration: TimeInterval) {
         events.append("fade")
         fades.append((windows, duration))
+    }
+
+    func popFlight(token: Int, image: SnapshotFace<CGImage>, pop: WindowOpenPop) {
+        events.append("pop:\(token)")
+        pops.append((token, image, pop))
+    }
+
+    func revealFlight(token: Int, windows: Set<WindowID>, holes: [WindowID: CGRect], entryHoles: Set<WindowID>) {
+        events.append("reveal:\(token)")
+        reveals.append((token, windows, holes, entryHoles))
     }
 }
 
@@ -83,6 +106,7 @@ final class SnapshotFlightTests: XCTestCase {
         var freshAnswers: [@Sendable (SnapshotFreshRead<CGImage>?) -> Void] = []
         /// SM-31: the on-screen WindowServer windows the cache judges misses by.
         var serverWindows: [ServerWindow] = []
+        var gestureLosses = 0
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -565,8 +589,9 @@ final class SnapshotFlightTests: XCTestCase {
 
         XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [idA])
         XCTAssertEqual(overlay.begins.first?.holes, [idB: b], "the real window shows through at its target")
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [], "not opening: the images still draw above it")
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot fallback") })
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=0") })
     }
 
     func testAHoleWindowIsPaintCheckedBeforeTheHandOff() {
@@ -602,7 +627,341 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(flight.drive(animations: [second], plans: [ParkingPlan(visible: visible)], spring: .niri), .flying)
 
         XCTAssertEqual(overlay.retargets.first?.holes, [idB: b])
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=0") })
+    }
+
+    // MARK: FX-09 still windows show the real window
+
+    /// Recording 2026-10-21 19:22: OrbStack kept its frame while the focus
+    /// moved; its image (inactive look) replaced the real window (active)
+    /// for the flight and the real one came back still active, then
+    /// repainted: a flicker. A still window's layer is see-through and the
+    /// backdrop is cut at its frame; a moving one flies its image.
+    func testAStillWindowIsSeenThroughAHoleWhileTheOthersFly() {
+        refresh([idA: a, idB: b])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(items.first { $0.id == idB }?.seeThrough, true, "its layer keeps ring, dim and shadow")
+        XCTAssertEqual(items.first { $0.id == idA }?.seeThrough, false)
+        XCTAssertEqual(overlay.begins.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [], "the images still draw above it")
+    }
+
+    func testAStillWindowThatStartsMovingOnARetargetFliesItsImage() {
+        beginAndPrime()
+        var visible = fixture.physicalFrames
+        visible[idA] = a.offsetBy(dx: 200, dy: 0)
+        visible[idB] = b.offsetBy(dx: 100, dy: 0)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [WindowAnimation(id: idB, from: b, to: visible[idB]!, duration: 0.3)],
+                plans: [ParkingPlan(visible: visible)], spring: .niri
+            ),
+            .flying
+        )
+        let added = overlay.retargets.first?.adds.flatMap(\.items) ?? []
+        XCTAssertEqual(added.map(\.id), [idB], "a new layer with its image replaces the see-through one")
+        XCTAssertEqual(added.first?.seeThrough, false)
+        XCTAssertEqual(added.first?.from, b)
+        XCTAssertEqual(overlay.retargets.first?.holes, [:], "nothing to show through any more")
+    }
+
+    // MARK: WP-04 entry holes
+
+    /// A window opening mid-strip without an image: its hole cuts the image
+    /// layers too, from the prime on, so the neighbour it displaces slides
+    /// out from under the real window instead of covering it.
+    func testAnOpeningWindowIsAnEntryHoleFromThePrime() {
+        refresh([idA: a])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: b.offsetBy(dx: 0, dy: -40), to: b, duration: 0.3)
+
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB]), .priming
+        )
+
+        XCTAssertEqual(overlay.begins.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [idB])
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot holes ids=1 entries=1") })
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertEqual(world.paintChecks, [[idB: b]], "an entry hole is paint-checked like any hole")
+    }
+
+    func testARetargetKeepsTheEntryHoleWhileTheWindowIsStillAHole() {
+        refresh([idA: a])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: b.offsetBy(dx: 0, dy: -40), to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB]), .priming
+        )
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+
+        var next = plan.visible
+        next[idA] = a.offsetBy(dx: 200, dy: 0)
+        let more = WindowAnimation(id: idA, from: animation.to, to: next[idA]!, duration: 0.3)
+        XCTAssertEqual(flight.drive(animations: [more], plans: [ParkingPlan(visible: next)], spring: .niri), .flying)
+
+        XCTAssertEqual(overlay.retargets.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.retargets.first?.entryHoles, [idB], "the same flight: still opening")
+    }
+
+    func testAnUndrawnOpeningWindowGetsNoHole() {
+        refresh([idA: a])
+        cache.noteVanished([idB])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: b.offsetBy(dx: 0, dy: -40), to: b, duration: 0.3)
+
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB]), .priming
+        )
+
+        XCTAssertEqual(overlay.begins.first?.holes, [:])
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [])
+    }
+
+    // MARK: WP-05 covered until redrawn, then the pop
+
+    private var openStart: CGRect { b.offsetBy(dx: 0, dy: -24) }
+
+    private func openPops() -> WindowOpenPopPlan {
+        WindowOpenPopPlan(starts: [idB: openStart], animation: AnimationsSectionConfig().resolved(.windowOpen))
+    }
+
+    /// idA slides out of the way while idB opens in its slot, covered.
+    @discardableResult
+    private func coverOpening() -> ParkingPlan {
+        refresh([idA: a])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        let entry = WindowAnimation(id: idB, from: openStart, to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(animations: [animation, entry], plans: [plan], spring: .niri, entries: [idB], pops: openPops()),
+            .priming
+        )
+        return plan
+    }
+
+    @discardableResult
+    private func coverOpeningAndPrime() -> ParkingPlan {
+        let plan = coverOpening()
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        return plan
+    }
+
+    private func answerOpenCapture(_ paint: SnapshotPaintVerdict, size: CGSize? = nil) {
+        let read = SnapshotFreshRead(
+            image: image(), fill: nil, windowSize: size ?? b.size, paint: paint, samples: [1, 2, 3, 4]
+        )
+        world.freshAnswers.removeFirst()(read)
+        scheduler.runPending()
+    }
+
+    private var openID: String { "\(idB.pid):\(idB.elementID)" }
+
+    func testAnOpeningWindowIsCoveredNotAHole() {
+        coverOpening()
+        XCTAssertEqual(overlay.begins.first?.holes, [:], "the backdrop covers its slot")
+        XCTAssertEqual(overlay.begins.first?.entryHoles, [])
+        XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [idA])
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot holes") })
+    }
+
+    func testAConfirmedCapturePopsTheWindowThenRevealsItAndHandsOver() {
+        coverOpeningAndPrime()
+        XCTAssertTrue(world.freshProbes.isEmpty, "the first capture waits for the redraw")
+        scheduler.advance(by: WindowOpenPopBook.firstCaptureDelay)
+        XCTAssertEqual(world.freshProbes.map(\.id), [idB])
+        XCTAssertEqual(world.freshProbes.first?.probe.paint.frame, b, "captured at its target")
+
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.ends, 0, "the overlay waits for the opening window")
+        XCTAssertTrue(flight.isActive)
+
+        answerOpenCapture(.painted)
+        XCTAssertEqual(overlay.pops.count, 1)
+        XCTAssertEqual(overlay.pops.first?.pop.from, openStart)
+        XCTAssertEqual(overlay.pops.first?.pop.to, b)
+        XCTAssertEqual(overlay.pops.first?.image.size, b.size)
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot open pop id=\(openID) waited ms=50") })
+        XCTAssertNotNil(cache.flightImage(idB, startFrame: b, at: scheduler.now), "the redrawn image is cached")
+        XCTAssertEqual(overlay.ends, 0, "still popping")
+        XCTAssertTrue(overlay.reveals.isEmpty)
+
+        scheduler.advance(by: overlay.pops[0].pop.duration)
+        XCTAssertEqual(overlay.reveals.first?.windows, [idB])
+        XCTAssertEqual(overlay.reveals.first?.holes, [idB: b])
+        XCTAssertEqual(overlay.reveals.first?.entryHoles, [idB])
+        XCTAssertEqual(overlay.events.suffix(3), ["reveal:1", "publish", "end"])
+        XCTAssertFalse(flight.isActive)
+    }
+
+    func testAPartialReadAtAnotherSizeIsRetried() {
+        coverOpeningAndPrime()
+        scheduler.advance(by: WindowOpenPopBook.firstCaptureDelay)
+        answerOpenCapture(.painted, size: CGSize(width: 500, height: 600))
+        XCTAssertTrue(overlay.pops.isEmpty, "not at its target size yet")
+        XCTAssertEqual(world.freshProbes.count, 1)
+        scheduler.advance(by: WindowOpenPopBook.retryInterval)
+        XCTAssertEqual(world.freshProbes.count, 2)
+        answerOpenCapture(.painted)
+        XCTAssertEqual(overlay.pops.count, 1)
+    }
+
+    func testNoPaintedCaptureInTimeRevealsTheWindowWithoutThePop() {
+        coverOpeningAndPrime()
+        scheduler.advance(by: WindowOpenPopBook.firstCaptureDelay)
+        answerOpenCapture(.blank)
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.ends, 0)
+
+        scheduler.advance(by: WindowOpenPopBook.maxWait - WindowOpenPopBook.firstCaptureDelay - 0.001)
+        XCTAssertTrue(overlay.reveals.isEmpty)
+        scheduler.advance(by: 0.001)
+        XCTAssertTrue(overlay.pops.isEmpty)
+        XCTAssertEqual(overlay.reveals.first?.holes, [idB: b], "revealed as today: an entry hole")
+        XCTAssertEqual(overlay.reveals.first?.entryHoles, [idB])
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot open reveal id=\(openID) reason=blank") })
+        XCTAssertEqual(overlay.ends, 1)
+        XCTAssertFalse(flight.isActive)
+
+        answerOpenCapture(.painted)
+        XCTAssertTrue(overlay.pops.isEmpty, "a late read changes nothing")
+    }
+
+    func testAnAbortMidWaitRevealsAtOnce() {
+        coverOpeningAndPrime()
+        flight.aborted(.mouseDown)
+        scheduler.runPending()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot open reveal id=\(openID) reason=abort") })
+        scheduler.advance(by: WindowOpenPopBook.maxWait)
+        XCTAssertTrue(world.freshProbes.isEmpty, "no capture after the overlay is gone")
+        XCTAssertTrue(overlay.reveals.isEmpty)
+    }
+
+    func testAnEndMidPopRevealsAtOnce() {
+        coverOpeningAndPrime()
+        scheduler.advance(by: WindowOpenPopBook.firstCaptureDelay)
+        answerOpenCapture(.painted)
+        flight.end()
+        XCTAssertEqual(overlay.events.suffix(2), ["end", "publish"])
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot open reveal id=\(openID) reason=abort") })
+        scheduler.advance(by: 1)
+        XCTAssertTrue(overlay.reveals.isEmpty)
+        XCTAssertEqual(overlay.ends, 1)
+    }
+
+    func testARetargetThatMovesTheOpeningWindowRevealsItAtOnce() {
+        let plan = coverOpeningAndPrime()
+        scheduler.advance(by: WindowOpenPopBook.firstCaptureDelay)
+        answerOpenCapture(.painted)
+
+        var next = plan.visible
+        next[idA] = a.offsetBy(dx: 200, dy: 0)
+        next[idB] = b.offsetBy(dx: 100, dy: 0)
+        let moves = [
+            WindowAnimation(id: idA, from: plan.visible[idA]!, to: next[idA]!, duration: 0.3),
+            WindowAnimation(id: idB, from: b, to: next[idB]!, duration: 0.3),
+        ]
+        XCTAssertEqual(flight.drive(animations: moves, plans: [ParkingPlan(visible: next)], spring: .niri), .flying)
+
+        XCTAssertEqual(overlay.reveals.first?.windows, [idB])
+        XCTAssertEqual(overlay.retargets.first?.adds.first?.items.map(\.id), [idB], "it flies on with its redrawn image")
+        XCTAssertEqual(overlay.reveals.first?.holes, [:])
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot open reveal id=\(openID) reason=retarget") })
+        scheduler.advance(by: 1)
+        XCTAssertEqual(overlay.reveals.count, 1, "the pop's end no-ops")
+    }
+
+    func testARetargetThatKeepsTheOpeningTargetKeepsItCovered() {
+        let plan = coverOpeningAndPrime()
+        var next = plan.visible
+        next[idA] = a.offsetBy(dx: 200, dy: 0)
+        let more = WindowAnimation(id: idA, from: plan.visible[idA]!, to: next[idA]!, duration: 0.3)
+        XCTAssertEqual(flight.drive(animations: [more], plans: [ParkingPlan(visible: next)], spring: .niri), .flying)
+
+        XCTAssertEqual(overlay.retargets.first?.holes, [:])
+        XCTAssertTrue(overlay.reveals.isEmpty)
+        scheduler.advance(by: WindowOpenPopBook.firstCaptureDelay)
+        answerOpenCapture(.painted)
+        XCTAssertEqual(overlay.pops.count, 1)
+    }
+
+    func testAFailedPrimeRevealsAndRunsTheAXRise() {
+        coverOpening()
+        deferPass()
+        flight.primed(1, ok: false)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events.last, "publish")
+        XCTAssertTrue(overlay.events.contains("fallback"))
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot open reveal id=\(openID) reason=abort") })
+        scheduler.advance(by: WindowOpenPopBook.maxWait)
+        XCTAssertTrue(world.freshProbes.isEmpty)
+    }
+
+    func testAnEntryOnlyOpenPopsThroughTheOverlayInsteadOfAX() {
+        refresh([idA: a])
+        let entry = WindowAnimation(id: idB, from: openStart, to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [entry], plans: [ParkingPlan(visible: fixture.physicalFrames)], spring: .niri,
+                entries: [idB], pops: openPops()
+            ),
+            .priming
+        )
+        XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [idA], "the still neighbour")
+        XCTAssertEqual(overlay.begins.first?.flights.first?.items.first?.seeThrough, true, "FX-09: still, seen through")
+        XCTAssertEqual(overlay.begins.first?.holes, [idA: a], "the still neighbour shows through; the opening one is covered")
+        XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot fallback") })
+    }
+
+    func testAnOpenAloneOnItsDisplayStillGetsTheDisplaysOverlay() {
+        refresh([idA: a])
+        let entry = WindowAnimation(id: idB, from: openStart, to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [entry], plans: [ParkingPlan(visible: [idB: b])], spring: .niri, entries: [idB],
+                pops: openPops()
+            ),
+            .priming
+        )
+        XCTAssertEqual(overlay.begins.first?.flights.count, 1)
+        XCTAssertEqual(overlay.begins.first?.flights.first?.items.map(\.id), [])
+    }
+
+    func testAnEntryOnlyOpenWithoutABackdropKeepsTheAXRise() {
+        refresh([idA: a], backdrop: false)
+        let entry = WindowAnimation(id: idB, from: openStart, to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [entry], plans: [ParkingPlan(visible: fixture.physicalFrames)], spring: .niri,
+                entries: [idB], pops: openPops()
+            ),
+            .ax
+        )
+        XCTAssertTrue(world.logs.contains { $0 == (.info, "snapshot fallback reason=no-backdrop ids=0") })
+    }
+
+    func testWithoutAPopPlanAnEntryOnlyOpenKeepsTheAXRise() {
+        refresh([idA: a])
+        let entry = WindowAnimation(id: idB, from: openStart, to: b, duration: 0.3)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [entry], plans: [ParkingPlan(visible: fixture.physicalFrames)], spring: .niri, entries: [idB]
+            ),
+            .ax
+        )
+        XCTAssertTrue(world.logs.contains { $0 == (.info, "snapshot fallback reason=cache-miss ids=1") })
     }
 
     // MARK: SM-31 vanished and undrawn windows
@@ -984,7 +1343,7 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(item.target?.size, wide.size)
         let still = try XCTUnwrap(items.first { $0.id == idB })
         XCTAssertTrue(still.target?.image === still.image.image, "a move: its own image again, nothing to fade")
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
         XCTAssertEqual(world.logs.filter { $0.1.hasPrefix("snapshot resize") }.count, 1)
     }
 
@@ -1004,7 +1363,7 @@ final class SnapshotFlightTests: XCTestCase {
         let retarget = try XCTUnwrap(overlay.retargets.first)
         XCTAssertEqual(retarget.images[idA]?.size, wide.size, "fade to the maximized image")
         XCTAssertEqual(retarget.images[idB]?.size, b.size, "same size: the image it already shows")
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap") })
         XCTAssertFalse(world.logs.contains { $0.1.hasPrefix("snapshot resize id=2:") })
     }
 
@@ -1104,7 +1463,7 @@ final class SnapshotFlightTests: XCTestCase {
         flight.layersFinished(token)
         scheduler.runPending()
         answerPaint([idA: .painted])
-        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=crossfade fresh=200 attempts=3") })
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot resize id=1:1 mode=swap fresh=200 attempts=3") })
     }
 
     func testAPureMoveIsNotCapturedAgainAndLeavesAtOnce() {
@@ -1165,5 +1524,241 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertEqual(probe.paint.frame, wide)
         XCTAssertEqual(probe.paint.resizedFrom, a.size)
         XCTAssertEqual(probe.cached?.size, wide.size)
+    }
+
+    // MARK: TG-06 gesture release
+
+    func testAReleaseVelocityStartsTheLayersOfTheSettleFlight() {
+        refresh([idA: a, idB: b])
+        let (slid, plan) = slide(idA, from: a, by: 100)
+        let release = slid.springing(.niri, velocity: CGPoint(x: 2400, y: 0))
+        XCTAssertEqual(flight.drive(animations: [release], plans: [plan], spring: .niri), .priming)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(items.first { $0.id == idA }?.velocity, CGPoint(x: 2400, y: 0))
+        XCTAssertEqual(items.first { $0.id == idA }?.from, a, "from where the fingers left the window")
+        XCTAssertEqual(items.first { $0.id == idB }?.velocity, .zero, "a window without a spring keeps still")
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1", "writes", "fly:1"], "the one instant pass under the overlay, then the fly")
+    }
+
+    // MARK: TG-07 the fingers hold the overlay
+
+    @discardableResult
+    private func hold(_ frames: [WindowID: CGRect]? = nil, animates: Bool = true) -> GestureTransport {
+        let world = world!
+        let held = frames ?? [idA: a, idB: b]
+        return flight.holdGesture(
+            frames: held, display: SessionFixture.screen, spring: .niri, animates: animates
+        ) {
+            world.gestureLosses += 1
+        }
+    }
+
+    func testASwipeCatchingASettlingFlightStartsFromTheSampledMidFlightFrames() throws {
+        refresh([idA: a, idB: b])
+        let (slid, plan) = slide(idA, from: a, by: -820)
+        let release = slid.springing(.niri, velocity: CGPoint(x: -2400, y: 0))
+        XCTAssertEqual(flight.drive(animations: [release], plans: [plan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        scheduler.advance(by: 0.1)
+
+        let drawn = flight.drawnFrames()
+        let track = FlightTrack(
+            start: overlayLayerGeometry(frame: a, in: .zero, flipped: false),
+            end: overlayLayerGeometry(frame: slid.to, in: .zero, flipped: false),
+            velocity: overlayLayerVelocity(origin: CGPoint(x: -2400, y: 0), flipped: false)
+        )
+        let expected = track.state(at: 0.1, spring: .niri).geometry
+        let sampled = try XCTUnwrap(drawn[idA])
+        XCTAssertEqual(sampled.midX, expected.position.x, accuracy: 1e-6, "where the layer is drawn now")
+        XCTAssertGreaterThan(sampled.minX, slid.to.minX + 50, "not the landed frame the real window was written to")
+        XCTAssertEqual(drawn[idB], b)
+
+        XCTAssertEqual(hold(drawn), .overlay(layers: [idA, idB]))
+        let held = overlay.begins.last?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(held.first { $0.id == idA }?.from, sampled, "the hold takes the layers over mid-air")
+        let reheld = try XCTUnwrap(flight.drawnFrames()[idA])
+        XCTAssertEqual(reheld.minX, sampled.minX, accuracy: 1e-6, "held where it was taken over")
+    }
+
+    func testNoFlightDrawsNothing() {
+        XCTAssertTrue(flight.drawnFrames().isEmpty)
+    }
+
+    func testAnInstantSettleKeepsTheGestureOnThePump() {
+        refresh([idA: a, idB: b])
+        XCTAssertEqual(hold(animates: false), .accessibility(reason: .instantSettle, missing: []))
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(overlay.begins.isEmpty)
+    }
+
+    func testAHoldThatCannotFlyWritesTheWindowsBeforeTheOverlayComesDown() {
+        holdAndPrime()
+        XCTAssertTrue(flight.isHoldingGesture)
+        let overlay = overlay!
+        flight.endHold { overlay.events.append("writes") }
+        XCTAssertEqual(Array(overlay.events.suffix(4)), ["writes", "collect", "end", "publish"])
+        XCTAssertFalse(flight.isActive)
+        XCTAssertFalse(flight.isHoldingGesture)
+        XCTAssertEqual(world.gestureLosses, 0, "a released hold is not lost")
+    }
+
+    private func holdAndPrime() {
+        refresh([idA: a, idB: b])
+        XCTAssertEqual(hold(), .overlay(layers: [idA, idB]))
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+    }
+
+    func testAGestureHoldPrimesEveryStripWindowWhereItIsAndNeverFlies() {
+        refresh([idA: a, idB: b])
+        XCTAssertEqual(hold(), .overlay(layers: [idA, idB]))
+        XCTAssertTrue(flight.isActive)
+        let items = overlay.begins.first?.flights.flatMap(\.items) ?? []
+        XCTAssertEqual(Set(items.map(\.id)), [idA, idB])
+        XCTAssertTrue(items.allSatisfy { $0.from == $0.to }, "held, not flying anywhere")
+        XCTAssertTrue(world.logs.contains { $0.1 == "gesture scroll transport=overlay layers=2" })
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1"], "no write and no fly while the fingers hold it")
+        XCTAssertTrue(flight.isActive)
+    }
+
+    func testFramesTrackedBeforeThePrimeLandWhenItDoes() {
+        refresh([idA: a, idB: b])
+        hold()
+        let moved = a.offsetBy(dx: -50, dy: 0)
+        let further = a.offsetBy(dx: -80, dy: 0)
+        let neighbour = b.offsetBy(dx: -50, dy: 0)
+        flight.trackGesture([idA: moved, idB: neighbour])
+        flight.trackGesture([idA: further])
+        XCTAssertEqual(overlay.events, ["prime:1"], "kept until the overlay is up")
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1", "track:1"])
+        XCTAssertEqual(overlay.tracks.last?.frames, [idA: further, idB: neighbour], "only the latest frame of each window")
+        flight.trackGesture([idA: a])
+        XCTAssertEqual(overlay.events, ["prime:1", "track:1", "track:1"], "straight to the overlay once primed")
+    }
+
+    func testReleasingAHoldRetargetsWithTheReleaseVelocityAndFliesAfterTheInstantPass() {
+        holdAndPrime()
+        flight.trackGesture([idA: a.offsetBy(dx: -300, dy: 0), idB: b.offsetBy(dx: -300, dy: 0)])
+        let (animation, plan) = slide(idA, from: a, by: -820)
+        let release = GestureRelease(windows: [idA, idB], velocity: -2400, focusChanged: false)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri, release: release), .flying)
+        let velocity = CGPoint(x: -2400, y: 0)
+        XCTAssertEqual(overlay.retargets.first?.targets, [idA: animation.to, idB: b])
+        XCTAssertEqual(
+            overlay.retargets.first?.velocities, [idA: velocity, idB: velocity],
+            "every held layer that still moves, the one without an animation too"
+        )
+        XCTAssertEqual(overlay.events, ["prime:1", "track:1", "retarget:2"], "no fly before the real windows' pass")
+        overlay.events.append("writes")
+        flight.passSettled()
+        XCTAssertEqual(overlay.events.suffix(2), ["writes", "fly:2"])
+        flight.passSettled()
+        XCTAssertEqual(overlay.flies, [2], "one fly")
+        flight.layersFinished(2)
+        scheduler.runPending()
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("snapshot flight layers=2") })
+        XCTAssertEqual(world.gestureLosses, 0, "a released hold is not lost")
+    }
+
+    func testAReleaseBeforeThePrimeFliesOnceThePrimeLands() {
+        refresh([idA: a, idB: b])
+        hold()
+        flight.trackGesture([idA: a.offsetBy(dx: -40, dy: 0)])
+        let (slid, plan) = slide(idA, from: a, by: -820)
+        let animation = slid.springing(.niri, velocity: CGPoint(x: -300, y: 0))
+        let release = GestureRelease(windows: [idA, idB], velocity: -900, focusChanged: false)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri, release: release), .priming)
+        XCTAssertEqual(
+            overlay.retargets.first?.velocities, [idA: CGPoint(x: -900, y: 0)],
+            "the release's velocity, not the real window's animation; the layer at its target keeps still"
+        )
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.events, ["prime:1", "retarget:2", "track:2", "writes", "fly:2"])
+        XCTAssertEqual(overlay.tracks.first?.frames, [idA: a.offsetBy(dx: -40, dy: 0)])
+    }
+
+    func testAnAbandonedHoldFliesBackToStateWithoutVelocity() {
+        holdAndPrime()
+        flight.trackGesture([idA: a.offsetBy(dx: -120, dy: 0), idB: b.offsetBy(dx: -120, dy: 0)])
+        XCTAssertEqual(flight.drive(animations: [], plans: [ParkingPlan(visible: fixture.physicalFrames)], spring: .niri), .flying)
+        XCTAssertEqual(overlay.retargets.first?.targets, [idA: a, idB: b])
+        XCTAssertEqual(overlay.retargets.first?.velocities, [:])
+        flight.passSettled()
+        XCTAssertEqual(overlay.events.last, "fly:2")
+    }
+
+    func testAFailedPrimeHandsTheGestureBackToThePump() {
+        refresh([idA: a, idB: b])
+        hold()
+        flight.trackGesture([idA: a.offsetBy(dx: -40, dy: 0)])
+        flight.primed(1, ok: false)
+        scheduler.runPending()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.gestureLosses, 1)
+        XCTAssertEqual(overlay.events, ["prime:1", "end", "publish"])
+        XCTAssertTrue(world.logs.contains { $0.1 == "snapshot fallback reason=prime-failed ids=2" })
+    }
+
+    func testAnAbortedOrEndedHoldHandsTheGestureBackToThePump() {
+        holdAndPrime()
+        flight.aborted(.watchdog)
+        scheduler.runPending()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.gestureLosses, 1)
+
+        hold()
+        flight.end()
+        XCTAssertEqual(world.gestureLosses, 2)
+        flight.end()
+        XCTAssertEqual(world.gestureLosses, 2, "reported once")
+    }
+
+    func testShuttingDownDoesNotHandTheGestureBack() {
+        holdAndPrime()
+        world.shuttingDown = true
+        flight.end()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.gestureLosses, 0, "nothing may move the windows while they are restored")
+    }
+
+    func testAMissingImageKeepsTheGestureOnThePump() {
+        refresh([idA: a])
+        XCTAssertEqual(hold(), .accessibility(reason: .cacheMiss, missing: [idB]))
+        XCTAssertTrue(overlay.begins.isEmpty)
+        XCTAssertFalse(flight.isActive)
+        XCTAssertTrue(world.logs.contains { $0.1 == "gesture scroll transport=ax reason=cache-miss missing=1" })
+    }
+
+    func testThePumpEndsARunningFlightAsBefore() {
+        beginAndPrime()
+        world.rendererAvailable = false
+        XCTAssertEqual(hold(), .accessibility(reason: .renderer, missing: []))
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(overlay.ends, 1)
+    }
+
+    func testAHoldTakesOverARunningFlightWithoutTakingTheOverlayDown() {
+        beginAndPrime()
+        let before = overlay.events.count
+        XCTAssertEqual(hold(), .overlay(layers: [idA, idB]))
+        XCTAssertEqual(
+            Array(overlay.events.dropFirst(before)), ["collect", "prime:3"],
+            "the running flight's writes are folded; the new prime replaces its layers in the same hop"
+        )
+        XCTAssertEqual(overlay.ends, 0)
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertTrue(flight.isActive, "the old flight's landing does not settle the hold")
     }
 }

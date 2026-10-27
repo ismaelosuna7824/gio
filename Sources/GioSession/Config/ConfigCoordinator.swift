@@ -12,8 +12,8 @@ public final class ConfigCoordinator: @unchecked Sendable {
         public var session: () -> CommandSession
         /// Re-reads the config into the session (`dispatch(.reload, ...)` live).
         public var reloadSession: () -> Void
-        /// The config file's load messages (errors and warnings).
-        public var loadMessages: () -> [String]
+        /// The config file's load outcome: errors (rejected file) or warnings.
+        public var loadStatus: () -> ConfigLoadStatus
         /// Patches the config file; nothing is written when it is rejected.
         public var patchFile: ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>
         /// The configured log level took effect (logger and actuator call counts).
@@ -34,7 +34,7 @@ public final class ConfigCoordinator: @unchecked Sendable {
 
         public init(
             session: @escaping () -> CommandSession, reloadSession: @escaping () -> Void,
-            loadMessages: @escaping () -> [String],
+            loadStatus: @escaping () -> ConfigLoadStatus,
             patchFile: @escaping ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
             applyLogLevel: @escaping (LogLevel) -> Void, invalidateConfigCaches: @escaping () -> Void,
             setFocusFollowsMouse: @escaping (Bool) -> Void, tapObservesMouseMoved: @escaping () -> Bool?,
@@ -44,7 +44,7 @@ public final class ConfigCoordinator: @unchecked Sendable {
         ) {
             self.session = session
             self.reloadSession = reloadSession
-            self.loadMessages = loadMessages
+            self.loadStatus = loadStatus
             self.patchFile = patchFile
             self.applyLogLevel = applyLogLevel
             self.invalidateConfigCaches = invalidateConfigCaches
@@ -65,8 +65,9 @@ public final class ConfigCoordinator: @unchecked Sendable {
     /// by the tap, rebuilt on the session queue at start and on reload.
     private let dispatcherLock = NSLock()
     private var dispatcherTable = HotkeyDispatcher()
-    /// Config load messages (errors and warnings) for the Overview; session queue.
-    public private(set) var messages: [String] = []
+    /// Config load outcome (errors or warnings) for the Overview and
+    /// Diagnostics; session queue.
+    public private(set) var status = ConfigLoadStatus()
 
     public init(context: Context, scheduler: SessionScheduler) {
         self.context = context
@@ -80,9 +81,9 @@ public final class ConfigCoordinator: @unchecked Sendable {
         return dispatcherTable
     }
 
-    /// Launch: the messages of the config the session started with.
-    public func setMessages(_ messages: [String]) {
-        self.messages = messages
+    /// Launch: the load outcome of the config the session started with.
+    public func setStatus(_ status: ConfigLoadStatus) {
+        self.status = status
     }
 
     /// Rebuild the hotkey table and the focus-follows-mouse flag from the
@@ -134,13 +135,13 @@ public final class ConfigCoordinator: @unchecked Sendable {
         return result
     }
 
-    /// After `session.config` changed: rebuild bindings and messages,
+    /// After `session.config` changed: rebuild bindings and the load status,
     /// re-evaluate rules, relayout. Session queue.
     public func applyReloadedConfig() {
         context.applyLogLevel(context.session().config.logging.level)
         context.invalidateConfigCaches()
         refreshDispatcher()
-        messages = context.loadMessages()
+        status = context.loadStatus()
         context.reapplyRules()
         context.reflow()
         context.publishSnapshot()

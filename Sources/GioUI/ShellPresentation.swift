@@ -29,20 +29,34 @@ public enum OnboardingStep: Int, CaseIterable, Sendable {
     case welcome, accessibility, screenRecording, keys
 }
 
+/// S5: Screen Recording features need macOS 14 (ScreenCaptureKit), so below
+/// it the step is left out. The app passes `#available(macOS 14, *)`.
+public func onboardingSteps(screenRecordingAvailable: Bool) -> [OnboardingStep] {
+    OnboardingStep.allCases.filter { $0 != .screenRecording || screenRecordingAvailable }
+}
+
 public struct OnboardingProgress: Equatable, Sendable {
     public let index: Int
     public let count: Int
 }
 
 public struct OnboardingState: Equatable, Sendable {
-    public private(set) var step: OnboardingStep = .welcome
+    public let steps: [OnboardingStep]
+    public private(set) var step: OnboardingStep
     public private(set) var accessibilityGranted: Bool
     public private(set) var screenRecordingGranted: Bool
 
-    public init(accessibilityGranted: Bool, screenRecordingGranted: Bool, step: OnboardingStep = .welcome) {
+    /// A `step` the flow leaves out starts on the next one that is shown.
+    public init(
+        accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingAvailable: Bool,
+        step: OnboardingStep = .welcome
+    ) {
+        let steps = onboardingSteps(screenRecordingAvailable: screenRecordingAvailable)
+        self.steps = steps
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
-        self.step = step
+        let later = steps.first(where: { $0.rawValue > step.rawValue }) ?? steps[steps.count - 1]
+        self.step = steps.contains(step) ? step : later
     }
 
     /// Live permission polling while the window is visible.
@@ -62,8 +76,8 @@ public struct OnboardingState: Equatable, Sendable {
         step != .accessibility || accessibilityGranted
     }
 
-    public var canGoBack: Bool { step != .welcome }
-    public var isLastStep: Bool { step == OnboardingStep.allCases.last }
+    public var canGoBack: Bool { step != steps.first }
+    public var isLastStep: Bool { step == steps.last }
 
     public var primaryTitle: String {
         switch step {
@@ -75,25 +89,29 @@ public struct OnboardingState: Equatable, Sendable {
     }
 
     public var progress: OnboardingProgress {
-        OnboardingProgress(index: step.rawValue, count: OnboardingStep.allCases.count)
+        OnboardingProgress(index: position, count: steps.count)
+    }
+
+    private var position: Int {
+        steps.firstIndex(of: step) ?? 0
     }
 
     public mutating func advance() {
-        guard canAdvance, let next = OnboardingStep(rawValue: step.rawValue + 1) else {
+        guard canAdvance, position + 1 < steps.count else {
             return
         }
-        step = next
+        step = steps[position + 1]
     }
 
     public mutating func back() {
-        if let previous = OnboardingStep(rawValue: step.rawValue - 1) {
-            step = previous
+        if position > 0 {
+            step = steps[position - 1]
         }
     }
 }
 
 /// One line of the "Keys to know" card. `families` names the catalog
-/// action of each combo (empty for app-level keys like the launcher).
+/// action of each combo.
 public struct OnboardingKey: Equatable, Sendable {
     public let title: String
     public let detail: String
@@ -118,9 +136,13 @@ public let onboardingKeys: [OnboardingKey] = [
     ),
     OnboardingKey(
         title: "Open launcher", detail: "Search apps and windows",
-        combos: [HotkeyCombo(modifiers: [.alt], key: "Space")], families: []
+        combos: [HotkeyCombo(modifiers: [.alt], key: "Space")], families: ["toggle-launcher"]
     ),
 ]
+
+/// B1: under the keys card. Option combos type characters on many layouts,
+/// and a bound combo never reaches the app.
+public let onboardingKeyboardNote = "On many keyboard layouts (Spanish, German and more), Option plus a number or letter types a character such as @, #, |, [ or ], and Gio's shortcuts take those keys while it runs. Change or remove any shortcut in Gio's Shortcuts section."
 
 // MARK: - Menu bar
 

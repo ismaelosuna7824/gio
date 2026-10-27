@@ -4,7 +4,9 @@ name: Prepare Release
 # patch (0.1.0 -> 0.1.1), minor (-> 0.2.0) or major (-> 1.0.0). The pull
 # request carries the bump as its release:<bump> label, its title shows the
 # version it will publish, and its body (the release notes, editable before the
-# merge) lists dev's commits since the latest release. Merging it is the release:
+# merge) starts with a fixed install line and lists dev's user-facing commits
+# since the latest release (docs(odd), test, ci, chore and build left out).
+# Merging it is the release:
 # release.yml computes the version again at merge time from the latest tag and
 # the label, so a stale title never publishes a wrong version.
 on:
@@ -77,20 +79,32 @@ jobs:
               --color 7FD6B6 --description "Merging to main publishes a $kind release"
           done
           body="$RUNNER_TEMP/body.md"
+          # Since the latest release (commits merged to main after it count
+          # too), else everything dev adds to main.
+          if [ "$LATEST" != "none" ]; then
+            range="$LATEST..HEAD"
+          else
+            range="origin/main..HEAD"
+          fi
+          subjects="$(git log --no-merges --reverse --format='- %s' "$range")"
+          # Users read these notes: leave out internal work (decision records,
+          # tests, CI, chores, build tooling); feat/fix/perf/refactor and other
+          # docs stay.
+          changes="$(printf '%s\n' "$subjects" \
+            | grep -Ev '^- (docs\(odd\)!?:|(test|ci|chore|build)(\([^)]*\))?!?:)' || true)"
+          if [ -z "$changes" ]; then
+            changes="- Internal maintenance only (tests, CI, tooling)."
+          fi
           {
             echo "Merging this pull request publishes **Gio $TAG** ($BUMP bump from $LATEST). Merge with **Create a merge commit**."
             echo "Everything after this paragraph becomes the release notes: edit it before merging."
             echo
             echo "<!-- release notes -->"
+            echo "Apple silicon, macOS 13 or later. First install: the app is not notarized yet; see Install in the README."
+            echo
             echo "## Changes"
             echo
-            # Since the latest release (commits merged to main after it count
-            # too), else everything dev adds to main.
-            if [ "$LATEST" != "none" ]; then
-              git log --no-merges --reverse --format='- %s' "$LATEST..HEAD"
-            else
-              git log --no-merges --reverse --format='- %s' origin/main..HEAD
-            fi
+            printf '%s\n' "$changes"
           } > "$body"
           title="Release $TAG"
           pr="$(gh pr list --repo "$repo" --base main --head dev --state open --json number --jq '.[0].number // empty')"

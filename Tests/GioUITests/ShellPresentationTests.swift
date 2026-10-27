@@ -16,8 +16,14 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertFalse(shouldShowOnboarding(hasCompleted: true, accessibilityGranted: nil))
     }
 
+    private func onboarding(
+        ax: Bool, sr: Bool, available: Bool = true, step: OnboardingStep = .welcome
+    ) -> OnboardingState {
+        OnboardingState(accessibilityGranted: ax, screenRecordingGranted: sr, screenRecordingAvailable: available, step: step)
+    }
+
     func testStepsRunInOrder() {
-        var state = OnboardingState(accessibilityGranted: true, screenRecordingGranted: false)
+        var state = onboarding(ax: true, sr: false)
         XCTAssertEqual(state.step, .welcome)
         XCTAssertFalse(state.canGoBack)
         state.advance()
@@ -34,7 +40,7 @@ final class ShellPresentationTests: XCTestCase {
     }
 
     func testAccessibilityBlocksContinueUntilGranted() {
-        var state = OnboardingState(accessibilityGranted: false, screenRecordingGranted: false)
+        var state = onboarding(ax: false, sr: false)
         state.advance()
         XCTAssertEqual(state.step, .accessibility)
         XCTAssertFalse(state.canAdvance)
@@ -47,7 +53,7 @@ final class ShellPresentationTests: XCTestCase {
     }
 
     func testUpdatingKeepsTheStepAndTakesTheLatestPermissions() {
-        var stored = OnboardingState(accessibilityGranted: false, screenRecordingGranted: false)
+        var stored = onboarding(ax: false, sr: false)
         stored.advance()
 
         let current = stored.updating(accessibilityGranted: true, screenRecordingGranted: true)
@@ -60,7 +66,7 @@ final class ShellPresentationTests: XCTestCase {
     }
 
     func testScreenRecordingIsSkippable() {
-        var state = OnboardingState(accessibilityGranted: true, screenRecordingGranted: false)
+        var state = onboarding(ax: true, sr: false)
         state.advance()
         state.advance()
         XCTAssertEqual(state.step, .screenRecording)
@@ -71,7 +77,7 @@ final class ShellPresentationTests: XCTestCase {
     }
 
     func testPrimaryTitlesAndProgress() {
-        var state = OnboardingState(accessibilityGranted: true, screenRecordingGranted: true)
+        var state = onboarding(ax: true, sr: true)
         XCTAssertEqual(state.primaryTitle, "Get Started")
         XCTAssertEqual(state.progress, OnboardingProgress(index: 0, count: 4))
         state.advance()
@@ -79,6 +85,28 @@ final class ShellPresentationTests: XCTestCase {
         state.advance()
         XCTAssertEqual(state.primaryTitle, "Done")
         XCTAssertEqual(state.progress, OnboardingProgress(index: 3, count: 4))
+    }
+
+    /// S5: Screen Recording features need macOS 14; below it the step is
+    /// left out and the flow runs welcome, Accessibility, keys.
+    func testScreenRecordingStepIsLeftOutWhenUnavailable() {
+        XCTAssertEqual(onboardingSteps(screenRecordingAvailable: true), [.welcome, .accessibility, .screenRecording, .keys])
+        XCTAssertEqual(onboardingSteps(screenRecordingAvailable: false), [.welcome, .accessibility, .keys])
+
+        var state = onboarding(ax: true, sr: false, available: false)
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 0, count: 3))
+        state.advance()
+        state.advance()
+        XCTAssertEqual(state.step, .keys)
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 2, count: 3))
+        XCTAssertTrue(state.isLastStep)
+        state.back()
+        XCTAssertEqual(state.step, .accessibility)
+    }
+
+    func testAStartOnAnUnavailableStepMovesToTheNextOne() {
+        let state = onboarding(ax: true, sr: false, available: false, step: .screenRecording)
+        XCTAssertEqual(state.step, .keys)
     }
 
     func testScreenRecordingStepPhaseFollowsPermissionAndRequest() {
@@ -183,8 +211,7 @@ final class ShellPresentationTests: XCTestCase {
     func testKeysToKnowMatchTheDefaults() {
         let defaults = defaultHotkeyBindings()
         for key in onboardingKeys {
-            // The launcher is handled by the app, not the action table.
-            XCTAssertEqual(key.families.count, key.title == "Open launcher" ? 0 : key.combos.count)
+            XCTAssertEqual(key.families.count, key.combos.count)
             for (combo, family) in zip(key.combos, key.families) {
                 XCTAssertTrue(
                     defaults.contains { $0.0 == combo && shortcutFamily(of: $0.1) == family },
@@ -198,7 +225,7 @@ final class ShellPresentationTests: XCTestCase {
     // MARK: - Menu bar
 
     private let state = BarSessionState(
-        workspace: 2, windows: 5, columns: 3, focused: nil,
+        workspace: 2, windows: 5, columns: 3,
         stacks: [BarStack(display: 1, focused: true, workspaces: [
             WorkspaceEntry(index: 1, windows: 1, columns: 1, isActive: false),
             WorkspaceEntry(index: 2, windows: 5, columns: 3, isActive: true),
@@ -216,7 +243,7 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertEqual(menu.title, "Gio")
         XCTAssertEqual(menu.subtitle, "Workspace 2 of 3 · 5 windows")
         XCTAssertEqual(barMenuModel(nil).subtitle, "Starting…")
-        let single = BarSessionState(workspace: 4, windows: 1, columns: 1, focused: nil)
+        let single = BarSessionState(workspace: 4, windows: 1, columns: 1)
         XCTAssertEqual(barMenuModel(single).subtitle, "Workspace 4 · 1 window")
     }
 

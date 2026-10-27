@@ -4,7 +4,7 @@ import GioCore
 /// Read-only view of the live session, built by the host on the session
 /// queue and handed to the main thread by value. Views never touch session
 /// state directly.
-public struct SessionSnapshot: Sendable {
+public struct SessionSnapshot: Equatable, Sendable {
     /// Session, permission and window facts; nil before the first fetch.
     public var facts: SessionFacts?
     /// The config the session is running with right now (its
@@ -92,8 +92,13 @@ public final class DesktopModel: ObservableObject {
         refresh()
     }
 
+    /// PA-12: an unchanged snapshot is not republished, so polling an idle
+    /// session redraws nothing.
     public func refresh() {
-        snapshot = fetch()
+        let next = fetch()
+        if next != snapshot {
+            snapshot = next
+        }
     }
 
     /// Called by the window controller. Becoming visible refreshes once so

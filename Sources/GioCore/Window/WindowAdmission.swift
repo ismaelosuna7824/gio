@@ -40,13 +40,15 @@ public enum SuspendReason: String, Equatable, Sendable {
     case minimized
 }
 
-/// Observed facts about one window, as plain values (no AX types) so the
-/// admission decision stays pure and testable.
-public struct WindowAdmissionFacts: Equatable, Sendable {
+/// Observed facts about one window, with no AX types so the admission
+/// decision stays pure and testable. PA-18a: the settable checks are probes
+/// (one Accessibility message each), asked only when every earlier rule
+/// passed and at most once each.
+public struct WindowAdmissionFacts {
     public var role: String?
     public var subrole: String?
-    public var isPositionSettable: Bool
-    public var isSizeSettable: Bool
+    public var isPositionSettable: () -> Bool
+    public var isSizeSettable: () -> Bool
     public var isFullscreen: Bool
     public var isMinimized: Bool
     public var hasValidFrame: Bool
@@ -54,8 +56,8 @@ public struct WindowAdmissionFacts: Equatable, Sendable {
     public init(
         role: String?,
         subrole: String?,
-        isPositionSettable: Bool,
-        isSizeSettable: Bool,
+        isPositionSettable: @escaping () -> Bool,
+        isSizeSettable: @escaping () -> Bool,
         isFullscreen: Bool = false,
         isMinimized: Bool = false,
         hasValidFrame: Bool = true
@@ -131,5 +133,15 @@ public func classifyWindowAdmission(_ facts: WindowAdmissionFacts) -> WindowAdmi
     if facts.isMinimized {
         return .suspend(.minimized)
     }
-    return facts.isPositionSettable && facts.isSizeSettable ? .tile : .float(.notResizable)
+    return facts.isPositionSettable() && facts.isSizeSettable() ? .tile : .float(.notResizable)
+}
+
+/// MM-12: admission is decided once, when the window is registered, from
+/// what the app reports then. Live, Music's main window reported a dialog
+/// at one startup and floated for the whole session, over and under the
+/// tiles at its own frame. An admission float whose window now classifies
+/// as a tile (`admission`, read again when it is activated) rejoins the
+/// grid; floats a rule, the user or a snap-back chose never do.
+public func promotesAdmissionFloat(_ window: ManagedWindow, to admission: WindowAdmission) -> Bool {
+    window.mode == .floating && window.floatReason?.isAdmission == true && admission == .tile
 }

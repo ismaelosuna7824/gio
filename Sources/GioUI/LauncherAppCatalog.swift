@@ -72,6 +72,18 @@ public struct LauncherCatalogRefresh: Equatable, Sendable {
 private struct LauncherScanResult: @unchecked Sendable {
     let apps: [LauncherEntry]
     let icons: [String: NSImage]
+    /// When each bundle's icon was drawn from (its Info.plist's date).
+    let stamps: [String: TimeInterval]
+    let drawn: Int
+}
+
+/// PF-T (2026-10-15 profile: every app launch redrew the icon of every
+/// installed app, 8 % of Gio's CPU while in use): the bundles of `found`
+/// (path to its Info.plist's modification time) whose icon must be drawn,
+/// sorted: new ones and those changed since `drawn`. The others keep the
+/// icon they have.
+public func launcherIconsToDraw(found: [String: TimeInterval], drawn: [String: TimeInterval]) -> [String] {
+    found.filter { drawn[$0.key] != $0.value }.keys.sorted()
 }
 
 /// PF-01: the launcher's app list and icons, built off the main thread at
@@ -88,18 +100,40 @@ public final class LauncherAppCatalog {
     public var onChange: (() -> Void)?
 
     private var icons: [String: NSImage] = [:]
-    private var appIcons: [String: NSImage] = [:]
+    private var iconStamps: [String: TimeInterval] = [:]
+    /// Window rows' icons by app name; a miss is cached too (nil) until the
+    /// next scan lands.
+    private var appIcons: [String: NSImage?] = [:]
     private var refresh = LauncherCatalogRefresh()
     private let directories: [String]
     private let now: () -> TimeInterval
+    private let findRunningApp: (String) -> (bundlePath: String?, icon: NSImage?)?
+    /// PA-22: icons drawn by earlier launches; nil keeps them in memory only.
+    private let iconStore: LauncherIconStore?
+    /// Draws one bundle's icon (background queue).
+    private let drawIcon: @Sendable (String, CGFloat) -> NSImage
     private var observers: [NSObjectProtocol] = []
 
+    /// `findRunningApp` finds a running app by name (its bundle path and
+    /// icon) for window rows. `iconStore` is read on the first scan and
+    /// written whenever a scan drew or dropped an icon.
     public init(
         directories: [String] = defaultApplicationDirectories(),
-        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+        now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        findRunningApp: @escaping (String) -> (bundlePath: String?, icon: NSImage?)? = { name in
+            NSWorkspace.shared.runningApplications.first { $0.localizedName == name }
+                .map { ($0.bundleURL?.path, $0.icon) }
+        },
+        iconStore: LauncherIconStore? = nil,
+        drawIcon: @escaping @Sendable (String, CGFloat) -> NSImage = { path, side in
+            scaledLauncherIcon(NSWorkspace.shared.icon(forFile: path), side: side)
+        }
     ) {
         self.directories = directories
         self.now = now
+        self.findRunningApp = findRunningApp
+        self.iconStore = iconStore
+        self.drawIcon = drawIcon
     }
 
     /// Scan now in the background and refresh when an app launches.
@@ -151,12 +185,9 @@ public final class LauncherAppCatalog {
             if let cached = appIcons[application] {
                 return cached
             }
-            guard let app = NSWorkspace.shared.runningApplications.first(where: { $0.localizedName == application })
-            else {
-                return nil
+            let image = findRunningApp(application).flatMap { app in
+                app.bundlePath.flatMap { icons[$0] } ?? app.icon.map { scaledLauncherIcon($0, side: Self.iconSide) }
             }
-            let image = app.bundleURL.flatMap { icons[$0.path] }
-                ?? app.icon.map { scaledLauncherIcon($0, side: Self.iconSide) }
             appIcons[application] = image
             return image
         case .gioCommand, .shellCommand, .workspace:
@@ -168,13 +199,31 @@ public final class LauncherAppCatalog {
         let directories = directories
         let started = now()
         let side = Self.iconSide
+        // PA-22: the first scan of a launch starts from the icons on disk.
+        let store = iconStore
+        let fromDisk = iconStamps.isEmpty
+        let inMemory = LauncherScanResult(apps: [], icons: icons, stamps: iconStamps, drawn: 0)
+        let previous = LauncherAppScan(apps: apps, stamps: iconStamps)
+        let drawIcon = drawIcon
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            let apps = scanApplications(directories: directories)
-            var icons: [String: NSImage] = [:]
-            for case .app(_, _, let path) in apps {
-                icons[path] = scaledLauncherIcon(NSWorkspace.shared.icon(forFile: path), side: side)
+            var cached = inMemory
+            if fromDisk, let stored = store?.load(side: side) {
+                cached = LauncherScanResult(apps: [], icons: stored.icons, stamps: stored.stamps, drawn: 0)
             }
-            let result = LauncherScanResult(apps: apps, icons: icons)
+            let scan = scanApplications(directories: directories, previous: previous)
+            let toDraw = Set(launcherIconsToDraw(found: scan.stamps, drawn: cached.stamps))
+            var icons: [String: NSImage] = [:]
+            for path in scan.stamps.keys {
+                if !toDraw.contains(path), let icon = cached.icons[path] {
+                    icons[path] = icon
+                } else {
+                    icons[path] = drawIcon(path, side)
+                }
+            }
+            if !toDraw.isEmpty || cached.stamps.keys.contains(where: { scan.stamps[$0] == nil }) {
+                store?.save(icons: icons, stamps: scan.stamps, side: side)
+            }
+            let result = LauncherScanResult(apps: scan.apps, icons: icons, stamps: scan.stamps, drawn: toDraw.count)
             DispatchQueue.main.async {
                 MainActor.assumeIsolated { self?.land(result, started: started, reason: reason) }
             }
@@ -184,12 +233,13 @@ public final class LauncherAppCatalog {
     private func land(_ result: LauncherScanResult, started: TimeInterval, reason: String) {
         apps = result.apps
         icons = result.icons
+        iconStamps = result.stamps
         appIcons.removeAll()
         let finished = now()
         GioLog.record(
             .info,
             "launcher appsReady ms=\(Int(((finished - started) * 1000).rounded())) apps=\(result.apps.count)"
-                + " icons=\(result.icons.count) reason=\(reason)"
+                + " icons=\(result.icons.count) drawn=\(result.drawn) reason=\(reason)"
         )
         if refresh.finishScan(at: finished) {
             scan(reason: "refresh")

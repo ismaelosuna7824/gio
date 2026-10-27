@@ -45,6 +45,13 @@ final class FocusRingTests: XCTestCase {
         XCTAssertEqual(state(focused: FocusRingWindow(frame: window, isMinimized: true)), .hidden)
     }
 
+    /// Live 2026-10-15: a floating window (Finder by rule) kept the ring at
+    /// its old place while the user dragged it: Gio does not follow a
+    /// floating window's own moves, so the ring would sit apart from it.
+    func testHiddenForAFloatingWindow() {
+        XCTAssertEqual(state(focused: FocusRingWindow(frame: window, isFloating: true)), .hidden)
+    }
+
     func testFullscreenRingShownWhenTheGapFitsItAndHidingIsOff() {
         let fullscreen = FocusRingWindow(frame: window, isFullscreen: true)
         let config = FocusRingSectionConfig(hideWhenMaximized: false)

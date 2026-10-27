@@ -112,9 +112,13 @@ final class AdvancedPresentationTests: XCTestCase {
 
     // MARK: - Diagnostics
 
-    private func facts(ax: Bool = true, sr: Bool = true, messages: [String] = [], exists: Bool = true, displays: Int = 1) -> SessionFacts {
+    private func facts(
+        ax: Bool = true, sr: Bool = true, messages: [String] = [], rejected: Bool = false, exists: Bool = true,
+        displays: Int = 1
+    ) -> SessionFacts {
         SessionFacts(
             configPath: "~/.config/gio/config.toml", configExists: exists, configMessages: messages,
+            configRejected: rejected,
             accessibilityGranted: ax, currentWorkspace: 2,
             displays: (0..<displays).map { DisplayFact(id: UInt32($0 + 1), workspace: 2) }, windows: [],
             screenRecordingGranted: sr
@@ -137,6 +141,18 @@ final class AdvancedPresentationTests: XCTestCase {
             checklist(facts()).map(\.title),
             ["Permissions", "Session", "Configuration", "Displays", "Renderer", "Gestures", "Logging"]
         )
+    }
+
+    /// DA-08: the report's `system.txt` repeats the checklist, one line per
+    /// card (status, title, badge, summary; no details).
+    func testIssueReportHealthLinesRepeatTheChecklist() {
+        let lines = issueReportHealthLines(checklist(facts(ax: false)))
+        XCTAssertEqual(lines.count, 7)
+        XCTAssertEqual(
+            lines[0],
+            "[error] Permissions: Accessibility missing — Gio cannot move windows or hear shortcuts until Accessibility is granted."
+        )
+        XCTAssertEqual(lines[1], "[ok] Session: Running — Tiling is running and the gio command-line tool can connect.")
     }
 
     private func facts(gestures: GestureSourceStatus, conflicts: [GestureConflict] = []) -> SessionFacts {
@@ -212,11 +228,31 @@ final class AdvancedPresentationTests: XCTestCase {
     func testConfigurationAndSocketProblems() {
         let list = checklist(facts(messages: ["line 3: bad", "line 9: bad"]), socket: false)
         XCTAssertEqual(check(list, "configuration").status, .warning)
-        XCTAssertEqual(check(list, "configuration").badge, "2 issues")
+        XCTAssertEqual(check(list, "configuration").badge, "2 warnings")
         XCTAssertEqual(check(list, "configuration").details, ["line 3: bad", "line 9: bad"])
         XCTAssertEqual(check(list, "session").status, .error)
         XCTAssertEqual(check(checklist(facts(exists: false)), "configuration").badge, "Defaults")
         XCTAssertEqual(check(checklist(facts(displays: 2)), "displays").badge, "2 displays")
+    }
+
+    /// S6: an error rejects the whole file, so Gio runs on the defaults
+    /// (custom shortcuts included): an error card that says so.
+    func testConfigErrorsSayTheFileWasIgnored() {
+        let card = check(checklist(facts(messages: ["line 4: layout.gaps expects a non-negative number"], rejected: true)), "configuration")
+        XCTAssertEqual(card.status, .error)
+        XCTAssertEqual(card.badge, "1 error")
+        XCTAssertTrue(card.summary.contains("config.toml was ignored"), card.summary)
+        XCTAssertTrue(card.summary.contains("defaults in use"), card.summary)
+        XCTAssertEqual(card.details, ["line 4: layout.gaps expects a non-negative number"])
+    }
+
+    /// S6: warnings keep the file: a warning card that says it applies.
+    func testConfigWarningsSayTheFileStillApplies() {
+        let card = check(checklist(facts(messages: ["line 3: unknown layout key 'gasp', ignored"])), "configuration")
+        XCTAssertEqual(card.status, .warning)
+        XCTAssertEqual(card.badge, "1 warning")
+        XCTAssertTrue(card.summary.contains("config.toml applies"), card.summary)
+        XCTAssertFalse(card.summary.contains("ignored, defaults"), card.summary)
     }
 
     func testRendererOffWhenAnimationsAreDisabled() {

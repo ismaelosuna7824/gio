@@ -48,6 +48,49 @@ final class FocusSettleTests: XCTestCase {
         XCTAssertNil(windowAreaClick(nil, visibleAreas: visible))
     }
 
+    /// WC-13: an auto-hidden Dock (or the menu bar while a fullscreen-like
+    /// area reaches it) sits inside the usable area: a click marked as
+    /// landing on system UI is not a window click either.
+    func testAClickOnSystemUIInsideTheVisibleAreaIsNotAWindowClick() {
+        let visible = [CGRect(x: 0, y: 0, width: 1000, height: 800)]
+        let dock = MouseClick(location: CGPoint(x: 500, y: 20), time: 1, onSystemUI: true)
+        XCTAssertNil(windowAreaClick(dock, visibleAreas: visible))
+    }
+
+    /// WC-13: the frontmost window under the click decides, Gio's own
+    /// click-through panels (ring, dim, overlay) aside: the Dock (layer 20)
+    /// and above (menu bar, status items, menus) are system UI; app windows
+    /// (0), app panels below the Dock and the desktop (negative) are not.
+    /// WC-16: the same window names the app that was clicked (a normal
+    /// window only; panels, the desktop and system UI name none).
+    func testTheClickTargetIsTheFrontmostWindowSkippingGiosOwnPanels() {
+        let point = CGPoint(x: 100, y: 100)
+        let box = CGRect(x: 0, y: 0, width: 200, height: 200)
+        let gio: pid_t = 99
+        func target(_ windows: [PointWindow]) -> ClickTarget {
+            clickTarget(at: point, frontToBack: windows, ownPID: gio)
+        }
+        XCTAssertEqual(
+            target([PointWindow(pid: 5, layer: 20, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]),
+            ClickTarget(onSystemUI: true, ownerPID: nil)
+        )
+        XCTAssertEqual(target([PointWindow(pid: 5, layer: 25, bounds: box)]), ClickTarget(onSystemUI: true, ownerPID: nil))
+        XCTAssertEqual(
+            target([PointWindow(pid: gio, layer: 3, bounds: box), PointWindow(pid: 7, layer: 0, bounds: box)]),
+            ClickTarget(onSystemUI: false, ownerPID: 7)
+        )
+        XCTAssertEqual(target([PointWindow(pid: 7, layer: 3, bounds: box)]), ClickTarget(onSystemUI: false, ownerPID: nil), "an app's floating panel")
+        XCTAssertEqual(
+            target([PointWindow(pid: 8, layer: -2_147_483_603, bounds: box)]), ClickTarget(onSystemUI: false, ownerPID: nil),
+            "the desktop"
+        )
+        XCTAssertEqual(
+            target([PointWindow(pid: 5, layer: 20, bounds: CGRect(x: 300, y: 0, width: 10, height: 10))]),
+            ClickTarget(onSystemUI: false, ownerPID: nil)
+        )
+        XCTAssertEqual(target([]), ClickTarget(onSystemUI: false, ownerPID: nil))
+    }
+
     // MARK: Click validation
 
     func testFocusedWindowContainingTheClickMatches() {
@@ -61,6 +104,22 @@ final class FocusSettleTests: XCTestCase {
             frame: CGRect(x: 1439, y: 100, width: 800, height: 600), click: click.location
         ))
         XCTAssertFalse(focusMatchesClick(frame: nil, click: click.location))
+    }
+
+    /// WC-16 live (2026-10-15): a link clicked in Slack opened in Chrome,
+    /// whose window was parked on another workspace; the activation was
+    /// judged against the click point (`focus dropped source=activation
+    /// id=1528:3 frame=1799,-1073 ... reason=focused window not under
+    /// click`) and the browser stayed behind. When another app than the
+    /// clicked one takes the focus, the click handed off to it.
+    func testAClickHandsOffToAnotherAppButMustMatchForTheClickedApp() {
+        let parked = CGRect(x: 1799, y: -1073, width: 1784, height: 1114)
+        var onSlack = click
+        onSlack.ownerPID = 10
+        XCTAssertTrue(clickExplainsFocus(onSlack, focusPID: 20, frame: parked), "Slack link -> Chrome")
+        XCTAssertFalse(clickExplainsFocus(onSlack, focusPID: 10, frame: parked), "Slack itself: must be under the click")
+        XCTAssertTrue(clickExplainsFocus(onSlack, focusPID: 10, frame: CGRect(x: 400, y: 300, width: 300, height: 300)))
+        XCTAssertFalse(clickExplainsFocus(click, focusPID: 20, frame: parked), "unknown clicked app: must match")
     }
 
     // MARK: Keyboard-driven

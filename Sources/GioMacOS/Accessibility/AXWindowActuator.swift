@@ -131,7 +131,7 @@ public final class AXWindowActuator: WindowActuator {
         guard let handle = handle(for: id) else {
             return nil
         }
-        countCalls(2, pid: id.pid)
+        countCalls(1, pid: id.pid)
         return try readFrame(handle.element).map { flip.toCocoa($0) }
     }
 
@@ -226,38 +226,59 @@ func actuatorPermission() throws {
     }
 }
 
+/// PF-AF: the messaging timeout of every Accessibility element Gio creates
+/// without one of its own (discovery app elements, observers, focus reads,
+/// elements handed to AX callbacks). The system default lets a hung app hold
+/// the calling thread for seconds; registered handles keep their shorter
+/// `AXWindowActuator.messagingTimeoutSeconds`.
+public let globalAXMessagingTimeoutSeconds: Float = 1.0
+
+/// Set once at session start: a timeout set on the system-wide element is
+/// the global one (`AXUIElementSetMessagingTimeout` documentation).
+public func applyGlobalAXMessagingTimeout() {
+    _ = AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), globalAXMessagingTimeoutSeconds)
+}
+
 /// Nil only when macOS reports the element invalid; every other read failure
 /// throws, so live-but-unreadable windows are never mislabeled as vanished.
+/// PF-AE: position and size in one Accessibility message
+/// (`AXUIElementCopyMultipleAttributeValues`) instead of two (paired A/B in
+/// the live workload: median 0.71 -> 0.50 ms, 10 % trimmed mean 1.58 ->
+/// 0.85 ms per read); per-attribute failures come back as `AXValue`s of
+/// type `.axError` with the same meaning.
 func readFrame(_ element: AXUIElement) throws -> CGRect? {
-    var rawPosition: CFTypeRef?
-    var rawSize: CFTypeRef?
-    let positionStatus = AXUIElementCopyAttributeValue(
-        element, kAXPositionAttribute as CFString, &rawPosition
-    )
-    let sizeStatus = AXUIElementCopyAttributeValue(
-        element, kAXSizeAttribute as CFString, &rawSize
-    )
-    if positionStatus == .invalidUIElement || sizeStatus == .invalidUIElement {
+    var raw: CFArray?
+    let attributes = [kAXPositionAttribute, kAXSizeAttribute] as CFArray
+    let status = AXUIElementCopyMultipleAttributeValues(element, attributes, AXCopyMultipleAttributeOptions(rawValue: 0), &raw)
+    if status == .invalidUIElement {
         return nil
     }
-    guard positionStatus == .success else {
-        throw SystemWindowActionError.readbackFailed(attribute: "position", status: positionStatus)
-    }
-    guard sizeStatus == .success else {
-        throw SystemWindowActionError.readbackFailed(attribute: "size", status: sizeStatus)
-    }
-    guard let position = rawPosition, let size = rawSize,
-          CFGetTypeID(position) == AXValueGetTypeID(),
-          CFGetTypeID(size) == AXValueGetTypeID()
-    else {
-        throw SystemWindowActionError.readbackFailed(attribute: "position/size", status: .failure)
+    guard status == .success, let values = raw as? [AnyObject], values.count == 2 else {
+        throw SystemWindowActionError.readbackFailed(attribute: "position/size", status: status)
     }
     var point = CGPoint.zero
     var dimensions = CGSize.zero
-    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-          AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-          point.x.isFinite, point.y.isFinite,
-          dimensions.width.isFinite, dimensions.height.isFinite,
+    for (index, (name, type)) in [("position", AXValueType.cgPoint), ("size", AXValueType.cgSize)].enumerated() {
+        let value = values[index]
+        guard CFGetTypeID(value) == AXValueGetTypeID() else {
+            throw SystemWindowActionError.readbackFailed(attribute: name, status: .failure)
+        }
+        let axValue = value as! AXValue
+        if AXValueGetType(axValue) == .axError {
+            var error = AXError.failure
+            _ = AXValueGetValue(axValue, .axError, &error)
+            if error == .invalidUIElement {
+                return nil
+            }
+            throw SystemWindowActionError.readbackFailed(attribute: name, status: error)
+        }
+        let ok = type == .cgPoint
+            ? AXValueGetValue(axValue, .cgPoint, &point) : AXValueGetValue(axValue, .cgSize, &dimensions)
+        guard ok else {
+            throw SystemWindowActionError.readbackFailed(attribute: name, status: .failure)
+        }
+    }
+    guard point.x.isFinite, point.y.isFinite, dimensions.width.isFinite, dimensions.height.isFinite,
           dimensions.width > 0, dimensions.height > 0
     else {
         throw SystemWindowActionError.readbackFailed(attribute: "position/size", status: .failure)
@@ -301,6 +322,12 @@ struct AXElementFrameIO: FrameAttributeIO {
             throw SystemWindowActionError.readbackFailed(attribute: "size", status: status)
         }
         return size
+    }
+
+    /// PA-18b: one message for a read-back of both (PF-AE, `readFrame`).
+    func readFrame() throws -> CGRect? {
+        count(1)
+        return try GioMacOS.readFrame(element)
     }
 
     func writePosition(_ point: CGPoint) throws {

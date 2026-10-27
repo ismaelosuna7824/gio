@@ -75,7 +75,7 @@ final class ShortcutCatalogTests: XCTestCase {
             XCTAssertEqual(keys("move-window-to-monitor-\(suffix)"), ["Ctrl+Alt+Cmd+\(key)"], "bound by MM-04")
             XCTAssertEqual(keys("move-workspace-to-monitor-\(suffix)"), [], "unbound")
         }
-        let monitors = entries.filter { $0.category == .monitors }.compactMap(\.configName)
+        let monitors = entries.filter { $0.category == .monitors }.map(\.configName)
         XCTAssertEqual(monitors.count, 20)
         XCTAssertEqual(Array(monitors.prefix(4)), [
             "focus-monitor-left", "focus-monitor-right", "focus-monitor-up", "focus-monitor-down",
@@ -156,10 +156,20 @@ final class ShortcutCatalogTests: XCTestCase {
         XCTAssertTrue(move.bindings.contains { $0.combo == combo("Ctrl+H") && $0.source == .config })
     }
 
-    func testLauncherShortcutIsListedAsAppEntryWithoutConfigName() {
-        let launcher = shortcutCatalog(configKeybindings: []).first { $0.category == .app }
-        XCTAssertNil(launcher?.configName)
-        XCTAssertEqual(launcher?.bindings.map(\.combo), [combo("Alt+Space")])
+    func testLauncherIsAnEditableAppEntryLikeAnyAction() {
+        let launcher = shortcutCatalog(configKeybindings: []).filter { $0.category == .app }
+        XCTAssertEqual(launcher.map(\.configName), ["toggle-launcher"])
+        XCTAssertEqual(launcher.first?.action, .toggleLauncher)
+        XCTAssertEqual(launcher.first?.bindings, [ShortcutBinding(combo: combo("Alt+Space"), source: .default)])
+    }
+
+    func testRemovingTheLauncherDefaultShowsItRemovedAndRebindingMovesIt() {
+        let entries = shortcutCatalog(
+            configKeybindings: [(combo("Ctrl+Alt+Space"), .toggleLauncher)], unbound: [combo("Alt+Space")]
+        )
+        let launcher = entries.first { $0.configName == "toggle-launcher" }
+        XCTAssertEqual(launcher?.bindings, [ShortcutBinding(combo: combo("Ctrl+Alt+Space"), source: .config)])
+        XCTAssertEqual(launcher?.removedDefaults, [combo("Alt+Space")])
     }
 
     func testKeycapsUseMacSymbolsInCanonicalOrder() {

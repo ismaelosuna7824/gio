@@ -77,7 +77,13 @@ public func requireAXPermission() throws {
 
 /// - Parameter onlyPID: restrict the scan to one process (incremental
 ///   registration of a launched app); nil scans every regular app.
-public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowDiscoveryResult {
+/// - Parameter isKnown: elements the caller already manages. PA-18a: their
+///   settable probes (two messages each) are skipped, so a known window
+///   comes back as a tile candidate whatever its resizability; only for a
+///   caller that treats known tile and float candidates alike.
+public func discoverSystemWindows(
+    onlyPID: pid_t? = nil, isKnown: (AXUIElement, pid_t) -> Bool = { _, _ in false }
+) throws -> SystemWindowDiscoveryResult {
     try requireAXPermission()
     var found: [DiscoveredSystemWindow] = []
     var floating: [DiscoveredSystemWindow] = []
@@ -109,7 +115,9 @@ public func discoverSystemWindows(onlyPID: pid_t? = nil) throws -> SystemWindowD
         for element in elements {
             let appName = app.localizedName ?? "unknown"
             switch classifyElement(
-                element, pid: app.processIdentifier, appName: appName, bundleID: app.bundleIdentifier,
+                element, facts: readWindowFacts(element),
+                probesSettable: !isKnown(element, app.processIdentifier),
+                pid: app.processIdentifier, appName: appName, bundleID: app.bundleIdentifier,
                 appElement: appElement, focused: focusedElement,
                 index: found.count + floating.count
             ) {
@@ -179,10 +187,117 @@ private func axFocusedWindow(of appElement: AXUIElement) -> AXUIElement? {
     return (candidate as! AXUIElement)
 }
 
+/// PA-18a: what classification needs of one window. Unreadable attributes
+/// are nil, as the single-attribute reads they replace reported them.
+struct AXWindowFacts: Equatable {
+    /// Nil unless position and size are both readable, finite and positive.
+    var frame: CGRect?
+    var minimized: Bool?
+    /// `AXFullScreen`, else the `AXFullscreen` spelling some apps use.
+    var fullscreen: Bool?
+    var role: String?
+    var subrole: String?
+    /// Nil when unreadable or empty.
+    var title: String?
+    /// The role answered, whatever its value (PF-E: a readable "not a
+    /// window" is final, an unreadable role is worth another try).
+    var roleReadable: Bool
+    /// macOS reports the element invalid (destroyed).
+    var elementGone: Bool
+}
+
+/// The attributes of `AXWindowFacts`, in slot order.
+let windowFactAttributes: [String] = [
+    kAXPositionAttribute, kAXSizeAttribute, kAXMinimizedAttribute, "AXFullScreen", "AXFullscreen",
+    kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute,
+]
+
+/// PA-18a: every fact in one Accessibility message
+/// (`AXUIElementCopyMultipleAttributeValues`) instead of one per attribute.
+func readWindowFacts(_ element: AXUIElement) -> AXWindowFacts {
+    var raw: CFArray?
+    let status = AXUIElementCopyMultipleAttributeValues(
+        element, windowFactAttributes as CFArray, AXCopyMultipleAttributeOptions(rawValue: 0), &raw
+    )
+    return decodeWindowFacts(status: status, values: raw as? [AnyObject])
+}
+
+/// One slot of a batched read: its value, or the error macOS put in its
+/// place (an `AXValue` of type `.axError`).
+private enum AXSlot {
+    case value(AnyObject)
+    case error(AXError)
+}
+
+/// Pure: decodes a batched read of `windowFactAttributes`. A failed call
+/// fails every slot with its status.
+func decodeWindowFacts(status: AXError, values: [AnyObject]?) -> AXWindowFacts {
+    let slots: [AXSlot]
+    if status == .success, let values, values.count == windowFactAttributes.count {
+        slots = values.map(axSlot)
+    } else {
+        slots = Array(repeating: .error(status == .success ? .failure : status), count: windowFactAttributes.count)
+    }
+    func value(_ index: Int) -> AnyObject? {
+        if case .value(let value) = slots[index] {
+            return value
+        }
+        return nil
+    }
+    var point = CGPoint.zero
+    var size = CGSize.zero
+    let frame: CGRect?
+    if let position = value(0), CFGetTypeID(position) == AXValueGetTypeID(),
+       AXValueGetValue(position as! AXValue, .cgPoint, &point),
+       let extent = value(1), CFGetTypeID(extent) == AXValueGetTypeID(),
+       AXValueGetValue(extent as! AXValue, .cgSize, &size),
+       point.x.isFinite, point.y.isFinite, size.width.isFinite, size.height.isFinite,
+       size.width > 0, size.height > 0
+    {
+        frame = CGRect(origin: point, size: size)
+    } else {
+        frame = nil
+    }
+    let title = value(7) as? String
+    var roleReadable = false
+    var elementGone = false
+    switch slots[5] {
+    case .value:
+        roleReadable = true
+    case .error(let error):
+        elementGone = error == .invalidUIElement
+    }
+    return AXWindowFacts(
+        frame: frame,
+        minimized: value(2) as? Bool,
+        fullscreen: (value(3) as? Bool) ?? (value(4) as? Bool),
+        role: value(5) as? String,
+        subrole: value(6) as? String,
+        title: title?.isEmpty == false ? title : nil,
+        roleReadable: roleReadable,
+        elementGone: elementGone
+    )
+}
+
+private func axSlot(_ value: AnyObject) -> AXSlot {
+    if CFGetTypeID(value) == CFNullGetTypeID() {
+        return .error(.noValue)
+    }
+    guard CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError else {
+        return .value(value)
+    }
+    var error = AXError.failure
+    _ = AXValueGetValue(value as! AXValue, .axError, &error)
+    return .error(error)
+}
+
 /// Admission decision plus handles for one element. Shared by the full scan
 /// and the single-window path used when a window appears later.
+/// `probesSettable` false skips the settable probes (a known window).
 private func classifyElement(
     _ element: AXUIElement,
+    facts: AXWindowFacts,
+    probesSettable: Bool = true,
     pid: pid_t,
     appName: String,
     bundleID: String?,
@@ -190,49 +305,59 @@ private func classifyElement(
     focused focusedElement: AXUIElement?,
     index: Int
 ) -> ElementClassification {
-    let frame = axFrame(of: element)
-    let minimized = axBool(of: element, attribute: kAXMinimizedAttribute as String) ?? false
-    let fullscreen = axBool(of: element, attribute: "AXFullScreen")
-        ?? axBool(of: element, attribute: "AXFullscreen")
-    let admission = classifyWindowAdmission(WindowAdmissionFacts(
-        role: axString(of: element, attribute: kAXRoleAttribute as String),
-        subrole: axString(of: element, attribute: kAXSubroleAttribute as String),
-        isPositionSettable: axIsSettable(element, attribute: kAXPositionAttribute as String),
-        isSizeSettable: axIsSettable(element, attribute: kAXSizeAttribute as String),
-        isFullscreen: fullscreen ?? false,
-        isMinimized: minimized,
-        hasValidFrame: frame != nil
-    ))
+    let admission = windowAdmission(of: element, facts: facts, probesSettable: probesSettable)
     if case .ignore = admission {
         return .ignored(ExcludedSystemWindow(pid: pid, appName: appName, admission: admission))
     }
     // Float/suspend/tile all have a valid frame except a dialog or floating
     // panel whose geometry is unreadable: count it as skipped.
-    guard let frame else {
+    guard let frame = facts.frame else {
         return .skipped
     }
     let window = SystemWindow(
         index: index,
         pid: pid,
         appName: appName,
-        title: axTitle(of: element),
+        title: facts.title,
         frame: frame,
         isFocused: focusedElement.map { CFEqual($0, element) } ?? false,
-        isMinimized: minimized,
-        isFullscreen: fullscreen,
+        isMinimized: facts.minimized ?? false,
+        isFullscreen: facts.fullscreen,
         bundleID: bundleID
     )
     var discovered = DiscoveredSystemWindow(
         window: window, element: element, appElement: appElement
     )
     if case .float(let reason) = admission {
+        // MM-12: logged with its id once registered (`window float`).
         discovered.floatReason = reason
-        GioLog.record(
-            .info, "discovery exclude pid=\(pid) app=\(appName) \(admission.label)"
-        )
         return .float(discovered)
     }
     return .tile(discovered)
+}
+
+/// The settable probes run only when admission reaches them (PA-18a).
+private func windowAdmission(
+    of element: AXUIElement, facts: AXWindowFacts, probesSettable: Bool = true
+) -> WindowAdmission {
+    classifyWindowAdmission(WindowAdmissionFacts(
+        role: facts.role,
+        subrole: facts.subrole,
+        isPositionSettable: { !probesSettable || axIsSettable(element, attribute: kAXPositionAttribute as String) },
+        isSizeSettable: { !probesSettable || axIsSettable(element, attribute: kAXSizeAttribute as String) },
+        isFullscreen: facts.fullscreen ?? false,
+        isMinimized: facts.minimized ?? false,
+        hasValidFrame: facts.frame != nil
+    ))
+}
+
+/// MM-12: the admission a registered window would get now (a fresh read of
+/// role, subrole, settability and state). Never for Gio's own pid.
+public func currentWindowAdmission(of element: AXUIElement, pid: pid_t) -> WindowAdmission? {
+    guard pid != ProcessInfo.processInfo.processIdentifier else {
+        return nil
+    }
+    return windowAdmission(of: element, facts: readWindowFacts(element))
 }
 
 /// PF-02: one appeared element's classification, with why it failed: a
@@ -259,10 +384,11 @@ public func discoverSystemWindowAttempt(element: AXUIElement, pid: pid_t) -> Sin
     let appElement = AXUIElementCreateApplication(pid)
     let app = NSRunningApplication(processIdentifier: pid)
     let appName = app?.localizedName ?? "unknown"
+    let facts = readWindowFacts(element)
     let ignore: IgnoreReason?
     switch classifyElement(
-        element, pid: pid, appName: appName, bundleID: app?.bundleIdentifier, appElement: appElement,
-        focused: axFocusedWindow(of: appElement), index: 0
+        element, facts: facts, pid: pid, appName: appName, bundleID: app?.bundleIdentifier,
+        appElement: appElement, focused: axFocusedWindow(of: appElement), index: 0
     ) {
     case .tile(let discovered), .float(let discovered):
         return .found(discovered)
@@ -275,13 +401,11 @@ public func discoverSystemWindowAttempt(element: AXUIElement, pid: pid_t) -> Sin
             ignore = nil
         }
     }
-    // One more read tells a destroyed element (closed before it could be
+    // The same read tells a destroyed element (closed before it could be
     // read: never retry) from one that does not answer yet.
-    var role: CFTypeRef?
-    let roleStatus = AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &role)
     switch registrationFailure(
-        elementGone: roleStatus == .invalidUIElement, roleReadable: roleStatus == .success,
-        frameReadable: axFrame(of: element) != nil, ignore: ignore
+        elementGone: facts.elementGone, roleReadable: facts.roleReadable,
+        frameReadable: facts.frame != nil, ignore: ignore
     ) {
     case .gone: return .gone
     case .rejected: return .rejected
@@ -304,7 +428,8 @@ public func discoverSystemWindow(element: AXUIElement, pid: pid_t) -> Discovered
     let app = NSRunningApplication(processIdentifier: pid)
     let appName = app?.localizedName ?? "unknown"
     switch classifyElement(
-        element, pid: pid, appName: appName, bundleID: app?.bundleIdentifier, appElement: appElement,
+        element, facts: readWindowFacts(element), pid: pid, appName: appName,
+        bundleID: app?.bundleIdentifier, appElement: appElement,
         focused: axFocusedWindow(of: appElement), index: 0
     ) {
     case .tile(let discovered), .float(let discovered):
@@ -322,11 +447,18 @@ public func discoverSystemWindow(element: AXUIElement, pid: pid_t) -> Discovered
 /// old skip-zoomed rule dated from one clamp observation that looks more
 /// like minimum-size clamping; real apps decide live now. Live-only.
 public func axIsTileable(_ element: AXUIElement) -> Bool {
+    axTileability(element) == .tileable
+}
+
+public func axTileability(_ element: AXUIElement) -> TileabilityProbe {
     for attribute in [kAXPositionAttribute, kAXSizeAttribute] {
         var settable = DarwinBoolean(false)
         let status = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
-        guard status == .success, settable.boolValue else {
-            return false
+        guard status == .success else {
+            return .undetermined(status: Int(status.rawValue))
+        }
+        guard settable.boolValue else {
+            return .notTileable
         }
     }
     for name in ["AXFullScreen", "AXFullscreen"] {
@@ -335,10 +467,10 @@ public func axIsTileable(_ element: AXUIElement) -> Bool {
             continue
         }
         if let fullscreen = raw as? Bool, fullscreen {
-            return false
+            return .notTileable
         }
     }
-    return true
+    return .tileable
 }
 
 /// Whether the window's size attribute is settable (the latency probe skips
@@ -375,30 +507,9 @@ func axIsSettable(_ element: AXUIElement, attribute: String) -> Bool {
         && settable.boolValue
 }
 
+/// Nil on any failure (discovery retries); one message (PF-AE, `readFrame`).
 func axFrame(of element: AXUIElement) -> CGRect? {
-    var rawPosition: CFTypeRef?
-    var rawSize: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &rawPosition)
-        == .success,
-        AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &rawSize) == .success,
-        let position = rawPosition,
-        let size = rawSize,
-        CFGetTypeID(position) == AXValueGetTypeID(),
-        CFGetTypeID(size) == AXValueGetTypeID()
-    else {
-        return nil
-    }
-    var point = CGPoint.zero
-    var dimensions = CGSize.zero
-    guard AXValueGetValue(position as! AXValue, .cgPoint, &point),
-          AXValueGetValue(size as! AXValue, .cgSize, &dimensions),
-          point.x.isFinite, point.y.isFinite,
-          dimensions.width.isFinite, dimensions.height.isFinite,
-          dimensions.width > 0, dimensions.height > 0
-    else {
-        return nil
-    }
-    return CGRect(origin: point, size: dimensions)
+    (try? readFrame(element)) ?? nil
 }
 
 public func axTitle(of element: AXUIElement) -> String? {
@@ -415,12 +526,4 @@ public func axTitle(of element: AXUIElement) -> String? {
     default:
         return nil
     }
-}
-
-func axBool(of element: AXUIElement, attribute: String) -> Bool? {
-    var raw: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success else {
-        return nil
-    }
-    return raw as? Bool
 }

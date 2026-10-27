@@ -73,10 +73,27 @@ final class RulePlacementTests: XCTestCase {
     // MARK: Focus
 
     func testTakesFocusFollowsTheRuleAndTheWindowState() {
-        XCTAssertTrue(arrivalTakesFocus(.none, mode: .tiled, minimized: false))
-        XCTAssertFalse(arrivalTakesFocus(RuleOutcome(openFocused: false), mode: .tiled, minimized: false))
-        XCTAssertFalse(arrivalTakesFocus(.none, mode: .floating, minimized: false))
-        XCTAssertFalse(arrivalTakesFocus(.none, mode: .tiled, minimized: true))
+        XCTAssertTrue(arrivalTakesFocus(.none, mode: .tiled, minimized: false, fromBackgroundApp: false))
+        XCTAssertTrue(arrivalTakesFocus(RuleOutcome(openFocused: true), mode: .tiled, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(RuleOutcome(openFocused: false), mode: .tiled, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(.none, mode: .floating, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(.none, mode: .tiled, minimized: true, fromBackgroundApp: false))
+    }
+
+    /// FL-01: macOS orders a background app's new window under the frontmost
+    /// app's window, where the focused column hides it (Slack, Meet popups).
+    /// Only an explicit `open-focused = true` lets such a popup take focus;
+    /// never the frontmost app's own popups (Chrome's address-bar
+    /// suggestions, re-created on every key) and never by default.
+    func testOnlyAnOptedInBackgroundPopupTakesFocus() {
+        let optedIn = RuleOutcome(openFocused: true)
+        XCTAssertTrue(arrivalTakesFocus(optedIn, mode: .floating, minimized: false, fromBackgroundApp: true))
+        XCTAssertFalse(arrivalTakesFocus(optedIn, mode: .floating, minimized: false, fromBackgroundApp: false))
+        XCTAssertFalse(arrivalTakesFocus(optedIn, mode: .floating, minimized: true, fromBackgroundApp: true))
+        XCTAssertFalse(arrivalTakesFocus(.none, mode: .floating, minimized: false, fromBackgroundApp: true))
+        XCTAssertFalse(
+            arrivalTakesFocus(RuleOutcome(openFocused: false), mode: .floating, minimized: false, fromBackgroundApp: true)
+        )
     }
 
     func testAnUnfocusedArrivalKeepsTheWorkspaceFocus() {
@@ -87,6 +104,118 @@ final class RulePlacementTests: XCTestCase {
         XCTAssertEqual(workspace.columns.map(\.windows), [[id(1)], [id(2)]])
         XCTAssertEqual(workspace.focusedWindow, id(1))
         XCTAssertEqual(workspace.focusedColumn, 0)
+    }
+
+    // MARK: New window position
+
+    private func ids(_ elements: [UInt64]) -> [[WindowID]] {
+        elements.map { [id($0)] }
+    }
+
+    /// Windows 1, 2, 3 in their own columns, the middle one focused.
+    private func threeColumnStrip() -> WorkspaceManager {
+        var manager = WorkspaceManager()
+        for n: UInt64 in 1...3 {
+            placeArrival(id(n), outcome: .none, takesFocus: true, manager: &manager)
+        }
+        manager.update(adoptingFocus(id(2), in: manager.currentWorkspace())!)
+        return manager
+    }
+
+    func testAFocusedArrivalOpensAtEachPositionAndTakesFocusThere() {
+        let expected: [(NewWindowPosition, [UInt64], Int)] = [
+            (.end, [1, 2, 3, 4], 3), (.start, [4, 1, 2, 3], 0),
+            (.rightOfFocused, [1, 2, 4, 3], 2), (.leftOfFocused, [1, 4, 2, 3], 1),
+        ]
+        for (position, order, focusedColumn) in expected {
+            var manager = threeColumnStrip()
+            placeArrival(id(4), outcome: .none, takesFocus: true, position: position, manager: &manager)
+            let workspace = manager.currentWorkspace()
+            XCTAssertEqual(workspace.columns.map(\.windows), ids(order), "\(position)")
+            XCTAssertEqual(workspace.focusedColumn, focusedColumn, "\(position)")
+            XCTAssertEqual(workspace.focusedWindow, id(4), "\(position)")
+        }
+    }
+
+    func testAnUnfocusedArrivalAtEachPositionKeepsTheFocusedColumn() {
+        let expected: [(NewWindowPosition, [UInt64], Int)] = [
+            (.end, [1, 2, 3, 4], 1), (.start, [4, 1, 2, 3], 2),
+            (.rightOfFocused, [1, 2, 4, 3], 1), (.leftOfFocused, [1, 4, 2, 3], 2),
+        ]
+        for (position, order, focusedColumn) in expected {
+            var manager = threeColumnStrip()
+            placeArrival(id(4), outcome: .none, takesFocus: false, position: position, manager: &manager)
+            let workspace = manager.currentWorkspace()
+            XCTAssertEqual(workspace.columns.map(\.windows), ids(order), "\(position)")
+            XCTAssertEqual(workspace.focusedColumn, focusedColumn, "\(position)")
+            XCTAssertEqual(workspace.focusedWindow, id(2), "\(position)")
+        }
+    }
+
+    func testAnEmptyStripTakesTheArrivalAtIndexZeroForEveryPosition() {
+        for position in NewWindowPosition.allCases {
+            for takesFocus in [true, false] {
+                var manager = WorkspaceManager()
+                placeArrival(id(1), outcome: .none, takesFocus: takesFocus, position: position, manager: &manager)
+                let workspace = manager.currentWorkspace()
+                XCTAssertEqual(workspace.columns.map(\.windows), ids([1]), "\(position) \(takesFocus)")
+                XCTAssertEqual(workspace.focusedColumn, 0, "\(position) \(takesFocus)")
+            }
+        }
+    }
+
+    func testARoutedArrivalIsPlacedAroundTheDestinationsFocusedColumn() {
+        var manager = threeColumnStrip()
+        let destination = placeArrival(id(5), outcome: RuleOutcome(workspace: 2), takesFocus: true, manager: &manager)
+        placeArrival(id(6), outcome: RuleOutcome(workspace: 2), takesFocus: true, manager: &manager)
+        manager.update(adoptingFocus(id(5), in: manager.workspace(id: destination)!)!)
+        placeArrival(
+            id(7), outcome: RuleOutcome(workspace: 2), takesFocus: false, position: .rightOfFocused,
+            manager: &manager
+        )
+        let routed = manager.workspace(id: destination)!
+        XCTAssertEqual(routed.columns.map(\.windows), ids([5, 7, 6]))
+        XCTAssertEqual(routed.focusedWindow, id(5))
+        XCTAssertEqual(routed.focusedColumn, 0)
+        XCTAssertEqual(manager.currentWorkspace().columns.map(\.windows), ids([1, 2, 3]))
+        XCTAssertEqual(manager.currentWorkspace().focusedWindow, id(2))
+    }
+
+    func testADwindleWorkspaceIgnoresThePosition() {
+        func dwindleStrip() -> WorkspaceManager {
+            var manager = WorkspaceManager()
+            XCTAssertTrue(manager.setLayout(.dwindle))
+            for n: UInt64 in 1...3 {
+                placeArrival(id(n), outcome: .none, takesFocus: true, manager: &manager)
+            }
+            manager.update(adoptingFocus(id(2), in: manager.currentWorkspace())!)
+            return manager
+        }
+        var appended = dwindleStrip()
+        placeArrival(id(4), outcome: .none, takesFocus: true, manager: &appended)
+        for position in NewWindowPosition.allCases {
+            var manager = dwindleStrip()
+            placeArrival(id(4), outcome: .none, takesFocus: true, position: position, manager: &manager)
+            XCTAssertEqual(manager.currentWorkspace(), appended.currentWorkspace(), "\(position)")
+        }
+    }
+
+    func testTheTitleRecheckPlacesAMovedWindowAtThePosition() throws {
+        let registry = WindowRegistry()
+        var manager = WorkspaceManager()
+        try registry.register(chromeWindow(1, title: "Meet"))
+        placeArrival(id(1), outcome: .none, takesFocus: true, manager: &manager)
+        let destination = placeArrival(id(5), outcome: RuleOutcome(workspace: 2), takesFocus: true, manager: &manager)
+        placeArrival(id(6), outcome: RuleOutcome(workspace: 2), takesFocus: true, manager: &manager)
+        manager.update(adoptingFocus(id(5), in: manager.workspace(id: destination)!)!)
+        applyTitleRecheck(
+            id(1), outcome: RuleOutcome(workspace: 2), registry: registry, position: .leftOfFocused,
+            manager: &manager
+        )
+        let routed = manager.workspace(id: destination)!
+        XCTAssertEqual(routed.columns.map(\.windows), ids([1, 5, 6]))
+        XCTAssertEqual(routed.focusedWindow, id(5))
+        XCTAssertEqual(routed.focusedColumn, 1)
     }
 
     // MARK: Display

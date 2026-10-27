@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// NF-06: how the focused window stands out. `dim` (default) darkens the
-/// visible unfocused tiled windows at rest; `ring` draws the NF-01 outline;
-/// `none` shows nothing.
+/// NF-06: how the focused window stands out. `ring` (default since NF-08)
+/// draws the NF-01 outline; `dim` darkens the visible unfocused tiled
+/// windows at rest; `none` shows nothing.
 public enum FocusIndicatorKind: String, CaseIterable, Equatable, Sendable {
     case dim
     case ring
@@ -18,7 +18,7 @@ public struct FocusSectionConfig: Equatable, Sendable {
     /// Opacity of the black fill over unfocused windows (0.0-0.5).
     public var dimStrength: Double
 
-    public init(indicator: FocusIndicatorKind = .dim, dimStrength: Double = 0.15) {
+    public init(indicator: FocusIndicatorKind = .ring, dimStrength: Double = 0.15) {
         self.indicator = indicator
         self.dimStrength = dimStrength
     }
