@@ -662,6 +662,24 @@ public func snapshotStripSelection<Image>(
     }
 }
 
+public func snapshotNearbyStaleSelection<Image>(
+    cache: SnapshotCache<Image>, strip: [(id: WindowID, frame: CGRect)], distances: [WindowID: Int],
+    excluded: Set<WindowID>, now: TimeInterval, softAge: TimeInterval = snapshotSoftAge, tolerance: CGFloat = 2
+) -> [(id: WindowID, cause: SnapshotRefreshCause)] {
+    let stale = strip.enumerated().filter { _, item in
+        guard !excluded.contains(item.id), let entry = cache.entry(item.id, matching: item.frame, tolerance: tolerance) else {
+            return false
+        }
+        return now - entry.capturedAt > softAge
+    }
+    let nearestFirst = stale.sorted { first, second in
+        let firstKey = (distances[first.element.id] ?? Int.max, first.offset)
+        let secondKey = (distances[second.element.id] ?? Int.max, second.offset)
+        return firstKey < secondKey
+    }
+    return nearestFirst.map { (id: $0.element.id, cause: SnapshotRefreshCause.stale) }
+}
+
 /// Why a wanted window is captured again.
 public enum SnapshotRefreshCause: Equatable, Sendable {
     case missing

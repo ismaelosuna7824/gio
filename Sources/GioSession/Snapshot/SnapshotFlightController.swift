@@ -571,7 +571,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 }
             }
             startedAt = now
-            cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids, now: now)
+            cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids.subtracting(still), now: now)
             origins = starts
             self.targets = targets
             primingToken = token
@@ -720,7 +720,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 layerModel.fly(at: context.now())
                 if pass != nil {
                     // SM-30: the resized windows were just written.
-                    followFresh(snapshotResizedWindows(starts: origins, targets: targets).intersection(ids))
+                    followFresh(ids)
                     followOpening()
                 }
             }
@@ -942,16 +942,20 @@ public final class SnapshotFlightController: @unchecked Sendable {
     // MARK: SM-30 fresh images
 
     /// The writes of `candidates` were just dispatched: a new series for each
-    /// whose size differs from its flight start, unless its size did not
+    /// whose size differs from its flight start, or that moves on screen with
+    /// an image older than the soft age (`snapshotStaleMoves`), unless its size did not
     /// change since `previousTargets` (a move keeps its series); a window
     /// back at its start size needs none.
     private func followFresh(_ candidates: Set<WindowID>, previousTargets: [WindowID: CGRect] = [:]) {
         let now = context.now()
-        for id in candidates.intersection(ids).sorted() {
+        let layered = candidates.intersection(ids)
+        let stale = staleMoves(layered.subtracting(seeThrough).subtracting(opening), now: now)
+        for id in layered.sorted() {
             guard let target = targets[id], let origin = origins[id] else {
                 continue
             }
-            guard snapshotResized(from: origin.size, to: target.size) else {
+            let resized = snapshotResized(from: origin.size, to: target.size)
+            guard resized || stale.contains(id) else {
                 fresh.forget(id)
                 continue
             }
@@ -959,11 +963,29 @@ public final class SnapshotFlightController: @unchecked Sendable {
                fresh.outcome(id) != nil {
                 continue
             }
+            if !resized, let captured = cache.cache.entry(id, matching: target)?.capturedAt {
+                let ageMilliseconds = Int(((now - captured) * 1000).rounded())
+                context.log(.debug, snapshotStaleMoveLine(id, ageMilliseconds: ageMilliseconds))
+            }
             let token = fresh.start(id, now: now)
-            scheduler.asyncAfter(SnapshotFreshTracker.firstDelay) { [weak self] in
+            let delay = resized ? SnapshotFreshTracker.firstDelay : SnapshotFreshTracker.staleMoveDelay
+            scheduler.asyncAfter(delay) { [weak self] in
                 self?.captureFresh(id, token: token)
             }
         }
+    }
+
+    private func staleMoves(_ candidates: Set<WindowID>, now: TimeInterval) -> Set<WindowID> {
+        let capturedAt = candidates.reduce(into: [WindowID: TimeInterval]()) { result, id in
+            guard let target = targets[id], let entry = cache.cache.entry(id, matching: target) else {
+                return
+            }
+            result[id] = entry.capturedAt
+        }
+        return snapshotStaleMoves(
+            candidates, starts: origins, targets: targets, capturedAt: capturedAt, displays: context.displayFrames(),
+            now: now
+        )
     }
 
     /// One capture of the series `token` of `id`, at its current target.

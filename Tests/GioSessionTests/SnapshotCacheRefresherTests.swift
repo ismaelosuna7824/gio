@@ -1028,6 +1028,24 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         XCTAssertEqual(scheduler.pendingCount, 0, "no timers at rest")
     }
 
+    func testStripWindowsBeyondTheNeighbourColumnOlderThanTheSoftAgeAreCapturedAgainAtTheNextSettle() throws {
+        let strip = try addWindows(3, workspace: 1)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        completeAll()
+        XCTAssertFalse(Set(cache.refreshSet().map(\.id)).contains(strip[2]), "beyond the neighbour column")
+        scheduler.advance(by: snapshotSoftAge + 1)
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(Set(lastRequest?.windows.keys ?? [:].keys), Set([idA, idB] + strip), "the whole strip")
+        completeAll()
+        let captures = world.captures.count
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(world.captures.count, captures, "fresh now: nothing to capture")
+        XCTAssertEqual(scheduler.pendingCount, 0, "no timers at rest")
+    }
+
     /// SM-21: a strip window that keeps missing while visible is asked
     /// once per settle, never in a stage loop.
     func testAStripWindowThatKeepsMissingIsNotRetriedInAStageLoop() throws {

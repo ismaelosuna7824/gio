@@ -1477,6 +1477,39 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertFalse(world.logs.contains { $0.1.contains("fresh=") || $0.1.contains("fade=") })
     }
 
+    func testAMoveFlyingAnImageOlderThanTheSoftAgeIsCapturedAgainOnceAndTheLayerShowsIt() throws {
+        refresh([idA: a, idB: b])
+        scheduler.advance(by: snapshotSoftAge + 1)
+        let moved = a.offsetBy(dx: 100, dy: 0)
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let token = overlay.begins.last!.token
+        deferPass()
+        flight.primed(token, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(world.freshProbes.map(\.id), [idA], "a move needs no repaint: captured at once")
+        let probe = try XCTUnwrap(world.freshProbes.first?.probe)
+        XCTAssertEqual(probe.paint, SnapshotPaintProbe(frame: moved))
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot stale move id=1:1 ageMs=31000") })
+
+        let fresh = image()
+        answerFresh(freshRead(fresh, size: a.size))
+        XCTAssertTrue(overlay.freshens.first?.faces[idA]?.image === fresh)
+        XCTAssertTrue(cache.cache.entry(idA, matching: moved)?.image === fresh)
+        flight.layersFinished(token)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.ends, 1)
+        XCTAssertTrue(overlay.fades.isEmpty)
+
+        let (back, backPlan) = slide(idA, from: moved, by: -100)
+        XCTAssertEqual(flight.drive(animations: [back], plans: [backPlan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(overlay.begins.last!.token, ok: true)
+        scheduler.runPending()
+        scheduler.advance(by: SnapshotFreshTracker.limit)
+        XCTAssertEqual(world.freshProbes.count, 1, "its image is fresh now: the next press captures nothing")
+    }
+
     func testTheHandOffStopsTheFreshCapturesAndALateAnswerIsDropped() {
         refresh([idA: a, idB: b])
         let token = resizeAndPrime(from: a, to: wide)

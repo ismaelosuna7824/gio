@@ -590,6 +590,22 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         return (strip, adjacent)
     }
 
+    private func stripDistances() -> [WindowID: Int] {
+        let session = context.session()
+        var distances: [WindowID: Int] = [:]
+        for display in context.displays() {
+            guard let workspace = session.manager.workspace(id: display.workspace) else {
+                continue
+            }
+            for (index, column) in workspace.columns.enumerated() {
+                for id in column.windows {
+                    distances[id] = abs(index - workspace.focusedColumn)
+                }
+            }
+        }
+        return distances
+    }
+
     /// The strip coverage cares about: none for the close ghost alone.
     private func coverageStrip() -> [(id: WindowID, frame: CGRect)] {
         context.rendererAvailable() ? stripPlan().strip : []
@@ -786,17 +802,22 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         // SM-21: a coverage stage does not ask again for a window this
         // pass already asked for (unless it is dirty again). PF-AK: a typing
         // mark counts only once the pause and the floor allow it.
-        let selected = Array((
-            snapshotRefreshSelection(
-                cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+        let ruled = snapshotRefreshSelection(
+            cache: cache, wanted: wanted, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+        )
+            + snapshotStripSelection(
+                cache: cache, strip: strip, dirty: dirty, typedAt: typedAt, excluded: parkedMisses, now: now
             )
-                + snapshotStripSelection(
-                    cache: cache, strip: strip, dirty: dirty, typedAt: typedAt, excluded: parkedMisses, now: now
-                )
-                + snapshotRefreshSelection(
-                    cache: cache, wanted: extra, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
-                )
-        ).filter { !full || !stripPass.contains($0.id) || dirty[$0.id] != nil }.prefix(Self.maxWindows))
+            + snapshotRefreshSelection(
+                cache: cache, wanted: extra, dirty: dirty, typedAt: typedAt, now: now, fullResolution: shown
+            )
+        let nearbyStaleExclusions = parkedMisses.union(dirty.keys).union(ruled.map(\.id))
+        let nearbyStale = full ? snapshotNearbyStaleSelection(
+            cache: cache, strip: strip, distances: stripDistances(), excluded: nearbyStaleExclusions, now: now
+        ) : []
+        let selected = Array((ruled + nearbyStale).filter {
+            !full || !stripPass.contains($0.id) || dirty[$0.id] != nil
+        }.prefix(Self.maxWindows))
         armTypingRun(selected: Set(selected.map(\.id)), now: now)
         let managed = managedFrames()
         let backdrops = backdropFrames(full: full, managed: managed, now: now)
