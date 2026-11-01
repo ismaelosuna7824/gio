@@ -1,5 +1,6 @@
 import AppKit
 import GioCore
+import IOSurface
 import QuartzCore
 
 // SM-03/SM-08: GPU snapshot overlay. Main thread only (AppKit + Core
@@ -175,6 +176,8 @@ private final class WindowLayers {
     /// The largest frame of the current track (keyframes included): how far
     /// the fills reach.
     private var reach: CGSize = .zero
+    private(set) var isSeeThrough = false
+    private(set) var live: CALayer?
 
     var all: [CALayer] { [shadow, clip, dim, ring] }
 
@@ -316,6 +319,45 @@ private final class WindowLayers {
         for (index, face) in faces.enumerated() {
             face.fill.isHidden = shown.underlay.map { $0 != index } ?? false
         }
+        live?.zPosition = CGFloat(faces.count)
+    }
+
+    func showLive(_ surface: IOSurface) {
+        let layer = live ?? addLive()
+        layer.contents = surface
+    }
+
+    func clearLive() {
+        live?.removeAllAnimations()
+        live?.removeFromSuperlayer()
+        live = nil
+    }
+
+    private func addLive() -> CALayer {
+        let layer = CALayer()
+        layer.actions = noActions
+        layer.contentsScale = clip.contentsScale
+        layer.contentsGravity = .resize
+        layer.magnificationFilter = .linear
+        layer.minificationFilter = .linear
+        layer.anchorPoint = CGPoint(x: 0, y: 1)
+        layer.position = .zero
+        layer.zPosition = CGFloat(faces.count)
+        clip.addSublayer(layer)
+        live = layer
+        followClip()
+        return layer
+    }
+
+    private func followClip() {
+        guard let live else {
+            return
+        }
+        live.bounds = clip.bounds
+        live.removeAnimation(forKey: "gio.bounds")
+        if let track = clip.animation(forKey: "gio.bounds") {
+            live.add(track, forKey: "gio.bounds")
+        }
     }
 
     private func layoutFaces(reach: CGSize) {
@@ -337,6 +379,7 @@ private final class WindowLayers {
         let outset = overlayRingGeometry(window: geometry, width: ringWidth)
         ring.position = outset.position
         ring.bounds = outset.bounds
+        followClip()
     }
 
     /// FX-09: no image (the real window shows through the backdrop's hole);
@@ -344,6 +387,7 @@ private final class WindowLayers {
     /// the real one, so it never darkens the window itself. The layer never
     /// moves (a window that starts moving gets a new layer).
     func seeThrough() {
+        isSeeThrough = true
         clip.isHidden = true
         let outset: CGFloat = 64
         let bounds = shadow.bounds
@@ -404,6 +448,7 @@ private final class WindowLayers {
             values: resizes ? keyframes.geometries.map { NSValue(rect: overlayClipBounds($0.bounds.size)) } : nil,
             times: times, keyframes: keyframes, beginTime: beginTime
         )
+        followClip()
         Self.setTrack(
             shadow, "shadowPath",
             values: resizes
@@ -428,6 +473,7 @@ private final class WindowLayers {
     func removeAnimations() {
         all.forEach { $0.removeAllAnimations() }
         faces.forEach { $0.group.removeAllAnimations() }
+        live?.removeAllAnimations()
     }
 
     func removeFromSuperlayer() {
@@ -482,6 +528,8 @@ final class SnapshotOverlay {
     var spring: SpringParameters
 
     var ids: Set<WindowID> { Set(windows.keys) }
+
+    var liveLayers: [WindowID: CALayer] { windows.compactMapValues(\.live) }
 
     init(displayFrame: CGRect, spring: SpringParameters) {
         self.displayFrame = displayFrame
@@ -710,6 +758,36 @@ final class SnapshotOverlay {
         layers.startedAt = now
         layers.animate(keyframes.flight, beginTime: now)
         layers.fadeIn(keyframes.opacities, keyframes: keyframes.flight, beginTime: now)
+        CATransaction.commit()
+    }
+
+    @discardableResult
+    func showLive(_ id: WindowID, surface: IOSurface, size: CGSize) -> Bool {
+        guard let layers = windows[id], !layers.isSeeThrough, size.width > 0, size.height > 0 else {
+            return false
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layers.showLive(surface)
+        CATransaction.commit()
+        return true
+    }
+
+    func clearLive() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layers in windows.values {
+            layers.clearLive()
+        }
+        CATransaction.commit()
+    }
+
+    func clearLive(_ ids: Set<WindowID>) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for id in ids {
+            windows[id]?.clearLive()
+        }
         CATransaction.commit()
     }
 
@@ -1007,6 +1085,24 @@ public final class SnapshotOverlayController {
     /// Remove every overlay at once.
     public func end() {
         endAll()
+    }
+
+    public func showLive(_ id: WindowID, surface: IOSurface, size: CGSize) {
+        for key in active.sorted() where overlays[key]?.showLive(id, surface: surface, size: size) == true {
+            return
+        }
+    }
+
+    public func clearLive() {
+        for key in active.sorted() {
+            overlays[key]?.clearLive()
+        }
+    }
+
+    public func clearLive(_ ids: Set<WindowID>) {
+        for key in active.sorted() {
+            overlays[key]?.clearLive(ids)
+        }
     }
 
     /// SM-30: fresh images of resized layers' landing sizes for flight

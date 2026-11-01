@@ -112,7 +112,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         return false
     }
 
-    private let ownPid: pid_t
+    let ownPid: pid_t
     private let lock = NSLock()
     // Guarded by `lock`. Type-erased so the class is usable on macOS 13.
     private var content: AnyObject?
@@ -430,6 +430,26 @@ public final class SnapshotCapturer: @unchecked Sendable {
             paint: paint, samples: samples, startRegion: startRegion, freshRegion: freshRegion,
             cached: probe.cached.map { snapshotSamples(of: $0.image) }
         )
+    }
+
+    @available(macOS 14.0, *)
+    func liveWindows(_ windows: [WindowID: CGRect], primaryDisplayHeight: CGFloat) async -> [WindowID: SCWindow] {
+        let pids = Set(windows.keys.map(\.pid))
+        let candidates = windowServerSnapshotCandidates(pids: pids, displayHeight: primaryDisplayHeight)
+        let matched = match(windows, candidates: candidates, learningOn: nil).compactMapValues { match -> UInt32? in
+            guard case .matched(let windowID) = match else {
+                return nil
+            }
+            return windowID
+        }
+        guard !matched.isEmpty,
+              let cache = await ensureCache(
+                  managed: Set(matched.keys), needed: Set(matched.values), needsDisplays: false
+              ).cache
+        else {
+            return [:]
+        }
+        return matched.compactMapValues { cache.windows[$0] }
     }
 
     @available(macOS 14.0, *)
@@ -870,6 +890,12 @@ public final class SnapshotCapturer: @unchecked Sendable {
     @available(macOS 14.0, *)
     private static func captureWindow(_ window: SCWindow, pixels: (width: Int, height: Int)) async throws -> CGImage {
         let filter = SCContentFilter(desktopIndependentWindow: window)
+        let configuration = windowCaptureConfiguration(pixels: pixels)
+        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+    }
+
+    @available(macOS 14.0, *)
+    static func windowCaptureConfiguration(pixels: (width: Int, height: Int)) -> SCStreamConfiguration {
         let configuration = SCStreamConfiguration()
         configuration.width = pixels.width
         configuration.height = pixels.height
@@ -882,7 +908,7 @@ public final class SnapshotCapturer: @unchecked Sendable {
         // translucent pane came out flat grey, the real one shows the
         // wallpaper through it), so its image never matched it on screen.
         configuration.backgroundColor = CGColor.clear
-        return try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
+        return configuration
     }
 
     /// FX-11: the window as the display shows it: a crop of the composited
