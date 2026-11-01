@@ -1310,7 +1310,7 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   `OverlayResizeTests.testShrinkingKeepsTheLargerImageUnderTheNewOne` compile failure (`overlayUnderlay`,
   `over:`, `underlay` missing); GREEN; bundles UI 310 (53 skipped) / Session 481 / POC 7 / Mac 19 / MacOS 95
   / Core 1962, 0 failures. LIVE PENDING: `Alt+F` back on Postman, no dark block.
-- [ ] SM-35 (uncommitted, branch `fix/stale-flight-snapshots`) — "sometimes when we change of focus the
+- [x] SM-35 (`ecbdf72`, branch `fix/stale-flight-snapshots`) — "sometimes when we change of focus the
   displayed image is very past time, not even actual". Live log 2026-10-27: 131 flights, 51 with
   `cacheAgeMs` over 30 s, 23 over 180 s, max ~104 min. Cause: a flight flies the image of the start size
   whatever its age (SM-24) and refreshes only run on events (settle, dirty signals, no periodic timer), so
@@ -1395,3 +1395,4 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-17: follow-up in `odd/tasks/new-window-position.md` WP-05 (branch `feat/new-window-position`): with the snapshot renderer an opening window (NA-02 entry) is covered by the overlay (no hole, `planSnapshotFlight(covered:)`) until an SM-30 fresh capture at its target reads painted, then pops in (`OverlayPort.popFlight`, `WindowOpenPopBook`, at most 400 ms of wait) and is revealed through its WP-04 entry hole (`revealFlight`); the hand-off waits for it. An open alone is now an overlay flight (no `.cacheMiss` AX fallback). Debug `snapshot open pop|reveal`. LIVE PENDING (TESTING.md).
 - 2026-10-31: live report of minutes-old images in focus-change flights; SM-35 (one fresh mid-flight capture of a moving on-screen layer whose image is older than the soft age, truthful `cacheAgeMs`) written, all bundles green, uncommitted. Next: user approval to commit, then the SM-35 LIVE PENDING check.
 - 2026-11-01: SM-35 part 2 after the live check (fresh capture landed ~200 ms into the flight, far strip columns 68 s old): immediate capture for stale moves, nearest-first soft-age refresh of the shown strip at each settle; all bundles green, uncommitted.
+- 2026-11-01: SM-35 (parts 1 and 2) committed as `ecbdf72`; live layers (`odd/tasks/live-layers.md`) as `b471657`. Next: the PR to `dev`.
