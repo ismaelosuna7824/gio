@@ -174,6 +174,7 @@ public struct SnapshotFreshTracker: Equatable, Sendable {
     /// After the write: a native app has repainted by then and the capture
     /// (~60-150 ms live) still lands inside a ~350 ms Alt+F.
     public static let firstDelay: TimeInterval = 0.12
+    public static let staleMoveDelay: TimeInterval = 0
     public static let retryInterval: TimeInterval = 0.04
     /// The overlay is gone by then (flight ~350-400 ms plus the SM-29 hold).
     public static let limit: TimeInterval = 0.6
@@ -305,4 +306,21 @@ public func snapshotHandoffFading(
     resized: Set<WindowID>, translucent: Set<WindowID>, layered: Set<WindowID>
 ) -> Set<WindowID> {
     resized.union(translucent).intersection(layered)
+}
+
+public func snapshotStaleMoves(
+    _ candidates: Set<WindowID>, starts: [WindowID: CGRect], targets: [WindowID: CGRect],
+    capturedAt: [WindowID: TimeInterval], displays: [CGRect], now: TimeInterval, softAge: TimeInterval = snapshotSoftAge
+) -> Set<WindowID> {
+    candidates.filter { id in
+        guard let start = starts[id], let target = targets[id], let captured = capturedAt[id] else {
+            return false
+        }
+        let landsOnScreen = overlayDisplayIndex(from: target, to: target, displays: displays) != nil
+        return snapshotFrameMoves(from: start, to: target) && landsOnScreen && now - captured > softAge
+    }
+}
+
+public func snapshotStaleMoveLine(_ id: WindowID, ageMilliseconds: Int) -> String {
+    "snapshot stale move id=\(id.pid):\(id.elementID) ageMs=\(ageMilliseconds)"
 }

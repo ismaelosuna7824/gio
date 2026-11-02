@@ -167,6 +167,7 @@ final class SessionHost: @unchecked Sendable {
     private var trackpadPreferencesRead: TimeInterval?
     /// SM-02: caches ScreenCaptureKit content between debug captures.
     private let snapshotCapturer = SnapshotCapturer()
+    private lazy var liveStreamer = LiveWindowStreamer(capturer: snapshotCapturer)
     /// PF-X: the Screen Recording check is an IPC to tccd (~8 ms); hot
     /// paths and the polled facts answer from this cache (PA-15b: the facts
     /// refresh it only while it reads missing, to catch a new grant).
@@ -200,6 +201,7 @@ final class SessionHost: @unchecked Sendable {
     /// the real windows (token, ids, holes).
     var overlayPop: ((Int, SnapshotFace<CGImage>, WindowOpenPop) -> Void)?
     var overlayReveal: ((Int, Set<WindowID>, OverlayHoles) -> Void)?
+    var overlayClearLive: ((Set<WindowID>) -> Void)?
     /// Main thread: removes a running flight at once (mouse down); true when one ran.
     var overlayAbortForMouseDown: (() -> Bool)?
     /// NA-03 close ghost hooks, set once by the app before `start()`; invoked
@@ -449,7 +451,18 @@ final class SessionHost: @unchecked Sendable {
                         ))
                     }
                 },
-                log: { GioLog.record($0, $1) }
+                log: { GioLog.record($0, $1) },
+                startLive: { [unowned self, liveStreamer] windows in
+                    let (screens, primary) = displayParameters.captureScreens
+                    liveStreamer.start(windows, displays: screens, primaryDisplayHeight: primary)
+                },
+                stopLive: { [liveStreamer] in
+                    liveStreamer.stopAll()
+                },
+                stopLiveWindows: { [unowned self, liveStreamer] ids in
+                    liveStreamer.stop(ids)
+                    overlayClearLive?(ids)
+                }
             ),
             cache: snapshotRefresher, overlay: HostOverlayPort(host: self), scheduler: scheduler
         )
@@ -2239,6 +2252,10 @@ final class SessionHost: @unchecked Sendable {
 
     /// Overlay layers of flight `token` landed with the frames the display
     /// presented meanwhile (called from the main thread).
+    func deliverLiveFrames(to frames: @escaping @Sendable (WindowID, IOSurface, CGSize) -> Void) {
+        liveStreamer.deliverFrames(to: frames)
+    }
+
     func snapshotLayersFinished(_ token: Int, frames: FlightFrameStats?) {
         overlayFlight.layersFinished(token, frames: frames)
     }

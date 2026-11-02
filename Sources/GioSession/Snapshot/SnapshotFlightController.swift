@@ -177,6 +177,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
         ) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
+        public var startLive: ([WindowID: CGRect]) -> Void
+        public var stopLive: () -> Void
+        public var stopLiveWindows: (Set<WindowID>) -> Void
 
         public init(
             displayFrames: @escaping () -> [CGRect], usableFrames: @escaping () -> [CGRect],
@@ -193,7 +196,10 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 WindowID, SnapshotFreshProbe<CGImage>, @escaping @Sendable (SnapshotFreshRead<CGImage>?) -> Void
             ) -> Void,
             log: @escaping (LogLevel, String) -> Void,
-            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+            startLive: @escaping ([WindowID: CGRect]) -> Void = { _ in },
+            stopLive: @escaping () -> Void = {},
+            stopLiveWindows: @escaping (Set<WindowID>) -> Void = { _ in }
         ) {
             self.displayFrames = displayFrames
             self.usableFrames = usableFrames
@@ -210,6 +216,9 @@ public final class SnapshotFlightController: @unchecked Sendable {
             self.captureFresh = captureFresh
             self.log = log
             self.now = now
+            self.startLive = startLive
+            self.stopLive = stopLive
+            self.stopLiveWindows = stopLiveWindows
         }
     }
 
@@ -271,6 +280,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
     private var flyAfterPass = false
     private var pops = WindowOpenPopBook()
     private var deferredHandover: SnapshotHandoffSummary?
+    private var live: Set<WindowID> = []
 
     public init(
         context: Context, cache: SnapshotCacheRefresher, overlay: OverlayPort, scheduler: SessionScheduler
@@ -511,6 +521,11 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 // SM-30: the instant pass writes these windows now.
                 followFresh(Set(plan.retargets.keys).union(plan.adds.map(\.id)), previousTargets: previousTargets)
             }
+            stopResizedLive(targets: targets)
+            streamLive(
+                Set(plan.adds.map(\.id)).union(moving), excluded: seeThrough.union(opening).union(covered),
+                starts: starts, targets: targets, displays: screens
+            )
             if !plan.uncovered.isEmpty {
                 // No image: written once under the overlay, shown through a
                 // hole when visible at its target (SM-16).
@@ -571,7 +586,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 }
             }
             startedAt = now
-            cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids, now: now)
+            cacheAgeMilliseconds = cache.cache.maxAgeMilliseconds(of: ids.subtracting(still), now: now)
             origins = starts
             self.targets = targets
             primingToken = token
@@ -580,8 +595,55 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 token: token, spring: spring, flights: flights, holes: self.holes, entryHoles: entryHoles,
                 decorations: context.decorations(targets)
             )
+            streamLive(
+                ids, excluded: still.union(entries).union(covered.map(\.id)), starts: starts, targets: targets,
+                displays: screens
+            )
             return .priming
         }
+    }
+
+    private func streamLive(
+        _ candidates: Set<WindowID>, excluded: Set<WindowID>, starts: [WindowID: CGRect],
+        targets: [WindowID: CGRect], displays: [CGRect]
+    ) {
+        guard !context.isShuttingDown(), live.count < liveLayerMaxStreams else {
+            return
+        }
+        let started = liveLayerCandidates(
+            ids: candidates, excluded: excluded.union(live), starts: starts, targets: targets, displays: displays,
+            limit: liveLayerMaxStreams - live.count
+        )
+        let windows = started.reduce(into: [WindowID: CGRect]()) { result, id in
+            result[id] = targets[id]
+        }
+        guard !windows.isEmpty else {
+            return
+        }
+        live.formUnion(windows.keys)
+        context.startLive(windows)
+    }
+
+    private func stopResizedLive(targets: [WindowID: CGRect]) {
+        let resized = live.filter { id in
+            guard let origin = origins[id], let target = targets[id] else {
+                return false
+            }
+            return snapshotResized(from: origin.size, to: target.size)
+        }
+        guard !resized.isEmpty else {
+            return
+        }
+        live.subtract(resized)
+        context.stopLiveWindows(resized)
+    }
+
+    private func stopLive() {
+        guard !live.isEmpty else {
+            return
+        }
+        live = []
+        context.stopLive()
     }
 
     /// SM-08: the pass that waits for the prime. `writes` is the instant
@@ -720,7 +782,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
                 layerModel.fly(at: context.now())
                 if pass != nil {
                     // SM-30: the resized windows were just written.
-                    followFresh(snapshotResizedWindows(starts: origins, targets: targets).intersection(ids))
+                    followFresh(ids)
                     followOpening()
                 }
             }
@@ -942,16 +1004,20 @@ public final class SnapshotFlightController: @unchecked Sendable {
     // MARK: SM-30 fresh images
 
     /// The writes of `candidates` were just dispatched: a new series for each
-    /// whose size differs from its flight start, unless its size did not
+    /// whose size differs from its flight start, or that moves on screen with
+    /// an image older than the soft age (`snapshotStaleMoves`), unless its size did not
     /// change since `previousTargets` (a move keeps its series); a window
     /// back at its start size needs none.
     private func followFresh(_ candidates: Set<WindowID>, previousTargets: [WindowID: CGRect] = [:]) {
         let now = context.now()
-        for id in candidates.intersection(ids).sorted() {
+        let layered = candidates.intersection(ids)
+        let stale = staleMoves(layered.subtracting(seeThrough).subtracting(opening), now: now)
+        for id in layered.sorted() {
             guard let target = targets[id], let origin = origins[id] else {
                 continue
             }
-            guard snapshotResized(from: origin.size, to: target.size) else {
+            let resized = snapshotResized(from: origin.size, to: target.size)
+            guard resized || stale.contains(id) else {
                 fresh.forget(id)
                 continue
             }
@@ -959,11 +1025,29 @@ public final class SnapshotFlightController: @unchecked Sendable {
                fresh.outcome(id) != nil {
                 continue
             }
+            if !resized, let captured = cache.cache.entry(id, matching: target)?.capturedAt {
+                let ageMilliseconds = Int(((now - captured) * 1000).rounded())
+                context.log(.debug, snapshotStaleMoveLine(id, ageMilliseconds: ageMilliseconds))
+            }
             let token = fresh.start(id, now: now)
-            scheduler.asyncAfter(SnapshotFreshTracker.firstDelay) { [weak self] in
+            let delay = resized ? SnapshotFreshTracker.firstDelay : SnapshotFreshTracker.staleMoveDelay
+            scheduler.asyncAfter(delay) { [weak self] in
                 self?.captureFresh(id, token: token)
             }
         }
+    }
+
+    private func staleMoves(_ candidates: Set<WindowID>, now: TimeInterval) -> Set<WindowID> {
+        let capturedAt = candidates.reduce(into: [WindowID: TimeInterval]()) { result, id in
+            guard let target = targets[id], let entry = cache.cache.entry(id, matching: target) else {
+                return
+            }
+            result[id] = entry.capturedAt
+        }
+        return snapshotStaleMoves(
+            candidates, starts: origins, targets: targets, capturedAt: capturedAt, displays: context.displayFrames(),
+            now: now
+        )
     }
 
     /// One capture of the series `token` of `id`, at its current target.
@@ -1147,6 +1231,7 @@ public final class SnapshotFlightController: @unchecked Sendable {
     }
 
     private func clear() {
+        stopLive()
         ids = []
         displays = []
         windows = []
