@@ -125,6 +125,19 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   base `origin/dev` `9ede867`; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
   LIVE PENDING: the real panel over a desktop (vibrancy and shadow cannot be rendered
   offscreen).
+- [ ] DD-09 (`<hash>`) — Motion presets in the first-run guide and Settings (user request 2026-11-03:
+  "en el onboarding hay que poner dos opciones al final la recomendada… y las fast… también pon esa
+  configuración en el settings para así desde el inicio sepan que pueden editar todo").
+  `MotionPreset` (`recommended` = `[animations] enabled`, `fast` = off: every move instant, "the most
+  fluid feel, with no animations") lives in GioCore with `motionPresetEdits`, so the setup and
+  Settings write the same line. The flow gains a last step `.motion` ("Pick a Feel"): two selectable
+  cards, Recommended preselected, the note that everything stays editable; Finish applies the choice
+  through `DesktopModel.apply`. Settings → Animations replaces the bare "Animate scrolling and focus
+  changes" switch with a **Preset** row (Recommended / Fast, same two values). Docs: USER_GUIDE
+  (First steps paragraph and the `[animations] enabled` row). RED: `MotionPresetTests`,
+  `ShellPresentationTests` (steps count 4/5, `.motion` last, titles, the preset default). GREEN:
+  Core 2213, Session 577, UI 376 (53 skipped), POC 7, Mac 19, macOS 116 (2 skipped, the known
+  setuid sandbox failure); signed build OK. LIVE PENDING: the real setup sheet and the Settings row.
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.

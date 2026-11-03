@@ -32,11 +32,29 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertEqual(state.step, .screenRecording)
         state.advance()
         XCTAssertEqual(state.step, .keys)
+        XCTAssertFalse(state.isLastStep)
+        state.advance()
+        XCTAssertEqual(state.step, .motion)
         XCTAssertTrue(state.isLastStep)
         state.advance()
-        XCTAssertEqual(state.step, .keys)
+        XCTAssertEqual(state.step, .motion)
         state.back()
-        XCTAssertEqual(state.step, .screenRecording)
+        XCTAssertEqual(state.step, .keys)
+    }
+
+    /// DD-06: the last step offers the motion presets; Recommended is the
+    /// default, so the flow writes Gio's defaults unless someone picks Fast.
+    func testMotionPresetsDefaultToRecommended() {
+        var state = onboarding(ax: true, sr: true)
+        XCTAssertEqual(state.motion, .recommended)
+        state.selectMotion(.fast)
+        XCTAssertEqual(state.motion, .fast)
+        var last = onboarding(ax: true, sr: true)
+        while !last.isLastStep {
+            last.advance()
+        }
+        XCTAssertEqual(last.step, .motion)
+        XCTAssertEqual(last.primaryTitle, "Done")
     }
 
     func testAccessibilityBlocksContinueUntilGranted() {
@@ -79,29 +97,38 @@ final class ShellPresentationTests: XCTestCase {
     func testPrimaryTitlesAndProgress() {
         var state = onboarding(ax: true, sr: true)
         XCTAssertEqual(state.primaryTitle, "Get Started")
-        XCTAssertEqual(state.progress, OnboardingProgress(index: 0, count: 4))
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 0, count: 5))
         state.advance()
         state.advance()
+        state.advance()
+        XCTAssertEqual(state.primaryTitle, "Continue")
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 3, count: 5))
         state.advance()
         XCTAssertEqual(state.primaryTitle, "Done")
-        XCTAssertEqual(state.progress, OnboardingProgress(index: 3, count: 4))
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 4, count: 5))
     }
 
     /// S5: Screen Recording features need macOS 14; below it the step is
     /// left out and the flow runs welcome, Accessibility, keys.
     func testScreenRecordingStepIsLeftOutWhenUnavailable() {
-        XCTAssertEqual(onboardingSteps(screenRecordingAvailable: true), [.welcome, .accessibility, .screenRecording, .keys])
-        XCTAssertEqual(onboardingSteps(screenRecordingAvailable: false), [.welcome, .accessibility, .keys])
+        XCTAssertEqual(
+            onboardingSteps(screenRecordingAvailable: true),
+            [.welcome, .accessibility, .screenRecording, .keys, .motion]
+        )
+        XCTAssertEqual(onboardingSteps(screenRecordingAvailable: false), [.welcome, .accessibility, .keys, .motion])
 
         var state = onboarding(ax: true, sr: false, available: false)
-        XCTAssertEqual(state.progress, OnboardingProgress(index: 0, count: 3))
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 0, count: 4))
         state.advance()
         state.advance()
         XCTAssertEqual(state.step, .keys)
-        XCTAssertEqual(state.progress, OnboardingProgress(index: 2, count: 3))
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 2, count: 4))
+        XCTAssertFalse(state.isLastStep)
+        state.advance()
+        XCTAssertEqual(state.progress, OnboardingProgress(index: 3, count: 4))
         XCTAssertTrue(state.isLastStep)
         state.back()
-        XCTAssertEqual(state.step, .accessibility)
+        XCTAssertEqual(state.step, .keys)
     }
 
     func testAStartOnAnUnavailableStepMovesToTheNextOne() {

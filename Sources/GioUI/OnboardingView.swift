@@ -6,7 +6,8 @@ import SwiftUI
 /// DD-05 first-run onboarding, presented as a sheet on the main window: a
 /// welcome, Accessibility (required, with live status from the existing
 /// permission polling), Screen Recording (recommended; macOS 14 and later
-/// only), and the keys to know with the Open at Login switch (DA-06).
+/// only), the keys to know with the Open at Login switch (DA-06) and the
+/// motion preset (DD-06).
 
 /// Remembers that onboarding was finished. Injected so tests never write
 /// the user's defaults.
@@ -105,7 +106,7 @@ struct OnboardingSheet: View {
     @ObservedObject var model: DesktopModel
     @StateObject private var loginItem = LoginItemModel(service: SystemLoginItem())
     let startStep: OnboardingStep
-    let onFinish: () -> Void
+    let onFinish: (MotionPreset) -> Void
     let onLater: () -> Void
     let onPrepareRelaunch: () -> Void
 
@@ -168,7 +169,8 @@ struct OnboardingContent: View {
     let screenRecordingRequested: Bool
     /// DA-06: the Open at Login row on the last step; nil hides it.
     let loginItem: LoginItemPresentation?
-    var onFinish: () -> Void = {}
+    /// DD-06: the last step's motion preset, applied on Finish.
+    var onFinish: (MotionPreset) -> Void = { _ in }
     var onLater: () -> Void = {}
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
@@ -181,7 +183,7 @@ struct OnboardingContent: View {
     init(
         accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingRequested: Bool = false,
         screenRecordingAvailable: Bool, step: OnboardingStep = .welcome, loginItem: LoginItemPresentation? = nil,
-        onFinish: @escaping () -> Void = {}, onLater: @escaping () -> Void = {},
+        onFinish: @escaping (MotionPreset) -> Void = { _ in }, onLater: @escaping () -> Void = {},
         requestAccessibility: @escaping () -> Void = {}, requestScreenRecording: @escaping () -> Void = {},
         relaunch: @escaping () -> Void = {},
         setLoginItem: @escaping (Bool) -> Void = { _ in }, openLoginItems: @escaping () -> Void = {}
@@ -213,6 +215,7 @@ struct OnboardingContent: View {
                     case .accessibility: accessibility
                     case .screenRecording: screenRecording
                     case .keys: keys
+                    case .motion: motion
                     }
                 }
                 .frame(maxWidth: 620)
@@ -415,6 +418,78 @@ struct OnboardingContent: View {
         }
     }
 
+    /// DD-06: the last step. Two presets, Recommended selected, and the hint
+    /// that everything else is editable from Settings.
+    private var motion: some View {
+        VStack(spacing: 20) {
+            Spacer(minLength: 0)
+            SectionIcon(symbol: "wind", tint: .pink, size: 72)
+            Text("Pick a Feel")
+                .font(.system(size: 36, weight: .bold, design: .rounded))
+                .foregroundStyle(GioColor.primaryText)
+            Text("How Gio moves when you scroll, focus and switch workspaces. Everything else — shortcuts, gaps, the focus ring — stays editable in Settings.")
+                .font(.system(size: 16))
+                .foregroundStyle(GioColor.secondaryText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(3)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: 540)
+            HStack(spacing: GioSpacing.m) {
+                motionOption(
+                    .recommended, symbol: "sparkles", tint: .green, title: "Recommended",
+                    detail: "Spring motion for every move: what Gio does out of the box."
+                )
+                motionOption(
+                    .fast, symbol: "bolt.fill", tint: .orange, title: "Fast",
+                    detail: "No animations at all: the most fluid feel, every move instant."
+                )
+            }
+            .frame(maxWidth: 580)
+            .padding(.top, 8)
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func motionOption(
+        _ preset: MotionPreset, symbol: String, tint: SectionTint, title: String, detail: String
+    ) -> some View {
+        let selected = current.motion == preset
+        return Button {
+            state.selectMotion(preset)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    SectionIcon(symbol: symbol, tint: tint, size: 36)
+                    Spacer(minLength: 0)
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 18))
+                        .foregroundStyle(selected ? GioColor.ok : GioColor.tertiaryText)
+                }
+                Text(title).font(.system(size: 17, weight: .semibold)).foregroundStyle(GioColor.primaryText)
+                Text(detail)
+                    .font(GioFont.caption)
+                    .foregroundStyle(GioColor.secondaryText)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(GioColor.card.opacity(selected ? 0.95 : 0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(
+                    selected ? GioColor.accent.opacity(0.6) : GioColor.hairline.opacity(0.6),
+                    lineWidth: selected ? 1.5 : 0.5
+                )
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
     // MARK: Footer
 
     private var footer: some View {
@@ -433,7 +508,7 @@ struct OnboardingContent: View {
                 }
                 Button(current.primaryTitle) {
                     if current.isLastStep {
-                        onFinish()
+                        onFinish(current.motion)
                     } else {
                         var next = current
                         next.advance()

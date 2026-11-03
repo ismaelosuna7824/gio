@@ -101,7 +101,12 @@ public struct GioMainView: View {
         .setupCover(isPresented: onboarding.isPresented) {
             OnboardingSheet(
                 model: model, startStep: onboarding.startStep,
-                onFinish: { onboarding.finish() }, onLater: { onboarding.later() },
+                onFinish: { preset in
+                    onboarding.finish()
+                    // DD-06: the first-run choice writes the same line the
+                    // Preset row in Settings writes.
+                    _ = model.apply(motionPresetEdits(preset))
+                }, onLater: { onboarding.later() },
                 onPrepareRelaunch: { onboarding.prepareRelaunch(at: .screenRecording) }
             )
         }
