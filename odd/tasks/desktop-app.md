@@ -207,7 +207,7 @@ necesidad de modificar el config.toml").
   inset 66 = frame 600) while the log list inside still does (document 7800 pt in a 305 pt
   clip); `scrollDisabled` was rejected because it also froze the inner list. Re-rendered: the
   Logs title bar is the page color like Rules. LIVE PENDING: the real window.
-- [ ] DA-13 (`<hash>`) — Gio's window can open behind other apps (user report 2026-11-03, screenshot
+- [ ] DA-13 (`0d46eda`) — Gio's window can open behind other apps (user report 2026-11-03, screenshot
   with the Overview window between the Music and Activity Monitor windows). `MainWindowController.show()`
   flipped the activation policy from `.accessory` to `.regular` and called `activate()` in the same
   turn, so the activation could land after `makeKeyAndOrderFront` and leave the window behind the app
