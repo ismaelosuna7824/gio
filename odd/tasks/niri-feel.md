@@ -120,7 +120,7 @@ LIVE PENDING. Review: UNAVAILABLE.
   overlay's maximized expectation. GREEN: Core 2210, Session 577, UI 375 (53 skipped), POC 7, Mac 19,
   macOS 116 (2 skipped, same environmental failure); signed build OK. LIVE PENDING: rebuild, `Alt+F`,
   the ring stays.
-- [ ] NF-10 (`416570d`) — No ring on some focused windows (user report 2026-11-03, screenshot: Terminal
+- [x] NF-10 (`416570d`) — No ring on some focused windows (user report 2026-11-03, screenshot: Terminal
   focused next to Zen, no ring; "solo algunas y otras no"). Reproduced live on 0.1.4 (activating Zen
   shows the ring panel at Zen's frame, activating Terminal shows none; debug log `focus ring hidden`
   right after `focus adopt ... id=37822:5`). Cause: Terminal keeps its character-grid size
@@ -130,12 +130,13 @@ LIVE PENDING. Review: UNAVAILABLE.
   records a failed window at the actual frame its failure reports (mismatch); other failures,
   vanished and deferred windows are still forgotten. RED: compile (`foldSettledPhysicalFrames`
   missing). GREEN: Core 2228, Session 577, UI 381 (54 skipped), POC 7, Mac 19, macOS 116; signed
-  build OK. LIVE PENDING: with the fixed build, focus Terminal next to another window: ring shows.
+  build OK. LIVE (Debug build with NF-10/NF-11, 2026-11-03 21:51Z, release removed): Terminal focused
+  next to OrbStack shows the ring at (6,39,745,938), Terminal's 741x934 frame outset by 2, 4 of 4 runs.
   Same cause behind the overview report (2026-11-03, "click desde aquí ... no le pone el aro"): the
   log's picks at 21:36:48 and 21:38:40 are `focus window requested id=37822:4` (Terminal), and every
   write to it fails `frameMismatch`; System Settings (740 wide) is the other window affected
-  this session. LIVE PENDING too: pick Terminal in the overview, the ring shows.
-- [ ] NF-11 (`ff3d04b`) — Alt+O pick onto another app's window often left it without a ring (user report
+  this session.
+- [x] NF-11 (`ff3d04b`) — Alt+O pick onto another app's window often left it without a ring (user report
   2026-11-03, on the Xcode build that already had NF-10, picking OrbStack). Reproduced (debug log,
   `gio overview` + arrow + Return): picking OrbStack from Terminal logs `focus ring hidden` at the pick,
   before the reconcile, and no `focus ring shown` until another app is activated; picking the window
@@ -145,7 +146,9 @@ LIVE PENDING. Review: UNAVAILABLE.
   followed to refresh it. Fix: the mask reads `NSWorkspace.frontmostApplication` (Gio's pid) and the
   controller also refreshes on `NSWorkspace.didActivateApplicationNotification`. Main-thread overlay,
   no unit test (no window-server harness). GREEN: Core 2228, Session 578, UI 381 (54 skipped), POC 7,
-  Mac 19, macOS 116; signed build OK. LIVE PENDING: Alt+O, pick another app's window, ring shows.
+  Mac 19, macOS 116; signed build OK. LIVE (same build): Terminal focused, `gio overview`, Right,
+  Return onto OrbStack: ring at OrbStack's frame after the pick in 4 of 4 runs (before: 2 of 3 had none);
+  with Gio's main window frontmost the ring stays hidden, back on OrbStack's activation.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
