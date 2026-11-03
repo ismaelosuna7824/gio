@@ -44,13 +44,13 @@ public struct OverlayDecorations: Equatable, Sendable {
 
 /// `focused` is the focused window as the ring sees it (its frame is the one
 /// it lands on); `tiled` are the tiled, non-minimized windows of the flight.
-/// Ring: exactly the live rule (`focusRingState`). Dim: the other tiled
-/// windows at the configured strength, and nothing without a visible
-/// focused window (no window to keep lit), like `focusDimRegions`.
+/// Ring: exactly the live rule (`focusRingState`, `alone` included). Dim: the
+/// other tiled windows at the configured strength, and nothing without a
+/// visible focused window (no window to keep lit), like `focusDimRegions`.
 public func overlayDecorations(
     focus: FocusSectionConfig, ring: FocusRingSectionConfig, theme: GioTheme?,
     focusedID: WindowID?, focused: FocusRingWindow?, tiled: Set<WindowID>,
-    displays: [CGRect], fullscreenGap: CGFloat
+    displays: [CGRect], fullscreenGap: CGFloat, alone: Bool = false
 ) -> OverlayDecorations {
     guard let focusedID, let focused else {
         return .none
@@ -60,7 +60,8 @@ public func overlayDecorations(
         return .none
     case .ring:
         guard case .shown(let geometry) = focusRingState(
-            config: ring, theme: theme, focused: focused, displays: displays, fullscreenGap: fullscreenGap
+            config: ring, theme: theme, focused: focused, displays: displays, fullscreenGap: fullscreenGap,
+            alone: alone
         ) else {
             return .none
         }

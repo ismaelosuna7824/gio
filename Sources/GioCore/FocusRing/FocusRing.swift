@@ -6,6 +6,9 @@ public struct FocusRingSectionConfig: Equatable, Sendable {
     public static let widthRange = 0...20
     /// Niri's default focus color.
     public static let defaultColor = ThemeColor(hex: "#7fc8ff")!
+    /// Thin enough to read as a hint, not as a frame around a big window
+    /// (NF-02: 4 pt looked heavy on a lone column filling the screen).
+    public static let defaultWidth = 2
 
     public var enabled: Bool
     /// Ring thickness in points; 0 draws nothing.
@@ -15,14 +18,20 @@ public struct FocusRingSectionConfig: Equatable, Sendable {
     /// No ring on a maximized column or a fullscreen window (default). Off
     /// restores the fullscreen ring when the fullscreen gap fits it.
     public var hideWhenMaximized: Bool
+    /// NF-02: no ring when the focused window is the only visible tiled window
+    /// on its display: there is nothing left to tell it apart from, and the
+    /// outline only framed the screen.
+    public var hideWhenAlone: Bool
 
     public init(
-        enabled: Bool = true, width: Int = 4, activeColor: ThemeColor? = nil, hideWhenMaximized: Bool = true
+        enabled: Bool = true, width: Int = FocusRingSectionConfig.defaultWidth, activeColor: ThemeColor? = nil,
+        hideWhenMaximized: Bool = true, hideWhenAlone: Bool = true
     ) {
         self.enabled = enabled
         self.width = width
         self.activeColor = activeColor
         self.hideWhenMaximized = hideWhenMaximized
+        self.hideWhenAlone = hideWhenAlone
     }
 
     /// Explicit color, else the theme's active border, else Niri's blue.
@@ -125,20 +134,49 @@ public func focusIndicatorVisible(_ frame: CGRect, on displays: [CGRect]) -> Boo
     }
 }
 
+/// The display that holds most of `frame` (its biggest visible overlap).
+func focusRingHomeDisplay(_ frame: CGRect, _ displays: [CGRect]) -> CGRect? {
+    var best: (display: CGRect, area: CGFloat)?
+    for display in displays {
+        let overlap = display.intersection(frame)
+        guard !overlap.isNull else {
+            continue
+        }
+        let area = overlap.width * overlap.height
+        if area > (best?.area ?? 0) {
+            best = (display, area)
+        }
+    }
+    return best?.display
+}
+
+/// NF-02 `hide-when-alone`: true when no other tiled window is visible on the
+/// display that holds the focused one. A neighbour on another display or one
+/// parked off-viewport (its 1 pt sliver) does not count: nothing sits next to
+/// the focused window to tell it apart from.
+public func focusRingIsAlone(focused: CGRect, others: [CGRect], displays: [CGRect]) -> Bool {
+    guard let home = focusRingHomeDisplay(focused, displays) else {
+        return true
+    }
+    return !others.contains { focusIndicatorVisible($0, on: [home]) }
+}
+
 /// Pure decision: the ring for the focused window, or hidden when the feature
 /// is off, nothing is focused, the window is minimized or floating (it moves
 /// on its own; the ring would stay behind), maximized or
-/// fullscreen while `hideWhenMaximized` is on, fullscreen without
+/// fullscreen while `hideWhenMaximized` is on, alone on its display while
+/// `hideWhenAlone` is on, fullscreen without
 /// room for it (the ring would be clipped by the display edge and menu bar
 /// unless `fullscreenGap` is at least the ring width) or off-viewport
 /// (parked, or on a workspace no display shows).
 public func focusRingState(
     config: FocusRingSectionConfig, theme: GioTheme? = nil,
-    focused: FocusRingWindow?, displays: [CGRect], fullscreenGap: CGFloat = 0
+    focused: FocusRingWindow?, displays: [CGRect], fullscreenGap: CGFloat = 0, alone: Bool = false
 ) -> FocusRingState {
     guard config.enabled, config.width > 0, let focused, let frame = focused.frame,
           !focused.isMinimized, !focused.isFloating,
           !(config.hideWhenMaximized && (focused.isMaximized || focused.isFullscreen)),
+          !(config.hideWhenAlone && alone),
           !focused.isFullscreen || fullscreenGap >= CGFloat(config.width)
     else {
         return .hidden

@@ -98,11 +98,18 @@ struct FocusSettingsView: View {
             CardRow {
                 FocusRingColorRow(form: current.ring)
             }
-            CardRow(divider: false) {
+            CardRow {
                 ToggleRow(
                     "Hide on maximized windows",
                     caption: "Also hides it on fullscreen windows. With this off, fullscreen shows the ring only when the fullscreen gap fits it.",
                     isOn: current.ring.hideWhenMaximized
+                )
+            }
+            CardRow(divider: false) {
+                ToggleRow(
+                    "Hide when it is the only window",
+                    caption: "No ring when the focused window is the only one visible on its display; a lone column filling the screen would get a frame around it.",
+                    isOn: current.ring.hideWhenAlone
                 )
             }
             ForEach(draft.current.ring.problems, id: \.self) { problem in

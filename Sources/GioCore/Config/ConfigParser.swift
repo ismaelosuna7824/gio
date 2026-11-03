@@ -615,6 +615,10 @@ func applyFocusRingKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "focus-ring", errors: &errors) {
             config.focusRing.hideWhenMaximized = $0
         }
+    case "hide-when-alone":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "focus-ring", errors: &errors) {
+            config.focusRing.hideWhenAlone = $0
+        }
     case "active-color":
         guard case .string(let text) = value, let color = ThemeColor(hex: text) else {
             errors.append("line \(line): focus-ring.active-color expects a hex color like \"#7fc8ff\"")

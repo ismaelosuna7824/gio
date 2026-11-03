@@ -35,7 +35,7 @@ final class FocusRingPublisherTests: XCTestCase {
 
     private var expectedShown: FocusRingState {
         .shown(FocusRingGeometry(
-            frame: CGRect(x: 0, y: 0, width: 900, height: 1000).insetBy(dx: -4, dy: -4), width: 4,
+            frame: CGRect(x: 0, y: 0, width: 900, height: 1000).insetBy(dx: -2, dy: -2), width: 2,
             color: FocusRingSectionConfig.defaultColor
         ))
     }
@@ -82,6 +82,30 @@ final class FocusRingPublisherTests: XCTestCase {
         XCTAssertEqual(publisher.snapshot(), .hidden)
     }
 
+    // MARK: hide-when-alone (NF-02)
+
+    func testHiddenWhenTheFocusedWindowIsTheOnlyOneVisible() {
+        fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 1800, height: 1000)], focus: 0)
+        fixture.session.config.focus.indicator = .ring
+        XCTAssertEqual(makePublisher().snapshot(), .hidden)
+        fixture.session.config.focusRing.hideWhenAlone = false
+        guard case .shown(let ring) = makePublisher().snapshot() else {
+            return XCTFail("expected a ring with hide-when-alone off")
+        }
+        XCTAssertEqual(ring.frame, CGRect(x: 0, y: 0, width: 1800, height: 1000).insetBy(dx: -2, dy: -2))
+    }
+
+    func testANeighbourParkedOffDisplayDoesNotCount() {
+        // The second window keeps only its 1 pt sliver on screen.
+        let other = SessionFixture.id(1, pid: 2)
+        fixture.physicalFrames[other] = CGRect(x: 1799, y: 0, width: 900, height: 1000)
+        XCTAssertEqual(makePublisher().snapshot(), .hidden)
+    }
+
+    func testASecondVisibleWindowKeepsTheRing() {
+        XCTAssertEqual(makePublisher().snapshot(), expectedShown)
+    }
+
     func testGateDropsSubPointMovesAndMailboxCoalescesToLatest() {
         let publisher = makePublisher()
         publisher.publish()
@@ -101,7 +125,7 @@ final class FocusRingPublisherTests: XCTestCase {
         guard case .shown(let geometry) = delivered.values.last else {
             return XCTFail("expected shown")
         }
-        XCTAssertEqual(geometry.frame.minX, 16, "latest frame wins (20 - width)")
+        XCTAssertEqual(geometry.frame.minX, 18, "latest frame wins (20 - width)")
     }
 
     func testResetGateStillDedupesAnIdenticalStateInTheMailbox() {
@@ -124,7 +148,7 @@ final class FocusRingPublisherTests: XCTestCase {
         let decorations = publisher.flightDecorations(
             targets: [id: landing, SessionFixture.id(1, pid: 2): landing.offsetBy(dx: 900, dy: 0)]
         )
-        XCTAssertEqual(decorations.ring, OverlayRing(id: id, width: 4, color: FocusRingSectionConfig.defaultColor))
+        XCTAssertEqual(decorations.ring, OverlayRing(id: id, width: 2, color: FocusRingSectionConfig.defaultColor))
         XCTAssertNil(decorations.dim)
         XCTAssertEqual(publisher.snapshot(), .hidden, "the live ring stays hidden during the flight")
     }

@@ -140,9 +140,13 @@ public func defaultConfigTemplate() -> String {
     # A rounded outline drawn around the focused window (click-through overlay).
     enabled = true
     # Thickness in points (0-20; 0 hides it).
-    width = 4
+    width = 2
     # No ring on a maximized column or a fullscreen window.
     hide-when-maximized = true
+    # No ring when the focused window is the only one visible on its display:
+    # nothing to tell it apart from, and a full-width column would otherwise
+    # get a frame around the whole screen.
+    hide-when-alone = true
     # Hex color; leave commented to use the Niri blue.
     # active-color = "#7fc8ff"
 

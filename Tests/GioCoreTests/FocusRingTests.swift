@@ -10,9 +10,10 @@ final class FocusRingTests: XCTestCase {
     private func state(
         config: FocusRingSectionConfig = FocusRingSectionConfig(),
         focused: FocusRingWindow? = FocusRingWindow(frame: CGRect(x: 100, y: 100, width: 600, height: 500)),
-        displays: [CGRect]? = nil
+        displays: [CGRect]? = nil,
+        alone: Bool = false
     ) -> FocusRingState {
-        focusRingState(config: config, focused: focused, displays: displays ?? [display])
+        focusRingState(config: config, focused: focused, displays: displays ?? [display], alone: alone)
     }
 
     // MARK: visibility table
@@ -21,7 +22,7 @@ final class FocusRingTests: XCTestCase {
         guard case .shown(let ring) = state() else {
             return XCTFail("expected a shown ring")
         }
-        XCTAssertEqual(ring.width, 4)
+        XCTAssertEqual(ring.width, 2, "2 pt is the default thickness")
         XCTAssertEqual(ring.color, ThemeColor(hex: "#7fc8ff"))
     }
 
@@ -61,10 +62,10 @@ final class FocusRingTests: XCTestCase {
             ) else {
                 return XCTFail("expected a ring with gap \(gap)")
             }
-            XCTAssertEqual(ring.frame, window.insetBy(dx: -4, dy: -4))
+            XCTAssertEqual(ring.frame, window.insetBy(dx: -2, dy: -2))
         }
         XCTAssertEqual(
-            focusRingState(config: config, focused: fullscreen, displays: [display], fullscreenGap: 3),
+            focusRingState(config: config, focused: fullscreen, displays: [display], fullscreenGap: 1),
             .hidden
         )
     }
@@ -87,7 +88,7 @@ final class FocusRingTests: XCTestCase {
         guard case .shown(let ring) = focusRingState(config: config, focused: maximized, displays: [display]) else {
             return XCTFail("expected a ring")
         }
-        XCTAssertEqual(ring.frame, window.insetBy(dx: -4, dy: -4))
+        XCTAssertEqual(ring.frame, window.insetBy(dx: -2, dy: -2))
     }
 
     func testTiledWindowKeepsItsRingWhenHidingIsOn() {
@@ -107,6 +108,54 @@ final class FocusRingTests: XCTestCase {
         form.hideWhenMaximized = false
         let result = try patchGioConfig(defaultConfigTemplate(), edits: form.edits).get()
         XCTAssertFalse(result.config.focusRing.hideWhenMaximized)
+    }
+
+    // MARK: hide-when-alone
+
+    /// NF-02 (live 2026-11-03): a lone column expanded to the full width is
+    /// not "maximized", so the ring framed the whole screen. When the focused
+    /// window is the only visible one there is nothing to tell apart.
+    func testHiddenWhenTheFocusedWindowIsTheOnlyVisibleOneByDefault() {
+        XCTAssertTrue(FocusRingSectionConfig().hideWhenAlone)
+        XCTAssertEqual(state(alone: true), .hidden)
+    }
+
+    func testShownWhenAloneAndHidingIsOff() {
+        guard case .shown = state(config: FocusRingSectionConfig(hideWhenAlone: false), alone: true) else {
+            return XCTFail("expected a ring with hide-when-alone off")
+        }
+    }
+
+    func testAnotherVisibleWindowOnTheSameDisplayIsNotAlone() {
+        let other = CGRect(x: 800, y: 100, width: 600, height: 500)
+        XCTAssertFalse(focusRingIsAlone(focused: window, others: [other], displays: [display]))
+        XCTAssertTrue(focusRingIsAlone(focused: window, others: [], displays: [display]))
+    }
+
+    func testAWindowOnAnotherDisplayDoesNotCount() {
+        let second = CGRect(x: 1440, y: 0, width: 1920, height: 1080)
+        let other = CGRect(x: 1600, y: 100, width: 800, height: 600)
+        XCTAssertTrue(
+            focusRingIsAlone(focused: window, others: [other], displays: [display, second]),
+            "a neighbour on the second display is not next to the focused window"
+        )
+    }
+
+    func testAParkedNeighbourIsNotVisible() {
+        // Parking keeps a 1 pt sliver on screen.
+        let parked = CGRect(x: 1439, y: 100, width: 600, height: 500)
+        XCTAssertTrue(focusRingIsAlone(focused: window, others: [parked], displays: [display]))
+    }
+
+    func testHideWhenAloneParsesAndRoundTrips() throws {
+        let (off, _) = try parseGioConfig("[focus-ring]\nhide-when-alone = false\n").get()
+        XCTAssertFalse(off.focusRing.hideWhenAlone)
+        XCTAssertTrue(defaultConfigTemplate().contains("hide-when-alone = true"))
+        var form = FocusRingSettingsForm(config: FocusRingSectionConfig())
+        XCTAssertTrue(form.hideWhenAlone)
+        form.hideWhenAlone = false
+        let result = try patchGioConfig(defaultConfigTemplate(), edits: form.edits).get()
+        XCTAssertFalse(result.config.focusRing.hideWhenAlone)
     }
 
     func testHiddenWhenFullscreen() {
@@ -221,8 +270,9 @@ final class FocusRingTests: XCTestCase {
     func testDefaults() {
         let ring = defaultGioConfig().focusRing
         XCTAssertTrue(ring.enabled)
-        XCTAssertEqual(ring.width, 4)
+        XCTAssertEqual(ring.width, 2)
         XCTAssertNil(ring.activeColor)
+        XCTAssertTrue(ring.hideWhenAlone)
         XCTAssertEqual(FocusRingSectionConfig.defaultColor.hex, "#7FC8FF")
     }
 
