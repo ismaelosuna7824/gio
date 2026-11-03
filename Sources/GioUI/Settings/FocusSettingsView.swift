@@ -100,9 +100,9 @@ struct FocusSettingsView: View {
             }
             CardRow {
                 ToggleRow(
-                    "Hide on maximized windows",
-                    caption: "Also hides it on fullscreen windows. With this off, fullscreen shows the ring only when the fullscreen gap fits it.",
-                    isOn: current.ring.hideWhenMaximized
+                    "Hide in fullscreen",
+                    caption: "A maximized column (Alt+F) keeps the ring; in fullscreen it only shows when the fullscreen gap fits it and this is off.",
+                    isOn: current.ring.hideInFullscreen
                 )
             }
             CardRow(divider: false) {

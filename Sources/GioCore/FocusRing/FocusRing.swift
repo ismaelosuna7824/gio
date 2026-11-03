@@ -15,22 +15,24 @@ public struct FocusRingSectionConfig: Equatable, Sendable {
     public var width: Int
     /// Explicit color; nil defers to the theme, then to `defaultColor`.
     public var activeColor: ThemeColor?
-    /// No ring on a maximized column or a fullscreen window (default). Off
-    /// restores the fullscreen ring when the fullscreen gap fits it.
-    public var hideWhenMaximized: Bool
+    /// No ring on a fullscreen window (default). Off restores the fullscreen
+    /// ring when the fullscreen gap fits it. A maximized column (`Alt+F`) keeps
+    /// its ring: it is an explicit state, not an accident (NF-09 follow-up).
+    public var hideInFullscreen: Bool
     /// NF-02: no ring when the focused window is the only visible tiled window
     /// on its display: there is nothing left to tell it apart from, and the
-    /// outline only framed the screen.
+    /// outline only framed the screen. A maximized column never counts as
+    /// alone (NF-09): its ring is what shows that it is maximized.
     public var hideWhenAlone: Bool
 
     public init(
         enabled: Bool = true, width: Int = FocusRingSectionConfig.defaultWidth, activeColor: ThemeColor? = nil,
-        hideWhenMaximized: Bool = true, hideWhenAlone: Bool = true
+        hideInFullscreen: Bool = true, hideWhenAlone: Bool = true
     ) {
         self.enabled = enabled
         self.width = width
         self.activeColor = activeColor
-        self.hideWhenMaximized = hideWhenMaximized
+        self.hideInFullscreen = hideInFullscreen
         self.hideWhenAlone = hideWhenAlone
     }
 
@@ -163,9 +165,9 @@ public func focusRingIsAlone(focused: CGRect, others: [CGRect], displays: [CGRec
 
 /// Pure decision: the ring for the focused window, or hidden when the feature
 /// is off, nothing is focused, the window is minimized or floating (it moves
-/// on its own; the ring would stay behind), maximized or
-/// fullscreen while `hideWhenMaximized` is on, alone on its display while
-/// `hideWhenAlone` is on, fullscreen without
+/// on its own; the ring would stay behind), fullscreen while `hideInFullscreen`
+/// is on, alone on its display while `hideWhenAlone` is on (a maximized column
+/// never counts as alone), fullscreen without
 /// room for it (the ring would be clipped by the display edge and menu bar
 /// unless `fullscreenGap` is at least the ring width) or off-viewport
 /// (parked, or on a workspace no display shows).
@@ -175,8 +177,8 @@ public func focusRingState(
 ) -> FocusRingState {
     guard config.enabled, config.width > 0, let focused, let frame = focused.frame,
           !focused.isMinimized, !focused.isFloating,
-          !(config.hideWhenMaximized && (focused.isMaximized || focused.isFullscreen)),
-          !(config.hideWhenAlone && alone),
+          !(config.hideInFullscreen && focused.isFullscreen),
+          !(config.hideWhenAlone && alone && !focused.isMaximized),
           !focused.isFullscreen || fullscreenGap >= CGFloat(config.width)
     else {
         return .hidden

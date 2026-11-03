@@ -111,6 +111,15 @@ LIVE PENDING. Review: UNAVAILABLE.
   (2 skipped) — its one failure, `UpdatePreparerTests.testSetIDItemsNeverReachTheStagedCopy`, is
   environmental: the agent sandbox drops the setuid bit the fixture needs, and it reproduces outside
   this change. Signed build OK. LIVE PENDING: rebuild the app, focus a lone column, no ring.
+  **Follow-up (`<hash>`, live 2026-11-03 07:09)**: the user wants the ring back on a maximized
+  column ("con Alt+F también debe salir"). Maximize no longer hides the ring, and a maximized column
+  never counts as alone (`focusRingState` exempts it), so `Alt+F` shows the level indicator at 2 pt.
+  The hide key became `hide-in-fullscreen` — the old `hide-when-maximized` still parses into it — and
+  the Settings toggle reads "Hide in fullscreen". RED: `FocusRingTests.testMaximizedColumnKeepsItsRing`
+  and the renamed round trip, `FocusRingPublisherTests.testMaximizedColumnKeepsTheRing`, the
+  overlay's maximized expectation. GREEN: Core 2210, Session 577, UI 375 (53 skipped), POC 7, Mac 19,
+  macOS 116 (2 skipped, same environmental failure); signed build OK. LIVE PENDING: rebuild, `Alt+F`,
+  the ring stays.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.

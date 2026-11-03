@@ -53,13 +53,21 @@ final class FocusRingPublisherTests: XCTestCase {
         XCTAssertEqual(makePublisher().snapshot(), .hidden)
     }
 
-    func testHiddenWhenFocusedColumnIsMaximizedUnlessConfiguredOtherwise() {
+    func testMaximizedColumnKeepsTheRing() {
         var workspace = fixture.session.manager.currentWorkspace()
         workspace.columns[0].savedWidthSpec = .standard
         fixture.session.manager.update(workspace)
-        XCTAssertEqual(makePublisher().snapshot(), .hidden)
-        fixture.session.config.focusRing.hideWhenMaximized = false
         XCTAssertEqual(makePublisher().snapshot(), expectedShown)
+        // Even alone: maximize is an explicit state, not an accident.
+        fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 1800, height: 1000)], focus: 0)
+        fixture.session.config.focus.indicator = .ring
+        workspace = fixture.session.manager.currentWorkspace()
+        workspace.columns[0].savedWidthSpec = .standard
+        fixture.session.manager.update(workspace)
+        XCTAssertEqual(makePublisher().snapshot(), .shown(FocusRingGeometry(
+            frame: CGRect(x: 0, y: 0, width: 1800, height: 1000).insetBy(dx: -2, dy: -2), width: 2,
+            color: FocusRingSectionConfig.defaultColor
+        )))
     }
 
     func testHiddenWhenFullscreenWithoutGap() {

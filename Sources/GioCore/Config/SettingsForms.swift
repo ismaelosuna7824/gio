@@ -203,12 +203,12 @@ public func animationOverrideEdits(_ kind: AnimationKind, override: AnimationOve
 }
 
 public func focusRingEdits(
-    enabled: Bool, width: Int, colorHex: String, hideWhenMaximized: Bool = true, hideWhenAlone: Bool = true
+    enabled: Bool, width: Int, colorHex: String, hideInFullscreen: Bool = true, hideWhenAlone: Bool = true
 ) -> [ConfigEdit] {
     [
         .set(table: "focus-ring", key: "enabled", value: .bool(enabled)),
         .set(table: "focus-ring", key: "width", value: .int(width)),
-        .set(table: "focus-ring", key: "hide-when-maximized", value: .bool(hideWhenMaximized)),
+        .set(table: "focus-ring", key: "hide-in-fullscreen", value: .bool(hideInFullscreen)),
         .set(table: "focus-ring", key: "hide-when-alone", value: .bool(hideWhenAlone)),
         .set(table: "focus-ring", key: "active-color", value: .string(colorHex)),
     ]
@@ -218,12 +218,12 @@ public struct FocusRingSettingsForm: Equatable, Sendable {
     public var enabled: Bool
     public var width: Double
     public var colorText: String
-    public var hideWhenMaximized: Bool
+    public var hideInFullscreen: Bool
     public var hideWhenAlone: Bool
 
     public init(config: FocusRingSectionConfig, theme: GioTheme? = nil) {
         enabled = config.enabled
-        hideWhenMaximized = config.hideWhenMaximized
+        hideInFullscreen = config.hideInFullscreen
         hideWhenAlone = config.hideWhenAlone
         width = Double(config.width)
         colorText = config.resolvedColor(theme: theme).hex
@@ -245,7 +245,7 @@ public struct FocusRingSettingsForm: Equatable, Sendable {
         let color = ThemeColor(hex: colorText)?.lowercaseHex ?? colorText
         return focusRingEdits(
             enabled: enabled, width: Int(width.rounded()), colorHex: color,
-            hideWhenMaximized: hideWhenMaximized, hideWhenAlone: hideWhenAlone
+            hideInFullscreen: hideInFullscreen, hideWhenAlone: hideWhenAlone
         )
     }
 

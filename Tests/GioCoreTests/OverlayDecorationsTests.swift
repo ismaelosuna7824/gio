@@ -35,7 +35,10 @@ final class OverlayDecorationsTests: XCTestCase {
 
     func testRingFollowsTheLiveRingRules() {
         XCTAssertNil(decorations(indicator: .ring, ring: FocusRingSectionConfig(enabled: false)).ring)
-        XCTAssertNil(decorations(indicator: .ring, window: FocusRingWindow(frame: frame, isMaximized: true)).ring)
+        XCTAssertNotNil(
+            decorations(indicator: .ring, window: FocusRingWindow(frame: frame, isMaximized: true)).ring,
+            "a maximized column keeps the ring (NF-09)"
+        )
         XCTAssertNil(decorations(indicator: .ring, window: FocusRingWindow(frame: frame, isMinimized: true)).ring)
         let parked = CGRect(x: -599, y: 100, width: 600, height: 900)
         XCTAssertNil(decorations(indicator: .ring, window: FocusRingWindow(frame: parked)).ring)

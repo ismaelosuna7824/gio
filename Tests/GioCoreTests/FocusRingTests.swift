@@ -55,7 +55,7 @@ final class FocusRingTests: XCTestCase {
 
     func testFullscreenRingShownWhenTheGapFitsItAndHidingIsOff() {
         let fullscreen = FocusRingWindow(frame: window, isFullscreen: true)
-        let config = FocusRingSectionConfig(hideWhenMaximized: false)
+        let config = FocusRingSectionConfig(hideInFullscreen: false)
         for gap in [CGFloat(4), 8] {
             guard case .shown(let ring) = focusRingState(
                 config: config, focused: fullscreen, displays: [display], fullscreenGap: gap
@@ -70,11 +70,9 @@ final class FocusRingTests: XCTestCase {
         )
     }
 
-    func testRingHiddenForMaximizedAndFullscreenWindowsByDefault() {
-        XCTAssertTrue(FocusRingSectionConfig().hideWhenMaximized)
-        let maximized = FocusRingWindow(frame: window, isMaximized: true)
-        XCTAssertEqual(state(focused: maximized), .hidden)
-        // Even with a gap that would fit the ring in fullscreen.
+    func testFullscreenRingHiddenByDefault() {
+        XCTAssertTrue(FocusRingSectionConfig().hideInFullscreen)
+        // Even with a gap that would fit the ring.
         let fullscreen = FocusRingWindow(frame: window, isFullscreen: true)
         XCTAssertEqual(
             focusRingState(config: FocusRingSectionConfig(), focused: fullscreen, displays: [display], fullscreenGap: 8),
@@ -82,13 +80,18 @@ final class FocusRingTests: XCTestCase {
         )
     }
 
-    func testMaximizedRingShownWhenHidingIsOff() {
-        let config = FocusRingSectionConfig(hideWhenMaximized: false)
+    /// NF-09 follow-up (live 2026-11-03): maximizing with Alt+F keeps the
+    /// ring: it is an explicit state the user wants to see, not an accident.
+    func testMaximizedColumnKeepsItsRing() {
         let maximized = FocusRingWindow(frame: window, isMaximized: true)
-        guard case .shown(let ring) = focusRingState(config: config, focused: maximized, displays: [display]) else {
-            return XCTFail("expected a ring")
+        guard case .shown(let ring) = state(focused: maximized) else {
+            return XCTFail("a maximized column keeps the ring")
         }
         XCTAssertEqual(ring.frame, window.insetBy(dx: -2, dy: -2))
+        // And it is not treated as "alone" even when nothing else is visible.
+        guard case .shown = state(focused: maximized, alone: true) else {
+            return XCTFail("maximize is explicit: hide-when-alone does not apply")
+        }
     }
 
     func testTiledWindowKeepsItsRingWhenHidingIsOn() {
@@ -97,17 +100,21 @@ final class FocusRingTests: XCTestCase {
         }
     }
 
-    func testHideWhenMaximizedParsesAndRoundTrips() throws {
-        let (off, _) = try parseGioConfig("[focus-ring]\nhide-when-maximized = false\n").get()
-        XCTAssertFalse(off.focusRing.hideWhenMaximized)
-        let (on, _) = try parseGioConfig("[focus-ring]\nhide-when-maximized = true\n").get()
-        XCTAssertTrue(on.focusRing.hideWhenMaximized)
-        XCTAssertTrue(defaultConfigTemplate().contains("hide-when-maximized = true"))
+    func testHideInFullscreenParsesAndRoundTrips() throws {
+        let (off, _) = try parseGioConfig("[focus-ring]\nhide-in-fullscreen = false\n").get()
+        XCTAssertFalse(off.focusRing.hideInFullscreen)
+        let (on, _) = try parseGioConfig("[focus-ring]\nhide-in-fullscreen = true\n").get()
+        XCTAssertTrue(on.focusRing.hideInFullscreen)
+        // NF-09: the old name still parses (a config written before the rename).
+        let (legacy, legacyWarnings) = try parseGioConfig("[focus-ring]\nhide-when-maximized = false\n").get()
+        XCTAssertFalse(legacy.focusRing.hideInFullscreen)
+        XCTAssertEqual(legacyWarnings, [])
+        XCTAssertTrue(defaultConfigTemplate().contains("hide-in-fullscreen = true"))
         var form = FocusRingSettingsForm(config: FocusRingSectionConfig())
-        XCTAssertTrue(form.hideWhenMaximized)
-        form.hideWhenMaximized = false
+        XCTAssertTrue(form.hideInFullscreen)
+        form.hideInFullscreen = false
         let result = try patchGioConfig(defaultConfigTemplate(), edits: form.edits).get()
-        XCTAssertFalse(result.config.focusRing.hideWhenMaximized)
+        XCTAssertFalse(result.config.focusRing.hideInFullscreen)
     }
 
     // MARK: hide-when-alone
