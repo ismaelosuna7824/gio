@@ -284,6 +284,22 @@ Window admission, observation and registration only. Out of scope: animation/per
   frame; `LogFrameTests` new. GREEN: Core 2216, Session 577, UI 377 (54 skipped), POC 7, Mac 19,
   macOS 116 (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING:
   reproduce with the new lines in `gio logs`.
+- [ ] WC-18 (`<hash>`) — The focus ring stays over macOS's own window overview (user report
+  2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
+  marco vacío"). Gio's ring and dim are separate panels at the windows' *real* frames; the
+  WindowServer does not move them with the overview's scaled surfaces, so they read as empty
+  borders. Detection: AltTab's macOS 27 finding (the Dock's `AXExpose*` notifications are gone):
+  only `WindowManager`'s **shield** counts, a level-19 surface at least as large as one screen;
+  the Spaces bar (level 14) alone, a Stage Manager stage icon (66×82 at level 19) and another
+  app's level-19 surface do not. Pure `systemOverviewShowing(_:screens:)` in
+  `GioCore/FocusRing/SystemOverview.swift`; `SystemOverviewMonitor` (`GioMacOS/System`, utility
+  queue, `DispatchSourceTimer` 500 ms with 150 ms leeway, measured under 0.1 % CPU) maps the
+  on-screen window list to it and calls only on a change; `FocusRingController` and
+  `FocusDimController` gain `setSystemOverview` and the app wires them in `main.swift`
+  (log `system overview shown|dismissed`). RED: `SystemOverviewTests` (7 cases from the spec's
+  scenarios). GREEN: Core 2223, Session 577, UI 377 (54 skipped), POC 7, Mac 19, macOS 116
+  (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING: Control+Up over a
+  focused window, no frame over the overview.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.

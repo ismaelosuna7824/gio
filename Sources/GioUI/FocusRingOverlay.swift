@@ -65,6 +65,9 @@ public final class FocusRingController {
     private var ringView: FocusRingView?
     private var state: FocusRingState = .hidden
     private var isShown = false
+    /// WC-18: macOS is showing its own overview (Mission Control, App Exposé):
+    /// the panel must not sit at the window's real frame as an empty border.
+    private var systemOverview = false
     private var observers: [NSObjectProtocol] = []
 
     public init() {}
@@ -87,6 +90,15 @@ public final class FocusRingController {
         refresh()
     }
 
+    /// WC-18: step aside while macOS shows its own overview of the windows.
+    public func setSystemOverview(_ showing: Bool) {
+        guard showing != systemOverview else {
+            return
+        }
+        systemOverview = showing
+        refresh()
+    }
+
     public func stop() {
         observers.forEach(NotificationCenter.default.removeObserver)
         observers = []
@@ -98,7 +110,7 @@ public final class FocusRingController {
     }
 
     private func refresh() {
-        switch state.masked(gioIsFrontmost: NSApplication.shared.isActive) {
+        switch systemOverview ? .hidden : state.masked(gioIsFrontmost: NSApplication.shared.isActive) {
         case .hidden:
             if isShown {
                 panel?.orderOut(nil)
