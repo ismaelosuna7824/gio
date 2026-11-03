@@ -131,6 +131,10 @@ LIVE PENDING. Review: UNAVAILABLE.
   vanished and deferred windows are still forgotten. RED: compile (`foldSettledPhysicalFrames`
   missing). GREEN: Core 2228, Session 577, UI 381 (54 skipped), POC 7, Mac 19, macOS 116; signed
   build OK. LIVE PENDING: with the fixed build, focus Terminal next to another window: ring shows.
+  Same cause behind the overview report (2026-11-03, "click desde aquí ... no le pone el aro"): the
+  log's picks at 21:36:48 and 21:38:40 are `focus window requested id=37822:4` (Terminal), and every
+  write to it fails `frameMismatch`; System Settings (740 wide) is the other window affected
+  this session. LIVE PENDING too: pick Terminal in the overview, the ring shows.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
