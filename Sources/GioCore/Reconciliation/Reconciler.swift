@@ -111,6 +111,30 @@ public struct ReconcileReport: Equatable, Sendable {
     }
 }
 
+/// Where the windows of a settled pass physically are: written ones at their
+/// targets (parked ones at their parking spot). A failed write whose failure
+/// knows the landing frame (a mismatch: the app kept its own size, Terminal
+/// snaps to its character grid) is recorded there, since the window is still
+/// on screen and the ring, the dim and the neighbour checks read it; any other
+/// failure, a vanished or a deferred window is forgotten.
+public func foldSettledPhysicalFrames(
+    _ frames: inout [WindowID: CGRect], report: ReconcileReport, visible: [WindowID: CGRect],
+    parked: [WindowID: ParkedTarget]
+) {
+    for (id, frame) in visible where parked[id] == nil {
+        frames[id] = frame
+    }
+    for (id, target) in parked {
+        frames[id] = target.frame
+    }
+    for id in report.failed {
+        frames[id] = report.failures[id]?.actual
+    }
+    for id in report.vanished + report.deferred {
+        frames.removeValue(forKey: id)
+    }
+}
+
 /// Plan §14: the ONLY component authorized to physically modify windows.
 /// Desired state in, minimal writes out: frames within `tolerance` are
 /// skipped, vanished windows are recorded, and focus is applied last so the
