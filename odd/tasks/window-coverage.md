@@ -268,6 +268,34 @@ Window admission, observation and registration only. Out of scope: animation/per
   WC-13 one per click now carries both answers). LIVE PENDING: a link clicked in Slack with
   the browser on another workspace brings the browser forward (needs a real click; the
   terminal cannot post mouse events).
+- [ ] WC-17 (`00232b3`) — Floating-window diagnostics (user report 2026-11-03: "a veces hay bug con
+  las pestañas flotantes en las que se esconden así", screenshot of a float partly behind a tile).
+  Read-only investigation (delegated): floats are excluded from every layout (`tilingWorkspace`),
+  so a float on a shown workspace is only ever written by the hidden-book restore, the
+  inactive-workspace parking, the display relocation or the startup/quit restore; the FI-10 yield
+  path (`window yields to app`, `.appControlled`) drops the hidden-book entry and is never written
+  again. In the reported half hour the only float-state event in `gio.log` was `window yields to
+  app id=2082:3 app=DeepSeek Harness snapBacks=3` (13:23:12.684Z); no workspace switch happened, so
+  the hidden-book paths were not exercised. Fix scope for now: make the next occurrence
+  traceable — `logFrame` (`GioCore/Logging`) and four log lines, once per transition (not per
+  frame): `float toggle … mode=… frame=…` (`ActionApplier`), `float unmanaged … reason=… frame=…`
+  (`ReflowPlanner`, once per yield), `float hide … frame=…` and `float restore … frame=…` (the
+  frame it was hidden with). RED: `WindowEventRouterTests` expected the old yield line without the
+  frame; `LogFrameTests` new. GREEN: Core 2216, Session 577, UI 377 (54 skipped), POC 7, Mac 19,
+  macOS 116 (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING:
+  reproduce with the new lines in `gio logs`.
+- [ ] WC-18 (`95491eb`) — The focus ring stays over macOS's own window overview (user report
+  2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
+  marco vacío").
+- [x] WC-19 (`7ba7a3d`, reverted by `857d582`) — Tried: keep a floating window above the strip (niri's floating
+  layer) by pinning its **window-server level** with the private `CGSSetWindowLevel`
+  (`SkyLight`) plus `_AXUIElementGetWindow` for the window number. Result: **macOS 27.2 refuses
+  it** for another app's window even with the Accessibility grant — the call returns success and
+  the layer stays 0, which the read-back caught: `floating level refused id=2082:4`
+  (2026-11-03T15:05:48.127Z). Reverted at the user's request: the second private call, its
+  `floatingLevelChanges` helper and the `finishSettle` hook are gone, the README is back to one
+  private call, and floats keep today's behaviour (own frame, z-order by activation). Pushing
+  further needs SIP off (yabai's scripting-addition route), which Gio rules out.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -312,3 +340,7 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-10-15: WC-14 park by the size the app kept done (`c941b20`, same branch). LIVE PASS.
 - 2026-10-15: WC-15 admission floats rejoin the grid on activation done (`a03d47d`, branch
   `perf/measured-pass`). LIVE PENDING (needs an app that reports a dialog, then a window).
+- 2026-11-03: WC-17 (float diagnostics) shipped; WC-18 (no ring over Mission Control) shipped;
+  WC-19 (pin a float's level) tried and reverted: macOS 27.2 refuses `CGSSetWindowLevel` for
+  another app's window (`floating level refused`), so floats keep their frame but stay in the
+  normal layer.

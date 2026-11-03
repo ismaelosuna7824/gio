@@ -107,6 +107,9 @@ final class SnapshotFlightTests: XCTestCase {
         /// SM-31: the on-screen WindowServer windows the cache judges misses by.
         var serverWindows: [ServerWindow] = []
         var gestureLosses = 0
+        var liveStarts: [[WindowID: CGRect]] = []
+        var liveStops = 0
+        var liveWindowStops: [Set<WindowID>] = []
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -186,7 +189,10 @@ final class SnapshotFlightTests: XCTestCase {
                     world.freshAnswers.append(answer)
                 },
                 log: { world.logs.append(($0, $1)) },
-                now: { scheduler.now }
+                now: { scheduler.now },
+                startLive: { world.liveStarts.append($0) },
+                stopLive: { world.liveStops += 1 },
+                stopLiveWindows: { world.liveWindowStops.append($0) }
             ),
             cache: cache, overlay: overlay, scheduler: scheduler
         )
@@ -1477,6 +1483,39 @@ final class SnapshotFlightTests: XCTestCase {
         XCTAssertFalse(world.logs.contains { $0.1.contains("fresh=") || $0.1.contains("fade=") })
     }
 
+    func testAMoveFlyingAnImageOlderThanTheSoftAgeIsCapturedAgainOnceAndTheLayerShowsIt() throws {
+        refresh([idA: a, idB: b])
+        scheduler.advance(by: snapshotSoftAge + 1)
+        let moved = a.offsetBy(dx: 100, dy: 0)
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        let token = overlay.begins.last!.token
+        deferPass()
+        flight.primed(token, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(world.freshProbes.map(\.id), [idA], "a move needs no repaint: captured at once")
+        let probe = try XCTUnwrap(world.freshProbes.first?.probe)
+        XCTAssertEqual(probe.paint, SnapshotPaintProbe(frame: moved))
+        XCTAssertTrue(world.logs.contains { $0 == (.debug, "snapshot stale move id=1:1 ageMs=31000") })
+
+        let fresh = image()
+        answerFresh(freshRead(fresh, size: a.size))
+        XCTAssertTrue(overlay.freshens.first?.faces[idA]?.image === fresh)
+        XCTAssertTrue(cache.cache.entry(idA, matching: moved)?.image === fresh)
+        flight.layersFinished(token)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.ends, 1)
+        XCTAssertTrue(overlay.fades.isEmpty)
+
+        let (back, backPlan) = slide(idA, from: moved, by: -100)
+        XCTAssertEqual(flight.drive(animations: [back], plans: [backPlan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(overlay.begins.last!.token, ok: true)
+        scheduler.runPending()
+        scheduler.advance(by: SnapshotFreshTracker.limit)
+        XCTAssertEqual(world.freshProbes.count, 1, "its image is fresh now: the next press captures nothing")
+    }
+
     func testTheHandOffStopsTheFreshCapturesAndALateAnswerIsDropped() {
         refresh([idA: a, idB: b])
         let token = resizeAndPrime(from: a, to: wide)
@@ -1760,5 +1799,144 @@ final class SnapshotFlightTests: XCTestCase {
         flight.layersFinished(1)
         scheduler.runPending()
         XCTAssertTrue(flight.isActive, "the old flight's landing does not settle the hold")
+    }
+
+    // MARK: LL-04 live layers follow the flight
+
+    func testAMovingWindowStreamsLiveWithItsTargetFromTheFlightStart() {
+        refresh([idA: a, idB: b])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        XCTAssertEqual(world.liveStarts, [[idA: animation.to]], "the still window keeps its see-through layer")
+        XCTAssertEqual(world.liveStops, 0)
+    }
+
+    func testAResizedWindowStreamsNothing() {
+        cacheBothSizesOfA()
+        let (animation, plan) = resize(idA, from: a, to: wide)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        XCTAssertEqual(world.liveStarts, [])
+    }
+
+    func testAnAXFallbackStreamsNothing() {
+        refresh([idB: b])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .ax)
+        XCTAssertEqual(world.liveStarts, [])
+        XCTAssertEqual(world.liveStops, 0)
+    }
+
+    func testNothingStreamsWhileShuttingDown() {
+        refresh([idA: a, idB: b])
+        world.shuttingDown = true
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        _ = flight.drive(animations: [animation], plans: [plan], spring: .niri)
+        XCTAssertEqual(world.liveStarts, [])
+    }
+
+    func testARetargetStreamsOnlyTheWindowThatStartsMoving() {
+        beginAndPrime()
+        var visible = fixture.physicalFrames
+        visible[idA] = a.offsetBy(dx: 200, dy: 0)
+        visible[idB] = b.offsetBy(dx: 100, dy: 0)
+        XCTAssertEqual(
+            flight.drive(
+                animations: [WindowAnimation(id: idB, from: b, to: visible[idB]!, duration: 0.3)],
+                plans: [ParkingPlan(visible: visible)], spring: .niri
+            ),
+            .flying
+        )
+        XCTAssertEqual(world.liveStarts, [[idA: a.offsetBy(dx: 100, dy: 0)], [idB: visible[idB]!]])
+    }
+
+    func testARetargetOfLiveWindowsStartsNoOtherStream() {
+        beginAndPrime()
+        let (second, plan2) = slide(idA, from: a.offsetBy(dx: 100, dy: 0), by: 100)
+        XCTAssertEqual(flight.drive(animations: [second], plans: [plan2], spring: .niri), .flying)
+        XCTAssertEqual(world.liveStarts.count, 1)
+    }
+
+    func testARetargetThatResizesALiveWindowStopsOnlyThatStream() {
+        beginAndPrime()
+        let moved = a.offsetBy(dx: 100, dy: 0)
+        let wider = CGRect(x: moved.minX, y: moved.minY, width: moved.width + 200, height: moved.height)
+        let (grow, plan) = resize(idA, from: moved, to: wider)
+        XCTAssertEqual(flight.drive(animations: [grow], plans: [plan], spring: .niri), .flying)
+        XCTAssertEqual(world.liveWindowStops, [[idA]])
+        XCTAssertEqual(world.liveStarts.count, 1, "a resized window is not streamed again")
+        XCTAssertEqual(world.liveStops, 0)
+    }
+
+    func testTheHandOffStopsTheStreamsOnce() {
+        beginAndPrime()
+        flight.layersFinished(1)
+        scheduler.runPending()
+        XCTAssertEqual(overlay.ends, 1)
+        XCTAssertEqual(world.liveStops, 1)
+        flight.end()
+        XCTAssertEqual(world.liveStops, 1)
+    }
+
+    func testAnAbortStopsTheStreamsOnce() {
+        beginAndPrime()
+        flight.aborted(.mouseDown)
+        scheduler.runPending()
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.liveStops, 1)
+    }
+
+    func testAnEndStopsTheStreamsOnce() {
+        beginAndPrime()
+        flight.end()
+        XCTAssertEqual(world.liveStops, 1)
+    }
+
+    func testAFailedPrimeStopsTheStreamsOnce() {
+        refresh([idA: a, idB: b])
+        let (animation, plan) = slide(idA, from: a, by: 100)
+        XCTAssertEqual(flight.drive(animations: [animation], plans: [plan], spring: .niri), .priming)
+        deferPass()
+        flight.primed(1, ok: false)
+        scheduler.runPending()
+        XCTAssertEqual(world.liveStarts.count, 1)
+        XCTAssertEqual(world.liveStops, 1)
+    }
+
+    func testAFlightWithoutLiveWindowsNeverStopsStreams() {
+        refresh([idA: a, idB: b])
+        let token = resizeAndPrime(from: a, to: wide)
+        flight.layersFinished(token)
+        scheduler.runPending()
+        answerPaint([idA: .painted])
+        XCTAssertFalse(flight.isActive)
+        XCTAssertEqual(world.liveStarts, [])
+        XCTAssertEqual(world.liveStops, 0)
+    }
+
+    func testNoMoreThanTheCapStreamAtOnce() {
+        let frames = (0..<6).map { CGRect(x: CGFloat($0) * 300, y: 100, width: 250, height: 900) }
+        let six = SessionFixture(frames: frames, focus: 0)
+        fixture.session = six.session
+        fixture.physicalFrames = six.physicalFrames
+        let ids = (0..<6).map { SessionFixture.id($0, pid: pid_t($0 + 1)) }
+        refresh(Dictionary(uniqueKeysWithValues: zip(ids, frames)))
+        var visible = fixture.physicalFrames
+        for index in 0..<3 {
+            visible[ids[index]] = frames[index].offsetBy(dx: 20, dy: 0)
+        }
+        let animations = (0..<3).map { WindowAnimation(id: ids[$0], from: frames[$0], to: visible[ids[$0]]!, duration: 0.3) }
+        XCTAssertEqual(flight.drive(animations: animations, plans: [ParkingPlan(visible: visible)], spring: .niri), .priming)
+        deferPass()
+        flight.primed(1, ok: true)
+        scheduler.runPending()
+        XCTAssertEqual(world.liveStarts.map(\.count), [3])
+
+        for index in 0..<6 {
+            visible[ids[index]] = frames[index].offsetBy(dx: 40, dy: 0)
+        }
+        XCTAssertEqual(flight.drive(animations: [], plans: [ParkingPlan(visible: visible)], spring: .niri), .flying)
+        XCTAssertEqual(world.liveStarts.map(\.count), [3, 1])
+        XCTAssertEqual(Set(world.liveStarts.flatMap(\.keys)).count, liveLayerMaxStreams)
+        XCTAssertEqual(world.liveStarts.last?.keys.first, ids[3], "the lowest id of those landing on screen")
     }
 }

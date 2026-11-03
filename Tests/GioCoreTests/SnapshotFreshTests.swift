@@ -210,3 +210,93 @@ final class SnapshotFreshTests: XCTestCase {
         XCTAssertEqual(snapshotHandoffFading(resized: [id], translucent: [translucent], layered: [id]), [id], "no layer: nothing to fade")
     }
 }
+
+final class SnapshotStaleMoveTests: XCTestCase {
+    private let screen = CGRect(x: 0, y: 0, width: 1800, height: 1130)
+    private let start = CGRect(x: 0, y: 100, width: 800, height: 900)
+    private let moved = CGRect(x: 820, y: 100, width: 800, height: 900)
+    private let parked = CGRect(x: 1799, y: 100, width: 800, height: 900)
+    private let now: TimeInterval = 1_000
+
+    private func staleMoves(
+        _ id: WindowID, from: CGRect, to: CGRect, capturedAt: TimeInterval?
+    ) -> Set<WindowID> {
+        let captured = capturedAt.map { [id: $0] } ?? [:]
+        return snapshotStaleMoves(
+            [id], starts: [id: from], targets: [id: to], capturedAt: captured, displays: [screen], now: now
+        )
+    }
+
+    func testAMovingWindowLandingOnScreenWithAnImageOlderThanTheSoftAgeIsStale() {
+        let id = WindowID(pid: 1, elementID: 1)
+        let old = now - snapshotSoftAge - 1
+        XCTAssertEqual(staleMoves(id, from: start, to: moved, capturedAt: old), [id])
+    }
+
+    func testAnImageWithinTheSoftAgeIsNotStale() {
+        let id = WindowID(pid: 1, elementID: 1)
+        let recent = now - snapshotSoftAge + 1
+        XCTAssertEqual(staleMoves(id, from: start, to: moved, capturedAt: recent), [])
+    }
+
+    func testAWindowThatKeepsItsFrameIsNotStaleWhateverItsImageAge() {
+        let id = WindowID(pid: 1, elementID: 1)
+        XCTAssertEqual(staleMoves(id, from: start, to: start, capturedAt: 0), [])
+    }
+
+    func testAWindowParkedOffScreenIsNotStale() {
+        let id = WindowID(pid: 1, elementID: 1)
+        XCTAssertEqual(staleMoves(id, from: start, to: parked, capturedAt: 0), [])
+    }
+
+    func testAWindowWithoutAnImageOfItsTargetSizeIsNotStale() {
+        let id = WindowID(pid: 1, elementID: 1)
+        XCTAssertEqual(staleMoves(id, from: start, to: moved, capturedAt: nil), [])
+    }
+
+    func testTheStaleMoveLineCarriesTheIdAndTheImageAge() {
+        let id = WindowID(pid: 13261, elementID: 4)
+        XCTAssertEqual(snapshotStaleMoveLine(id, ageMilliseconds: 31_000), "snapshot stale move id=13261:4 ageMs=31000")
+    }
+}
+
+final class SnapshotNearbyStaleSelectionTests: XCTestCase {
+    private let frame = CGRect(x: 0, y: 100, width: 800, height: 900)
+    private let now: TimeInterval = 1_000
+
+    private func cache(_ ages: [WindowID: TimeInterval]) -> SnapshotCache<String> {
+        var cache = SnapshotCache<String>()
+        for (id, age) in ages {
+            cache.store(id, image: "image", frame: frame, pixels: 1, at: now - age)
+        }
+        return cache
+    }
+
+    func testStaleStripWindowsComeNearestToTheFocusFirst() {
+        let far = WindowID(pid: 1, elementID: 1)
+        let near = WindowID(pid: 2, elementID: 2)
+        let middle = WindowID(pid: 3, elementID: 3)
+        let old = snapshotSoftAge + 1
+        let selection = snapshotNearbyStaleSelection(
+            cache: cache([far: old, near: old, middle: old]), strip: [(far, frame), (near, frame), (middle, frame)],
+            distances: [far: 5, near: 1, middle: 3], excluded: [], now: now
+        )
+        XCTAssertEqual(selection.map(\.id), [near, middle, far])
+        XCTAssertEqual(selection.map(\.cause), [.stale, .stale, .stale])
+    }
+
+    func testFreshExcludedMissingAndOtherSizeImagesAreLeftToTheirOwnRules() {
+        let fresh = WindowID(pid: 1, elementID: 1)
+        let excluded = WindowID(pid: 2, elementID: 2)
+        let missing = WindowID(pid: 3, elementID: 3)
+        let resized = WindowID(pid: 4, elementID: 4)
+        let old = snapshotSoftAge + 1
+        let wider = CGRect(x: 0, y: 100, width: 1600, height: 900)
+        let selection = snapshotNearbyStaleSelection(
+            cache: cache([fresh: snapshotSoftAge - 1, excluded: old, resized: old]),
+            strip: [(fresh, frame), (excluded, frame), (missing, frame), (resized, wider)],
+            distances: [:], excluded: [excluded], now: now
+        )
+        XCTAssertTrue(selection.isEmpty)
+    }
+}

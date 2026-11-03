@@ -48,6 +48,10 @@ public final class FocusDimController {
     private var panels: [String: (panel: FocusDimPanel, view: FocusDimView)] = [:]
     private var visible: Set<String> = []
     private var state: FocusDimState = .hidden(.disabled)
+    /// WC-18: macOS is showing its own overview (Mission Control, App Exposé).
+    private var systemOverview = false
+    /// The last state Gio wanted, kept while the overview masks it.
+    private var desired: FocusDimState = .hidden(.disabled)
     /// Bumped on every apply so a fade-out's completion never orders out a
     /// panel that was shown again meanwhile.
     private var generation = 0
@@ -55,6 +59,21 @@ public final class FocusDimController {
     public init() {}
 
     public func apply(_ next: FocusDimState) {
+        desired = next
+        render(systemOverview ? .hidden(.disabled) : next)
+    }
+
+    /// WC-18: the dim is a set of panels at the windows' real frames too, so
+    /// it goes away with the ring while macOS shows its own overview.
+    public func setSystemOverview(_ showing: Bool) {
+        guard showing != systemOverview else {
+            return
+        }
+        systemOverview = showing
+        render(showing ? .hidden(.disabled) : desired)
+    }
+
+    private func render(_ next: FocusDimState) {
         guard next != state else {
             return
         }

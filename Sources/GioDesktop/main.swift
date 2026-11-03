@@ -62,6 +62,9 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     )
     private let focusRing = FocusRingController()
     private let focusDim = FocusDimController()
+    /// WC-18: watches for macOS's own window overview (Mission Control, App
+    /// Exposé); the ring and the dim step aside while it is up.
+    private var systemOverview: SystemOverviewMonitor?
     private let snapshotOverlay = SnapshotOverlayController()
     private let closeGhosts = CloseGhostOverlay()
     private var signalSources: [DispatchSourceSignal] = []
@@ -80,6 +83,16 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         applyBundleAppIcon()
         _ = launcher
         focusRing.start()
+        let overview = SystemOverviewMonitor(
+            screens: { NSScreen.screens.map(\.frame) },
+            onChange: { [weak self] showing in
+                GioLog.record(.info, "system overview \(showing ? "shown" : "dismissed")")
+                self?.focusRing.setSystemOverview(showing)
+                self?.focusDim.setSystemOverview(showing)
+            }
+        )
+        overview.start()
+        systemOverview = overview
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
@@ -154,6 +167,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         closeGhosts.stop()
         focusRing.stop()
         focusDim.stop()
+        systemOverview?.stop()
+        systemOverview = nil
     }
 
     /// SM-04/SM-08: the session queue drives the overlay through hooks that
@@ -236,6 +251,16 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
                 MainActor.assumeIsolated { overlay.reveal(token: token, windows: windows, holes: holes) }
             }
         }
+        host.overlayClearLive = { ids in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.clearLive(ids) }
+            }
+        }
+        host.deliverLiveFrames { id, surface, size in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { overlay.showLive(id, surface: surface, size: size) }
+            }
+        }
         // NA-03: the close ghost, a window-sized layer that removes itself.
         let ghosts = closeGhosts
         host.ghostShow = { token, image, frame, duration, shrink in
@@ -260,6 +285,8 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         closeGhosts.stop()
         focusRing.stop()
         focusDim.stop()
+        systemOverview?.stop()
+        systemOverview = nil
         relaunchGio { NSApplication.shared.terminate(nil) }
     }
 

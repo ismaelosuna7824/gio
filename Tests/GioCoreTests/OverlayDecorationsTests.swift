@@ -13,12 +13,12 @@ final class OverlayDecorationsTests: XCTestCase {
 
     private func decorations(
         indicator: FocusIndicatorKind, ring: FocusRingSectionConfig = FocusRingSectionConfig(),
-        window: FocusRingWindow? = nil, tiled: Set<WindowID>? = nil
+        window: FocusRingWindow? = nil, tiled: Set<WindowID>? = nil, alone: Bool = false
     ) -> OverlayDecorations {
         overlayDecorations(
             focus: FocusSectionConfig(indicator: indicator, dimStrength: 0.2), ring: ring, theme: nil,
             focusedID: focused, focused: window ?? FocusRingWindow(frame: frame),
-            tiled: tiled ?? [focused, left, right], displays: [display], fullscreenGap: 0
+            tiled: tiled ?? [focused, left, right], displays: [display], fullscreenGap: 0, alone: alone
         )
     }
 
@@ -35,7 +35,10 @@ final class OverlayDecorationsTests: XCTestCase {
 
     func testRingFollowsTheLiveRingRules() {
         XCTAssertNil(decorations(indicator: .ring, ring: FocusRingSectionConfig(enabled: false)).ring)
-        XCTAssertNil(decorations(indicator: .ring, window: FocusRingWindow(frame: frame, isMaximized: true)).ring)
+        XCTAssertNotNil(
+            decorations(indicator: .ring, window: FocusRingWindow(frame: frame, isMaximized: true)).ring,
+            "a maximized column keeps the ring (NF-09)"
+        )
         XCTAssertNil(decorations(indicator: .ring, window: FocusRingWindow(frame: frame, isMinimized: true)).ring)
         let parked = CGRect(x: -599, y: 100, width: 600, height: 900)
         XCTAssertNil(decorations(indicator: .ring, window: FocusRingWindow(frame: parked)).ring)
@@ -43,6 +46,14 @@ final class OverlayDecorationsTests: XCTestCase {
             focus: FocusSectionConfig(indicator: .ring), ring: FocusRingSectionConfig(), theme: nil,
             focusedID: nil, focused: nil, tiled: [left], displays: [display], fullscreenGap: 0
         ).ring)
+    }
+
+    func testRingFollowsHideWhenAloneLikeTheLiveRing() {
+        XCTAssertNil(decorations(indicator: .ring, alone: true).ring)
+        XCTAssertNotNil(
+            decorations(indicator: .ring, ring: FocusRingSectionConfig(hideWhenAlone: false), alone: true).ring
+        )
+        XCTAssertNotNil(decorations(indicator: .ring, alone: false).ring)
     }
 
     func testDimIndicatorDimsTheOtherTiledWindowsAtTheConfiguredStrength() {

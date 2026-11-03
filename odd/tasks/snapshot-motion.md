@@ -1310,6 +1310,37 @@ Risks: CASpringAnimation on bounds, parked windows capture blank/stale -> fallba
   `OverlayResizeTests.testShrinkingKeepsTheLargerImageUnderTheNewOne` compile failure (`overlayUnderlay`,
   `over:`, `underlay` missing); GREEN; bundles UI 310 (53 skipped) / Session 481 / POC 7 / Mac 19 / MacOS 95
   / Core 1962, 0 failures. LIVE PENDING: `Alt+F` back on Postman, no dark block.
+- [x] SM-35 (`ecbdf72`, branch `fix/stale-flight-snapshots`) — "sometimes when we change of focus the
+  displayed image is very past time, not even actual". Live log 2026-10-27: 131 flights, 51 with
+  `cacheAgeMs` over 30 s, 23 over 180 s, max ~104 min. Cause: a flight flies the image of the start size
+  whatever its age (SM-24) and refreshes only run on events (settle, dirty signals, no periodic timer), so
+  the first motion after a pause showed pictures as old as the pause. Fix (no idle capture, no capture per
+  press): a layer that moves, lands on screen (`overlayDisplayIndex`) and flies an image of its target size
+  older than `snapshotSoftAge` gets one SM-30 fresh capture after its write (`snapshotStaleMoves`, called
+  from `followFresh`), and the layer shows the new image within the same flight (`freshenFlight`); the image
+  is stored, so further presses within the soft age capture nothing. Still (see-through) and opening layers
+  are excluded. Debug `snapshot stale move id=P:E ageMs=N` per series. `cacheAgeMs` now counts the moving
+  layers only (the still and parked ones showed up to ~104 min although never seen). RED:
+  `SnapshotStaleMoveTests` compile failure (`snapshotStaleMoves`, `snapshotStaleMoveLine` missing);
+  `SnapshotFlightTests.testAMoveFlyingAnImageOlderThanTheSoftAgeIsCapturedAgainOnceAndTheLayerShowsIt`
+  failed on the controller without the change (no fresh probe). GREEN; `swift test` 3251 tests, 53 skipped,
+  0 failures; `git diff --check` clean. Signed build not run (no GioMacOS/GioUI/GioDesktop change). LIVE
+  PENDING: after a pause of over 30 s, a focus change shows each moving window's current content (at worst
+  the old picture for ~0.2 s, then the new one), and `snapshot stale move` lines appear only once per
+  window per 30 s.
+  Live 2026-11-01 06:55 UTC ("The image is still very past in time"): the series ran (`snapshot stale move
+  ... ageMs=68066`, `snapshot fresh capture ms=70 ok=true`) but landed ~200 ms into the flight (120 ms
+  `firstDelay` plus the capture), and the strip windows 2-3 columns away were 66-68 s old because only the
+  visible and neighbour columns follow the soft age (`snapshot refresh skipped wanted=3 fresh`). Part 2: a
+  pure stale move is captured at once (`SnapshotFreshTracker.staleMoveDelay = 0`; a move needs no repaint),
+  and every settle run adds, after every other rule and within `maxWindows`, the shown-strip windows whose
+  image of their current size is older than the soft age, nearest the focused column first
+  (`snapshotNearbyStaleSelection`, `stripDistances`). No periodic timer: an idle refresh was rejected (steady
+  background captures, blank captures while the screen is locked). RED: `SnapshotNearbyStaleSelectionTests`
+  compile failure; `testStripWindowsBeyondTheNeighbourColumnOlderThanTheSoftAgeAreCapturedAgainAtTheNextSettle`
+  and the updated stale-move flight test (probe right after the prime) failed. GREEN; `swift test` 3254
+  tests, 53 skipped, 0 failures; `git diff --check` clean. LIVE PENDING: the old picture shows ~70-100 ms at
+  most after a pause, and not at all for strip windows once a settle ran within 30 s.
 
 ## Acceptance criteria
 - Scroll/maximize/workspace animations visibly smooth at display refresh on Electron and native apps.
@@ -1362,3 +1393,6 @@ SM-00..SM-02 one delegated writer; SM-03..SM-04 one delegated writer; SM-05 with
 - 2026-10-12: live recording after SM-29 still showed a purple flat box on Slack's first maximize, a 25 s old target image and a 2-frame old layout on VS Code's shrink, and hard cuts; SM-30 (fresh mid-flight capture of resized windows, content-colour fill, 120 ms fade-out of resized layers at the hand-off) committed and pushed. Next: the SM-30 LIVE PENDING check.
 - 2026-10-14: report (no logs) of a window appearing and disappearing after a dismissed installer prompt; SM-31 (vanished and undrawn windows lose their images and never fly, one pid scan proves a vanished window gone) written, targeted tests green. Next: the integrator's full suite and signed build, then the SM-31 LIVE PENDING check.
 - 2026-10-17: follow-up in `odd/tasks/new-window-position.md` WP-05 (branch `feat/new-window-position`): with the snapshot renderer an opening window (NA-02 entry) is covered by the overlay (no hole, `planSnapshotFlight(covered:)`) until an SM-30 fresh capture at its target reads painted, then pops in (`OverlayPort.popFlight`, `WindowOpenPopBook`, at most 400 ms of wait) and is revealed through its WP-04 entry hole (`revealFlight`); the hand-off waits for it. An open alone is now an overlay flight (no `.cacheMiss` AX fallback). Debug `snapshot open pop|reveal`. LIVE PENDING (TESTING.md).
+- 2026-10-31: live report of minutes-old images in focus-change flights; SM-35 (one fresh mid-flight capture of a moving on-screen layer whose image is older than the soft age, truthful `cacheAgeMs`) written, all bundles green, uncommitted. Next: user approval to commit, then the SM-35 LIVE PENDING check.
+- 2026-11-01: SM-35 part 2 after the live check (fresh capture landed ~200 ms into the flight, far strip columns 68 s old): immediate capture for stale moves, nearest-first soft-age refresh of the shown strip at each settle; all bundles green, uncommitted.
+- 2026-11-01: SM-35 (parts 1 and 2) committed as `ecbdf72`; live layers (`odd/tasks/live-layers.md`) as `b471657`. Next: the PR to `dev`.
