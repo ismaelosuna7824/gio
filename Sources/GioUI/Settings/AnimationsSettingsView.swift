@@ -69,7 +69,20 @@ struct AnimationsSettingsView: View {
                 .padding(GioSpacing.s)
             Divider().padding(.leading, GioSpacing.m - 2)
             CardRow {
-                ToggleRow("Animate scrolling and focus changes", isOn: form.enabled)
+                // DD-06: the same two presets the first-run setup offers, so
+                // anyone who skipped it finds them here.
+                SegmentedRow(
+                    "Preset",
+                    caption: "Recommended keeps the spring motion below and the Snapshot renderer. Fast turns every animation off and moves the real windows through Accessibility: the most fluid feel, no Screen Recording.",
+                    selection: Binding<MotionPreset>(
+                        get: { draft.current.enabled ? .recommended : .fast },
+                        set: { preset in
+                            form.enabled.wrappedValue = preset == .recommended
+                            form.renderer.wrappedValue = preset.renderer
+                        }
+                    ),
+                    options: [(.recommended, "Recommended"), (.fast, "Fast")], width: 220
+                )
             }
             CardRow {
                 SegmentedRow("Curve", selection: form.curve, options: [(.spring, "Spring"), (.easeOut, "Ease Out")], width: 180)

@@ -148,6 +148,12 @@ public final class ReflowPlanner: @unchecked Sendable {
     /// MM-04: the windows the last pass parked on the far side of their
     /// display (`ParkedTarget.farSide`): coming back, they jump too.
     private var farParked: Set<WindowID> = []
+    /// WC-17: floats the last pass hid / restored, so the transitions are
+    /// logged once each instead of on every frame of a motion.
+    private var hiddenFloats: Set<WindowID> = []
+    private var shownFloats: Set<WindowID> = []
+    /// WC-17: windows that yielded to their app and were logged as such.
+    private var loggedUnmanaged: Set<WindowID> = []
 
     public init(context: Context) {
         self.context = context
@@ -177,7 +183,19 @@ public final class ReflowPlanner: @unchecked Sendable {
         let windows = Dictionary(uniqueKeysWithValues: registry.managedWindows().map { ($0.id, $0) })
         // FI-10: a window that yielded to its app is never written: not
         // parked, not restored, not moved with its workspace.
-        _ = hiddenBook.reveal(windows.values.filter(\.isAppControlled).map(\.id))
+        let unmanaged = windows.values.filter(\.isAppControlled)
+        _ = hiddenBook.reveal(unmanaged.map(\.id))
+        // WC-17: log it once per yield, frame included: this is the path that
+        // leaves a window wherever its app put it.
+        loggedUnmanaged.formIntersection(unmanaged.map(\.id))
+        for window in unmanaged where !loggedUnmanaged.contains(window.id) {
+            loggedUnmanaged.insert(window.id)
+            GioLog.record(
+                .info,
+                "float unmanaged id=\(window.id.pid):\(window.id.elementID) app=\(window.application)"
+                    + " reason=\(window.floatReason?.rawValue ?? "none") frame=\(logFrame(window.frame))"
+            )
+        }
         let hidden = manager.windows(outside: shown).filter {
             windows[$0].map { !$0.isMinimized && !$0.isAppControlled } ?? false
         }
@@ -201,6 +219,14 @@ public final class ReflowPlanner: @unchecked Sendable {
             frames[owners[id] ?? fallback.id, default: [:]][id] = frame
             if windows[id]?.mode == .floating {
                 hiddenBook.hide(id, from: frame)
+                if hiddenFloats.insert(id).inserted {
+                    shownFloats.remove(id)
+                    GioLog.record(
+                        .info,
+                        "float hide id=\(id.pid):\(id.elementID) app=\(windows[id]?.application ?? "?")"
+                            + " frame=\(logFrame(frame))"
+                    )
+                }
             }
         }
         relocateFloatingWindows(
@@ -224,6 +250,20 @@ public final class ReflowPlanner: @unchecked Sendable {
         // (or an abandoned animation) must find it again.
         let floating = active.filter { windows[$0]?.mode == .floating }
         plan.visible = hiddenBook.frames(of: floating)
+        // WC-17: a float coming back is written at the frame it was hidden
+        // with, so log both: a stale frame or a refused write shows here.
+        shownFloats.formIntersection(floating)
+        for (id, frame) in plan.visible {
+            guard shownFloats.insert(id).inserted else {
+                continue
+            }
+            hiddenFloats.remove(id)
+            GioLog.record(
+                .info,
+                "float restore id=\(id.pid):\(id.elementID) app=\(windows[id]?.application ?? "?")"
+                    + " frame=\(logFrame(frame))"
+            )
+        }
         for (id, frame) in plan.visible {
             if let physical = physical[id],
                abs(physical.minX - frame.minX) <= 1, abs(physical.minY - frame.minY) <= 1

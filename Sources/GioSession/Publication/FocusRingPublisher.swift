@@ -76,17 +76,38 @@ public final class FocusRingPublisher: @unchecked Sendable {
         else {
             return .hidden
         }
+        let workspace = session.manager.currentWorkspace()
+        let frame = context.physicalFrame(id)
+        let displays = context.displayFrames()
         return focusRingState(
             config: config,
             focused: FocusRingWindow(
-                frame: context.physicalFrame(id), isMinimized: window.isMinimized,
+                frame: frame, isMinimized: window.isMinimized,
                 isFullscreen: window.mode == .fullscreen || context.isFullscreen(id),
-                isMaximized: session.manager.currentWorkspace().focusedColumnRef?.savedWidthSpec != nil,
+                isMaximized: workspace.focusedColumnRef?.savedWidthSpec != nil,
                 isFloating: window.mode == .floating
             ),
-            displays: context.displayFrames(),
-            fullscreenGap: session.config.layout.resolvedFullscreenGap
+            displays: displays,
+            fullscreenGap: session.config.layout.resolvedFullscreenGap,
+            alone: frame.map {
+                focusRingIsAlone(focused: $0, others: neighbourFrames(of: id, session: session), displays: displays)
+            } ?? false
         )
+    }
+
+    /// NF-02: where the other windows of the shown workspace physically are.
+    /// Minimized ones do not count (they are not visible), and a parked window
+    /// only keeps its 1 pt sliver, which `focusRingIsAlone` ignores.
+    private func neighbourFrames(of id: WindowID, session: CommandSession) -> [CGRect] {
+        session.manager.currentWorkspace().columns
+            .flatMap(\.windows)
+            .filter { $0 != id }
+            .compactMap { candidate in
+                guard session.registry.find(candidate)?.isMinimized == false else {
+                    return nil
+                }
+                return context.physicalFrame(candidate)
+            }
     }
 
     /// SM-08: what the snapshot overlay draws during a flight, with the live
@@ -101,17 +122,22 @@ public final class FocusRingPublisher: @unchecked Sendable {
         let tiled = Set(targets.keys.filter { candidate in
             session.registry.find(candidate).map { $0.mode == .tiled && !$0.isMinimized } ?? false
         })
+        let frame = targets[id] ?? context.physicalFrame(id)
+        let displays = context.displayFrames()
+        // NF-02: the same "alone" rule as the live ring, on the frames the
+        // windows land on.
+        let others = tiled.subtracting([id]).compactMap { targets[$0] }
         return overlayDecorations(
             focus: session.config.focus, ring: session.config.focusRing, theme: nil,
             focusedID: id,
             focused: FocusRingWindow(
-                frame: targets[id] ?? context.physicalFrame(id), isMinimized: window.isMinimized,
+                frame: frame, isMinimized: window.isMinimized,
                 isFullscreen: window.mode == .fullscreen || context.isFullscreen(id),
                 isMaximized: workspace.focusedColumnRef?.savedWidthSpec != nil,
                 isFloating: window.mode == .floating
             ),
-            tiled: tiled, displays: context.displayFrames(),
-            fullscreenGap: session.config.layout.resolvedFullscreenGap
+            tiled: tiled, displays: displays, fullscreenGap: session.config.layout.resolvedFullscreenGap,
+            alone: frame.map { focusRingIsAlone(focused: $0, others: others, displays: displays) } ?? false
         )
     }
 }

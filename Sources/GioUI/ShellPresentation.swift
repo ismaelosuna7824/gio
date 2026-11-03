@@ -26,7 +26,7 @@ public func screenRecordingStepPhase(granted: Bool, requested: Bool) -> Permissi
 }
 
 public enum OnboardingStep: Int, CaseIterable, Sendable {
-    case welcome, accessibility, screenRecording, keys
+    case welcome, accessibility, screenRecording, keys, motion
 }
 
 /// S5: Screen Recording features need macOS 14 (ScreenCaptureKit), so below
@@ -45,16 +45,20 @@ public struct OnboardingState: Equatable, Sendable {
     public private(set) var step: OnboardingStep
     public private(set) var accessibilityGranted: Bool
     public private(set) var screenRecordingGranted: Bool
+    /// DD-06: the motion preset the last step offers; Recommended is the
+    /// default, so a flow nobody touches writes the defaults.
+    public private(set) var motion: MotionPreset
 
     /// A `step` the flow leaves out starts on the next one that is shown.
     public init(
         accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingAvailable: Bool,
-        step: OnboardingStep = .welcome
+        step: OnboardingStep = .welcome, motion: MotionPreset = .recommended
     ) {
         let steps = onboardingSteps(screenRecordingAvailable: screenRecordingAvailable)
         self.steps = steps
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
+        self.motion = motion
         let later = steps.first(where: { $0.rawValue > step.rawValue }) ?? steps[steps.count - 1]
         self.step = steps.contains(step) ? step : later
     }
@@ -63,6 +67,11 @@ public struct OnboardingState: Equatable, Sendable {
     public mutating func update(accessibilityGranted: Bool, screenRecordingGranted: Bool) {
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
+    }
+
+    /// DD-06: the last step's choice; the footer applies it on Finish.
+    public mutating func selectMotion(_ preset: MotionPreset) {
+        motion = preset
     }
 
     public func updating(accessibilityGranted: Bool, screenRecordingGranted: Bool) -> OnboardingState {
@@ -84,7 +93,8 @@ public struct OnboardingState: Equatable, Sendable {
         case .welcome: return "Get Started"
         case .accessibility: return "Continue"
         case .screenRecording: return screenRecordingGranted ? "Continue" : "Skip"
-        case .keys: return "Done"
+        case .keys: return "Continue"
+        case .motion: return "Done"
         }
     }
 
@@ -128,6 +138,10 @@ public let onboardingKeys: [OnboardingKey] = [
     OnboardingKey(
         title: "Maximize column", detail: "Fill the display, again to restore",
         combos: [HotkeyCombo(modifiers: [.alt], key: "F")], families: ["maximize-column"]
+    ),
+    OnboardingKey(
+        title: "Float / tile", detail: "Take the window out of the strip, or put it back",
+        combos: [HotkeyCombo(modifiers: [.alt, .shift], key: "Space")], families: ["toggle-floating"]
     ),
     OnboardingKey(
         title: "Workspace down / up", detail: "Switch workspaces on this display",

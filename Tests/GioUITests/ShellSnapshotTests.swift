@@ -50,6 +50,11 @@ final class ShellSnapshotTests: XCTestCase {
         )
     }
 
+    /// DD-09: the last step's two motion presets.
+    func testOnboardingMotionPresets() throws {
+        try onboarding("dd09-onboarding-motion", step: .motion, ax: true, sr: true)
+    }
+
     func testStatusGlyphs() throws {
         let badges: [String?] = [nil, "1", "2", "9", "12"]
         try SnapshotHarness.render("dd05-status-glyph", size: CGSize(width: 460, height: 90)) {

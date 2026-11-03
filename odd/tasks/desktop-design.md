@@ -125,6 +125,33 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   base `origin/dev` `9ede867`; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
   LIVE PENDING: the real panel over a desktop (vibrancy and shadow cannot be rendered
   offscreen).
+- [ ] DD-09 (`699e741`) — Motion presets in the first-run guide and Settings (user request 2026-11-03:
+  "en el onboarding hay que poner dos opciones al final la recomendada… y las fast… también pon esa
+  configuración en el settings para así desde el inicio sepan que pueden editar todo").
+  `MotionPreset` (`recommended` = `[animations] enabled`, `fast` = off: every move instant, "the most
+  fluid feel, with no animations") lives in GioCore with `motionPresetEdits`, so the setup and
+  Settings write the same line. The flow gains a last step `.motion` ("Pick a Feel"): two selectable
+  cards, Recommended preselected, the note that everything stays editable; Finish applies the choice
+  through `DesktopModel.apply`. Settings → Animations replaces the bare "Animate scrolling and focus
+  changes" switch with a **Preset** row (Recommended / Fast, same two values). Docs: USER_GUIDE
+  (First steps paragraph and the `[animations] enabled` row). RED: `MotionPresetTests`,
+  `ShellPresentationTests` (steps count 4/5, `.motion` last, titles, the preset default). GREEN:
+  Core 2213, Session 577, UI 376 (53 skipped), POC 7, Mac 19, macOS 116 (2 skipped, the known
+  setuid sandbox failure); signed build OK. LIVE PENDING: the real setup sheet and the Settings row.
+  **Follow-up (`3b5367b`, same day)**: the user also asked for a shortcut to float the focused window and
+  for it to be discoverable. `toggle-floating` already ships on `Alt+Shift+Space`
+  (`ShortcutCatalog`, default bindings, USER_GUIDE "Float the focused window (or tile it again)"):
+  it sets `mode = .floating` and the next reflow takes the window out of the strip; unfloating puts it
+  back in its column and reflows. It was missing from the setup's *Keys to Know*, so it is now the third
+  row there ("Float / tile"). Snapshot `dd05-onboarding-keys` re-rendered; UI 377 (54 skipped).
+  **Follow-up 2 (`a93fa1a`, same day)**: the user tied each preset to its renderer ("el snapshot debe
+  de estar activado… cuando se selecciona Recommended y accesibilidad cuando está en fast").
+  `MotionPreset.renderer` (recommended → `snapshot`, fast → `ax`) and `motionPresetEdits` writes
+  `[animations] renderer` next to `enabled`, so the setup and the Settings Preset row switch both;
+  the cards and the docs say why (Fast needs no Screen Recording). RED:
+  `MotionPresetTests.testFastTurnsEveryAnimationOffAndRecommendedBackOn` (renderer assertions) and
+  `testEachPresetBringsItsRenderer`. GREEN: Core 2224, Session 577, UI 377 (54 skipped), POC 7,
+  Mac 19, macOS 116 (2 skipped, the known setuid failure); signed build OK.
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.

@@ -95,6 +95,31 @@ LIVE PENDING. Review: UNAVAILABLE.
   template wording pin was dropped (the template still must parse to the defaults). GREEN: all
   bundles 0 failures (UI 312/53 skipped, Session 484, POC 7, Mac 19, MacOS 98, Core 1965); signed
   build OK. LIVE PENDING: a fresh config (no `indicator` key) shows the ring.
+- [ ] NF-09 (`2a254bc`) — Ring off when the focused window is the only visible one, and thinner by default
+  (user request 2026-11-03, screenshot: a lone column filling the screen wore a 4 pt frame around
+  the whole display; "que se quite el borde… si hay que ponerlo, reducir los puntos… que sea más
+  tenue"). `hide-when-maximized` never suppressed it: a wide column without a saved width spec is
+  not "maximized". `[focus-ring] hide-when-alone` (default true): no ring when no other tiled window
+  is visible on the display that holds the focused one (a parked column's 1 pt sliver, a minimized
+  window or a neighbour on another display does not count). Pure `focusRingIsAlone` +
+  `focusRingState(..., alone:)`, fed by the live publisher (physical frames of the shown workspace)
+  and by the snapshot overlay's flight copy (landing frames); `hide-when-alone` in the parser, the
+  template, `focusRingEdits`/`FocusRingSettingsForm` and the Settings toggle "Hide when it is the
+  only window". `FocusRingSectionConfig.defaultWidth` 4 -> 2 (template and USER_GUIDE too).
+  RED: `OverlayDecorationsTests` `extra argument 'alone'`, and `'hideWhenAlone'` before the config
+  field existed. GREEN: Core 2210, Session 577, UI 375 (53 skipped), POC 7, Mac 19, macOS 116
+  (2 skipped) — its one failure, `UpdatePreparerTests.testSetIDItemsNeverReachTheStagedCopy`, is
+  environmental: the agent sandbox drops the setuid bit the fixture needs, and it reproduces outside
+  this change. Signed build OK. LIVE PENDING: rebuild the app, focus a lone column, no ring.
+  **Follow-up (`2bdc186`, live 2026-11-03 07:09)**: the user wants the ring back on a maximized
+  column ("con Alt+F también debe salir"). Maximize no longer hides the ring, and a maximized column
+  never counts as alone (`focusRingState` exempts it), so `Alt+F` shows the level indicator at 2 pt.
+  The hide key became `hide-in-fullscreen` — the old `hide-when-maximized` still parses into it — and
+  the Settings toggle reads "Hide in fullscreen". RED: `FocusRingTests.testMaximizedColumnKeepsItsRing`
+  and the renamed round trip, `FocusRingPublisherTests.testMaximizedColumnKeepsTheRing`, the
+  overlay's maximized expectation. GREEN: Core 2210, Session 577, UI 375 (53 skipped), POC 7, Mac 19,
+  macOS 116 (2 skipped, same environmental failure); signed build OK. LIVE PENDING: rebuild, `Alt+F`,
+  the ring stays.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
@@ -114,3 +139,4 @@ LIVE PENDING. Review: UNAVAILABLE.
 - 2026-09-29: NF-01 done, pushed. Next: NF-02.
 - 2026-09-29: user live: likes focus ring; asked color picker (NF-03); reported right-side empty area until Alt+J — under diagnosis (center-focused-column=always vs Chromium occlusion repaint). NF-02 done, pushed.
 - 2026-09-29: NF-03 done, pushed. Open question to user: was the empty right area the last column (center=always) or a missing window (Chromium occlusion repaint)?
+- 2026-11-03: NF-09 (hide-when-alone + 2 pt default) red -> green, signed build OK; live check pending after rebuilding the app.

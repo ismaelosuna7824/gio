@@ -459,7 +459,7 @@ public final class WindowEventRouter: @unchecked Sendable {
         }
         context.log(
             .warn,
-            "window yields to app id=\(record.id.pid):\(record.id.elementID) app=\(record.application) snapBacks=\(snapBacks)"
+            "window yields to app id=\(record.id.pid):\(record.id.elementID) app=\(record.application) snapBacks=\(snapBacks) frame=\(logFrame(record.frame))"
         )
         context.invalidateTrust(record.id)
         context.forgetZoom(record.id)

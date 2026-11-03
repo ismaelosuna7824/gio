@@ -611,9 +611,15 @@ func applyFocusRingKey(
             )
         }
         config.focusRing.width = rounded
-    case "hide-when-maximized":
+    // NF-09: `hide-when-maximized` is the pre-rename name; a maximized column
+    // keeps its ring now, so the key only covers fullscreen.
+    case "hide-in-fullscreen", "hide-when-maximized":
         applyBoolKey(key, expected: key, value: value, line: line, table: "focus-ring", errors: &errors) {
-            config.focusRing.hideWhenMaximized = $0
+            config.focusRing.hideInFullscreen = $0
+        }
+    case "hide-when-alone":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "focus-ring", errors: &errors) {
+            config.focusRing.hideWhenAlone = $0
         }
     case "active-color":
         guard case .string(let text) = value, let color = ThemeColor(hex: text) else {

@@ -899,7 +899,11 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.registered.first?.floatReason, .appControlled)
         XCTAssertEqual(world.scheduledReflows, [false, false, false], "one pass closes the gap")
         let warnings = world.logs.filter { $0.0 == .warn && $0.1.hasPrefix("window yields to app") }
-        XCTAssertEqual(warnings.map(\.1), ["window yields to app id=7:\(id.elementID) app=Code snapBacks=3"])
+        XCTAssertEqual(
+            warnings.map(\.1),
+            ["window yields to app id=7:\(id.elementID) app=Code snapBacks=3 frame=(0,500,800,600)"],
+            "the frame tells the float diagnostics where the app left it"
+        )
         XCTAssertTrue(world.session.manager.currentWorkspace().columns.flatMap(\.windows).contains(id), "still a member")
 
         let holds = world.dragHolds

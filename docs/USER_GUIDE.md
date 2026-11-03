@@ -34,6 +34,8 @@ Gio tiles the windows of the current Space into a horizontal strip of columns as
 
 Closing the main window keeps Gio running from its menu bar item; **Quit Gio** there stops tiling and puts every window back on screen. The app's **Shortcuts** section lists, rebinds and removes every shortcut.
 
+**Motion.** The first-run guide ends with *Pick a Feel*: **Recommended** keeps Gio's spring motion with the Snapshot renderer, **Fast** turns every animation off and moves the real windows through Accessibility — the most fluid feel, with no motion and no Screen Recording needed. The choice writes `[animations] enabled` and `renderer`, and **Settings > Animations > Preset** offers the same two at any time, next to every other animation setting.
+
 ## Keyboard layouts
 
 Gio's default shortcuts are `Option` combos, and on many keyboard layouts `Option` plus a number or letter **types a character**: on Spanish `Option+1` is `|`, `Option+2` is `@` and `Option+3` is `#`; on German `Option+L` is `@`, `Option+5` is `[`, `Option+6` is `]` and `Option+7` is `|`; on US `Option+U` and `Option+I` start an accent (¨, ˆ). While Gio runs it **takes every combo it has bound**, so that character no longer reaches your apps. Keys are matched by their physical position (the US key at that place), whatever the layout.
@@ -127,7 +129,7 @@ Shortcuts are global while Gio runs and Accessibility permission is granted. A b
 | `Alt+C` | `center-column` | Scroll the view so the focused column is centered (clamped at the strip edges). |
 | `Ctrl+Alt+F` | `expand-column-to-available-width` | Make the focused column fill the space the other fully visible columns leave; the view scrolls so the group fills the display between the paddings. Nothing happens without room to grow. |
 | `Ctrl+Alt+C` | `center-visible-columns` | Scroll the view so the fully visible columns (and the focused one) are centered, clamped at the strip edges. |
-| `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. A window whose app keeps putting it back where it wants (an installer re-centring itself) floats by itself after three such snap-backs and Gio stops moving it (Overview: **Floating · App-controlled**, log `window yields to app`); toggle it to tile it again. |
+| `Alt+Shift+Space` | `toggle-floating` | Switch the focused window between tiled and floating. A window whose app keeps putting it back where it wants (an installer re-centring itself) floats by itself after three such snap-backs and Gio stops moving it (Overview: **Floating · App-controlled**, log `window yields to app`); toggle it to tile it again. Every float transition is logged with its frame — `float toggle … mode=… frame=…`, `float hide … frame=…`, `float restore … frame=…` (the frame it was hidden with) and `float unmanaged …` for a window Gio no longer writes — so a float that ends up clipped or behind a tile can be traced in `gio logs`. |
 | `Alt+Shift+R` | `switch-preset-window-height` | In a stacked column, cycle the focused window through `preset-window-heights` (first preset taller than now, wrapping); the other windows share the rest in their current proportions. |
 | `Alt+Shift+Minus` / `Alt+Shift+Equal` | `set-window-height-minus` / `set-window-height-plus` | Make the focused window 10% of the usable height shorter / taller. Every window of the column keeps at least 100 pt; a window alone in its column always fills it. |
 | `Ctrl+Alt+R` | `reset-window-height` | Give every window of the focused column an equal share of its height again. |
@@ -273,7 +275,7 @@ An invalid config never stops the window manager.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | bool | `true` | Off makes every reflow instant. |
+| `enabled` | bool | `true` | Off makes every reflow instant. **Settings > Animations > Preset** calls the two values **Recommended** (on, with the `snapshot` renderer) and **Fast** (off, with the `ax` renderer: real windows, no Screen Recording), and the last step of the first-run guide offers the same choice. |
 | `curve` | string | `"spring"` | `"spring"` (Niri-style) or `"ease-out"`. A spring keeps the speed of a move it interrupts, so rapid key presses flow instead of restarting. An unknown name warns and keeps the default. |
 | `duration-ms` | number | `200` | Length of one `ease-out` animation. Rounded and clamped to `0...1000` with a warning. `0` is instant for both curves. |
 | `spring-damping-ratio` | number | `1.0` | `0.2...3`. `1` settles without overshoot; lower values bounce. Clamped with a warning. |
@@ -313,11 +315,12 @@ Used when `[focus] indicator = "ring"`. A rounded outline around the focused win
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `enabled` | bool | `true` | Off removes the ring. |
-| `width` | number | `4` | Thickness in points, rounded and clamped to `0...20` with a warning. `0` hides the ring. |
-| `hide-when-maximized` | bool | `true` | No ring on a maximized column (`Alt+F`) or a fullscreen window. `false` shows it again (in fullscreen only when `layout.fullscreen-gap` is at least the ring `width`). Also a toggle under Settings, Layout, Focus ring. |
+| `width` | number | `2` | Thickness in points, rounded and clamped to `0...20` with a warning. `0` hides the ring. |
+| `hide-in-fullscreen` | bool | `true` | No ring on a fullscreen window. `false` shows it again when `layout.fullscreen-gap` is at least the ring `width`. A maximized column (`Alt+F`) keeps its ring either way: it is an explicit state. The old name `hide-when-maximized` still parses. Also a toggle under Settings, Focus, Ring. |
+| `hide-when-alone` | bool | `true` | No ring when the focused window is the only visible one on its display (a lone column filling the screen would otherwise get a frame around it). A parked column, a minimized window or a neighbour on another display does not count as visible. A maximized column never counts as alone. Also a toggle under Settings, Focus, Ring. |
 | `active-color` | string | `"#7fc8ff"` | Hex color (`#RGB` or `#RRGGBB`); anything else is an error. When unset the active theme's active border color is used if it defines one, else the Niri blue. |
 
-The ring is hidden when nothing is focused, the focused window is minimized or floating (a floating window moves on its own when you drag it, and the ring would stay behind), maximized or fullscreen (`hide-when-maximized`), fullscreen without room for it (it shows when `layout.fullscreen-gap` is at least the ring `width`) or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher). The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
+The ring is hidden when nothing is focused, the focused window is minimized or floating (a floating window moves on its own when you drag it, and the ring would stay behind), fullscreen (`hide-in-fullscreen`), the only visible window on its display (`hide-when-alone`, never for a maximized column), fullscreen without room for it (it shows when `layout.fullscreen-gap` is at least the ring `width`) or off-screen (parked, or on a workspace no display shows), and while Gio itself is the active app (its main window or launcher), and while **macOS shows its own overview** (Mission Control, App Exposé): its panels are separate windows that the system does not move with the scaled ones, so they would show as empty frames over the overview (the dim hides too). The ring sits outside the window, so a width larger than `gaps` overlaps the neighbouring columns' edges.
 
 ### `[gestures]`
 
@@ -395,8 +398,9 @@ dim-strength = 0.15
 
 [focus-ring]
 enabled = true
-width = 4
+width = 2
 hide-when-maximized = true
+hide-when-alone = true
 active-color = "#7fc8ff"
 
 [logging]
