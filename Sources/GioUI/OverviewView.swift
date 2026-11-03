@@ -22,9 +22,12 @@ struct OverviewView: View {
             },
             requestScreenRecording: {
                 _ = requestScreenRecordingPermission()
+                openPrivacyPane("Privacy_ScreenCapture")
                 model.markScreenRecordingRequested()
                 model.refresh()
             },
+            screenRecordingRequested: model.screenRecordingRequested,
+            relaunch: { model.relaunch() },
             loginItem: loginItem.presentation,
             setLoginItem: { loginItem.set($0) },
             openLoginItems: { loginItem.openSystemSettings() }
@@ -50,6 +53,10 @@ struct OverviewDashboard: View {
     var showGuide: (() -> Void)?
     var requestAccessibility: () -> Void = {}
     var requestScreenRecording: () -> Void = {}
+    /// A request was made in this process: macOS applies the grant only after
+    /// Gio relaunches, so the row offers the relaunch instead of a new request.
+    var screenRecordingRequested = false
+    var relaunch: () -> Void = {}
     /// DA-06: the Open at Login row; nil hides it.
     var loginItem: LoginItemPresentation?
     var setLoginItem: (Bool) -> Void = { _ in }
@@ -216,12 +223,19 @@ struct OverviewDashboard: View {
                 )
             }
             CardRow {
+                let phase = screenRecordingStepPhase(
+                    granted: facts.screenRecordingGranted, requested: screenRecordingRequested
+                )
+                let why = switch phase {
+                case .granted: "Powers smooth snapshot animations."
+                case .awaitingRelaunch: "Granted it? macOS applies it after Gio relaunches."
+                case .notRequested: "Required for smooth motion. Relaunch Gio after granting it."
+                }
                 statusRow(
-                    symbol: "record.circle", tint: .pink, title: "Screen Recording",
-                    why: facts.screenRecordingGranted
-                        ? "Powers smooth snapshot animations."
-                        : "Required for smooth motion. Relaunch Gio after granting it.",
-                    granted: facts.screenRecordingGranted, action: ("Request Access…", requestScreenRecording),
+                    symbol: "record.circle", tint: .pink, title: "Screen Recording", why: why,
+                    granted: facts.screenRecordingGranted,
+                    action: phase == .awaitingRelaunch
+                        ? ("Relaunch Gio", relaunch) : ("Request Access…", requestScreenRecording),
                     missingKind: .warning, missingLabel: "Off"
                 )
             }
