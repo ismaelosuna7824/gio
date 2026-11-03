@@ -287,7 +287,7 @@ Window admission, observation and registration only. Out of scope: animation/per
 - [ ] WC-18 (`95491eb`) — The focus ring stays over macOS's own window overview (user report
   2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
   marco vacío").
-- [x] WC-19 (`7ba7a3d`, reverted) — Tried: keep a floating window above the strip (niri's floating
+- [x] WC-19 (`7ba7a3d`, reverted by `857d582`) — Tried: keep a floating window above the strip (niri's floating
   layer) by pinning its **window-server level** with the private `CGSSetWindowLevel`
   (`SkyLight`) plus `_AXUIElementGetWindow` for the window number. Result: **macOS 27.2 refuses
   it** for another app's window even with the Accessibility grant — the call returns success and
