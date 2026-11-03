@@ -236,11 +236,14 @@ public final class WindowEventRouter: @unchecked Sendable {
             book.didDetach(event.pid)
             discovery.appTerminated(event.pid)
         case .appActivated:
-            // A previously refused (or missed) app gets another chance now.
+            // A previously refused (or missed) app gets another chance now,
+            // and its windows are scanned: the full scan that refused it may
+            // have missed them too (busy app at a permission rebuild).
             if event.pid != context.ownPID, book.needsAttach(event.pid), let port,
                port.attach(pid: event.pid)
             {
                 book.didAttach(event.pid)
+                discovery.appAttached(event.pid)
             }
             if context.isTapMissing() {
                 // Permission may have arrived late: the one activation-time
