@@ -135,6 +135,17 @@ LIVE PENDING. Review: UNAVAILABLE.
   log's picks at 21:36:48 and 21:38:40 are `focus window requested id=37822:4` (Terminal), and every
   write to it fails `frameMismatch`; System Settings (740 wide) is the other window affected
   this session. LIVE PENDING too: pick Terminal in the overview, the ring shows.
+- [ ] NF-11 (`ff3d04b`) — Alt+O pick onto another app's window often left it without a ring (user report
+  2026-11-03, on the Xcode build that already had NF-10, picking OrbStack). Reproduced (debug log,
+  `gio overview` + arrow + Return): picking OrbStack from Terminal logs `focus ring hidden` at the pick,
+  before the reconcile, and no `focus ring shown` until another app is activated; picking the window
+  already focused keeps the ring; intermittent (one of three runs showed it). The FX-01 lead publish
+  reaches `FocusRingController` while the overview's non-activating key panel makes
+  `NSApplication.isActive` read true, so the mask hid it, and no app activation notification of Gio's
+  followed to refresh it. Fix: the mask reads `NSWorkspace.frontmostApplication` (Gio's pid) and the
+  controller also refreshes on `NSWorkspace.didActivateApplicationNotification`. Main-thread overlay,
+  no unit test (no window-server harness). GREEN: Core 2228, Session 578, UI 381 (54 skipped), POC 7,
+  Mac 19, macOS 116; signed build OK. LIVE PENDING: Alt+O, pick another app's window, ring shows.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.
