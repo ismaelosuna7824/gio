@@ -125,7 +125,7 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   base `origin/dev` `9ede867`; signed `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean.
   LIVE PENDING: the real panel over a desktop (vibrancy and shadow cannot be rendered
   offscreen).
-- [ ] DD-09 (`<hash>`) — Motion presets in the first-run guide and Settings (user request 2026-11-03:
+- [ ] DD-09 (`699e741`) — Motion presets in the first-run guide and Settings (user request 2026-11-03:
   "en el onboarding hay que poner dos opciones al final la recomendada… y las fast… también pon esa
   configuración en el settings para así desde el inicio sepan que pueden editar todo").
   `MotionPreset` (`recommended` = `[animations] enabled`, `fast` = off: every move instant, "the most
