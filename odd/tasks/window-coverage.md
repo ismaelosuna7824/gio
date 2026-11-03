@@ -287,7 +287,7 @@ Window admission, observation and registration only. Out of scope: animation/per
 - [ ] WC-18 (`95491eb`) — The focus ring stays over macOS's own window overview (user report
   2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
   marco vacío").
-- [ ] WC-19 (`<hash>`) — A floating window goes behind the strip as soon as focus moves (user report
+- [ ] WC-19 (`7ba7a3d`) — A floating window goes behind the strip as soon as focus moves (user report
   2026-11-03: "cuando tienes una pestaña flotante se queda atrás cuando te empiezas a mover con
   opt h+l y la idea es que siempre esté al frente, que por eso es flotante"). On macOS a tiled
   window's app activates with every focus move and the floating window belongs to another app, so
