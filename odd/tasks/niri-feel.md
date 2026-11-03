@@ -111,7 +111,7 @@ LIVE PENDING. Review: UNAVAILABLE.
   (2 skipped) — its one failure, `UpdatePreparerTests.testSetIDItemsNeverReachTheStagedCopy`, is
   environmental: the agent sandbox drops the setuid bit the fixture needs, and it reproduces outside
   this change. Signed build OK. LIVE PENDING: rebuild the app, focus a lone column, no ring.
-  **Follow-up (`<hash>`, live 2026-11-03 07:09)**: the user wants the ring back on a maximized
+  **Follow-up (`2bdc186`, live 2026-11-03 07:09)**: the user wants the ring back on a maximized
   column ("con Alt+F también debe salir"). Maximize no longer hides the ring, and a maximized column
   never counts as alone (`focusRingState` exempts it), so `Alt+F` shows the level indicator at 2 pt.
   The hide key became `hide-in-fullscreen` — the old `hide-when-maximized` still parses into it — and
