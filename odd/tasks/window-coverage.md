@@ -286,7 +286,26 @@ Window admission, observation and registration only. Out of scope: animation/per
   reproduce with the new lines in `gio logs`.
 - [ ] WC-18 (`95491eb`) — The focus ring stays over macOS's own window overview (user report
   2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
-  marco vacío"). Gio's ring and dim are separate panels at the windows' *real* frames; the
+  marco vacío").
+- [ ] WC-19 (`<hash>`) — A floating window goes behind the strip as soon as focus moves (user report
+  2026-11-03: "cuando tienes una pestaña flotante se queda atrás cuando te empiezas a mover con
+  opt h+l y la idea es que siempre esté al frente, que por eso es flotante"). On macOS a tiled
+  window's app activates with every focus move and the floating window belongs to another app, so
+  activation alone leaves it behind; the public `kAXRaiseAction` only crosses windows of the same
+  app. Decision (user): pin the window's level. `FloatingWindowLevel` (`GioMacOS`, dlopen of
+  SkyLight: `CGSMainConnectionID` + `CGSSetWindowLevel`, and `_AXUIElementGetWindow` from
+  ApplicationServices for the window number) sets `normal + 2` while the window floats — above the
+  dim (`normal + 1`), below the focus ring (`.floating`, 3) — and back to `normal` when it tiles;
+  every change is read back from `CGWindowListCopyWindowInfo`, so a macOS that ignores the call
+  leaves today's behaviour and logs `floating level refused id=…` once per window (or
+  `floating level unavailable` when the symbols are gone, never retried). `floatingLevelChanges`
+  (`GioCore`, pure) decides raise/restore from the ids already raised; the app syncs it at the end
+  of every settled pass (`finishSettle`, after frames and focus), so a float comes up above the
+  window the pass just focused. README Private APIs updated (this is the second private call).
+  RED: `FloatingLevelPlanTests` (5 cases). GREEN: Core 2229, Session 577, UI 377 (54 skipped),
+  POC 7, Mac 19, macOS 116 (2 skipped, the known setuid failure); signed build OK. LIVE PENDING:
+  float a window, move focus with `Alt+H/L` over another app; the float stays on top, and the log
+  has no `floating level refused`. Gio's ring and dim are separate panels at the windows' *real* frames; the
   WindowServer does not move them with the overview's scaled surfaces, so they read as empty
   borders. Detection: AltTab's macOS 27 finding (the Dock's `AXExpose*` notifications are gone):
   only `WindowManager`'s **shield** counts, a level-19 surface at least as large as one screen;

@@ -2224,6 +2224,49 @@ final class SessionHost: @unchecked Sendable {
     /// Every window of the pass is on its final frame (or failed). A zoom
     /// started by the pass is already running, so its verification is
     /// scheduled here too.
+    /// WC-19: the floating windows whose window-server level is raised now,
+    /// and the ones the system refused (logged once, retried on later passes).
+    private var raisedFloats: Set<WindowID> = []
+    private var loggedLevelRefusals: Set<WindowID> = []
+    private var floatingLevelUnavailable = false
+
+    /// WC-19: niri keeps floating windows above the strip. macOS orders apps
+    /// by activation, so this raises the window's level through the window
+    /// server (`FloatingWindowLevel`, private `CGSSetWindowLevel`) and steps
+    /// aside on a system that ignores it; the ring and the dim sit above it.
+    private func syncFloatingLevels() {
+        guard !floatingLevelUnavailable, let actuator else {
+            return
+        }
+        let floating = Set(
+            session.registry.managedWindows()
+                .filter { $0.mode == .floating && !$0.isMinimized }
+                .map(\.id)
+        )
+        let changes = floatingLevelChanges(raised: raisedFloats, floating: floating)
+        for id in changes.restore {
+            raisedFloats.remove(id)
+            loggedLevelRefusals.remove(id)
+            _ = actuator.setFloatingLevel(false, for: id)
+        }
+        for id in changes.raise {
+            switch actuator.setFloatingLevel(true, for: id) {
+            case .applied:
+                raisedFloats.insert(id)
+            case .refused:
+                if loggedLevelRefusals.insert(id).inserted {
+                    GioLog.record(.info, "floating level refused id=\(id.pid):\(id.elementID)")
+                }
+            case .unavailable:
+                floatingLevelUnavailable = true
+                GioLog.record(
+                    .warn, "floating level unavailable: this macOS does not export CGSSetWindowLevel; floats stay where they are"
+                )
+                return
+            }
+        }
+    }
+
     private func finishSettle(deferred: [WindowID], zoomWriteFailures: Set<WindowID>) {
         // PF-02: one line per opened window.
         for line in openTimeline.settled(at: ProcessInfo.processInfo.systemUptime) {
@@ -2233,6 +2276,8 @@ final class SessionHost: @unchecked Sendable {
         // PF-K: a hung app may have missed its restore; retry on its lane.
         reconciler?.restoreEnhancedUI()
         nativeZoom.scheduleVerifications(failed: zoomWriteFailures)
+        // WC-19: the pass wrote its frames and focused; floats go above them.
+        syncFloatingLevels()
     }
 
     // MARK: - Snapshot renderer (SM-04/SM-08)
