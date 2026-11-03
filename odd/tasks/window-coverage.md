@@ -284,7 +284,7 @@ Window admission, observation and registration only. Out of scope: animation/per
   frame; `LogFrameTests` new. GREEN: Core 2216, Session 577, UI 377 (54 skipped), POC 7, Mac 19,
   macOS 116 (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING:
   reproduce with the new lines in `gio logs`.
-- [ ] WC-18 (`<hash>`) — The focus ring stays over macOS's own window overview (user report
+- [ ] WC-18 (`95491eb`) — The focus ring stays over macOS's own window overview (user report
   2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
   marco vacío"). Gio's ring and dim are separate panels at the windows' *real* frames; the
   WindowServer does not move them with the overview's scaled surfaces, so they read as empty
