@@ -140,6 +140,10 @@ public let onboardingKeys: [OnboardingKey] = [
         combos: [HotkeyCombo(modifiers: [.alt], key: "F")], families: ["maximize-column"]
     ),
     OnboardingKey(
+        title: "Float / tile", detail: "Take the window out of the strip, or put it back",
+        combos: [HotkeyCombo(modifiers: [.alt, .shift], key: "Space")], families: ["toggle-floating"]
+    ),
+    OnboardingKey(
         title: "Workspace down / up", detail: "Switch workspaces on this display",
         combos: [HotkeyCombo(modifiers: [.alt], key: "U"), HotkeyCombo(modifiers: [.alt], key: "I")],
         families: ["focus-workspace-down", "focus-workspace-up"]

@@ -138,6 +138,12 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   `ShellPresentationTests` (steps count 4/5, `.motion` last, titles, the preset default). GREEN:
   Core 2213, Session 577, UI 376 (53 skipped), POC 7, Mac 19, macOS 116 (2 skipped, the known
   setuid sandbox failure); signed build OK. LIVE PENDING: the real setup sheet and the Settings row.
+  **Follow-up (`<hash>`, same day)**: the user also asked for a shortcut to float the focused window and
+  for it to be discoverable. `toggle-floating` already ships on `Alt+Shift+Space`
+  (`ShortcutCatalog`, default bindings, USER_GUIDE "Float the focused window (or tile it again)"):
+  it sets `mode = .floating` and the next reflow takes the window out of the strip; unfloating puts it
+  back in its column and reflows. It was missing from the setup's *Keys to Know*, so it is now the third
+  row there ("Float / tile"). Snapshot `dd05-onboarding-keys` re-rendered; UI 377 (54 skipped).
 
 ## Acceptance criteria
 - Every section rendered to PNG (light + dark) and reviewed; consistent tokens; no regressions.

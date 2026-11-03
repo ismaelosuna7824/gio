@@ -246,7 +246,10 @@ final class ShellPresentationTests: XCTestCase {
                 )
             }
         }
-        XCTAssertEqual(onboardingKeys.map(\.title), ["Focus left / right", "Maximize column", "Workspace down / up", "Open launcher"])
+        XCTAssertEqual(
+            onboardingKeys.map(\.title),
+            ["Focus left / right", "Maximize column", "Float / tile", "Workspace down / up", "Open launcher"]
+        )
     }
 
     // MARK: - Menu bar
