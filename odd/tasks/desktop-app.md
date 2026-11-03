@@ -216,6 +216,18 @@ necesidad de modificar el config.toml").
   nothing else changes. GREEN: Core 2224, Session 577, UI 377 (54 skipped), POC 7, Mac 19, macOS 116
   (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING: with another app
   frontmost, **Open Gio** in the menu bar puts the window in front of it.
+- [ ] DA-14 (`3ba8abf`) — The setup hid macOS's permission alert (user report 2026-11-03, screenshot of
+  the Screen Recording step with no alert visible: "la ventana de acceso sale hasta atrás"). The
+  cover (DA-11) sits above the menu bar while Gio is active and dropped only on
+  `didResignActive`; `CGRequestScreenCaptureAccess` shows its alert while Gio stays active, so the
+  alert stayed under the cover, and the step opened no System Settings although its button says
+  so. Fix: `SetupCoverStacking` (GioUI, pure) raises the cover only while Gio is active and no
+  permission request is pending; the setup's request actions call the `setupCoverYield`
+  environment action first (cover to the normal level until Gio is active again), and the Screen
+  Recording step also opens `Privacy_ScreenCapture`, like Accessibility. RED: compile
+  (`SetupCoverStacking` missing). GREEN: Core 2224, Session 577, UI 381 (54 skipped), POC 7,
+  Mac 19, macOS 116; signed build OK. LIVE PENDING: on the Screen Recording and Accessibility
+  steps, **Open System Settings** shows macOS's alert and System Settings above the setup.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
