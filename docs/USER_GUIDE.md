@@ -34,7 +34,7 @@ Gio tiles the windows of the current Space into a horizontal strip of columns as
 
 Closing the main window keeps Gio running from its menu bar item; **Quit Gio** there stops tiling and puts every window back on screen. The app's **Shortcuts** section lists, rebinds and removes every shortcut.
 
-**Motion.** The first-run guide ends with *Pick a Feel*: **Recommended** keeps Gio's spring motion, **Fast** turns every animation off — the most fluid feel, with no motion at all. The choice writes `[animations] enabled`, and **Settings > Animations > Preset** offers the same two at any time, next to every other animation setting.
+**Motion.** The first-run guide ends with *Pick a Feel*: **Recommended** keeps Gio's spring motion with the Snapshot renderer, **Fast** turns every animation off and moves the real windows through Accessibility — the most fluid feel, with no motion and no Screen Recording needed. The choice writes `[animations] enabled` and `renderer`, and **Settings > Animations > Preset** offers the same two at any time, next to every other animation setting.
 
 ## Keyboard layouts
 
@@ -275,7 +275,7 @@ An invalid config never stops the window manager.
 
 | Key | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | bool | `true` | Off makes every reflow instant. **Settings > Animations > Preset** calls the two values **Recommended** (on) and **Fast** (off), and the last step of the first-run guide offers the same choice. |
+| `enabled` | bool | `true` | Off makes every reflow instant. **Settings > Animations > Preset** calls the two values **Recommended** (on, with the `snapshot` renderer) and **Fast** (off, with the `ax` renderer: real windows, no Screen Recording), and the last step of the first-run guide offers the same choice. |
 | `curve` | string | `"spring"` | `"spring"` (Niri-style) or `"ease-out"`. A spring keeps the speed of a move it interrupts, so rapid key presses flow instead of restarting. An unknown name warns and keeps the default. |
 | `duration-ms` | number | `200` | Length of one `ease-out` animation. Rounded and clamped to `0...1000` with a warning. `0` is instant for both curves. |
 | `spring-damping-ratio` | number | `1.0` | `0.2...3`. `1` settles without overshoot; lower values bounce. Clamped with a warning. |

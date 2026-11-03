@@ -437,11 +437,11 @@ struct OnboardingContent: View {
             HStack(spacing: GioSpacing.m) {
                 motionOption(
                     .recommended, symbol: "sparkles", tint: .green, title: "Recommended",
-                    detail: "Spring motion for every move: what Gio does out of the box."
+                    detail: "Spring motion for every move and the Snapshot renderer: what Gio does out of the box."
                 )
                 motionOption(
                     .fast, symbol: "bolt.fill", tint: .orange, title: "Fast",
-                    detail: "No animations at all: the most fluid feel, every move instant."
+                    detail: "No animations, real windows moved through Accessibility: the most fluid feel, no Screen Recording."
                 )
             }
             .frame(maxWidth: 580)

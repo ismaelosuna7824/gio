@@ -13,10 +13,18 @@ final class MotionPresetTests: XCTestCase {
         let template = defaultConfigTemplate()
         let fast = try patchGioConfig(template, edits: motionPresetEdits(.fast)).get()
         XCTAssertFalse(fast.config.animations.enabled)
+        XCTAssertEqual(fast.config.animations.renderer, .ax, "Fast moves the real windows, no Screen Recording")
         let recommended = try patchGioConfig(template, edits: motionPresetEdits(.recommended)).get()
         XCTAssertTrue(recommended.config.animations.enabled)
+        XCTAssertEqual(recommended.config.animations.renderer, .snapshot)
         XCTAssertEqual(MotionPreset(animations: fast.config.animations), .fast)
         XCTAssertTrue(defaultGioConfig().animations.enabled, "the default config ships Recommended")
+        XCTAssertEqual(defaultGioConfig().animations.renderer, .snapshot)
+    }
+
+    func testEachPresetBringsItsRenderer() {
+        XCTAssertEqual(MotionPreset.recommended.renderer, .snapshot)
+        XCTAssertEqual(MotionPreset.fast.renderer, .ax)
     }
 
     func testTheTemplateStartsWithRecommended() throws {
