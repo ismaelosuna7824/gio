@@ -239,6 +239,12 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
         } else {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
+        // DA-13: activating right after the policy flips from `.accessory` to
+        // `.regular` can land after the window is ordered, which left it behind
+        // the app that was frontmost (live 2026-11-03: the window opened
+        // between two other windows). Ordering it in regardless puts it in
+        // front of its level now; the key status follows the activation.
+        window?.orderFrontRegardless()
         window?.makeKeyAndOrderFront(nil)
         model.setWindowVisible(true)
     }

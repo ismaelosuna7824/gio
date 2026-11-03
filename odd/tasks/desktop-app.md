@@ -207,6 +207,15 @@ necesidad de modificar el config.toml").
   inset 66 = frame 600) while the log list inside still does (document 7800 pt in a 305 pt
   clip); `scrollDisabled` was rejected because it also froze the inner list. Re-rendered: the
   Logs title bar is the page color like Rules. LIVE PENDING: the real window.
+- [ ] DA-13 (`<hash>`) — Gio's window can open behind other apps (user report 2026-11-03, screenshot
+  with the Overview window between the Music and Activity Monitor windows). `MainWindowController.show()`
+  flipped the activation policy from `.accessory` to `.regular` and called `activate()` in the same
+  turn, so the activation could land after `makeKeyAndOrderFront` and leave the window behind the app
+  that was frontmost. Fix: `orderFrontRegardless()` puts it in front of its level immediately (key
+  status still follows the activation), before `makeKeyAndOrderFront`. Views have no unit tests;
+  nothing else changes. GREEN: Core 2224, Session 577, UI 377 (54 skipped), POC 7, Mac 19, macOS 116
+  (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING: with another app
+  frontmost, **Open Gio** in the menu bar puts the window in front of it.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
