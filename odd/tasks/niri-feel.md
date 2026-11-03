@@ -95,7 +95,7 @@ LIVE PENDING. Review: UNAVAILABLE.
   template wording pin was dropped (the template still must parse to the defaults). GREEN: all
   bundles 0 failures (UI 312/53 skipped, Session 484, POC 7, Mac 19, MacOS 98, Core 1965); signed
   build OK. LIVE PENDING: a fresh config (no `indicator` key) shows the ring.
-- [ ] NF-09 (`35ac69b`) — Ring off when the focused window is the only visible one, and thinner by default
+- [ ] NF-09 (`2a254bc`) — Ring off when the focused window is the only visible one, and thinner by default
   (user request 2026-11-03, screenshot: a lone column filling the screen wore a 4 pt frame around
   the whole display; "que se quite el borde… si hay que ponerlo, reducir los puntos… que sea más
   tenue"). `hide-when-maximized` never suppressed it: a wide column without a saved width spec is
