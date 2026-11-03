@@ -131,7 +131,16 @@ public enum ActionApplier {
             }
         case .toggleFloating:
             if let id = workspace.focusedWindow {
-                _ = try? context.registry.toggleFloating(for: id)
+                let mode = try? context.registry.toggleFloating(for: id)
+                // WC-17: the float diagnostics start here; the reflow logs the
+                // restore or the hide that follows.
+                if let window = context.registry.find(id) {
+                    GioLog.record(
+                        .info,
+                        "float toggle id=\(id.pid):\(id.elementID) app=\(window.application)"
+                            + " mode=\(mode?.rawValue ?? "?") frame=\(logFrame(window.frame))"
+                    )
+                }
             }
         case .fullscreen:
             effect.fullscreenToggle = fullscreenToggle(manager: manager, context: context)
