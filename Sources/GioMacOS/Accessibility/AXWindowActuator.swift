@@ -206,37 +206,6 @@ public final class AXWindowActuator: WindowActuator {
         }
     }
 
-    /// WC-19: put a floating window above the strip (or back to the normal
-    /// level) through the window server, by the window number of its element.
-    /// Called from the session queue after a pass settled.
-    public func setFloatingLevel(_ above: Bool, for id: WindowID) -> FloatingWindowLevel.Outcome {
-        guard let handle = handle(for: id), let number = windowNumber(of: handle.element) else {
-            return .refused
-        }
-        return floatingLevel.set(above: above, windowNumber: number)
-    }
-
-    /// `_AXUIElementGetWindow` is private too (it is how the window number of
-    /// an element is read); nil when this macOS does not export it.
-    private func windowNumber(of element: AXUIElement) -> UInt32? {
-        guard let getWindow = Self.getWindow else {
-            return nil
-        }
-        var number: CGWindowID = 0
-        return getWindow(element, &number) == .success ? number : nil
-    }
-
-    private static let getWindow: (@convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError)? = {
-        typealias GetWindowFn = @convention(c) (AXUIElement, UnsafeMutablePointer<CGWindowID>) -> AXError
-        let path = "/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices"
-        guard let handle = dlopen(path, RTLD_LAZY), let symbol = dlsym(handle, "_AXUIElementGetWindow") else {
-            return nil
-        }
-        return unsafeBitCast(symbol, to: GetWindowFn.self)
-    }()
-
-    private let floatingLevel = FloatingWindowLevel()
-
     /// PF-I: succeeds only when the window's app is frontmost with the window
     /// focused (`focusAXWindow`); may wait up to `FocusLandingCheck.budget`
     /// on the calling thread (an app's write lane or the session queue).

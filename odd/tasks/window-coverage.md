@@ -287,38 +287,15 @@ Window admission, observation and registration only. Out of scope: animation/per
 - [ ] WC-18 (`95491eb`) — The focus ring stays over macOS's own window overview (user report
   2026-11-03, screenshot of Mission Control: a pale frame around every scaled window, "se ve el
   marco vacío").
-- [ ] WC-19 (`7ba7a3d`) — A floating window goes behind the strip as soon as focus moves (user report
-  2026-11-03: "cuando tienes una pestaña flotante se queda atrás cuando te empiezas a mover con
-  opt h+l y la idea es que siempre esté al frente, que por eso es flotante"). On macOS a tiled
-  window's app activates with every focus move and the floating window belongs to another app, so
-  activation alone leaves it behind; the public `kAXRaiseAction` only crosses windows of the same
-  app. Decision (user): pin the window's level. `FloatingWindowLevel` (`GioMacOS`, dlopen of
-  SkyLight: `CGSMainConnectionID` + `CGSSetWindowLevel`, and `_AXUIElementGetWindow` from
-  ApplicationServices for the window number) sets `normal + 2` while the window floats — above the
-  dim (`normal + 1`), below the focus ring (`.floating`, 3) — and back to `normal` when it tiles;
-  every change is read back from `CGWindowListCopyWindowInfo`, so a macOS that ignores the call
-  leaves today's behaviour and logs `floating level refused id=…` once per window (or
-  `floating level unavailable` when the symbols are gone, never retried). `floatingLevelChanges`
-  (`GioCore`, pure) decides raise/restore from the ids already raised; the app syncs it at the end
-  of every settled pass (`finishSettle`, after frames and focus), so a float comes up above the
-  window the pass just focused. README Private APIs updated (this is the second private call).
-  RED: `FloatingLevelPlanTests` (5 cases). GREEN: Core 2229, Session 577, UI 377 (54 skipped),
-  POC 7, Mac 19, macOS 116 (2 skipped, the known setuid failure); signed build OK. LIVE PENDING:
-  float a window, move focus with `Alt+H/L` over another app; the float stays on top, and the log
-  has no `floating level refused`. Gio's ring and dim are separate panels at the windows' *real* frames; the
-  WindowServer does not move them with the overview's scaled surfaces, so they read as empty
-  borders. Detection: AltTab's macOS 27 finding (the Dock's `AXExpose*` notifications are gone):
-  only `WindowManager`'s **shield** counts, a level-19 surface at least as large as one screen;
-  the Spaces bar (level 14) alone, a Stage Manager stage icon (66×82 at level 19) and another
-  app's level-19 surface do not. Pure `systemOverviewShowing(_:screens:)` in
-  `GioCore/FocusRing/SystemOverview.swift`; `SystemOverviewMonitor` (`GioMacOS/System`, utility
-  queue, `DispatchSourceTimer` 500 ms with 150 ms leeway, measured under 0.1 % CPU) maps the
-  on-screen window list to it and calls only on a change; `FocusRingController` and
-  `FocusDimController` gain `setSystemOverview` and the app wires them in `main.swift`
-  (log `system overview shown|dismissed`). RED: `SystemOverviewTests` (7 cases from the spec's
-  scenarios). GREEN: Core 2223, Session 577, UI 377 (54 skipped), POC 7, Mac 19, macOS 116
-  (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING: Control+Up over a
-  focused window, no frame over the overview.
+- [x] WC-19 (`7ba7a3d`, reverted) — Tried: keep a floating window above the strip (niri's floating
+  layer) by pinning its **window-server level** with the private `CGSSetWindowLevel`
+  (`SkyLight`) plus `_AXUIElementGetWindow` for the window number. Result: **macOS 27.2 refuses
+  it** for another app's window even with the Accessibility grant — the call returns success and
+  the layer stays 0, which the read-back caught: `floating level refused id=2082:4`
+  (2026-11-03T15:05:48.127Z). Reverted at the user's request: the second private call, its
+  `floatingLevelChanges` helper and the `finishSettle` hook are gone, the README is back to one
+  private call, and floats keep today's behaviour (own frame, z-order by activation). Pushing
+  further needs SIP off (yabai's scripting-addition route), which Gio rules out.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
@@ -363,3 +340,7 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
 - 2026-10-15: WC-14 park by the size the app kept done (`c941b20`, same branch). LIVE PASS.
 - 2026-10-15: WC-15 admission floats rejoin the grid on activation done (`a03d47d`, branch
   `perf/measured-pass`). LIVE PENDING (needs an app that reports a dialog, then a window).
+- 2026-11-03: WC-17 (float diagnostics) shipped; WC-18 (no ring over Mission Control) shipped;
+  WC-19 (pin a float's level) tried and reverted: macOS 27.2 refuses `CGSSetWindowLevel` for
+  another app's window (`floating level refused`), so floats keep their frame but stay in the
+  normal layer.
