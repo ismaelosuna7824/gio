@@ -268,6 +268,22 @@ Window admission, observation and registration only. Out of scope: animation/per
   WC-13 one per click now carries both answers). LIVE PENDING: a link clicked in Slack with
   the browser on another workspace brings the browser forward (needs a real click; the
   terminal cannot post mouse events).
+- [ ] WC-17 (`00232b3`) — Floating-window diagnostics (user report 2026-11-03: "a veces hay bug con
+  las pestañas flotantes en las que se esconden así", screenshot of a float partly behind a tile).
+  Read-only investigation (delegated): floats are excluded from every layout (`tilingWorkspace`),
+  so a float on a shown workspace is only ever written by the hidden-book restore, the
+  inactive-workspace parking, the display relocation or the startup/quit restore; the FI-10 yield
+  path (`window yields to app`, `.appControlled`) drops the hidden-book entry and is never written
+  again. In the reported half hour the only float-state event in `gio.log` was `window yields to
+  app id=2082:3 app=DeepSeek Harness snapBacks=3` (13:23:12.684Z); no workspace switch happened, so
+  the hidden-book paths were not exercised. Fix scope for now: make the next occurrence
+  traceable — `logFrame` (`GioCore/Logging`) and four log lines, once per transition (not per
+  frame): `float toggle … mode=… frame=…` (`ActionApplier`), `float unmanaged … reason=… frame=…`
+  (`ReflowPlanner`, once per yield), `float hide … frame=…` and `float restore … frame=…` (the
+  frame it was hidden with). RED: `WindowEventRouterTests` expected the old yield line without the
+  frame; `LogFrameTests` new. GREEN: Core 2216, Session 577, UI 377 (54 skipped), POC 7, Mac 19,
+  macOS 116 (2 skipped, the known setuid sandbox failure); signed build OK. LIVE PENDING:
+  reproduce with the new lines in `gio logs`.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.
