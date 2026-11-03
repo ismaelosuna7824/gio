@@ -120,6 +120,17 @@ LIVE PENDING. Review: UNAVAILABLE.
   overlay's maximized expectation. GREEN: Core 2210, Session 577, UI 375 (53 skipped), POC 7, Mac 19,
   macOS 116 (2 skipped, same environmental failure); signed build OK. LIVE PENDING: rebuild, `Alt+F`,
   the ring stays.
+- [ ] NF-10 (`416570d`) — No ring on some focused windows (user report 2026-11-03, screenshot: Terminal
+  focused next to Zen, no ring; "solo algunas y otras no"). Reproduced live on 0.1.4 (activating Zen
+  shows the ring panel at Zen's frame, activating Terminal shows none; debug log `focus ring hidden`
+  right after `focus adopt ... id=37822:5`). Cause: Terminal keeps its character-grid size
+  (requested 744x933, actual 741x934), every write reports `frameMismatch`, and `foldSettle` forgot
+  the physical frame of every failed window, so `FocusRingPublisher` had no frame (ring hidden) and
+  the window dropped out of the neighbour/dim checks. Fix: `foldSettledPhysicalFrames` (GioCore)
+  records a failed window at the actual frame its failure reports (mismatch); other failures,
+  vanished and deferred windows are still forgotten. RED: compile (`foldSettledPhysicalFrames`
+  missing). GREEN: Core 2228, Session 577, UI 381 (54 skipped), POC 7, Mac 19, macOS 116; signed
+  build OK. LIVE PENDING: with the fixed build, focus Terminal next to another window: ring shows.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.

@@ -228,6 +228,15 @@ necesidad de modificar el config.toml").
   (`SetupCoverStacking` missing). GREEN: Core 2224, Session 577, UI 381 (54 skipped), POC 7,
   Mac 19, macOS 116; signed build OK. LIVE PENDING: on the Screen Recording and Accessibility
   steps, **Open System Settings** shows macOS's alert and System Settings above the setup.
+- [ ] DA-15 (`884f5c6`) — Screen Recording stayed "Off" after granting it (user report 2026-11-03,
+  Overview screenshot). macOS applies the grant only after Gio relaunches, but the Overview row kept
+  offering **Request Access…** (and opened no System Settings, so an earlier denial showed nothing).
+  Fix: the row uses `screenRecordingStepPhase` like the setup: after a request in this process it
+  offers **Relaunch Gio**; the request also opens `Privacy_ScreenCapture`. On this Mac the grant in
+  the list also belonged to the dev build's signature (`Gio Dev` vs `Apple Development`), as with
+  Accessibility; `tccutil reset ScreenCapture dev.gio.windowmanager` cleared it. Views have no unit
+  tests (the phase function is tested). GREEN: as NF-10; signed build OK. LIVE PENDING: request,
+  grant, **Relaunch Gio**, the row reads Granted.
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,
