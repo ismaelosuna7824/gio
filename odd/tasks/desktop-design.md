@@ -144,7 +144,7 @@ launcher PNG grey veil is an offscreen icon-render artifact. LIVE PENDING. ALL D
   it sets `mode = .floating` and the next reflow takes the window out of the strip; unfloating puts it
   back in its column and reflows. It was missing from the setup's *Keys to Know*, so it is now the third
   row there ("Float / tile"). Snapshot `dd05-onboarding-keys` re-rendered; UI 377 (54 skipped).
-  **Follow-up 2 (`<hash>`, same day)**: the user tied each preset to its renderer ("el snapshot debe
+  **Follow-up 2 (`a93fa1a`, same day)**: the user tied each preset to its renderer ("el snapshot debe
   de estar activado… cuando se selecciona Recommended y accesibilidad cuando está en fast").
   `MotionPreset.renderer` (recommended → `snapshot`, fast → `ax`) and `motionPresetEdits` writes
   `[animations] renderer` next to `enabled`, so the setup and the Settings Preset row switch both;
