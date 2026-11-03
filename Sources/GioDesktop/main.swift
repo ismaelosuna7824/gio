@@ -86,7 +86,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         let overview = SystemOverviewMonitor(
             screens: { NSScreen.screens.map(\.frame) },
             onChange: { [weak self] showing in
-                GioLog.record(.debug, "system overview \(showing ? "shown" : "dismissed")")
+                GioLog.record(.info, "system overview \(showing ? "shown" : "dismissed")")
                 self?.focusRing.setSystemOverview(showing)
                 self?.focusDim.setSystemOverview(showing)
             }
