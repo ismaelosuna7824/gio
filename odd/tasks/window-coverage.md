@@ -296,6 +296,16 @@ Window admission, observation and registration only. Out of scope: animation/per
   `floatingLevelChanges` helper and the `finishSettle` hook are gone, the README is back to one
   private call, and floats keep today's behaviour (own frame, z-order by activation). Pushing
   further needs SIP off (yabai's scripting-addition route), which Gio rules out.
+- [ ] WC-20 (`cf55762`) — A window stayed on screen unmanaged (user report 2026-11-03, screenshots: Tern
+  over the strip "como si estuviera flotante", missing from the overview). Log: the session started
+  without Accessibility (21:35:16, `observation refused for 11 app(s)`), the permission rebuild at
+  21:35:50 attached all but one (`observation refused for 1 app(s)`), and its full scan did not list
+  Tern; `gio list-windows` had 10 windows, no Tern. A refused app gets its observer on activation,
+  but nothing scanned its windows then, so they stayed unknown until the app opened a new one. Fix:
+  `WindowEventRouter` calls `discovery.appAttached(pid)` when an activation attaches an app, as the
+  launch path does. RED: `testRefusedAppAttachedOnActivationRegistersItsWindows` (no scan of pid 8).
+  GREEN: Core 2228, Session 578, UI 381 (54 skipped), POC 7, Mac 19, macOS 116. LIVE PENDING:
+  start Gio without the grant, grant it, activate the refused app: its window tiles.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.

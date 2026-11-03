@@ -109,6 +109,7 @@ struct OnboardingSheet: View {
     let onFinish: (MotionPreset) -> Void
     let onLater: () -> Void
     let onPrepareRelaunch: () -> Void
+    @Environment(\.setupCoverYield) private var yieldCover
 
     var body: some View {
         OnboardingContent(
@@ -120,12 +121,15 @@ struct OnboardingSheet: View {
             loginItem: loginItem.presentation,
             onFinish: onFinish, onLater: onLater,
             requestAccessibility: {
+                yieldCover()
                 _ = requestAXPermission()
                 openPrivacyPane("Privacy_Accessibility")
                 model.refresh()
             },
             requestScreenRecording: {
+                yieldCover()
                 _ = requestScreenRecordingPermission()
+                openPrivacyPane("Privacy_ScreenCapture")
                 model.markScreenRecordingRequested()
                 model.refresh()
             },

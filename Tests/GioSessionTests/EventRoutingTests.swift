@@ -624,6 +624,22 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.port!.attachCalls.filter { $0 == 8 }.count, 2)
     }
 
+    /// A refused app (busy at the rebuild after a permission grant, live:
+    /// Tern) attached on activation registers its windows: the full scan
+    /// missed them, so without this its window stayed unmanaged on screen.
+    func testRefusedAppAttachedOnActivationRegistersItsWindows() {
+        world.port!.attachResults[8] = [false]
+        world.regular = [7, 8]
+        router.syncObservers()
+        world.classify = [:]
+        world.scan = SystemWindowDiscoveryResult(windows: [discovered(pid: 8)], completePIDs: [8])
+
+        send(.appActivated, pid: 8)
+
+        XCTAssertEqual(world.scans.last, 8)
+        XCTAssertTrue(world.registered.contains { $0.pid == 8 })
+    }
+
     func testEventsHopToTheSessionQueue() {
         world.port!.deliver(SystemWindowEvent(kind: .window(.destroyed), pid: 7, label: "App", element: element))
         XCTAssertEqual(world.registered.count, 1)

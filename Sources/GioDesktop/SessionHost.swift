@@ -2142,7 +2142,8 @@ final class SessionHost: @unchecked Sendable {
     }
 
     /// One settled report into the session's memory: minimum sizes, physical
-    /// frames (failed, vanished and deferred windows are forgotten), trust,
+    /// frames (`foldSettledPhysicalFrames`: a mismatch keeps where the window
+    /// landed; other failures, vanished and deferred windows are forgotten), trust,
     /// render-check candidates. SM-31: vanished windows lose their snapshot
     /// images and get one proof scan of their pid. `retryLater`: busy writes
     /// get a backoff retry (MM-11); off while a caller retries them itself.
@@ -2170,15 +2171,11 @@ final class SessionHost: @unchecked Sendable {
         let now = ProcessInfo.processInfo.systemUptime
         for (id, frame) in visible where parked[id] == nil {
             echoGate.recordApplied(id, frame: frame, at: now)
-            physicalFrames[id] = frame
         }
         for (id, target) in parked {
             echoGate.recordApplied(id, frame: target.frame, at: now)
-            physicalFrames[id] = target.frame
         }
-        for id in report.failed + report.vanished + report.deferred {
-            physicalFrames.removeValue(forKey: id)
-        }
+        foldSettledPhysicalFrames(&physicalFrames, report: report, visible: visible, parked: parked)
         snapshotRefresher.noteVanished(report.vanished)
         discovery.noteSettled(vanished: report.vanished, alive: report.applied + report.alreadyCorrect + report.parked)
         trustedFrames.recordSettle(report: report, visible: visible, parked: parked)
