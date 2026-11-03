@@ -72,8 +72,13 @@ public final class FocusRingController {
 
     public init() {}
 
-    /// Start following Gio's own activation: the ring hides while Gio is the
-    /// active app (main window, launcher) and returns when it resigns.
+    /// Start following which app is frontmost: the ring hides while Gio is
+    /// (main window, an activating launcher) and returns when another app is.
+    /// The mask reads the frontmost app, not `NSApplication.isActive`: a key
+    /// non-activating panel (the overview) can report Gio active while another
+    /// app stays frontmost, and a ring published then stayed masked with no
+    /// activation notification to refresh it (live: an overview pick onto
+    /// another app's window). Every app activation refreshes it.
     public func start() {
         let center = NotificationCenter.default
         for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
@@ -83,6 +88,13 @@ public final class FocusRingController {
                 }
             )
         }
+        observers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.refresh() }
+            }
+        )
     }
 
     public func apply(_ next: FocusRingState) {
@@ -101,6 +113,7 @@ public final class FocusRingController {
 
     public func stop() {
         observers.forEach(NotificationCenter.default.removeObserver)
+        observers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         observers = []
         state = .hidden
         refresh()
@@ -110,7 +123,9 @@ public final class FocusRingController {
     }
 
     private func refresh() {
-        switch systemOverview ? .hidden : state.masked(gioIsFrontmost: NSApplication.shared.isActive) {
+        let gioIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
+            == ProcessInfo.processInfo.processIdentifier
+        switch systemOverview ? .hidden : state.masked(gioIsFrontmost: gioIsFrontmost) {
         case .hidden:
             if isShown {
                 panel?.orderOut(nil)
