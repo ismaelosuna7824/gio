@@ -57,6 +57,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
       publish: ${{ steps.version.outputs.publish }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
       pr: ${{ steps.merged.outputs.pr }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,6 +74,8 @@ jobs:
         run: |
           latest="$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
           head_tags="$(git tag -l 'v*' --points-at "$SHA" | tr '\n' ' ' | sed 's/ *$//')"
+          # release:beta numbers the next patch's prerelease after these.
+          beta_tags="$(git tag -l 'v*-beta.*' | tr '\n' ' ' | sed 's/ *$//')"
           # The pull request this merge commit belongs to: its release:* label
           # is the bump, its body the release notes.
           pr="$(gh api "repos/$GITHUB_REPOSITORY/commits/$SHA/pulls" --jq '[.[] | select(.merged_at != null and .base.ref == "main")][0].number // empty')"
@@ -83,6 +86,7 @@ jobs:
           {
             echo "latest=$latest"
             echo "head_tags=$head_tags"
+            echo "beta_tags=$beta_tags"
             echo "bump=$bump"
             echo "pr=$pr"
           } >> "$GITHUB_OUTPUT"
@@ -97,6 +101,7 @@ jobs:
           LATEST_TAG: ${{ steps.merged.outputs.latest }}
           BUMP: ${{ steps.merged.outputs.bump }}
           HEAD_TAGS: ${{ steps.merged.outputs.head_tags }}
+          BETA_TAGS: ${{ steps.merged.outputs.beta_tags }}
         run: scripts/release-version.sh
 
   test:
@@ -260,18 +265,28 @@ jobs:
           TAG: ${{ needs.version.outputs.tag }}
           VERSION: ${{ needs.version.outputs.version }}
           PR: ${{ needs.version.outputs.pr }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
           SHA: ${{ github.sha }}
         run: |
           cd dist
           sha256sum -c "Gio-$VERSION.dmg.sha256"
-          # Gio.dmg: the same file under a fixed name, so
-          # releases/latest/download/Gio.dmg (the landing page's Download
-          # button) always serves the newest stable release. The updater
-          # only reads Gio-<version>.dmg and its .sha256.
-          cp "Gio-$VERSION.dmg" Gio.dmg
+          assets=("Gio-$VERSION.dmg" "Gio-$VERSION.dmg.sha256")
           # The tag is created here, on the merged commit (a tag created with
           # the workflow token starts no other workflow).
           args=(--repo "$GITHUB_REPOSITORY" --target "$SHA" --title "Gio $VERSION")
+          if [ "$PRERELEASE" = "true" ]; then
+            # A beta (release:beta): a prerelease, never "latest", so
+            # releases/latest and its Gio.dmg keep the newest stable release;
+            # the updater offers it only with Include beta versions on.
+            args+=(--prerelease --latest=false)
+          else
+            # Gio.dmg: the same file under a fixed name, so
+            # releases/latest/download/Gio.dmg (the landing page's Download
+            # button) always serves the newest stable release. The updater
+            # only reads Gio-<version>.dmg and its .sha256.
+            cp "Gio-$VERSION.dmg" Gio.dmg
+            assets+=(Gio.dmg)
+          fi
           notes="$RUNNER_TEMP/release-notes.md"
           : > "$notes"
           if [ -n "$PR" ]; then
@@ -289,4 +304,4 @@ jobs:
           else
             args+=(--generate-notes)
           fi
-          gh release create "$TAG" "${args[@]}" "Gio-$VERSION.dmg" "Gio-$VERSION.dmg.sha256" Gio.dmg
+          gh release create "$TAG" "${args[@]}" "${assets[@]}"

@@ -196,6 +196,16 @@ critical or high issue; every finding below was checked against the code before 
   skipped job passes the required check); fork PRs still run. Prepare Release writes `<!-- release notes -->`
   after its instructions and publish keeps only what follows (CRLF-safe awk, whole body as fallback).
   `actionlint` clean; awk checked on a CRLF sample. LIVE PENDING: the next release PR and push to `dev`.
+- [ ] RL-14 (`PENDING`) — Beta releases (stability follow-up from the OmniWM comparison; user choice 2026-11-04:
+  a beta release PR, over a daily canary from `dev`, which would open the `release` environment to `dev`, or
+  a local beta). Prepare Release gains **beta**: label `release:beta`; `release-version.sh` makes it the next
+  patch's `-beta.N` (`BETA_TAGS`: the `v*-beta.*` tags, N one past that version's highest; a newline in them is
+  refused), `prerelease=true`. `release.yml` passes `BETA_TAGS` and `prerelease`; publish adds `--prerelease
+  --latest=false` and leaves out `Gio.dmg` for a beta, so `releases/latest` stays the stable one. The app
+  already offers prereleases only with **Include beta versions** on (UP-..). RED:
+  `scripts/test-release-version.sh` 4 beta cases failed (`status 1`), GREEN with every case. Both workflows
+  parse (Ruby YAML; no `actionlint` installed here). LIVE PENDING: the first beta PR, its prerelease and an app
+  with Include beta versions on being offered it.
 
 Decisions:
 - Hardened Runtime only in **Release** (pbxproj) plus the CI command line, not in Debug: Debug runs (ad-hoc or

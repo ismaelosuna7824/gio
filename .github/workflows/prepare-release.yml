@@ -1,12 +1,14 @@
 name: Prepare Release
 
 # Opens (or updates) the release pull request dev -> main for the chosen bump:
-# patch (0.1.0 -> 0.1.1), minor (-> 0.2.0) or major (-> 1.0.0). The pull
-# request carries the bump as its release:<bump> label, its title shows the
-# version it will publish, and its body (the release notes, editable before the
-# merge) starts with a fixed install line and lists dev's user-facing commits
-# since the latest release (docs(odd), test, ci, chore and build left out).
-# Merging it is the release:
+# patch (0.1.0 -> 0.1.1), minor (-> 0.2.0), major (-> 1.0.0) or beta (a
+# prerelease of the next patch, 0.1.0 -> 0.1.1-beta.N, offered in the app only
+# with Include beta versions on; the stable release comes later with a
+# patch/minor/major PR). The pull request carries the bump as its
+# release:<bump> label, its title shows the version it will publish, and its
+# body (the release notes, editable before the merge) starts with a fixed
+# install line and lists dev's user-facing commits since the latest release
+# (docs(odd), test, ci, chore and build left out). Merging it is the release:
 # release.yml computes the version again at merge time from the latest tag and
 # the label, so a stale title never publishes a wrong version.
 on:
@@ -16,7 +18,7 @@ on:
         description: "How the version grows"
         required: true
         type: choice
-        options: [patch, minor, major]
+        options: [patch, minor, major, beta]
         default: patch
 
 concurrency:
@@ -53,8 +55,9 @@ jobs:
         run: |
           git fetch --no-tags origin main
           latest="$(git tag -l 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n 1 || true)"
+          beta_tags="$(git tag -l 'v*-beta.*' | tr '\n' ' ' | sed 's/ *$//')"
           # The same computation as the merge to main (release.yml), as a preview.
-          EVENT_NAME=push REF_NAME=main LATEST_TAG="$latest" HEAD_TAGS="" \
+          EVENT_NAME=push REF_NAME=main LATEST_TAG="$latest" HEAD_TAGS="" BETA_TAGS="$beta_tags" \
             GITHUB_OUTPUT="$GITHUB_OUTPUT" scripts/release-version.sh
           {
             echo "latest=${latest:-none}"
@@ -74,7 +77,7 @@ jobs:
             exit 1
           fi
           repo="$GITHUB_REPOSITORY"
-          for kind in patch minor major; do
+          for kind in patch minor major beta; do
             gh label create "release:$kind" --repo "$repo" --force \
               --color 7FD6B6 --description "Merging to main publishes a $kind release"
           done
@@ -100,6 +103,10 @@ jobs:
             echo "Everything after this paragraph becomes the release notes: edit it before merging."
             echo
             echo "<!-- release notes -->"
+            if [ "$BUMP" = "beta" ]; then
+              echo "**Beta.** Offered in the app only with Diagnostics > Updates > Include beta versions on."
+              echo
+            fi
             echo "Apple silicon, macOS 13 or later. First install: the app is not notarized yet; see Install in the README."
             echo
             echo "## Changes"
@@ -111,7 +118,7 @@ jobs:
           if [ -z "$pr" ]; then
             gh pr create --repo "$repo" --base main --head dev --title "$title" --body-file "$body" --label "release:$BUMP"
           else
-            for kind in patch minor major; do
+            for kind in patch minor major beta; do
               if [ "$kind" != "$BUMP" ]; then
                 gh pr edit "$pr" --repo "$repo" --remove-label "release:$kind" || true
               fi

@@ -100,6 +100,7 @@ LIVE PENDING until the first hardened release: launch, Accessibility, Screen Rec
 3. Edit the pull request's body if you want different release notes (for example to drop a commit the filter kept, or to add one it dropped), then merge it with **Create a merge commit**.
 4. The merge starts **Release**: `gh run watch --repo ismaelosuna7824/gio` (or the **Actions** tab). The version is computed again at the merge from the latest tag and the label, so the title never decides it. The release appears under **Releases** with `Gio-0.2.0.dmg`, `Gio-0.2.0.dmg.sha256` and `Gio.dmg`, and the apps out there offer it within a day.
 5. If the run fails, nothing is published and no tag exists: fix on `dev` and prepare a new release pull request (or re-run the failed jobs when the failure was the runner's).
+6. **A beta first.** Pick **beta** in step 2: the pull request is labeled `release:beta` and its merge publishes `vX.Y.Z-beta.N` (the next patch, `N` one past that version's betas already tagged) as a GitHub **prerelease**, never "latest": `releases/latest` and its `Gio.dmg` keep the newest stable release, and the app offers the beta only to users with **Diagnostics > Updates > Include beta versions** on (or already on a beta). Use it a few days, then run Prepare Release again with **patch**, **minor** or **major** for the stable version (a stable patch after `v0.1.6-beta.2` is `v0.1.6`, which beta users are offered too).
 
 ## Dry run and local DMG
 
