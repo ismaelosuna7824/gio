@@ -68,6 +68,7 @@ public final class WindowServerWatcher: @unchecked Sendable {
 
     public func noteRegistered(_ id: WindowID, number: UInt32) {
         book.record(id, number: number)
+        context.log(.debug, "window server number id=\(id.pid):\(id.elementID) number=\(number)")
     }
 
     public func forget(_ id: WindowID) {
