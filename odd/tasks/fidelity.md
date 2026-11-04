@@ -198,3 +198,16 @@ Review: UNAVAILABLE.
   (it asserted the stranding) and `testRescuedFrameKeepsTheSizeInsideTheVisibleArea` (compile failure).
   Still open: a Terminal window yielded again at 06:42:52 with the FI-12 build (three Terminal windows
   report the same frame, (771,69,741,872): likely one Terminal tab group; not reproduced).
+- 2026-11-04: FI-14 (`DONE`, commit below) — windows lost during a screen lock. User (v0.1.7 release):
+  windows left off screen that Gio did not manage. Log: SecurityAgent at 22:46:34, then at 22:52:10 a
+  rescan while `loginwindow` (pid 412) owned the screen logged `discovery exclude ... ignore(notAWindow)`
+  for nine apps: every window answered no role. Their apps still counted as fully read
+  (`completePIDs`), so `vanishedWindowIDs` purged Music, Figma, OrbStack and Bitwarden, parked at
+  their slivers; no event re-adopted them after the unlock (window server: Bitwarden x=-743, Music
+  x=-979, Figma x=-899, OrbStack x=-743, all unmanaged). Rule 10 broken: an unreadable answer was taken
+  as proof. Now a window whose role does not answer (and that is not destroyed) is skipped
+  (`discoverySkips`): its app is not fully read and nothing of it is purged. RED:
+  `WindowFactsDecodingTests.testAnUnreadableRoleIsSkippedNotIgnored` (compile failure). Also seen: the
+  dev session quit at 07:18 during a lock (`readbackFailed -25204`) restored 0 windows, so they started
+  the release parked; the first release launch had no Accessibility yet (expected: nothing managed
+  until the grant relaunch). NOT verified live with a real lock.
