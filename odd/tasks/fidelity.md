@@ -198,7 +198,7 @@ Review: UNAVAILABLE.
   (it asserted the stranding) and `testRescuedFrameKeepsTheSizeInsideTheVisibleArea` (compile failure).
   Still open: a Terminal window yielded again at 06:42:52 with the FI-12 build (three Terminal windows
   report the same frame, (771,69,741,872): likely one Terminal tab group; not reproduced).
-- 2026-11-04: FI-14 (`DONE`, commit below) — windows lost during a screen lock. User (v0.1.7 release):
+- 2026-11-04: FI-14 (`DONE`, `7b5ecc5`) — windows lost during a screen lock. User (v0.1.7 release):
   windows left off screen that Gio did not manage. Log: SecurityAgent at 22:46:34, then at 22:52:10 a
   rescan while `loginwindow` (pid 412) owned the screen logged `discovery exclude ... ignore(notAWindow)`
   for nine apps: every window answered no role. Their apps still counted as fully read
