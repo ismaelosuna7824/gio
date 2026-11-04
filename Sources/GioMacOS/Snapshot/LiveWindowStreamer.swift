@@ -114,7 +114,12 @@ public final class LiveWindowStreamer: @unchecked Sendable {
         lock.withLock { self.frames = frames }
     }
 
-    public func start(_ windows: [WindowID: CGRect], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat) {
+    /// `windowNumbers` (WS-04): recorded on the session queue, they win over
+    /// learned ids and frames when matching the windows to stream.
+    public func start(
+        _ windows: [WindowID: CGRect], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
+        windowNumbers: [WindowID: UInt32] = [:]
+    ) {
         guard #available(macOS 14.0, *) else {
             return
         }
@@ -128,7 +133,10 @@ public final class LiveWindowStreamer: @unchecked Sendable {
         log(.debug, liveLayerStartLine(count: admitted.count))
         let requested = windows.filter { admitted.contains($0.key) }
         Task {
-            await launch(requested, generation: generation, displays: displays, primaryDisplayHeight: primaryDisplayHeight)
+            await launch(
+                requested, generation: generation, displays: displays, primaryDisplayHeight: primaryDisplayHeight,
+                windowNumbers: windowNumbers
+            )
         }
     }
 
@@ -162,9 +170,12 @@ public final class LiveWindowStreamer: @unchecked Sendable {
 
     @available(macOS 14.0, *)
     private func launch(
-        _ windows: [WindowID: CGRect], generation: Int, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+        _ windows: [WindowID: CGRect], generation: Int, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
+        windowNumbers: [WindowID: UInt32]
     ) async {
-        let resolved = await capturer.liveWindows(windows, primaryDisplayHeight: primaryDisplayHeight)
+        let resolved = await capturer.liveWindows(
+            windows, primaryDisplayHeight: primaryDisplayHeight, windowNumbers: windowNumbers
+        )
         for (id, frame) in windows.sorted(by: { $0.key < $1.key }) {
             guard let window = resolved[id] else {
                 fail(id, generation: generation, reason: "unmatched")

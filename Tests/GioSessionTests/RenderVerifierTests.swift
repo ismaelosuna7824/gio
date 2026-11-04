@@ -20,6 +20,7 @@ final class RenderVerifierTests: XCTestCase {
         var logs: [(LogLevel, String)] = []
         var states: [pid_t: [ServerWindowState]] = [:]
         var stateQueries: [pid_t] = []
+        var windowNumbers: [WindowID: UInt32] = [:]
     }
 
     private var world: World!
@@ -58,7 +59,8 @@ final class RenderVerifierTests: XCTestCase {
                 serverWindowStates: { pid in
                     world.stateQueries.append(pid)
                     return world.states[pid] ?? []
-                }
+                },
+                windowNumber: { world.windowNumbers[$0] }
             ),
             scheduler: scheduler
         )
@@ -82,6 +84,20 @@ final class RenderVerifierTests: XCTestCase {
         XCTAssertEqual(probe.serverQueries, 1)
         XCTAssertFalse(verifier.hasCandidates)
         XCTAssertTrue(world.nudges.isEmpty, "a matching render needs no nudge")
+    }
+
+    /// WS-04: the recorded window number names the entry; another window of
+    /// the app at the target frame does not hide the window drawn elsewhere.
+    func testTheRecordedWindowNumberBeatsAnotherEntryAtTheTargetFrame() {
+        world.windowNumbers = [id: 51]
+        probe.serverWindows = [
+            ServerWindow(pid: 7, bounds: target, number: 50),
+            ServerWindow(pid: 7, bounds: target.offsetBy(dx: 40, dy: 0), number: 51),
+        ]
+        let verifier = makeVerifier()
+        settle(verifier)
+        scheduler.advance(by: 0.15)
+        XCTAssertEqual(world.nudges.count, 1)
     }
 
     func testNewMotionCancelsThePendingCheck() {

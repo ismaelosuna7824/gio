@@ -47,8 +47,18 @@ UInt32 window number). `_AXUIElementGetWindow` returned the focused window's num
   of that window arrived since (50 ms skew), the app is animating or a zoom is in flight, and
   otherwise handled by the same `handleFrameChange` as the AX event. RED: compile (Core
   `.moved`, watcher `frameChanged`/`subscribe`, router `windowServerFrameChanged`).
-- Not done yet: replacing the frame-matching CGWindowID guesses (snapshots, render
-  verification, native zoom) with the recorded numbers.
+- [ ] WS-04 (`PENDING`) — The recorded numbers replace the frame-matching guesses: snapshot capture
+  (`SnapshotCaptureRequest.windowNumbers`, paint check, fresh capture, live streams; merged over the
+  learned ids at match time by `snapshotKnownWindowNumbers`, never stored in
+  `SnapshotWindowIDBook`), render verification (`ServerWindow.number` from `kCGWindowNumber`, a
+  pass 0 by number in `matchServerWindows`), focus dim (`DimWindow.number` first in `serverIndex`),
+  native zoom and resize probes (`known:` in the host closures). A number that is nil or no longer
+  listed falls back to the frame rules. Not changed: `snapshotUndrawnWindows`,
+  `unmanagedWindowFingerprint` (still by frame). RED (delegated writer): compile, then wrong or
+  ambiguous matches for the render, dim and snapshot merge tests; the fallback guards and two
+  context tests were never seen failing. GREEN: Core 2253, Session 598, UI 385 (54 skipped), POC 7,
+  Mac 19, macOS 119; signed build OK. Live (2026-11-04T04:52Z, Fast preset with Screen Recording):
+  `gio overview` captured `windows=10 captured=10 misses=0`, parked windows included.
 
 ## Evidence
 GREEN: Core 2237, Session 584, UI 383 (54 skipped), POC 7, Mac 19, macOS 118; signed build OK;

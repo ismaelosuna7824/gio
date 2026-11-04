@@ -330,7 +330,8 @@ final class SessionHost: @unchecked Sendable {
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 frontToBack: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 mainHop: mainQueueHop,
-                deliver: { [unowned self] in onFocusDim?($0) }
+                deliver: { [unowned self] in onFocusDim?($0) },
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -377,7 +378,8 @@ final class SessionHost: @unchecked Sendable {
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 appName: { [unowned self] in appName($0) },
                 log: { GioLog.record($0, $1) },
-                serverWindowStates: { [unowned self] in windowServerWindowStates(pid: $0, displayHeight: primaryHeight()) }
+                serverWindowStates: { [unowned self] in windowServerWindowStates(pid: $0, displayHeight: primaryHeight()) },
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -423,7 +425,8 @@ final class SessionHost: @unchecked Sendable {
                 ownPid: getpid(),
                 log: { GioLog.record($0, $1) },
                 appName: { [unowned self] in appName($0) },
-                physicalMemory: ProcessInfo.processInfo.physicalMemory
+                physicalMemory: ProcessInfo.processInfo.physicalMemory,
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -464,27 +467,33 @@ final class SessionHost: @unchecked Sendable {
                 },
                 // SM-14: tiny captures off the session queue; the answer hops back.
                 // SM-29: probes carry a resized window's start size and background.
+                // WS-04: recorded window numbers are read here, on the session queue.
                 checkPaint: { [unowned self, snapshotCapturer] probes, answer in
                     let (screens, primary) = displayParameters.captureScreens
+                    let numbers = recordedWindowNumbers(probes.keys)
                     Task.detached {
                         answer(await snapshotCapturer.paintCheck(
-                            windows: probes, displays: screens, primaryDisplayHeight: primary
+                            windows: probes, displays: screens, primaryDisplayHeight: primary, windowNumbers: numbers
                         ))
                     }
                 },
                 // SM-30: a resized window captured again at its target size mid-flight.
                 captureFresh: { [unowned self, snapshotCapturer] id, probe, answer in
                     let (screens, primary) = displayParameters.captureScreens
+                    let number = windowServer.windowNumber(of: id)
                     Task.detached {
                         answer(await snapshotCapturer.freshCapture(
-                            id, probe: probe, displays: screens, primaryDisplayHeight: primary
+                            id, probe: probe, displays: screens, primaryDisplayHeight: primary, windowNumber: number
                         ))
                     }
                 },
                 log: { GioLog.record($0, $1) },
                 startLive: { [unowned self, liveStreamer] windows in
                     let (screens, primary) = displayParameters.captureScreens
-                    liveStreamer.start(windows, displays: screens, primaryDisplayHeight: primary)
+                    liveStreamer.start(
+                        windows, displays: screens, primaryDisplayHeight: primary,
+                        windowNumbers: recordedWindowNumbers(windows.keys)
+                    )
                 },
                 stopLive: { [liveStreamer] in
                     liveStreamer.stopAll()
@@ -511,7 +520,7 @@ final class SessionHost: @unchecked Sendable {
                 windowServerID: { [unowned self] id, frame in
                     let candidates = windowServerSnapshotCandidates(pids: [id.pid], displayHeight: primaryHeight())
                     guard case .matched(let windowID)? = matchSnapshotCandidates(
-                        managed: [id: frame], candidates: candidates
+                        managed: [id: frame], candidates: candidates, known: recordedWindowNumbers([id])
                     )[id] else {
                         return nil
                     }
@@ -547,7 +556,9 @@ final class SessionHost: @unchecked Sendable {
                     let candidates = windowServerSnapshotCandidates(
                         pids: Set(managed.keys.map(\.pid)), displayHeight: primaryHeight()
                     )
-                    return matchSnapshotCandidates(managed: managed, candidates: candidates)
+                    return matchSnapshotCandidates(
+                        managed: managed, candidates: candidates, known: recordedWindowNumbers(managed.keys)
+                    )
                 },
                 windowServerSize: { windowServerSize(windowID: $0) },
                 isSizeSettable: { [unowned self] in actuator?.element(for: $0).map(axIsSizeSettable) ?? false },
@@ -1098,6 +1109,13 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// WS-04: the window numbers recorded at registration for `ids` (those
+    /// that have one). Session queue only: the watcher is read here, and the
+    /// result travels as data to off-queue captures.
+    private func recordedWindowNumbers<S: Sequence>(_ ids: S) -> [WindowID: UInt32] where S.Element == WindowID {
+        ids.reduce(into: [:]) { numbers, id in numbers[id] = windowServer.windowNumber(of: id) }
+    }
+
     /// SM-02 debug action (Diagnostics): captures the visible managed windows
     /// and a backdrop once, logs the summary and hands it back on the main
     /// queue. Never runs from a motion; images are released on return. The
@@ -1118,6 +1136,7 @@ final class SessionHost: @unchecked Sendable {
                     frames[window.id] = frame
                 }
             }
+            let numbers = recordedWindowNumbers(frames.keys)
             DispatchQueue.main.async { [weak self] in
                 guard let self else {
                     return
@@ -1132,7 +1151,7 @@ final class SessionHost: @unchecked Sendable {
                 let request = SnapshotCaptureRequest(
                     windows: frames, displays: screens,
                     primaryDisplayHeight: primaryScreen()?.frame.height ?? 1169,
-                    measure: true, reason: .measure
+                    measure: true, reason: .measure, windowNumbers: numbers
                 )
                 Task.detached { [snapshotCapturer] in
                     let result = await snapshotCapturer.capture(request)
@@ -1302,7 +1321,8 @@ final class SessionHost: @unchecked Sendable {
                 displays: screens.map {
                     SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
                 },
-                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500, reason: .overview
+                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500, reason: .overview,
+                windowNumbers: recordedWindowNumbers(plan.toCapture.keys)
             )
             Task.detached { [snapshotCapturer] in
                 let result = await snapshotCapturer.capture(request)

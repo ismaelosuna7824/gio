@@ -28,14 +28,17 @@ public struct FocusSectionConfig: Equatable, Sendable {
 }
 
 /// A window as the dim model sees it: owner pid (to find it in the
-/// WindowServer list) and Gio's frame for it (Cocoa coordinates).
+/// WindowServer list), Gio's frame for it (Cocoa coordinates) and its
+/// recorded window number, when known (WS-04).
 public struct DimWindow: Equatable, Sendable {
     public var pid: pid_t
     public var frame: CGRect
+    public var number: UInt32?
 
-    public init(pid: pid_t, frame: CGRect) {
+    public init(pid: pid_t, frame: CGRect, number: UInt32? = nil) {
         self.pid = pid
         self.frame = frame
+        self.number = number
     }
 }
 
@@ -95,10 +98,16 @@ private func edgeDistance(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
     )
 }
 
-/// Index in `frontToBack` of the entry that draws `window`: same pid, every
-/// edge within the tolerance, closest first; `used` entries are skipped.
+/// Index in `frontToBack` of the entry that draws `window`: the entry with
+/// its recorded number when listed (WS-04), else same pid, every edge within
+/// the tolerance, closest first; `used` entries are skipped.
 private func serverIndex(of window: DimWindow, in frontToBack: [ServerWindow], used: Set<Int>) -> Int? {
-    frontToBack.indices
+    if let number = window.number, let index = frontToBack.indices.first(where: {
+        !used.contains($0) && frontToBack[$0].pid == window.pid && frontToBack[$0].number == number
+    }) {
+        return index
+    }
+    return frontToBack.indices
         .filter { !used.contains($0) && frontToBack[$0].pid == window.pid }
         .map { ($0, edgeDistance(frontToBack[$0].bounds, window.frame)) }
         .filter { $0.1 <= dimMatchTolerance }

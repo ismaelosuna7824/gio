@@ -212,6 +212,17 @@ final class SnapshotPlanningTests: XCTestCase {
         XCTAssertEqual(result[id(1)], .matched(14))
     }
 
+    /// WS-04: the number recorded at registration wins over the one the book
+    /// learned; windows without a recorded number keep the learned one.
+    func testRecordedWindowNumbersWinOverLearnedOnes() {
+        let known = snapshotKnownWindowNumbers(learned: [id(1): 11, id(2): 12], recorded: [id(1): 21, id(3): 23])
+        XCTAssertEqual(known, [id(1): 21, id(2): 12, id(3): 23])
+        let result = matchSnapshotCandidates(
+            managed: [id(1): a], candidates: [candidate(11, a), candidate(21, a)], known: known
+        )
+        XCTAssertEqual(result[id(1)], .matched(21))
+    }
+
     // MARK: SM-17 title tie-break of same-size parked windows
 
     /// Synthetic window names only (never real titles in assertions).
