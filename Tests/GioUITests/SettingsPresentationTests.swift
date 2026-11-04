@@ -337,6 +337,25 @@ final class SettingsPresentationTests: XCTestCase {
         )
     }
 
+    // MARK: - Layout key hints
+
+    /// MD-02: the hints under the Layout preview show the user's own combos
+    /// and drag modifier; an unbound action or a drag turned off drops out.
+    func testLayoutKeyHintsFollowTheConfig() throws {
+        let defaults = layoutKeyHints(GioConfig())
+        XCTAssertEqual(defaults.map(\.label), ["Move down", "Cycle width", "Resize", "Move", "Focus right"])
+        XCTAssertEqual(defaults[1].trigger, .combo(try XCTUnwrap(parseHotkey("Alt+R"))))
+        XCTAssertEqual(defaults[2].trigger, .mouse([.alt], "right-drag"))
+        XCTAssertEqual(defaults[3].trigger, .mouse([.alt], "drag"))
+
+        var config = try parseGioConfig("[keybindings]\n\"Alt+R\" = \"none\"\n\"Alt+Period\" = \"switch-preset-column-width\"\n\"Alt+Shift+J\" = \"none\"\n").get().0
+        config.behavior.mouseDrag = MouseDragSettings(move: false, resize: true, modifiers: [.ctrl, .alt])
+        let custom = layoutKeyHints(config)
+        XCTAssertEqual(custom.map(\.label), ["Cycle width", "Resize", "Focus right"])
+        XCTAssertEqual(custom[0].trigger, .combo(try XCTUnwrap(parseHotkey("Alt+Period"))))
+        XCTAssertEqual(custom[1].trigger, .mouse([.ctrl, .alt], "right-drag"))
+    }
+
     // MARK: - Focus section
 
     func testFocusDraftCollectsEveryFocusEdit() {

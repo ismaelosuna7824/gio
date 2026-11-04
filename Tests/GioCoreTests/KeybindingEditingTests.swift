@@ -300,17 +300,25 @@ final class KeybindingEditingTests: XCTestCase {
         XCTAssertEqual(shortcutActionTitle(.focusRight), "Focus right")
     }
 
-    // MARK: - The launcher's shown combo
+    // MARK: - The combo shown for an action
 
     /// The launcher title bar and the menu bar item show the combo that
     /// opens it now, not a fixed ⌥Space: the user's own binding first.
     func testTheLauncherHintFollowsTheBinding() throws {
-        XCTAssertEqual(launcherHotkey(in: GioConfig()), combo("Alt+Space"))
+        XCTAssertEqual(shownHotkey(for: .toggleLauncher, in: GioConfig()), combo("Alt+Space"))
         let moved = try parse("[keybindings]\n\"Alt+Space\" = \"none\"\n\"Ctrl+Alt+P\" = \"toggle-launcher\"\n")
-        XCTAssertEqual(launcherHotkey(in: moved), combo("Ctrl+Alt+P"))
+        XCTAssertEqual(shownHotkey(for: .toggleLauncher, in: moved), combo("Ctrl+Alt+P"))
         let added = try parse("[keybindings]\n\"Ctrl+Alt+P\" = \"toggle-launcher\"\n")
-        XCTAssertEqual(launcherHotkey(in: added), combo("Ctrl+Alt+P"), "the user's binding wins over the default")
+        XCTAssertEqual(shownHotkey(for: .toggleLauncher, in: added), combo("Ctrl+Alt+P"), "the user's binding wins over the default")
         let removed = try parse("[keybindings]\n\"Alt+Space\" = \"none\"\n")
-        XCTAssertNil(launcherHotkey(in: removed))
+        XCTAssertNil(shownHotkey(for: .toggleLauncher, in: removed))
+    }
+
+    /// MD-02: the Layout preview's key hints read the same way.
+    func testAnyActionShowsItsCurrentCombo() throws {
+        XCTAssertEqual(shownHotkey(for: .switchPresetColumnWidth, in: GioConfig()), combo("Alt+R"))
+        let rebound = try parse("[keybindings]\n\"Alt+Period\" = \"switch-preset-column-width\"\n")
+        XCTAssertEqual(shownHotkey(for: .switchPresetColumnWidth, in: rebound), combo("Alt+Period"))
+        XCTAssertNil(shownHotkey(for: .swapWindowLeft, in: GioConfig()), "unbound by default")
     }
 }

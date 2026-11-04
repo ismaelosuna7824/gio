@@ -56,14 +56,17 @@ struct LayoutSettingsView: View {
     private var previewCard: some View {
         SectionCard(
             "Preview",
-            footer: "Updates as you edit, before Apply. The focused column is outlined; its neighbors scroll off screen. Ticks mark the preset widths Alt+R cycles through."
+            footer: "Updates as you edit, before Apply. The focused window is ringed and stacked over another one in its column; the neighbors scroll off screen. Ticks mark the preset widths; the keys below are your current bindings."
         ) {
             GioSegmented(
                 title: "Preview mode", selection: $previewMode,
                 options: LayoutPreviewMode.allCases.map { ($0, $0.title) }, width: 260
             )
         } content: {
-            LayoutPreviewView(geometry: layoutPreviewGeometry(draft.current, mode: previewMode), mode: previewMode)
+            LayoutPreviewView(
+                geometry: layoutPreviewGeometry(draft.current, mode: previewMode), mode: previewMode,
+                hints: layoutKeyHints(model.snapshot.config)
+            )
                 .padding(GioSpacing.s)
         }
     }
@@ -241,34 +244,46 @@ struct LayoutSettingsView: View {
     }
 }
 
-/// The display miniature: desktop, three columns, focused outline and a
-/// ruler with the preset widths.
+/// The display miniature: a desktop with a menu bar, three columns of
+/// windows (title bars, traffic lights, content), the focused one ringed in
+/// the accent with a glow, a ruler with the preset widths and (MD-02) the
+/// strip's everyday keys as the config binds them.
 struct LayoutPreviewView: View {
     let geometry: LayoutPreviewGeometry
     let mode: LayoutPreviewMode
+    var hints: [LayoutKeyHint] = []
     @Environment(\.gioAccent) private var accent
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let rulerHeight: CGFloat = 37
+    /// The menu bar above the strip, in display points; a fullscreen window
+    /// covers the whole display, menu bar included.
+    private var menuBar: CGFloat { mode == .fullscreen ? 0 : 30 }
 
     var body: some View {
-        PreviewCanvas(height: 300) {
-            GeometryReader { proxy in
-                let available = CGSize(width: proxy.size.width - 48, height: proxy.size.height - 30 - rulerHeight)
-                let scale = min(available.width / geometry.display.width, available.height / geometry.display.height)
-                let screen = CGSize(width: geometry.display.width * scale, height: geometry.display.height * scale)
-                let origin = CGPoint(x: (proxy.size.width - screen.width) / 2, y: 16)
-                ZStack(alignment: .topLeading) {
-                    screenView(size: screen, scale: scale)
-                        .offset(x: origin.x, y: origin.y)
-                    ruler(width: screen.width, scale: scale)
-                        .offset(x: origin.x, y: origin.y + screen.height + 6)
+        VStack(spacing: GioSpacing.s) {
+            PreviewCanvas(height: 340) {
+                GeometryReader { proxy in
+                    let display = CGSize(width: geometry.display.width, height: geometry.display.height + menuBar)
+                    let available = CGSize(width: proxy.size.width - 48, height: proxy.size.height - 30 - rulerHeight)
+                    let scale = min(available.width / display.width, available.height / display.height)
+                    let screen = CGSize(width: display.width * scale, height: display.height * scale)
+                    let origin = CGPoint(x: (proxy.size.width - screen.width) / 2, y: 16)
+                    ZStack(alignment: .topLeading) {
+                        screenView(size: screen, scale: scale)
+                            .offset(x: origin.x, y: origin.y)
+                        ruler(width: screen.width, scale: scale)
+                            .offset(x: origin.x, y: origin.y + screen.height + 6)
+                    }
                 }
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(accessibilitySummary)
+            if !hints.isEmpty {
+                hintGrid
+            }
         }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(accessibilitySummary)
     }
 
     private var accessibilitySummary: String {
@@ -277,34 +292,103 @@ struct LayoutPreviewView: View {
         return "Layout preview, \(mode.title.lowercased()): focused column \(percent)% of the screen"
     }
 
+    /// One tile per window: the focused column holds a stack of two in the
+    /// Columns preview (the gap between them is the configured gap).
+    private struct Tile {
+        let rect: CGRect
+        let title: String
+        let tint: SectionTint
+        let focused: Bool
+        let column: Int
+    }
+
+    private var tiles: [Tile] {
+        let titles = ["Browser", "Editor", "Terminal"]
+        let tints: [SectionTint] = [.blue, .green, .gray]
+        var result: [Tile] = []
+        let gap = geometry.columns.count > 1 ? max(geometry.columns[1].minX - geometry.columns[0].maxX, 0) : 0
+        for (index, column) in geometry.columns.enumerated() {
+            let rect = column.offsetBy(dx: 0, dy: menuBar)
+            let focused = index == geometry.focusedIndex
+            if focused, mode == .columns, rect.height > gap + 40 {
+                let height = (rect.height - gap) / 2
+                result.append(Tile(rect: CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: height),
+                                   title: titles[index % 3], tint: tints[index % 3], focused: true, column: index))
+                result.append(Tile(rect: CGRect(x: rect.minX, y: rect.minY + height + gap, width: rect.width, height: height),
+                                   title: "Notes", tint: .orange, focused: false, column: index))
+            } else {
+                result.append(Tile(rect: rect, title: titles[index % 3], tint: tints[index % 3], focused: focused, column: index))
+            }
+        }
+        return result
+    }
+
     private func screenView(size: CGSize, scale: CGFloat) -> some View {
         let palette = AccentPalette(accent: accent, colorScheme: colorScheme)
         return ZStack(alignment: .topLeading) {
             PreviewDesktop()
-            ForEach(Array(geometry.columns.enumerated()), id: \.offset) { index, column in
-                let rect = CGRect(
-                    x: column.minX * scale, y: column.minY * scale,
-                    width: column.width * scale, height: column.height * scale
-                )
-                let focused = index == geometry.focusedIndex
-                MiniWindow(tint: focused ? .blue : .gray, cornerRadius: 4)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4, style: .continuous)
-                            .strokeBorder(focused ? palette.fill : .clear, lineWidth: 1.5)
-                    )
-                    .frame(width: max(rect.width, 1), height: max(rect.height, 1))
-                    .offset(x: rect.minX, y: rect.minY)
-                    .opacity(focused || mode == .columns ? 1 : 0)
+            ForEach(Array(tiles.enumerated()), id: \.offset) { _, tile in
+                PreviewTile(title: tile.title, tint: tile.tint, focused: tile.focused, ring: palette.fill)
+                    .frame(width: max(tile.rect.width * scale, 1), height: max(tile.rect.height * scale, 1))
+                    .offset(x: tile.rect.minX * scale, y: tile.rect.minY * scale)
+                    .opacity(tile.column == geometry.focusedIndex || mode == .columns ? 1 : 0)
+            }
+            if menuBar > 0 {
+                menuBarView
+                    .frame(width: size.width, height: menuBar * scale)
             }
         }
         .frame(width: size.width, height: size.height)
-        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
                 .strokeBorder(Color.black.opacity(colorScheme == .dark ? 0.6 : 0.25), lineWidth: 2)
         )
         .shadow(color: .black.opacity(0.12), radius: 4, y: 2)
         .animation(reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.9), value: geometry)
+    }
+
+    private var menuBarView: some View {
+        HStack(spacing: 9) {
+            Text("Gio").fontWeight(.semibold).foregroundStyle(GioColor.primaryText)
+            ForEach(["File", "Edit", "View"], id: \.self) { item in
+                Text(item).foregroundStyle(GioColor.secondaryText)
+            }
+            Spacer(minLength: 0)
+            Text("9:41").foregroundStyle(GioColor.secondaryText)
+        }
+        .font(.system(size: 8))
+        .padding(.horizontal, 10)
+        .background(Color.black.opacity(colorScheme == .dark ? 0.28 : 0.08))
+    }
+
+    /// The key hints, two to a row like keyboard legends.
+    private var hintGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: GioSpacing.s) {
+            ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
+                HStack(spacing: GioSpacing.xs) {
+                    switch hint.trigger {
+                    case .combo(let combo):
+                        KeyCombo(combo)
+                    case .mouse(let modifiers, let gesture):
+                        HStack(spacing: 3) {
+                            ForEach(modifierGlyphs(modifiers), id: \.self) { Keycap($0) }
+                            Keycap(gesture)
+                        }
+                    }
+                    Text(hint.label)
+                        .font(GioFont.caption)
+                        .foregroundStyle(GioColor.secondaryText)
+                }
+                .accessibilityElement(children: .combine)
+            }
+        }
+        .padding(.horizontal, GioSpacing.s)
+        .padding(.bottom, GioSpacing.xs)
+    }
+
+    private func modifierGlyphs(_ modifiers: Set<HotkeyModifier>) -> [String] {
+        [(HotkeyModifier.ctrl, "⌃"), (.alt, "⌥"), (.shift, "⇧"), (.cmd, "⌘")].filter { modifiers.contains($0.0) }.map(\.1)
     }
 
     /// A width scale from the left padding: the default width as a bar,
@@ -340,5 +424,59 @@ struct LayoutPreviewView: View {
         }
         .frame(width: width, height: rulerHeight, alignment: .topLeading)
         .opacity(mode == .columns ? 1 : 0.4)
+    }
+}
+
+/// One preview window: a title bar with the traffic lights and the app's
+/// name, placeholder content, and for the focused one the accent ring with
+/// its glow (what Gio's focus ring looks like on screen).
+private struct PreviewTile: View {
+    let title: String
+    let tint: SectionTint
+    let focused: Bool
+    let ring: Color
+
+    private static let lights = [
+        Color(red: 1.0, green: 0.37, blue: 0.34), Color(red: 1.0, green: 0.74, blue: 0.18), Color(red: 0.16, green: 0.78, blue: 0.25),
+    ]
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 5, style: .continuous)
+            .fill(GioColor.raised)
+            .overlay(alignment: .topLeading) {
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 3) {
+                        ForEach(0..<3) { index in
+                            Circle().fill(Self.lights[index]).frame(width: 5, height: 5)
+                        }
+                        Text(title)
+                            .font(.system(size: 7.5))
+                            .foregroundStyle(GioColor.secondaryText)
+                            .lineLimit(1)
+                            .padding(.leading, 3)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 6)
+                    .frame(height: 14)
+                    .background(Color.black.opacity(0.08))
+                    VStack(alignment: .leading, spacing: 4) {
+                        RoundedRectangle(cornerRadius: 2).fill(GioColor.tint(tint).opacity(0.6)).frame(height: 5)
+                            .frame(maxWidth: 70, alignment: .leading)
+                        ForEach(0..<3) { index in
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(GioColor.secondaryText.opacity(0.18))
+                                .frame(height: 4)
+                                .padding(.trailing, CGFloat(index % 2) * 18 + 6)
+                        }
+                    }
+                    .padding(7)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .strokeBorder(focused ? ring : GioColor.hairline.opacity(0.6), lineWidth: focused ? 2 : 0.5)
+            )
+            .shadow(color: focused ? ring.opacity(0.55) : .clear, radius: 6)
     }
 }

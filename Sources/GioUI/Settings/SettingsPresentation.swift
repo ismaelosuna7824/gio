@@ -188,6 +188,35 @@ public func layoutPreviewGeometry(
     )
 }
 
+/// MD-02: one key hint under the Layout preview.
+public struct LayoutKeyHint: Equatable, Sendable {
+    public enum Trigger: Equatable, Sendable {
+        case combo(HotkeyCombo)
+        /// Modifiers held plus a mouse gesture ("drag", "right-drag").
+        case mouse(Set<HotkeyModifier>, String)
+    }
+
+    public let trigger: Trigger
+    public let label: String
+}
+
+/// The strip's everyday moves as the config binds them now: move the window
+/// down its column, cycle the width presets, the mouse resize and move
+/// drags, focus right. An unbound action or a drag turned off is left out.
+public func layoutKeyHints(_ config: GioConfig) -> [LayoutKeyHint] {
+    func combo(_ action: HotkeyAction, _ label: String) -> LayoutKeyHint? {
+        shownHotkey(for: action, in: config).map { LayoutKeyHint(trigger: .combo($0), label: label) }
+    }
+    let drag = config.behavior.mouseDrag
+    return [
+        combo(.moveDown, "Move down"),
+        combo(.switchPresetColumnWidth, "Cycle width"),
+        drag.resize ? LayoutKeyHint(trigger: .mouse(drag.modifiers, "right-drag"), label: "Resize") : nil,
+        drag.move ? LayoutKeyHint(trigger: .mouse(drag.modifiers, "drag"), label: "Move") : nil,
+        combo(.focusRight, "Focus right"),
+    ].compactMap { $0 }
+}
+
 /// "Reset section" for Layout: every layout default except the centering
 /// mode, which the Focus section owns.
 public func layoutDefaults(preserving form: LayoutSettingsForm) -> LayoutSettingsForm {
