@@ -237,7 +237,7 @@ necesidad de modificar el config.toml").
   Accessibility; `tccutil reset ScreenCapture dev.gio.windowmanager` cleared it. Views have no unit
   tests (the phase function is tested). GREEN: as NF-10; signed build OK. LIVE PENDING: request,
   grant, **Relaunch Gio**, the row reads Granted.
-- [ ] DA-16 (`PENDING`) — Gio's window hides when you leave it (user report 2026-11-04, screenshot of
+- [ ] DA-16 (`32bcd12`) — Gio's window hides when you leave it (user report 2026-11-04, screenshot of
   the window cut off behind Terminal; user choice of: always in front, hide when you leave, leave
   as is). `mainWindowHidesOnActivation` (pure): another app activated hides the open window (the
   Cmd+W path: accessory policy, menu bar brings it back), except Gio itself, while the setup cover

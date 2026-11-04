@@ -159,7 +159,7 @@ LIVE PENDING. Review: UNAVAILABLE.
   UI 383 (54 skipped), POC 7, Mac 19, macOS 116; signed build OK. LIVE (dev build, clean grants,
   2026-11-04): `gio overview` open, no ring panel listed (only the overview's screen-sized panel);
   after a pick the ring sits at the picked window's frame.
-- [ ] NF-13 (`PENDING`) — The ring drew over Gio's own window (user screenshot 2026-11-04: its edge
+- [ ] NF-13 (`7d9ca86`) — The ring drew over Gio's own window (user screenshot 2026-11-04: its edge
   across the Overview while System Settings had the focus). The panel sat at `.floating`, above
   every ordinary window. Now `FocusRingGeometry.windowNumber` (the focused window's number from the
   WS-02 book, `FocusRingPublisher` context) puts the panel at `.normal`, ordered right above that
