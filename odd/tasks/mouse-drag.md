@@ -62,7 +62,7 @@ README was read for behavior, no code.
   Seen, not changed: a notch app (Droppy) keeps a layer-100 window over the top of the screen, so a
   press there is not taken (the frontmost window is not the tile). NOT verified live: a real mouse or
   trackpad drag by hand, the Settings rows, a second display, a dwindle workspace (refused by design).
-- [x] MD-02 (`DONE`, commit below) — Layout preview like OmniWM's "Niri layout" card (user, 2026-11-04:
+- [x] MD-02 (`DONE`, `191a37b`) — Layout preview like OmniWM's "Niri layout" card (user, 2026-11-04:
   "me refiero a la vista layout"). Settings > Layout > Preview now draws a desktop with a menu bar (none
   in the Fullscreen mode), windows with traffic lights, titles and content, the focused one ringed in the
   accent with a glow and stacked over a second window in its column (the configured gap between them),
