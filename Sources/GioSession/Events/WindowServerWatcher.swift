@@ -25,6 +25,8 @@ public final class WindowServerWatcher: @unchecked Sendable {
         /// WS-03: ask the window server for these windows' frame notices
         /// (the full list; it replaces the previous one).
         public var subscribe: ([UInt32]) -> Void
+        /// NF-13: a registered window moved in the stack.
+        public var reordered: (WindowID) -> Void
         public var now: () -> TimeInterval
         public var log: (LogLevel, String) -> Void
 
@@ -33,7 +35,8 @@ public final class WindowServerWatcher: @unchecked Sendable {
             allowsWindowWork: @escaping () -> Bool, scanApp: @escaping (pid_t) -> Void,
             proveVanished: @escaping (WindowID) -> Void,
             frameChanged: @escaping (WindowID, Bool, TimeInterval) -> Void,
-            subscribe: @escaping ([UInt32]) -> Void, now: @escaping () -> TimeInterval,
+            subscribe: @escaping ([UInt32]) -> Void, reordered: @escaping (WindowID) -> Void,
+            now: @escaping () -> TimeInterval,
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.windowOwner = windowOwner
@@ -43,6 +46,7 @@ public final class WindowServerWatcher: @unchecked Sendable {
             self.proveVanished = proveVanished
             self.frameChanged = frameChanged
             self.subscribe = subscribe
+            self.reordered = reordered
             self.now = now
             self.log = log
         }
@@ -90,6 +94,11 @@ public final class WindowServerWatcher: @unchecked Sendable {
         book.record(id, number: number)
         context.log(.debug, "window server number id=\(id.pid):\(id.elementID) number=\(number)")
         scheduleSubscription()
+    }
+
+    /// NF-13: the window-server number of a registered window.
+    public func windowNumber(of id: WindowID) -> UInt32? {
+        book.number(of: id)
     }
 
     public func forget(_ id: WindowID) {
@@ -150,6 +159,8 @@ public final class WindowServerWatcher: @unchecked Sendable {
                     self?.deliverFrameNotices()
                 }
             }
+        case .reordered(let id):
+            context.reordered(id)
         case .ignore:
             return
         }

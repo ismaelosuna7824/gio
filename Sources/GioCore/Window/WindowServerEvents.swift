@@ -11,6 +11,8 @@ public enum WindowServerEvent: Equatable, Sendable {
     /// WS-03: only for windows Gio subscribed (`SLSRequestNotificationsForWindows`).
     case moved(UInt32)
     case resized(UInt32)
+    /// NF-13: a subscribed window changed its place in the window stack.
+    case orderChanged(UInt32)
 }
 
 /// Notification types, as measured on macOS 27 (throwaway probe, 2026-11-04):
@@ -19,9 +21,12 @@ public enum WindowServerEvent: Equatable, Sendable {
 public enum WindowServerEventType {
     public static let windowMoved: UInt32 = 806
     public static let windowResized: UInt32 = 807
+    public static let windowOrderChanged: UInt32 = 808
     public static let spaceWindowCreated: UInt32 = 1325
     public static let spaceWindowDestroyed: UInt32 = 1326
-    public static let all: [UInt32] = [windowMoved, windowResized, spaceWindowCreated, spaceWindowDestroyed]
+    public static let all: [UInt32] = [
+        windowMoved, windowResized, windowOrderChanged, spaceWindowCreated, spaceWindowDestroyed,
+    ]
 }
 
 /// Decodes one notification. Created and destroyed carry the space id
@@ -43,6 +48,8 @@ public func decodeWindowServerEvent(type: UInt32, payload: [UInt8]) -> WindowSer
         return number(at: 0).map(WindowServerEvent.moved)
     case WindowServerEventType.windowResized:
         return number(at: 0).map(WindowServerEvent.resized)
+    case WindowServerEventType.windowOrderChanged:
+        return number(at: 0).map(WindowServerEvent.orderChanged)
     default:
         return nil
     }
@@ -58,6 +65,11 @@ public struct WindowNumberBook: Equatable, Sendable {
 
     public func window(for number: UInt32) -> WindowID? {
         byNumber[number]
+    }
+
+    /// NF-13: the window-server number of a registered window.
+    public func number(of id: WindowID) -> UInt32? {
+        byWindow[id]
     }
 
     /// WS-03: every recorded number, ascending (the subscription list).
@@ -90,6 +102,8 @@ public enum WindowServerEventAction: Equatable, Sendable {
     /// WS-03: a registered window moved or resized; handled like the AX
     /// event unless one arrived for the same change.
     case frameChanged(WindowID, resized: Bool)
+    /// NF-13: a registered window moved in the stack (the ring follows it).
+    case reordered(WindowID)
     case ignore
 }
 
@@ -103,6 +117,8 @@ public func windowServerEventAction(_ event: WindowServerEvent, book: WindowNumb
         return book.window(for: number).map { .frameChanged($0, resized: false) } ?? .ignore
     case .resized(let number):
         return book.window(for: number).map { .frameChanged($0, resized: true) } ?? .ignore
+    case .orderChanged(let number):
+        return book.window(for: number).map(WindowServerEventAction.reordered) ?? .ignore
     }
 }
 

@@ -40,9 +40,15 @@ UInt32 window number). `_AXUIElementGetWindow` returned the focused window's num
   (`DiscoveryService.appAttached`, one per app per batch, `window server scan pid=N
   reason=unregistered`); a destroyed registered window calls `noteSettled(vanished:)`. RED:
   compile (`WindowServerWatcherTests`, 6).
-- Not done yet: moved/resized notices (806/807, need `SLSRequestNotificationsForWindows` per
-  window) for external moves, and replacing the frame-matching CGWindowID guesses (snapshots,
-  render verification, native zoom) with the recorded numbers.
+- [ ] WS-03 (`f0b3b60`) — Moved/resized notices (806/807) for registered windows: the book's
+  numbers are re-subscribed once per turn (`SLSRequestNotificationsForWindows`, on main;
+  `window server subscribed windows=N` at debug); a burst per window becomes one
+  `WindowEventRouter.windowServerFrameChanged` after 0.25 s, dropped when an AX moved/resized
+  of that window arrived since (50 ms skew), the app is animating or a zoom is in flight, and
+  otherwise handled by the same `handleFrameChange` as the AX event. RED: compile (Core
+  `.moved`, watcher `frameChanged`/`subscribe`, router `windowServerFrameChanged`).
+- Not done yet: replacing the frame-matching CGWindowID guesses (snapshots, render
+  verification, native zoom) with the recorded numbers.
 
 ## Evidence
 GREEN: Core 2237, Session 584, UI 383 (54 skipped), POC 7, Mac 19, macOS 118; signed build OK;
@@ -56,3 +62,13 @@ session (no false scans for windows the AX path registers). NOT verified live: t
   itself (needs an app whose observer misses a window; covered by `WindowServerWatcherTests`).
   Idle after the change: 0 s of CPU time over 60 s (`ps -o time`), RSS 128 MB (no footprint
   baseline taken in this session).
+  WS-03 live (dev build, 2026-11-04T03:53Z, debug level for the run): the first build judged a
+  notice at its handling time, 0.25 s after it came; Terminal snapping to its character grid
+  right after Gio's write counted as a snap-back next to the late check, and Terminal yielded
+  (`window yields to app id=24818:7 app=Terminal snapBacks=3`). Fixed in the same task: notices
+  are judged at their own time, and a resize up to the late check after a write is the late
+  check's (`testWindowServerFrameChangeIsJudgedAtTheNoticeTime`,
+  `testWindowServerResizeBeforeTheLateCheckIsLeftToIt`, RED then GREEN). Rerun (04:10Z): the
+  same AppleScript resize logged one `window server frame change id=24818:7 resized=true` and
+  Terminal stayed `mode=tiled`. The debug line now appears only when a notice acts (Gio's own
+  moves no longer log it).

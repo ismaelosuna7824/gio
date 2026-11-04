@@ -23,8 +23,17 @@ final class WindowServerEventTests: XCTestCase {
 
     func testShortPayloadsAndOtherTypesDecodeToNothing() {
         XCTAssertNil(decodeWindowServerEvent(type: 1325, payload: [1, 0, 0, 0]))
-        XCTAssertNil(decodeWindowServerEvent(type: 808, payload: spacePayload(space: 1, number: 9)))
+        XCTAssertNil(decodeWindowServerEvent(type: 811, payload: spacePayload(space: 1, number: 9)))
         XCTAssertNil(decodeWindowServerEvent(type: 806, payload: [1, 0]))
+    }
+
+    /// NF-13: a subscribed window changed its place in the stack (808, 4 bytes).
+    func testDecodesOrderChangedAndMapsItToTheWindow() {
+        XCTAssertEqual(decodeWindowServerEvent(type: 808, payload: [0x37, 0, 0, 0]), .orderChanged(55))
+        var book = WindowNumberBook()
+        book.record(terminal, number: 55)
+        XCTAssertEqual(windowServerEventAction(.orderChanged(55), book: book), .reordered(terminal))
+        XCTAssertEqual(windowServerEventAction(.orderChanged(56), book: book), .ignore)
     }
 
     /// WS-03: moved and resized carry the window number alone (len=4, live).

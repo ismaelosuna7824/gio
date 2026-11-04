@@ -13,6 +13,7 @@ final class WindowServerWatcherTests: XCTestCase {
     private var proofs: [WindowID] = []
     private var frameChanges: [(WindowID, Bool, TimeInterval)] = []
     private var subscriptions: [[UInt32]] = []
+    private var reorders: [WindowID] = []
     private var watcher: WindowServerWatcher!
     private let ownPID: pid_t = 1
 
@@ -23,6 +24,7 @@ final class WindowServerWatcherTests: XCTestCase {
         proofs = []
         frameChanges = []
         subscriptions = []
+        reorders = []
         let scheduler = scheduler!
         watcher = WindowServerWatcher(
             context: .init(
@@ -33,6 +35,7 @@ final class WindowServerWatcherTests: XCTestCase {
                 proveVanished: { [unowned self] in proofs.append($0) },
                 frameChanged: { [unowned self] in frameChanges.append(($0, $1, $2)) },
                 subscribe: { [unowned self] in subscriptions.append($0) },
+                reordered: { [unowned self] in reorders.append($0) },
                 now: { scheduler.now },
                 log: { _, _ in }
             ),
@@ -136,5 +139,16 @@ final class WindowServerWatcherTests: XCTestCase {
         scheduler.runPending()
         scheduler.advance(by: WindowServerWatcher.frameGrace)
         XCTAssertTrue(frameChanges.isEmpty)
+    }
+
+    /// NF-13: a registered window moving in the stack is passed on at once
+    /// (the ring re-orders above it); unknown windows are not.
+    func testOrderChangeOfARegisteredWindowIsPassedOnAtOnce() {
+        let id = WindowID(pid: 42, elementID: 3)
+        watcher.noteRegistered(id, number: 7)
+        watcher.post(.orderChanged(7))
+        watcher.post(.orderChanged(8))
+        scheduler.runPending()
+        XCTAssertEqual(reorders, [id])
     }
 }

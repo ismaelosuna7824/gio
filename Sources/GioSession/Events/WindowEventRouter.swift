@@ -293,8 +293,9 @@ public final class WindowEventRouter: @unchecked Sendable {
             guard let known else {
                 return
             }
-            lastFrameEvents[known] = context.now()
-            handleFrameChange(known, kind: kind, invalidate: invalidate)
+            let now = context.now()
+            lastFrameEvents[known] = now
+            handleFrameChange(known, kind: kind, invalidate: invalidate, at: now)
         case .reflow:
             context.scheduleReflow(false)
         case .minimize:
@@ -365,15 +366,25 @@ public final class WindowEventRouter: @unchecked Sendable {
         else {
             return
         }
-        context.log(.debug, "window server frame change id=\(id.pid):\(id.elementID) resized=\(resized)")
-        handleFrameChange(id, kind: kind, invalidate: resized)
+        // FI-11: a resize up to the late check after Gio's write is the late
+        // check's to judge; counting it here too would double a snap-back.
+        if resized, let written = context.lastWrite(id),
+           noticeAt <= written + WriteEchoGate.suppression + Self.lateCheckMargin {
+            scheduleLateCheck(id)
+            return
+        }
+        handleFrameChange(id, kind: kind, invalidate: resized, at: noticeAt, fromWindowServer: true)
     }
 
     /// A known window's frame changed outside Gio's writes (an AX moved or
-    /// resized event, or the window server's notice of one).
-    private func handleFrameChange(_ known: WindowID, kind: WindowEventKind, invalidate: Bool) {
+    /// resized event, or the window server's notice of one). `at` is when the
+    /// change was reported: a notice handled after the grace is still an echo
+    /// when it came inside the echo window of Gio's write (live: Terminal
+    /// snapping to its grid yielded when judged at the handling time).
+    private func handleFrameChange(
+        _ known: WindowID, kind: WindowEventKind, invalidate: Bool, at now: TimeInterval, fromWindowServer: Bool = false
+    ) {
         // Animation frames raise a burst of events: skip the AX read.
-        let now = context.now()
         if context.isEchoSuppressed(known, now) {
             // FI-11: an app that applies its own size after Gio's
             // read-back raises its resize in here; look once more when
@@ -418,6 +429,9 @@ public final class WindowEventRouter: @unchecked Sendable {
         }
         // Not our echo: the window moved on its own (drag, app resize).
         // The dim comes down and returns after the snap-back reflow.
+        if fromWindowServer {
+            context.log(.debug, "window server frame change id=\(known.pid):\(known.elementID) resized=\(invalidate)")
+        }
         context.holdDimForDrag()
         context.invalidateTrust(known)
         context.forgetZoom(known)
