@@ -63,6 +63,20 @@ final class SnapBackBookTests: XCTestCase {
         var book = SnapBackBook()
         XCTAssertEqual(snap(&book, at: 0.5, writtenAt: 0), .counted(1))
         XCTAssertEqual(snap(&book, at: 0.6, writtenAt: 0, window: other), .counted(1))
-        XCTAssertEqual(snap(&book, at: 0.7, writtenAt: 0), .counted(2))
+        XCTAssertEqual(snap(&book, at: 0.9, writtenAt: 0.7), .counted(2))
+    }
+
+    /// Live 2026-11-04: one change of a window raises a burst (AX moved and
+    /// resized, the window server's move and resize notices); three Terminal
+    /// windows yielded at once, each counted three times after one write,
+    /// and sat floating over the tiles. A snap-back is the app answering a
+    /// write: every change after the same write is one.
+    func testABurstAfterOneWriteCountsOnce() {
+        var book = SnapBackBook()
+        for time in [0.30, 0.31, 0.32, 0.40] {
+            XCTAssertEqual(snap(&book, at: time, writtenAt: 0.2), .counted(1), "t=\(time)")
+        }
+        XCTAssertEqual(snap(&book, at: 1.0, writtenAt: 0.8), .counted(2), "the next write's answer counts")
+        XCTAssertEqual(snap(&book, at: 1.6, writtenAt: 1.4), .yield(3))
     }
 }

@@ -175,3 +175,15 @@ Review: UNAVAILABLE.
   GioPOCTests 7, GioMacTests 19, GioMacOSTests 95, GioCoreTests 1960, all 0 failures; signed
   `xcodebuild` BUILD SUCCEEDED; `git diff --check` clean. Not pushed. Next: live check (installer or
   re-centring dialog: `window yields to app`, `min size learned ... late=true`).
+- 2026-11-04: FI-12 (`DONE`) — one snap-back per write. User screenshot: windows stacked over the tiles.
+  `gio list-windows`: three Terminal windows `floating reason=appControlled`; the log had
+  `window yields to app ... snapBacks=3` for all three at the same millisecond, 5 s after a relaunch
+  (the Dock appeared and the strip was laid out again). One restore raises a burst (AX moved and
+  resized, WS-03's window-server notices), and `SnapBackBook` counted every change after the same
+  write, so one burst reached the cap. Now every change after the same write is one snap-back
+  (`answered`); a real fight (the app restoring after each of three writes) still yields. RED:
+  `SnapBackBookTests.testABurstAfterOneWriteCountsOnce` (2 failures); `testWindowsAreCountedApart`
+  now uses a second write. Full `swift test`: Core 2282, Session 607, UI 389 (54 skipped), POC 7,
+  Mac 19, macOS 120; signed build OK. Live: after the relaunch all Terminal windows are tiled, no
+  `yields` line, the window server shows no window over the visible tiles. Not reproduced live with
+  the burst itself (no debug log of the original event).
