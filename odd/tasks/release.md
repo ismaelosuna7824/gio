@@ -202,7 +202,7 @@ critical or high issue; every finding below was checked against the code before 
   patch's `-beta.N` (`BETA_TAGS`: the `v*-beta.*` tags, N one past that version's highest; a newline in them is
   refused), `prerelease=true`. `release.yml` passes `BETA_TAGS` and `prerelease`; publish adds `--prerelease
   --latest=false` and leaves out `Gio.dmg` for a beta, so `releases/latest` stays the stable one. The app
-  already offers prereleases only with **Include beta versions** on (UP-..). RED:
+  already offers prereleases only with **Include beta versions** on. RED:
   `scripts/test-release-version.sh` 4 beta cases failed (`status 1`), GREEN with every case. Both workflows
   parse (Ruby YAML; no `actionlint` installed here). LIVE PENDING: the first beta PR, its prerelease and an app
   with Include beta versions on being offered it.
