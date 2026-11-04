@@ -47,7 +47,7 @@ UInt32 window number). `_AXUIElementGetWindow` returned the focused window's num
   of that window arrived since (50 ms skew), the app is animating or a zoom is in flight, and
   otherwise handled by the same `handleFrameChange` as the AX event. RED: compile (Core
   `.moved`, watcher `frameChanged`/`subscribe`, router `windowServerFrameChanged`).
-- [ ] WS-04 (`PENDING`) — The recorded numbers replace the frame-matching guesses: snapshot capture
+- [ ] WS-04 (`3c0a8c2`) — The recorded numbers replace the frame-matching guesses: snapshot capture
   (`SnapshotCaptureRequest.windowNumbers`, paint check, fresh capture, live streams; merged over the
   learned ids at match time by `snapshotKnownWindowNumbers`, never stored in
   `SnapshotWindowIDBook`), render verification (`ServerWindow.number` from `kCGWindowNumber`, a
