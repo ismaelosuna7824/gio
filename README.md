@@ -84,7 +84,7 @@ See the [User guide](docs/USER_GUIDE.md) for every shortcut and config key.
 
 Apps redraw at their own pace, and some are slow (WhatsApp, Music, Xcode). Moving the real windows through Accessibility on every frame makes those apps lag behind the rest and jump. The default renderer (`[animations] renderer = "snapshot"`) avoids that: it moves each real window once, slides images of them in an overlay at the display's refresh rate, and removes the overlay only once the windows that came into view have painted. Every app then moves at the same speed, however slowly it repaints; during the slide the windows show their content as of the last capture.
 
-Capturing those images is what macOS calls Screen Recording (ScreenCaptureKit, macOS 14 or later). The same captures give the `Alt+O` overview its live thumbnails and the optional close ghost (`[animations.window-close] ghost = true`, off by default) the last image a closed window fades out from.
+Capturing those images is what macOS calls Screen Recording (ScreenCaptureKit, macOS 14 or later). The same captures give the `Alt+O` overview its thumbnails in the Fast motion preset (Recommended shows app icons there) and the optional close ghost (`[animations.window-close] ghost = true`, off by default) the last image a closed window fades out from.
 
 - **Without it, or on macOS 13**, Gio still works: it falls back to the Accessibility motion (the log shows `renderer effective=ax reason=screen-recording-missing`), so slow apps move at their own pace, the overview shows app icons and closed windows do not fade.
 - **Privacy.** The images stay in memory; Gio never writes them to disk or sends them anywhere. Window titles never reach the log.

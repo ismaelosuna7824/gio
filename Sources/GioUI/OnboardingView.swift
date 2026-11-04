@@ -309,7 +309,7 @@ struct OnboardingContent: View {
         permissionStep(
             icon: SectionIcon(symbol: "record.circle", tint: .pink, size: 80),
             title: "Screen Recording (Recommended)",
-            why: "Gio's smooth motion needs it: Gio slides captured images of your windows, so every app moves at the same speed, even slow ones, and the overview shows live thumbnails. Without it windows still tile, but they stutter as they move. The images stay in memory; nothing is recorded or saved. macOS applies this permission only after Gio relaunches.",
+            why: "Gio's smooth motion needs it: Gio slides captured images of your windows, so every app moves at the same speed, even slow ones. In the Fast preset the overview shows live thumbnails with it. Without it windows still tile, but they stutter as they move. The images stay in memory; nothing is recorded or saved. macOS applies this permission only after Gio relaunches.",
             phase: screenRecordingStepPhase(granted: screenRecordingGranted, requested: screenRecordingRequested),
             idleText: "Not granted. Turn Gio on in System Settings, then relaunch Gio.",
             showsProgress: false,

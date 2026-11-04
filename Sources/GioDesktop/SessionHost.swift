@@ -1192,14 +1192,19 @@ final class SessionHost: @unchecked Sendable {
     /// only the rest is captured, in one capture without a backdrop and at
     /// most `overviewThumbnailScale`, and delivered after. `completion` runs
     /// on main once per batch (twice when both exist; the ids are disjoint).
-    /// Empty without Screen Recording or before macOS 14; the panel then
-    /// keeps the app icons. Logs `overview thumbnails cached=N capture=N
+    /// Empty unless `overviewShowsThumbnails` (the Fast preset with Screen
+    /// Recording, on macOS 14 and later); the panel then keeps the app
+    /// icons. Logs `overview thumbnails cached=N capture=N
     /// scaleMs=S` once, the capture its own summary (counts only).
     func captureOverviewThumbnails(
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
         queue.async { [weak self] in
-            guard let self, SnapshotCapturer.isSupported, screenRecording.granted() else {
+            guard let self, SnapshotCapturer.isSupported,
+                  overviewShowsThumbnails(
+                      renderer: session.config.animations.renderer, screenRecordingGranted: screenRecording.granted()
+                  )
+            else {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
