@@ -75,6 +75,26 @@ final class MinimumSizeTests: XCTestCase {
         ))
     }
 
+    /// NC-15 (live 2026-11-04): Terminal rounds a size to its character
+    /// grid, up to half a cell either way: 893 pt came back 895 and 491 came
+    /// back 496, and both were learned as Terminal's minimum width, so a
+    /// stretched column could never shrink back. Growth within
+    /// `minimumClampSlack` is rounding, not a minimum; a real clamp is larger.
+    func testGridRoundingIsNotLearnedButARealClampIs() {
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 893, height: 933),
+            actual: CGRect(x: 8, y: 7, width: 895, height: 934)
+        ))
+        XCTAssertNil(learnedMinimum(
+            requested: CGRect(x: 760, y: 8, width: 491, height: 933),
+            actual: CGRect(x: 760, y: 8, width: 496, height: 948)
+        ))
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 744, height: 933),
+            actual: CGRect(x: 8, y: 8, width: 744 + minimumClampSlack + 1, height: 933)
+        )?.width, 744 + minimumClampSlack + 1)
+    }
+
     /// FX-05 (live 23:00:35): a 1 pt wide dwindle tile came back at the
     /// window's 888 pt column width and was learned as Tern's, Slack's and
     /// OrbStack's minimum. A request below 100 pt says nothing about the
