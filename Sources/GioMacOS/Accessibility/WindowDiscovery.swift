@@ -291,6 +291,13 @@ private func axSlot(_ value: AnyObject) -> AXSlot {
     return .error(error)
 }
 
+/// FI-14: a window whose role did not answer (locked screen, busy app) is
+/// skipped, so its app is not counted as fully read and nothing of it is
+/// purged; a readable role or a destroyed element is an answer.
+func discoverySkips(_ facts: AXWindowFacts) -> Bool {
+    !facts.roleReadable && !facts.elementGone
+}
+
 /// Admission decision plus handles for one element. Shared by the full scan
 /// and the single-window path used when a window appears later.
 /// `probesSettable` false skips the settable probes (a known window).
@@ -305,6 +312,9 @@ private func classifyElement(
     focused focusedElement: AXUIElement?,
     index: Int
 ) -> ElementClassification {
+    guard !discoverySkips(facts) else {
+        return .skipped
+    }
     let admission = windowAdmission(of: element, facts: facts, probesSettable: probesSettable)
     if case .ignore = admission {
         return .ignored(ExcludedSystemWindow(pid: pid, appName: appName, admission: admission))
