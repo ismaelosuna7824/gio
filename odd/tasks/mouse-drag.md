@@ -73,7 +73,7 @@ README was read for behavior, no code.
   observed). Visual check: `SnapshotHarness` renders of the preview in Columns, Maximized and Fullscreen,
   dark and light (throwaway, deleted). Full `swift test`: Core 2281, Session 607, UI 389 (snapshots on),
   POC 7, Mac 19, macOS 120; signed build OK. NOT viewed in the running app.
-- [x] MD-03 (`DONE`, commit below) — mouse drags removed (user, 2026-11-04: "creo que vamos a quitar la
+- [x] MD-03 (`DONE`, `d4bcf67`) — mouse drags removed (user, 2026-11-04: "creo que vamos a quitar la
   funcionalidad del drag, mejor hay que eliminarla"). `fc21c58` reverted: no `[behavior] mouse-*` keys
   (an old line now warns as an unknown key), no drag/up events in the tap mask, no `MouseDragGate`,
   `MouseDragController` or Core drag code, no Settings > Focus > Pointer rows; `settingWindowHeight`,
