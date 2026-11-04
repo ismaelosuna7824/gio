@@ -28,6 +28,7 @@ final class SpaceCoordinatorTests: XCTestCase {
             discardPendingAdoptions: { recorder.discards += 1 },
             rescan: { recorder.events.append("rescan") },
             adoptFrontmostFocus: { recorder.events.append("adopt") },
+            restoreWindows: { recorder.events.append("restore") },
             log: { recorder.logs.append(($0, $1)) }
         ))
     }
@@ -70,6 +71,21 @@ final class SpaceCoordinatorTests: XCTestCase {
         coordinator.managedSpaceActivityChanged(true)
 
         XCTAssertEqual(recorder.events, ["rescan", "adopt", "reflow"])
+    }
+
+    /// WC-22: another window manager pauses Gio and brings every parked
+    /// window back on screen (the other manager would otherwise find them
+    /// hanging off the edge); its exit resumes like a return to the Space.
+    func testAnotherWindowManagerPausesRestoresAndResumes() {
+        coordinator.windowManagersChanged(["yabai"])
+        XCTAssertFalse(coordinator.allowsWindowWork)
+        XCTAssertEqual(coordinator.conflicts, ["yabai"])
+        XCTAssertEqual(recorder.events, ["restore"])
+        XCTAssertEqual(recorder.logs.last?.1, "window manager running: yabai; pausing layout")
+        coordinator.windowManagersChanged([])
+        XCTAssertTrue(coordinator.allowsWindowWork)
+        XCTAssertEqual(recorder.events, ["restore", "rescan", "adopt", "reflow"])
+        XCTAssertEqual(recorder.logs.last?.1, "window manager gone; reflow")
     }
 
     func testRepeatedReportsDoNothing() {

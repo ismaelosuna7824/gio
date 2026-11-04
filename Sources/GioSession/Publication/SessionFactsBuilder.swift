@@ -28,6 +28,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var gestureStatus: () -> GestureSourceStatus
         /// TG-04: Gio's gestures macOS performs too (from its preferences).
         public var gestureConflicts: () -> [GestureConflict]
+        /// WC-22: other window managers running.
+        public var windowManagerConflicts: () -> [String]
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -40,10 +42,12 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             prefetchSnapshotContent: @escaping (Bool) -> Void,
             gestureStatus: @escaping () -> GestureSourceStatus,
             gestureConflicts: @escaping () -> [GestureConflict],
+            windowManagerConflicts: @escaping () -> [String] = { [] },
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.gestureStatus = gestureStatus
             self.gestureConflicts = gestureConflicts
+            self.windowManagerConflicts = windowManagerConflicts
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
@@ -129,7 +133,8 @@ public final class SessionFactsBuilder: @unchecked Sendable {
                 )
             },
             windows: windows, screenRecordingGranted: screenRecording,
-            strip: workspaceStrip(), gestures: gestures, gestureConflicts: conflicts
+            strip: workspaceStrip(), gestures: gestures, gestureConflicts: conflicts,
+            windowManagerConflicts: context.windowManagerConflicts()
         )
     }
 

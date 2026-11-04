@@ -223,6 +223,8 @@ final class SessionHost: @unchecked Sendable {
     private var windowServer: WindowServerWatcher!
     /// WS-01: kept alive for the app's life (its context is unretained).
     private var windowServerSource: WindowServerEventSource?
+    /// WC-22: main thread; kept for the app's life.
+    private var windowManagerMonitor: WindowManagerMonitor?
     private var events: WindowEventRouter!
     /// Focus adoption, keyboard intent, centering, cursor warp and
     /// focus-follows-mouse (clicks and pointer handed over under their locks).
@@ -287,6 +289,17 @@ final class SessionHost: @unchecked Sendable {
                 }
                 focus.requestAdoption(.activation, pid: pid, element: nil)
             },
+            restoreWindows: { [unowned self] in
+                // The quit path's restore, without quitting: the other
+                // manager finds every window on screen.
+                pendingReflow?.cancel()
+                motion.stop()
+                overlayFlight.end()
+                reconciler?.waitForMotionIdle(timeout: 0.3)
+                let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
+                let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
+                GioLog.record(.info, "restore for another window manager moved=\(moved)")
+            },
             log: { GioLog.record($0, $1) }
         ))
         reflowPlanner = ReflowPlanner(context: .init(
@@ -347,6 +360,7 @@ final class SessionHost: @unchecked Sendable {
                 )
             },
             gestureConflicts: { [unowned self] in gestureConflicts() },
+            windowManagerConflicts: { [unowned self] in space.conflicts },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
@@ -972,10 +986,14 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "session started")
         GioLog.record(.info, "spaces separate=\(displaysHaveSeparateSpaces())")
         guardian = spawnGuardian()
+        // WC-22: before the first layout, so Gio never parks a window another
+        // window manager is already managing.
+        let windowManagers = conflictingWindowManagers(runningProcessNames: runningProcessNames())
         queue.async {
             guard !self.isShuttingDown else {
                 return
             }
+            self.space.windowManagersChanged(windowManagers)
             // PA-24: the first layout already gives clamping apps their width.
             self.appMinimums = self.appMinimumStore?.load() ?? AppMinimumSizes()
             self.initialSync()
@@ -986,6 +1004,7 @@ final class SessionHost: @unchecked Sendable {
         watchDesktopPicture()
         watchMemoryPressure()
         watchManagedSpace()
+        watchWindowManagers()
         queue.async {
             guard !self.isShuttingDown else {
                 return
@@ -2493,6 +2512,21 @@ final class SessionHost: @unchecked Sendable {
         }
         memoryPressure = source
         source.resume()
+    }
+
+    /// WC-22: main thread, at start.
+    private func watchWindowManagers() {
+        let monitor = WindowManagerMonitor { [weak self] names in
+            self?.queue.async {
+                guard let self, !self.isShuttingDown else {
+                    return
+                }
+                self.space.windowManagersChanged(names)
+                self.publishSnapshot()
+            }
+        }
+        monitor.start()
+        windowManagerMonitor = monitor
     }
 
     private func watchManagedSpace() {
