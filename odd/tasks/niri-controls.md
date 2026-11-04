@@ -202,7 +202,7 @@ SettingsFormTests 0 failures; GioSessionTests.ActionApplierTests 23, 0 failures.
 (UI wording for the shared chips) was written before its test (`SettingsFollowUpTests`), so no RED
 was observed for it. Full `swift test` (2026-10-08, shared tree with the window-rules and updater work): GioUITests 303 (53 skipped), GioSessionTests 384, GioPOCTests 7, GioMacTests 19, GioMacOSTests 68, GioCoreTests 1628, all 0 failures; `git diff --check` clean. Signed build: parent. LIVE PENDING (TESTING row 7b).
 
-- [x] NC-15 (`DONE`) — Fill empty space (OmniWM comparison 2026-11-04, user: "su tiling es mejor ... se
+- [x] NC-15 (`DONE`, `d4e356e`, min-size fix `8b1eea4`) — Fill empty space (OmniWM comparison 2026-11-04, user: "su tiling es mejor ... se
   adapta mejor"; choice "Fill empty space" over vertical monitors and tabbed columns). OmniWM's
   "Visible Containers": columns that fit grow proportionally to fill the strip and return to their
   widths when more arrive; a resize by hand keeps its size until the column count changes. Gio:
