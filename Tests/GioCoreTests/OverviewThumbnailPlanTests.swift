@@ -11,6 +11,14 @@ final class OverviewThumbnailPlanTests: XCTestCase {
     /// A full-resolution image of `frame` on a 2x display.
     private var fullPixels: Int { 1600 * 1200 }
 
+    /// User choice 2026-11-04: thumbnails only in the Fast preset (the ax
+    /// renderer) and only with Screen Recording; Recommended keeps the icons.
+    func testThumbnailsOnlyInFastWithScreenRecording() {
+        XCTAssertTrue(overviewShowsThumbnails(renderer: .ax, screenRecordingGranted: true))
+        XCTAssertFalse(overviewShowsThumbnails(renderer: .ax, screenRecordingGranted: false))
+        XCTAssertFalse(overviewShowsThumbnails(renderer: .snapshot, screenRecordingGranted: true))
+    }
+
     func testFreshMatchingEntryIsReused() {
         var cache = SnapshotCache<String>()
         cache.store(id(1), image: "a", frame: frame, pixels: fullPixels, at: 100)

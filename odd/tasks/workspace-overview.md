@@ -106,6 +106,14 @@ window titles (titles appear only in the panel).
   (the manager renews the spare workspace id on every write) and was fixed. LIVE PENDING: open
   timing (`overview thumbnails cached=`), drag between and across rows, Esc during a drag.
   Known: dwindle rows still show the insertion bar; no autoscroll while dragging.
+- [ ] WO-04 (`2feb8be`) — Thumbnails only in the Fast preset (user choice 2026-11-04: "cuando está en
+  modo fast sí se vea ... si no está en fast solo se ve el icono"). `overviewShowsThumbnails(renderer:,
+  screenRecordingGranted:)` (GioCore) is true only for the configured `ax` renderer with Screen
+  Recording; `SessionHost.captureOverviewThumbnails` checks it before any capture, so Recommended
+  (`snapshot`) keeps the app icons and captures nothing for the overview. Onboarding copy, README
+  and USER_GUIDE updated. RED: compile (`OverviewThumbnailPlanTests`, no `overviewShowsThumbnails`).
+  GREEN: Core 2229, Session 578, UI 383 (54 skipped), POC 7, Mac 19, macOS 116; signed build OK.
+  LIVE PENDING: with Screen Recording granted, Alt+O in Fast shows thumbnails, in Recommended icons.
 
 ## Evidence (WO-01)
 - RED: `swift test --filter GioCoreTests...` failed to compile (`CLICommand` has no member

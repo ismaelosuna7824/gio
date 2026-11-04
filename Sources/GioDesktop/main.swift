@@ -103,6 +103,14 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
             let updates = DispatchQueue.main.sync { MainActor.assumeIsolated { self?.updates } }
             return updates?.answerCLI(request) ?? "Gio is shutting down"
         }
+        // WC-21: Accessibility arrived after launch: relaunch, resuming an
+        // unfinished setup after its Accessibility step.
+        host.onAccessibilityGranted = { [weak self] in
+            MainActor.assumeIsolated {
+                OnboardingStore().prepareAccessibilityRelaunch()
+                self?.restartSession()
+            }
+        }
         // PA-21: the first layout runs on the session queue while the menu
         // bar and the window come up; once it is published the window shows
         // it, and the launcher's scan waits a little longer still.
