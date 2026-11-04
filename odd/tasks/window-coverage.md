@@ -304,8 +304,21 @@ Window admission, observation and registration only. Out of scope: animation/per
   but nothing scanned its windows then, so they stayed unknown until the app opened a new one. Fix:
   `WindowEventRouter` calls `discovery.appAttached(pid)` when an activation attaches an app, as the
   launch path does. RED: `testRefusedAppAttachedOnActivationRegistersItsWindows` (no scan of pid 8).
-  GREEN: Core 2228, Session 578, UI 381 (54 skipped), POC 7, Mac 19, macOS 116. LIVE PENDING:
-  start Gio without the grant, grant it, activate the refused app: its window tiles.
+  GREEN: Core 2228, Session 578, UI 381 (54 skipped), POC 7, Mac 19, macOS 116. Not enough on its
+  own: live on the dev build (2026-11-04) Tern kept failing after activation (`focus dropped
+  source=activation pid=1072 reason=focused window unreadable`, 2 minutes after the grant) while a
+  fresh process read it at once. See WC-21.
+- [x] WC-21 (`b8f171e`) — Relaunch when Accessibility arrives mid-session (user choice 2026-11-04, of:
+  relaunch, relaunch only when an app stays unreadable, a Relaunch button). Some apps keep refusing
+  the process that asked without the grant. `SessionHost` records `startedWithoutAccessibility` at
+  `start()`; when the hotkey tap first starts later (the permission-regained branch) it logs
+  `accessibility granted mid-session; relaunching` and the app runs `restartSession()` instead of
+  rebuilding. `OnboardingStore.prepareAccessibilityRelaunch()` makes an unfinished setup resume
+  after its Accessibility step; a finished one stays closed. RED: compile (two
+  `ShellPresentationTests`, no `prepareAccessibilityRelaunch`). GREEN: Core 2228, Session 578, UI 383
+  (54 skipped), POC 7, Mac 19, macOS 116; signed build OK. LIVE (dev build, release removed, grants
+  reset, 2026-11-04T02:49Z): granting Accessibility logged the relaunch line, a new session started,
+  and `gio list-windows` lists Tern `mode=tiled`.
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.

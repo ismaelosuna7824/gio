@@ -149,6 +149,16 @@ LIVE PENDING. Review: UNAVAILABLE.
   Mac 19, macOS 116; signed build OK. LIVE (same build): Terminal focused, `gio overview`, Right,
   Return onto OrbStack: ring at OrbStack's frame after the pick in 4 of 4 runs (before: 2 of 3 had none);
   with Gio's main window frontmost the ring stays hidden, back on OrbStack's activation.
+- [x] NF-12 (`bb75518`) — Regression of NF-11 in 0.1.5: the ring showed through the Alt+O overview
+  (user screenshot 2026-11-03, the ring's frame across the overview's tiles). The overview and the
+  launcher are non-activating panels, so another app stays frontmost and the frontmost-only mask let
+  the ring show; before NF-11 `isActive` had hidden it. Fix: the mask is "Gio is frontmost or one of
+  its windows is key", refreshed on Gio's window key changes (now and on the next turn, once AppKit
+  updated the key window) and every app activation, so NF-11's pick still shows the ring once the
+  overview gives up key. RED: none (main-thread overlay, no harness). GREEN: Core 2228, Session 578,
+  UI 383 (54 skipped), POC 7, Mac 19, macOS 116; signed build OK. LIVE (dev build, clean grants,
+  2026-11-04): `gio overview` open, no ring panel listed (only the overview's screen-sized panel);
+  after a pick the ring sits at the picked window's frame.
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.

@@ -104,5 +104,5 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 1. `swift test`: every bundle reports 0 failures (read each `Executed` line).
 2. Signed build: the `xcodebuild` command above succeeds (required when `GioMacOS`, `GioUI`, `GioDesktop` or the project changed).
 3. `git diff --check`: clean.
-4. For anything Accessibility-related, say plainly what was **not** verified live; automated tests and a green build do not prove live behavior. Use the checklist in `docs/TESTING.md`.
+4. For anything Accessibility-related, say plainly what was **not** verified live; automated tests and a green build do not prove live behavior. Use the checklist in `docs/TESTING.md`. Every live test starts clean: delete the installed release, reset the `dev.gio.windowmanager` Accessibility and Screen Recording grants, then open the dev build and grant it (`docs/TESTING.md`, "Live manual test checklist").
 5. Report honestly: failed, skipped and pending checks belong in the report and in the feature document.
