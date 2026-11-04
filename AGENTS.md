@@ -7,7 +7,7 @@ Instructions for AI coding agents working on Gio, a Niri-style scrollable tiling
 | Path | What it is |
 | --- | --- |
 | `Sources/GioCore` | Pure logic. **No macOS UI/AX imports.** Registry, workspaces, layout, viewport, focus, move/resize, parking, motion planning, `WindowReconciler`, hotkeys, config, rules, IPC, logging, recovery, trackpad gesture recognition and the strip gesture's snap. |
-| `Sources/GioMacOS` | macOS adapters: Accessibility (`AXWindowActuator`, discovery, events), `HotkeyTap`, the MultitouchSupport touch source (`dlopen`ed), displays, assemblies. |
+| `Sources/GioMacOS` | macOS adapters: Accessibility (`AXWindowActuator`, discovery, events), `HotkeyTap`, the MultitouchSupport touch source and the SkyLight window-server notifications (both `dlopen`ed, read-only), displays, assemblies. |
 | `Sources/GioUI` | SwiftUI/AppKit views and view models (main window, menu bar, launcher, settings). **Put new UI here.** |
 | `Sources/GioSession` | Components extracted from `SessionHost` (publication, render verification, config coordination, IPC routing, snapshot flight and cache refresh, native zoom, motion driver and resize probes, focus coordination, window events and discovery, reflow planning, hotkey actions, trackpad gestures and their touch mailbox) plus the `SystemProbe`/`SessionScheduler` seams; session queue only, unit-tested with fakes and a virtual clock. |
 | `Sources/GioDesktop` | `main.swift` (app delegate) and `SessionHost.swift` (the live session on the `gio.session` queue, composition root over `GioSession`). The Xcode `Gio` target compiles exactly these two files. |
@@ -96,6 +96,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 | `release.md` | Versioning, signed DMG, release workflow and its hardening (RL-01..RL-08) and the in-app updater and its hardening (UP-01..UP-17). |
 | `public-release.md` | Public release readiness: audit, owner decisions (Developer ID, notarization, license), launcher binding, onboarding/diagnostics copy, user docs, release notes (PR-01..). |
 | `trackpad-gestures.md` | Trackpad gestures (TG-01..): MultitouchSupport input, swipe recognizer, interactive strip scroll with a snapping spring, workspace and overview swipes, `[gestures]` config, macOS gesture conflicts. |
+| `window-server-events.md` | Private SkyLight window-server notifications (read-only): created/destroyed notices backing up the AX observers, window numbers via `_AXUIElementGetWindow` (WS-01..). |
 | `tileability-probe.md` | Tileability probe errors: three-valued probe (an AX error keeps the mode, retried after `TileabilityCache.retryInterval`), `window mode` log lines, logged focus-activation drops (TP-01..TP-03). |
 | `native-spaces-tiling.md`, `automatic-tiling.md`, `virtual-workspaces.md` | Older prototype history (pre-rewrite). |
 

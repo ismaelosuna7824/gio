@@ -75,8 +75,13 @@ Once the main window made Gio a regular app, clicking it made Gio the frontmost 
 - `DiscoveryService.registerNew` (`GioSession`), the single registration funnel of the full scan, launch scans and appeared windows, refuses the own pid even if a discovery hands one over (tested per entry point with fake discovery and events).
 - `AXWindowActuator.register` ignores handles for the own pid, so no lane can ever write them.
 - `WindowEventRouter` (`GioSession`, PF-U) never attaches an AX observer to its `ownPID`: not from the running set of `syncObservers`, nor on launch or activation (Gio is `.regular` while its main window is open; observing itself subscribed it to its own overlay panels).
+- `WindowServerWatcher` (`GioSession`, WS-02) never scans the app of a window-server window owned by its `ownPID` (`windowServerArrivalScanPID`), and the host reads `_AXUIElementGetWindow` only for registered windows of other pids.
 
 Any new code path that enumerates windows or adopts focus must go through these guards.
+
+### Window-server notifications (WS-01, WS-02)
+
+`WindowServerEventSource` (`GioMacOS`) resolves `SLSMainConnectionID` and `SLSRegisterConnectionNotifyProc` from the private SkyLight framework at runtime and registers for 1325 (a window was created) and 1326 (destroyed); both carry the window number at byte 8 (`decodeWindowServerEvent`, `GioCore`). They arrive on the main thread while the app's event loop runs, for every app, whether or not it answers Accessibility; the C callback only decodes and posts to `WindowServerWatcher`, which handles them on the session queue. Registration records each window's number (`_AXUIElementGetWindow`) in a `WindowNumberBook`; `forgetWindow` drops it. A created window still unknown after `WindowServerWatcher.arrivalGrace` (1.5 s, longer than the AX registration retries) and still a layer-0 window of another app gets its app scanned (`DiscoveryService.appAttached`, one scan per app per batch, logged `window server scan pid=N reason=unregistered`); a destroyed registered window asks for its app's proof scan (`noteSettled(vanished:)`, rule 10), never a direct purge. Read-only: nothing moves, orders or changes a window through SkyLight (PF-S showed SkyLight moves of other apps' windows do nothing on macOS 27).
 
 ## State model
 

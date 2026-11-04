@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ismaelosuna7824/gio/actions/workflows/ci.yml/badge.svg)](https://github.com/ismaelosuna7824/gio/actions/workflows/ci.yml)
 
-Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It moves windows through public macOS APIs (Accessibility, `NSWorkspace`, `CGEvent`); the only private call it makes reads the trackpad's finger positions for gestures (see [Private APIs](#private-apis)). **System Integrity Protection stays on**; Gio injects nothing into other processes or the Dock.
+Gio is a Niri-style **scrollable tiling window manager for macOS**. It arranges windows in a horizontal strip of columns and treats each display as a viewport over that strip. It moves windows through public macOS APIs (Accessibility, `NSWorkspace`, `CGEvent`); its private calls only read: the trackpad's finger positions for gestures, and the window server's notices of windows opening and closing (see [Private APIs](#private-apis)). **System Integrity Protection stays on**; Gio injects nothing into other processes or the Dock.
 
 > Status: pre-release. The version comes from the release tag (`MARKETING_VERSION`, see [RELEASING](docs/RELEASING.md)); local and SwiftPM builds report the last tag or `0.0.0-dev`. Core behavior is covered by automated tests; several live behaviors are still recorded as "live pending" in `odd/tasks/`. Read the [Known limitations](docs/USER_GUIDE.md#known-limitations) before relying on it (developer detail: [TESTING](docs/TESTING.md#known-limitations)).
 
@@ -92,9 +92,10 @@ Capturing those images is what macOS calls Screen Recording (ScreenCaptureKit, m
 
 ### Private APIs
 
-Trackpad gestures need the fingers' positions, which no public API reports. When this macOS has them, Gio uses:
+Some facts have no public API. When this macOS has them, Gio uses:
 
 - **MultitouchSupport** (`MTDeviceCreateList`, `MTDeviceStart`, `MTDeviceStop`, `MTRegisterContactFrameCallbackWithRefcon`, `MTUnregisterContactFrameCallback`, from the private `MultitouchSupport` framework): the raw finger positions of the built-in trackpad and Magic Trackpads, for the trackpad gestures. Gio only reads them; it does not intercept or swallow any scroll or gesture event, so macOS's own gestures keep working (and must be moved where they collide). Without these symbols, or with every gesture off in `[gestures]`, the trackpad devices are not opened; the log says why (`gestures available=... reason=...`) and so does **Diagnostics > Gestures**.
+- **SkyLight** (`SLSMainConnectionID`, `SLSRegisterConnectionNotifyProc`, from the private `SkyLight` framework) and **`_AXUIElementGetWindow`** (HIServices): the window server's notices that a window was created or destroyed, for every app, and the window-server number of each window Gio registers. They back up the Accessibility observers: a window still unregistered 1.5 s after it appeared gets its app scanned (`window server scan pid=N reason=unregistered`), and a registered window the window server destroyed gets the usual proof scan before it leaves the layout. Gio only reads these notices; it never moves, orders or changes a window through SkyLight. Without the symbols the log says `window server events off missing-symbols:...` and Gio relies on Accessibility alone.
 
 The symbols are loaded at runtime (`dlopen`/`dlsym`), never linked. Windows themselves always move through Accessibility. Gio also switches an app's `AXEnhancedUserInterface` attribute off while it writes that app's windows and back on right after (assistive apps such as VoiceOver set it, and it makes Chromium and Electron apps slow to move).
 

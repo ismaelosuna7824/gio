@@ -218,6 +218,11 @@ final class SessionHost: @unchecked Sendable {
     /// Discovery, registration, purge and display sync; the observers and
     /// event routing on top of it.
     private var discovery: DiscoveryService!
+    /// WS-02: window-server created/destroyed notifications backing up the
+    /// Accessibility observers (session queue; `post` from main).
+    private var windowServer: WindowServerWatcher!
+    /// WS-01: kept alive for the app's life (its context is unretained).
+    private var windowServerSource: WindowServerEventSource?
     private var events: WindowEventRouter!
     /// Focus adoption, keyboard intent, centering, cursor warp and
     /// focus-follows-mouse (clicks and pointer handed over under their locks).
@@ -591,6 +596,11 @@ final class SessionHost: @unchecked Sendable {
                         elementID: id.elementID, pid: id.pid,
                         element: candidate.element, appElement: candidate.appElement
                     )
+                    // Rule 4: never an element of Gio's own process.
+                    if id.pid != ProcessInfo.processInfo.processIdentifier,
+                       let number = axWindowNumber(candidate.element) {
+                        windowServer.noteRegistered(id, number: number)
+                    }
                 },
                 watchWindow: { [unowned self] in events.watch(window: $0, pid: $1) },
                 displayHeight: { [unowned self] in primaryHeight() },
@@ -620,6 +630,7 @@ final class SessionHost: @unchecked Sendable {
                     openingWindows.forget(id)
                     openTimeline.forget(id)
                     actuator?.forget(elementID: id.elementID)
+                    windowServer.forget(id)
                 },
                 forgetApp: { [unowned self] pid in
                     appNames.forget(pid)
@@ -681,6 +692,17 @@ final class SessionHost: @unchecked Sendable {
                 listedWindows: { axWindowElements(pid: $0) },
                 windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
                 newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition }
+            ),
+            scheduler: scheduler
+        )
+        windowServer = WindowServerWatcher(
+            context: .init(
+                windowOwner: { windowServerOwner(number: $0) },
+                ownPID: ProcessInfo.processInfo.processIdentifier,
+                allowsWindowWork: { [unowned self] in space.allowsWindowWork },
+                scanApp: { [unowned self] in discovery.appAttached($0) },
+                proveVanished: { [unowned self] in discovery.noteSettled(vanished: [$0], alive: []) },
+                log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler
         )
@@ -959,6 +981,7 @@ final class SessionHost: @unchecked Sendable {
                         return
                     }
                     self.startMultitouch(gestures: config.gestures)
+                    self.startWindowServerEvents()
                     onReady()
                 }
             }
@@ -1310,6 +1333,22 @@ final class SessionHost: @unchecked Sendable {
         hotkeyTap = nil
         startTap()
         GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted)")
+    }
+
+    // MARK: - Window-server notifications (WS-01)
+
+    /// Main thread, once at start: load SkyLight's notification calls (a
+    /// missing symbol leaves them off and Gio on Accessibility alone) and
+    /// register for windows being created and destroyed.
+    private func startWindowServerEvents() {
+        let watcher = windowServer!
+        let loaded = WindowServerEventSource.load { watcher.post($0) }
+        windowServerSource = loaded.source
+        if let source = loaded.source {
+            GioLog.record(.info, "window server events registered=\(source.start())/\(WindowServerEventType.all.count)")
+        } else {
+            GioLog.record(.warn, "window server events off missing-symbols:\(loaded.missing.joined(separator: ","))")
+        }
     }
 
     // MARK: - Trackpad gestures (TG-03)
