@@ -154,9 +154,16 @@ extension EnvironmentValues {
 
 /// Borderless windows cannot become key by default; the setup needs the
 /// keyboard (Return continues).
-private final class SetupCoverWindow: NSWindow {
+final class SetupCoverWindow: NSWindow {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+}
+
+/// DA-16: the setup cover is on screen (its steps send you to System
+/// Settings; the main window stays open meanwhile).
+@MainActor
+var isSetupCoverShowing: Bool {
+    NSApplication.shared.windows.contains { $0 is SetupCoverWindow && $0.isVisible }
 }
 
 /// Anchors a `SetupCoverController` in the view tree: the cover shows on the
