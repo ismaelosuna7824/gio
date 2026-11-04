@@ -18,7 +18,7 @@ final class FocusRingPublisherTests: XCTestCase {
         delivered = Recorder()
     }
 
-    private func makePublisher() -> FocusRingPublisher {
+    private func makePublisher(windowNumbers: [WindowID: UInt32] = [:]) -> FocusRingPublisher {
         let fixture = fixture!
         let delivered = delivered!
         return FocusRingPublisher(context: .init(
@@ -29,7 +29,8 @@ final class FocusRingPublisherTests: XCTestCase {
             isZoomBusy: { fixture.zoomBusy.contains($0) },
             isFullscreen: { fixture.fullscreen.contains($0) },
             mainHop: hop.hop,
-            deliver: { delivered.append($0) }
+            deliver: { delivered.append($0) },
+            windowNumber: { windowNumbers[$0] }
         ))
     }
 
@@ -46,6 +47,16 @@ final class FocusRingPublisherTests: XCTestCase {
         XCTAssertEqual(delivered.values, [], "delivery waits for the main hop")
         hop.drain()
         XCTAssertEqual(delivered.values, [expectedShown])
+    }
+
+    /// NF-13: the ring carries the focused window's window-server number so
+    /// the overlay can sit right above that window, under whatever covers it.
+    func testRingCarriesTheFocusedWindowsNumber() {
+        let focused = fixture.session.manager.currentWorkspace().focusedWindow!
+        guard case .shown(let ring) = makePublisher(windowNumbers: [focused: 1188]).snapshot() else {
+            return XCTFail("ring hidden")
+        }
+        XCTAssertEqual(ring.windowNumber, 1188)
     }
 
     func testHiddenWhenTheDimIndicatorIsConfigured() {

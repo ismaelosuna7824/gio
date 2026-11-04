@@ -558,8 +558,31 @@ final class ReflowPlannerTests: XCTestCase {
         yieldToApp(floating, in: world)
         world.session.manager.switchTo(1)
         world.syncShown()
-        XCTAssertNil(run().plans.last?.visible[floating], "no restore of a yielded window")
+        // FI-13 (live 2026-11-04: Activity Monitor yielded while parked and
+        // never came back, even when activated): a yielded window its shown
+        // workspace leaves off screen is brought on screen once, size kept.
+        let usable = world.visibleFrames[ReflowWorld.left]!
+        let rescued = run().plans.last?.visible[floating]
+        XCTAssertNotNil(rescued)
+        XCTAssertTrue(rescued.map { usable.contains($0) } ?? false, "\(String(describing: rescued))")
+        XCTAssertEqual(rescued?.size, hidden[floating]?.frame.size)
+        world.physicalFrames[floating] = rescued
+        XCTAssertNil(run().plans.last?.visible[floating], "on screen: the app keeps it from here")
         XCTAssertTrue(world.session.manager.currentWorkspace().columns.flatMap(\.windows).contains(floating))
+    }
+
+    func testRescuedFrameKeepsTheSizeInsideTheVisibleArea() {
+        let visible = CGRect(x: 0, y: 0, width: 1512, height: 949)
+        XCTAssertNil(rescuedFrame(CGRect(x: 100, y: 0, width: 744, height: 933), into: visible), "on screen")
+        XCTAssertNil(rescuedFrame(CGRect(x: 1000, y: 0, width: 744, height: 933), into: visible), "mostly on screen")
+        XCTAssertEqual(
+            rescuedFrame(CGRect(x: 1511, y: 8, width: 744, height: 933), into: visible),
+            CGRect(x: 768, y: 8, width: 744, height: 933), "a parking sliver comes back to the nearest edge"
+        )
+        XCTAssertEqual(
+            rescuedFrame(CGRect(x: -5000, y: -900, width: 2000, height: 1200), into: visible),
+            CGRect(x: 0, y: 0, width: 1512, height: 949), "larger than the screen: it fills it"
+        )
     }
 
     func testAYieldedFloatingWindowDoesNotFollowItsWorkspaceToAnotherDisplay() {

@@ -17,7 +17,7 @@ final class OverviewPresentationTests: XCTestCase {
     }
 
     func testMotionSummary() {
-        var config = AnimationsSectionConfig()
+        var config = AnimationsSectionConfig(enabled: true)
         config.renderer = .snapshot
         config.curve = .spring
         XCTAssertEqual(motionSummary(config, screenRecording: true).value, "Snapshot")

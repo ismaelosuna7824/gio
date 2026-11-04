@@ -218,6 +218,16 @@ final class SessionHost: @unchecked Sendable {
     /// Discovery, registration, purge and display sync; the observers and
     /// event routing on top of it.
     private var discovery: DiscoveryService!
+    /// WS-02: window-server created/destroyed notifications backing up the
+    /// Accessibility observers (session queue; `post` from main).
+    private var windowServer: WindowServerWatcher!
+    /// WS-01: kept alive for the app's life (its context is unretained).
+    private var windowServerSource: WindowServerEventSource?
+    /// WC-22: main thread; kept for the app's life.
+    private var windowManagerMonitor: WindowManagerMonitor?
+    /// WS-01 diagnostics, session queue: how many notices the window server
+    /// accepted at start (nil before, or when symbols are missing).
+    private var windowServerStart: (registered: Int?, missing: [String]) = (nil, [])
     private var events: WindowEventRouter!
     /// Focus adoption, keyboard intent, centering, cursor warp and
     /// focus-follows-mouse (clicks and pointer handed over under their locks).
@@ -229,6 +239,9 @@ final class SessionHost: @unchecked Sendable {
     private var focusRing: FocusRingPublisher!
     /// Focus ring hook, always invoked on the main thread.
     var onFocusRing: ((FocusRingState) -> Void)?
+    /// NF-13: the focused window moved in the window stack (main thread);
+    /// the ring is ordered back right above it. Set once before `start()`.
+    var onFocusedWindowReordered: (() -> Void)?
     /// NF-06: the dim overlay, same hand-off as the ring; one coalesced
     /// recompute (one on-screen CGWindowList query), no timer at rest.
     private var focusDim: FocusDimPublisher!
@@ -279,6 +292,17 @@ final class SessionHost: @unchecked Sendable {
                 }
                 focus.requestAdoption(.activation, pid: pid, element: nil)
             },
+            restoreWindows: { [unowned self] in
+                // The quit path's restore, without quitting: the other
+                // manager finds every window on screen.
+                pendingReflow?.cancel()
+                motion.stop()
+                overlayFlight.end()
+                reconciler?.waitForMotionIdle(timeout: 0.3)
+                let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
+                let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
+                GioLog.record(.info, "restore for another window manager moved=\(moved)")
+            },
             log: { GioLog.record($0, $1) }
         ))
         reflowPlanner = ReflowPlanner(context: .init(
@@ -294,7 +318,8 @@ final class SessionHost: @unchecked Sendable {
             isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
             isFullscreen: { [unowned self] in fullscreen.isFullscreen($0) },
             mainHop: mainQueueHop,
-            deliver: { [unowned self] in onFocusRing?($0) }
+            deliver: { [unowned self] in onFocusRing?($0) },
+            windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
         ))
         focusDim = FocusDimPublisher(
             context: .init(
@@ -308,7 +333,8 @@ final class SessionHost: @unchecked Sendable {
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 frontToBack: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
                 mainHop: mainQueueHop,
-                deliver: { [unowned self] in onFocusDim?($0) }
+                deliver: { [unowned self] in onFocusDim?($0) },
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -338,6 +364,16 @@ final class SessionHost: @unchecked Sendable {
                 )
             },
             gestureConflicts: { [unowned self] in gestureConflicts() },
+            windowManagerConflicts: { [unowned self] in space.conflicts },
+            windowServerStatus: { [unowned self] in
+                WindowServerStatus(
+                    registered: windowServerStart.registered, total: WindowServerEventType.all.count,
+                    missingSymbols: windowServerStart.missing, notices: windowServer.noticeCount,
+                    rescueScans: windowServer.rescueScanCount, numberedWindows: windowServer.numberedWindowCount,
+                    managedWindows: session.registry.managedWindows().count
+                )
+            },
+            displaysHaveSeparateSpaces: { displaysHaveSeparateSpaces() },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
@@ -354,7 +390,8 @@ final class SessionHost: @unchecked Sendable {
                 recordEcho: { [unowned self] in echoGate.recordApplied($0, frame: $1, at: $2) },
                 appName: { [unowned self] in appName($0) },
                 log: { GioLog.record($0, $1) },
-                serverWindowStates: { [unowned self] in windowServerWindowStates(pid: $0, displayHeight: primaryHeight()) }
+                serverWindowStates: { [unowned self] in windowServerWindowStates(pid: $0, displayHeight: primaryHeight()) },
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -400,7 +437,8 @@ final class SessionHost: @unchecked Sendable {
                 ownPid: getpid(),
                 log: { GioLog.record($0, $1) },
                 appName: { [unowned self] in appName($0) },
-                physicalMemory: ProcessInfo.processInfo.physicalMemory
+                physicalMemory: ProcessInfo.processInfo.physicalMemory,
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
             ),
             scheduler: scheduler
         )
@@ -441,27 +479,33 @@ final class SessionHost: @unchecked Sendable {
                 },
                 // SM-14: tiny captures off the session queue; the answer hops back.
                 // SM-29: probes carry a resized window's start size and background.
+                // WS-04: recorded window numbers are read here, on the session queue.
                 checkPaint: { [unowned self, snapshotCapturer] probes, answer in
                     let (screens, primary) = displayParameters.captureScreens
+                    let numbers = recordedWindowNumbers(probes.keys)
                     Task.detached {
                         answer(await snapshotCapturer.paintCheck(
-                            windows: probes, displays: screens, primaryDisplayHeight: primary
+                            windows: probes, displays: screens, primaryDisplayHeight: primary, windowNumbers: numbers
                         ))
                     }
                 },
                 // SM-30: a resized window captured again at its target size mid-flight.
                 captureFresh: { [unowned self, snapshotCapturer] id, probe, answer in
                     let (screens, primary) = displayParameters.captureScreens
+                    let number = windowServer.windowNumber(of: id)
                     Task.detached {
                         answer(await snapshotCapturer.freshCapture(
-                            id, probe: probe, displays: screens, primaryDisplayHeight: primary
+                            id, probe: probe, displays: screens, primaryDisplayHeight: primary, windowNumber: number
                         ))
                     }
                 },
                 log: { GioLog.record($0, $1) },
                 startLive: { [unowned self, liveStreamer] windows in
                     let (screens, primary) = displayParameters.captureScreens
-                    liveStreamer.start(windows, displays: screens, primaryDisplayHeight: primary)
+                    liveStreamer.start(
+                        windows, displays: screens, primaryDisplayHeight: primary,
+                        windowNumbers: recordedWindowNumbers(windows.keys)
+                    )
                 },
                 stopLive: { [liveStreamer] in
                     liveStreamer.stopAll()
@@ -488,7 +532,7 @@ final class SessionHost: @unchecked Sendable {
                 windowServerID: { [unowned self] id, frame in
                     let candidates = windowServerSnapshotCandidates(pids: [id.pid], displayHeight: primaryHeight())
                     guard case .matched(let windowID)? = matchSnapshotCandidates(
-                        managed: [id: frame], candidates: candidates
+                        managed: [id: frame], candidates: candidates, known: recordedWindowNumbers([id])
                     )[id] else {
                         return nil
                     }
@@ -524,7 +568,9 @@ final class SessionHost: @unchecked Sendable {
                     let candidates = windowServerSnapshotCandidates(
                         pids: Set(managed.keys.map(\.pid)), displayHeight: primaryHeight()
                     )
-                    return matchSnapshotCandidates(managed: managed, candidates: candidates)
+                    return matchSnapshotCandidates(
+                        managed: managed, candidates: candidates, known: recordedWindowNumbers(managed.keys)
+                    )
                 },
                 windowServerSize: { windowServerSize(windowID: $0) },
                 isSizeSettable: { [unowned self] in actuator?.element(for: $0).map(axIsSizeSettable) ?? false },
@@ -591,6 +637,11 @@ final class SessionHost: @unchecked Sendable {
                         elementID: id.elementID, pid: id.pid,
                         element: candidate.element, appElement: candidate.appElement
                     )
+                    // Rule 4: never an element of Gio's own process.
+                    if id.pid != ProcessInfo.processInfo.processIdentifier,
+                       let number = axWindowNumber(candidate.element) {
+                        windowServer.noteRegistered(id, number: number)
+                    }
                 },
                 watchWindow: { [unowned self] in events.watch(window: $0, pid: $1) },
                 displayHeight: { [unowned self] in primaryHeight() },
@@ -620,6 +671,7 @@ final class SessionHost: @unchecked Sendable {
                     openingWindows.forget(id)
                     openTimeline.forget(id)
                     actuator?.forget(elementID: id.elementID)
+                    windowServer.forget(id)
                 },
                 forgetApp: { [unowned self] pid in
                     appNames.forget(pid)
@@ -681,6 +733,31 @@ final class SessionHost: @unchecked Sendable {
                 listedWindows: { axWindowElements(pid: $0) },
                 windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
                 newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition }
+            ),
+            scheduler: scheduler
+        )
+        windowServer = WindowServerWatcher(
+            context: .init(
+                windowOwner: { windowServerOwner(number: $0) },
+                ownPID: ProcessInfo.processInfo.processIdentifier,
+                allowsWindowWork: { [unowned self] in space.allowsWindowWork },
+                scanApp: { [unowned self] in discovery.appAttached($0) },
+                proveVanished: { [unowned self] in discovery.noteSettled(vanished: [$0], alive: []) },
+                frameChanged: { [unowned self] id, resized, at in
+                    events.windowServerFrameChanged(id, resized: resized, noticeAt: at)
+                },
+                subscribe: { [weak self] numbers in
+                    // The source lives on main (WS-01).
+                    DispatchQueue.main.async { self?.windowServerSource?.subscribe(numbers) }
+                },
+                reordered: { [unowned self] id in
+                    guard id == session.manager.currentWorkspace().focusedWindow else {
+                        return
+                    }
+                    DispatchQueue.main.async { [weak self] in self?.onFocusedWindowReordered?() }
+                },
+                now: { ProcessInfo.processInfo.systemUptime },
+                log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler
         )
@@ -932,10 +1009,14 @@ final class SessionHost: @unchecked Sendable {
         GioLog.record(.info, "session started")
         GioLog.record(.info, "spaces separate=\(displaysHaveSeparateSpaces())")
         guardian = spawnGuardian()
+        // WC-22: before the first layout, so Gio never parks a window another
+        // window manager is already managing.
+        let windowManagers = conflictingWindowManagers(runningProcessNames: runningProcessNames())
         queue.async {
             guard !self.isShuttingDown else {
                 return
             }
+            self.space.windowManagersChanged(windowManagers)
             // PA-24: the first layout already gives clamping apps their width.
             self.appMinimums = self.appMinimumStore?.load() ?? AppMinimumSizes()
             self.initialSync()
@@ -946,6 +1027,7 @@ final class SessionHost: @unchecked Sendable {
         watchDesktopPicture()
         watchMemoryPressure()
         watchManagedSpace()
+        watchWindowManagers()
         queue.async {
             guard !self.isShuttingDown else {
                 return
@@ -959,6 +1041,7 @@ final class SessionHost: @unchecked Sendable {
                         return
                     }
                     self.startMultitouch(gestures: config.gestures)
+                    self.startWindowServerEvents()
                     onReady()
                 }
             }
@@ -1038,6 +1121,13 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// WS-04: the window numbers recorded at registration for `ids` (those
+    /// that have one). Session queue only: the watcher is read here, and the
+    /// result travels as data to off-queue captures.
+    private func recordedWindowNumbers<S: Sequence>(_ ids: S) -> [WindowID: UInt32] where S.Element == WindowID {
+        ids.reduce(into: [:]) { numbers, id in numbers[id] = windowServer.windowNumber(of: id) }
+    }
+
     /// SM-02 debug action (Diagnostics): captures the visible managed windows
     /// and a backdrop once, logs the summary and hands it back on the main
     /// queue. Never runs from a motion; images are released on return. The
@@ -1058,6 +1148,7 @@ final class SessionHost: @unchecked Sendable {
                     frames[window.id] = frame
                 }
             }
+            let numbers = recordedWindowNumbers(frames.keys)
             DispatchQueue.main.async { [weak self] in
                 guard let self else {
                     return
@@ -1072,7 +1163,7 @@ final class SessionHost: @unchecked Sendable {
                 let request = SnapshotCaptureRequest(
                     windows: frames, displays: screens,
                     primaryDisplayHeight: primaryScreen()?.frame.height ?? 1169,
-                    measure: true, reason: .measure
+                    measure: true, reason: .measure, windowNumbers: numbers
                 )
                 Task.detached { [snapshotCapturer] in
                     let result = await snapshotCapturer.capture(request)
@@ -1242,7 +1333,8 @@ final class SessionHost: @unchecked Sendable {
                 displays: screens.map {
                     SnapshotDisplay(id: $0.id, frame: $0.frame, scale: min($0.scale, overviewThumbnailScale))
                 },
-                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500, reason: .overview
+                primaryDisplayHeight: primaryHeight, includeBackdrop: false, budgetMilliseconds: 1500, reason: .overview,
+                windowNumbers: recordedWindowNumbers(plan.toCapture.keys)
             )
             Task.detached { [snapshotCapturer] in
                 let result = await snapshotCapturer.capture(request)
@@ -1310,6 +1402,26 @@ final class SessionHost: @unchecked Sendable {
         hotkeyTap = nil
         startTap()
         GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted)")
+    }
+
+    // MARK: - Window-server notifications (WS-01)
+
+    /// Main thread, once at start: load SkyLight's notification calls (a
+    /// missing symbol leaves them off and Gio on Accessibility alone) and
+    /// register for windows being created and destroyed.
+    private func startWindowServerEvents() {
+        let watcher = windowServer!
+        let loaded = WindowServerEventSource.load { watcher.post($0) }
+        windowServerSource = loaded.source
+        let registered = loaded.source?.start()
+        if let registered {
+            GioLog.record(.info, "window server events registered=\(registered)/\(WindowServerEventType.all.count)")
+        } else {
+            GioLog.record(.warn, "window server events off missing-symbols:\(loaded.missing.joined(separator: ","))")
+        }
+        queue.async { [weak self] in
+            self?.windowServerStart = (registered, loaded.missing)
+        }
     }
 
     // MARK: - Trackpad gestures (TG-03)
@@ -2436,6 +2548,21 @@ final class SessionHost: @unchecked Sendable {
         }
         memoryPressure = source
         source.resume()
+    }
+
+    /// WC-22: main thread, at start.
+    private func watchWindowManagers() {
+        let monitor = WindowManagerMonitor { [weak self] names in
+            self?.queue.async {
+                guard let self, !self.isShuttingDown else {
+                    return
+                }
+                self.space.windowManagersChanged(names)
+                self.publishSnapshot()
+            }
+        }
+        monitor.start()
+        windowManagerMonitor = monitor
     }
 
     private func watchManagedSpace() {

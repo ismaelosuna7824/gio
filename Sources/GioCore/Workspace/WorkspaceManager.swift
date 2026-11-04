@@ -713,6 +713,7 @@ public struct WorkspaceManager: Equatable, Sendable {
             reconciled = reconciled.settingLayout(.scrolling, splitRatio: layoutDefaults.splitRatio)
         }
         reconciled.reconcileDwindle(splitRatio: layoutDefaults.splitRatio)
+        reconciled.reconcileFillPause()
         workspaces[workspace.id] = reconciled
     }
 

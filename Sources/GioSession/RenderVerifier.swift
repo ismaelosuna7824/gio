@@ -33,6 +33,8 @@ public final class RenderVerifier: @unchecked Sendable {
         public var now: () -> TimeInterval
         /// Every WindowServer window of one app, on screen or not (diagnostics).
         public var serverWindowStates: (pid_t) -> [ServerWindowState]
+        /// WS-04: the window number recorded at registration, if any.
+        public var windowNumber: (WindowID) -> UInt32?
 
         public init(
             isShuttingDown: @escaping () -> Bool, isMotionActive: @escaping () -> Bool,
@@ -43,7 +45,8 @@ public final class RenderVerifier: @unchecked Sendable {
             recordEcho: @escaping (WindowID, CGRect, TimeInterval) -> Void,
             appName: @escaping (pid_t) -> String, log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
-            serverWindowStates: @escaping (pid_t) -> [ServerWindowState] = { _ in [] }
+            serverWindowStates: @escaping (pid_t) -> [ServerWindowState] = { _ in [] },
+            windowNumber: @escaping (WindowID) -> UInt32? = { _ in nil }
         ) {
             self.isShuttingDown = isShuttingDown
             self.isMotionActive = isMotionActive
@@ -59,6 +62,7 @@ public final class RenderVerifier: @unchecked Sendable {
             self.log = log
             self.now = now
             self.serverWindowStates = serverWindowStates
+            self.windowNumber = windowNumber
         }
     }
 
@@ -119,8 +123,12 @@ public final class RenderVerifier: @unchecked Sendable {
     }
 
     private func verdict(axFrames: [WindowID: CGRect], targets: [WindowID: CGRect]) -> RenderVerdict {
-        evaluateRender(
-            axFrames: axFrames, server: context.serverWindows(), targets: targets, viewports: context.viewports()
+        let known = axFrames.keys.reduce(into: [WindowID: UInt32]()) { known, id in
+            known[id] = context.windowNumber(id)
+        }
+        return evaluateRender(
+            axFrames: axFrames, server: context.serverWindows(), targets: targets, viewports: context.viewports(),
+            known: known
         )
     }
 

@@ -78,12 +78,13 @@ public func effectiveHotkeyBindings(
     return effective
 }
 
-/// The combo that opens the launcher under `config` (nil: unbound), for the
-/// hints in the launcher's title bar and the menu bar item. A combo the user
-/// bound wins over the default; ties go to the canonical text order.
-public func launcherHotkey(in config: GioConfig) -> HotkeyCombo? {
+/// The combo shown for `action` under `config` (nil: unbound): the launcher's
+/// title bar and menu bar hint, the Layout preview's key hints (MD-02). A
+/// combo the user bound wins over the default; ties go to the canonical text
+/// order.
+public func shownHotkey(for action: HotkeyAction, in config: GioConfig) -> HotkeyCombo? {
     effectiveHotkeyBindings(configKeybindings: config.keybindings, unbound: config.unboundKeys)
-        .filter { $0.value.action == .toggleLauncher }
+        .filter { $0.value.action == action }
         .min { lhs, rhs in
             if (lhs.value.source == .config) != (rhs.value.source == .config) {
                 return lhs.value.source == .config

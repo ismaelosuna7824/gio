@@ -27,6 +27,14 @@ final class FocusRingGateTests: XCTestCase {
         XCTAssertFalse(gate.shouldPublish(shown(base)))
     }
 
+    /// NF-13: two windows at the same frame (tabs, stacked floats): focusing
+    /// the other one must re-order the ring above it.
+    func testAnotherWindowAtTheSameFramePublishes() {
+        var gate = FocusRingPublishGate()
+        _ = gate.shouldPublish(.shown(FocusRingGeometry(frame: base, width: 4, color: color, windowNumber: 10)))
+        XCTAssertTrue(gate.shouldPublish(.shown(FocusRingGeometry(frame: base, width: 4, color: color, windowNumber: 11))))
+    }
+
     func testSubPointMovementIsSkipped() {
         var gate = FocusRingPublishGate()
         _ = gate.shouldPublish(shown(base))

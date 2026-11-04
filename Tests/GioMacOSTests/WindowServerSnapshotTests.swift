@@ -22,6 +22,13 @@ final class WindowServerSnapshotTests: XCTestCase {
         XCTAssertEqual(windows, [ServerWindow(pid: 5, bounds: CGRect(x: 10, y: 500, width: 600, height: 400))])
     }
 
+    func testServerWindowsCarryTheirWindowNumber() {
+        var numbered = entry(pid: 5, layer: 0, x: 10, y: 100, w: 600, h: 400)
+        numbered[kCGWindowNumber as String] = 42
+        let windows = parseWindowServerEntries([numbered], displayHeight: 1000)
+        XCTAssertEqual(windows, [ServerWindow(pid: 5, bounds: CGRect(x: 10, y: 500, width: 600, height: 400), number: 42)])
+    }
+
     func testDropsOverlaysAndMalformedEntries() {
         let windows = parseWindowServerEntries(
             [

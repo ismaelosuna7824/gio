@@ -77,11 +77,16 @@ public struct FocusRingGeometry: Equatable, Sendable {
     public var frame: CGRect
     public var width: CGFloat
     public var color: ThemeColor
+    /// NF-13: the focused window's window-server number, when known: the
+    /// overlay is ordered right above that window (at its level), so
+    /// whatever covers the window covers the ring too.
+    public var windowNumber: UInt32?
 
-    public init(frame: CGRect, width: CGFloat, color: ThemeColor) {
+    public init(frame: CGRect, width: CGFloat, color: ThemeColor, windowNumber: UInt32? = nil) {
         self.frame = frame
         self.width = width
         self.color = color
+        self.windowNumber = windowNumber
     }
 
     /// Path of the stroke in overlay-local coordinates: strokes are centered

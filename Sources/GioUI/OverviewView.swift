@@ -74,6 +74,9 @@ struct OverviewDashboard: View {
                 if !facts.accessibilityGranted {
                     accessibilityBanner
                 }
+                if !facts.windowManagerConflicts.isEmpty {
+                    windowManagerBanner(facts.windowManagerConflicts)
+                }
                 heroRow(facts, overview)
                 stripCard(facts)
                 HStack(alignment: .top, spacing: GioSpacing.m) {
@@ -142,6 +145,30 @@ struct OverviewDashboard: View {
         .overlay(
             RoundedRectangle(cornerRadius: GioRadius.large, style: .continuous)
                 .strokeBorder(GioColor.info.opacity(0.28), lineWidth: 0.5)
+        )
+    }
+
+    /// WC-22: Gio paused because another window manager runs.
+    private func windowManagerBanner(_ names: [String]) -> some View {
+        HStack(alignment: .center, spacing: GioSpacing.m) {
+            SectionIcon(symbol: "pause.circle.fill", tint: .orange, size: 36)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Tiling is paused: \(names.joined(separator: ", ")) is running").font(GioFont.headline)
+                Text("Two window managers would fight over the same windows. Gio put every window back on screen and resumes on its own when the other one quits.")
+                    .font(GioFont.callout)
+                    .foregroundStyle(GioColor.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: GioSpacing.s)
+        }
+        .padding(GioSpacing.m)
+        .background(
+            RoundedRectangle(cornerRadius: GioRadius.large, style: .continuous)
+                .fill(GioColor.warning.opacity(0.10))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: GioRadius.large, style: .continuous)
+                .strokeBorder(GioColor.warning.opacity(0.28), lineWidth: 0.5)
         )
     }
 

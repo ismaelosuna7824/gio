@@ -319,6 +319,26 @@ Window admission, observation and registration only. Out of scope: animation/per
   (54 skipped), POC 7, Mac 19, macOS 116; signed build OK. LIVE (dev build, release removed, grants
   reset, 2026-11-04T02:49Z): granting Accessibility logged the relaunch line, a new session started,
   and `gio list-windows` lists Tern `mode=tiled`.
+- [ ] WC-22 (`e17ac62`) — Pause while another window manager runs (OmniWM comparison 2026-11-04; user
+  choice: pause until it quits, over warn only). `SpaceGate` gates window work for two reasons now
+  (managed Space, `conflicts`), reporting a transition only when the combined answer changes;
+  `conflictingWindowManagers` (GioCore) matches process names `AeroSpace`, `Amethyst`, `OmniWM`,
+  `yabai` (only names known to be window managers). `runningProcessNames` (libproc) is checked at
+  `start()` before the first layout, then by `WindowManagerMonitor` on app launch/quit and every 15 s
+  (yabai runs as a daemon, no app launch). Pausing logs `window manager running: <names>; pausing
+  layout`, drops pending adoptions and restores every parked window (the quit path's restore,
+  `restore for another window manager moved=N`); the exit resumes like a return to the Space
+  (rescan, adopt, reflow; `window manager gone; reflow`). Overview shows a "Tiling is paused"
+  banner (`SessionFacts.windowManagerConflicts`). RED: compile (`SpaceGateTests`,
+  `SpaceCoordinatorTests`). GREEN: Core 2246, Session 595, UI 385 (54 skipped), POC 7, Mac 19,
+  macOS 118; signed build OK. Live (dev build, release removed, grants reset, 2026-11-04): the first
+  build never paused with a process named `yabai` running: `proc_name` answers ESRCH (errno 3) for
+  processes it may not inspect. `runningProcessNames` now reads `sysctl(KERN_PROC_ALL)` `p_comm`
+  (`WindowManagerMonitorTests.testProcessesOfOtherUsersAreListedByName`: WindowServer, RED on the
+  `proc_name` version, GREEN now). Rerun: a copy of `sleep` named `yabai` logged `window manager
+  running: yabai; pausing layout` and `restore for another window manager moved=8`; after killing
+  it, `window manager gone; reflow` 25 s later (15 s period, 5 s leeway). Not verified live: the
+  Overview banner (not looked at).
 
 ## Acceptance criteria
 - Opening a new app or window after Gio starts tiles it without switching apps.

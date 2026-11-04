@@ -63,6 +63,12 @@ public struct SessionFacts: Equatable, Sendable {
     public let gestures: GestureSourceStatus
     /// TG-04: Gio's gestures that macOS performs too (system swipes on).
     public let gestureConflicts: [GestureConflict]
+    /// WC-22: other window managers running; Gio pauses while any is.
+    public let windowManagerConflicts: [String]
+    /// Diagnostics: the private window-server calls (WS-01..WS-04).
+    public let windowServer: WindowServerStatus
+    /// System Settings > Desktop & Dock > "Displays have separate Spaces".
+    public let displaysHaveSeparateSpaces: Bool
 
     public init(
         configPath: String, configExists: Bool, configMessages: [String], configRejected: Bool = false,
@@ -70,10 +76,14 @@ public struct SessionFacts: Equatable, Sendable {
         displays: [DisplayFact], windows: [WindowFact], screenRecordingGranted: Bool = false,
         strip: WorkspaceStripFact? = nil,
         gestures: GestureSourceStatus = GestureSourceStatus(available: false, reason: "unknown"),
-        gestureConflicts: [GestureConflict] = []
+        gestureConflicts: [GestureConflict] = [], windowManagerConflicts: [String] = [],
+        windowServer: WindowServerStatus = .notStarted, displaysHaveSeparateSpaces: Bool = true
     ) {
         self.gestures = gestures
         self.gestureConflicts = gestureConflicts
+        self.windowManagerConflicts = windowManagerConflicts
+        self.windowServer = windowServer
+        self.displaysHaveSeparateSpaces = displaysHaveSeparateSpaces
         self.configPath = configPath
         self.configExists = configExists
         self.configMessages = configMessages

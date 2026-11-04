@@ -21,6 +21,11 @@ public struct LayoutConfig: Equatable, Sendable {
     /// column lays it out in the middle of the viewport (when it fits inside
     /// the padding) instead of at the left padding.
     public var alwaysCenterSingleColumn: Bool
+    /// NC-15 `fill-empty-space`: columns that fit the strip stretch
+    /// proportionally to fill it (stored widths untouched), unless the
+    /// workspace was resized by hand at this column count
+    /// (`Workspace.fillPausedAtColumnCount`).
+    public var fillEmptySpace: Bool
     /// DW-01 `[dwindle]`: split ratio and shape bias of dwindle workspaces.
     public var dwindle: DwindleSettings
     /// Niri `center-focused-column` as configured. Keyboard focus changes
@@ -38,6 +43,7 @@ public struct LayoutConfig: Equatable, Sendable {
         fullscreenGap: CGFloat = 0,
         maximizeSingleWindow: Bool = false,
         alwaysCenterSingleColumn: Bool = false,
+        fillEmptySpace: Bool = false,
         dwindle: DwindleSettings = DwindleSettings(),
         centerFocusedColumn: CenterFocusedColumnMode = .never
     ) {
@@ -49,6 +55,7 @@ public struct LayoutConfig: Equatable, Sendable {
         self.fullscreenGap = fullscreenGap
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
+        self.fillEmptySpace = fillEmptySpace
         self.dwindle = dwindle
         self.centerFocusedColumn = centerFocusedColumn
     }
@@ -183,6 +190,13 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
             widths.append(max(limitedWidth(spec, column: column, usableWidth: usableWidth), min(learned, usableWidth)))
             framedColumns.append(column)
         }
+        if config.fillEmptySpace, widths.count >= 2, workspace.fillPausedAtColumnCount != widths.count {
+            widths = filledColumnWidths(
+                widths,
+                maxima: framedColumns.map { maximumWidth(of: $0) },
+                available: viewport.width - config.padding * 2 - config.gap * CGFloat(widths.count - 1)
+            )
+        }
 
         let pad = config.padding
         let gap = config.gap
@@ -238,6 +252,48 @@ public struct ScrollableLayoutEngine: LayoutEngine, Sendable {
         combined.min = combined.min.map { min($0, usableWidth) }
         return combined.clamp(width)
     }
+
+    /// A rule's `max-width` for the column (combined over its windows), nil
+    /// without one.
+    private func maximumWidth(of column: Column) -> CGFloat? {
+        let limits = column.windows.compactMap { widthLimits[$0] }
+        guard !limits.isEmpty else {
+            return nil
+        }
+        return ColumnWidthLimits.combined(limits).max
+    }
+}
+
+/// NC-15: columns whose widths leave room in `available` grow
+/// proportionally until they fill it; a column reaching its maximum stops
+/// there and the others share the rest. Columns that already fill or
+/// overflow `available` come back unchanged.
+public func filledColumnWidths(_ widths: [CGFloat], maxima: [CGFloat?], available: CGFloat) -> [CGFloat] {
+    var result = widths
+    var growing = Set(widths.indices.filter { index in maxima[index].map { cap in widths[index] < cap } ?? true })
+    while !growing.isEmpty {
+        let room = available - result.reduce(0, +)
+        let base = growing.reduce(CGFloat(0)) { $0 + result[$1] }
+        guard room > 0.01, base > 0 else {
+            break
+        }
+        let factor = 1 + room / base
+        var capped = false
+        for index in growing {
+            let grown = result[index] * factor
+            if let cap = maxima[index], grown >= cap {
+                result[index] = max(result[index], cap)
+                growing.remove(index)
+                capped = true
+            } else {
+                result[index] = grown
+            }
+        }
+        if !capped {
+            break
+        }
+    }
+    return result
 }
 
 /// Niri proportion semantics: a column of proportion `p` takes that share of

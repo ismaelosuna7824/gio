@@ -188,6 +188,26 @@ public func layoutPreviewGeometry(
     )
 }
 
+/// MD-02: one key hint under the Layout preview.
+public struct LayoutKeyHint: Equatable, Sendable {
+    public let combo: HotkeyCombo
+    public let label: String
+}
+
+/// The strip's everyday keys as the config binds them now: move the window
+/// down its column, put it into the column on the left, cycle and step the
+/// width, focus right. An unbound action is left out.
+public func layoutKeyHints(_ config: GioConfig) -> [LayoutKeyHint] {
+    let shown: [(HotkeyAction, String)] = [
+        (.moveDown, "Move down"), (.consumeOrExpelLeft, "Stack left"),
+        (.switchPresetColumnWidth, "Cycle width"), (.growColumnWidth, "Wider"),
+        (.shrinkColumnWidth, "Narrower"), (.focusRight, "Focus right"),
+    ]
+    return shown.compactMap { action, label in
+        shownHotkey(for: action, in: config).map { LayoutKeyHint(combo: $0, label: label) }
+    }
+}
+
 /// "Reset section" for Layout: every layout default except the centering
 /// mode, which the Focus section owns.
 public func layoutDefaults(preserving form: LayoutSettingsForm) -> LayoutSettingsForm {

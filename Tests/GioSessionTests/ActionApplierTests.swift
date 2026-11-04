@@ -136,15 +136,18 @@ final class ActionApplierTests: XCTestCase {
             .switchPresetWindowHeight, .shrinkWindowHeight, .growWindowHeight,
             .switchPresetColumnWidthBack, .expandColumnToAvailableWidth, .centerVisibleColumns
         ]
+        // NC-15: the column-width actions lay the workspace out to read the
+        // width the user sees (`fill-empty-space`), so they probe modes too.
         let modeActions: [HotkeyAction] = [
             .centerColumn, .expandColumnToAvailableWidth, .centerVisibleColumns,
             .focusLeft, .focusRight, .focusUp, .focusDown, .focusColumnFirst, .focusColumnLast,
-            .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight
+            .focusColumnOrMonitorLeft, .focusColumnOrMonitorRight,
+            .switchPresetColumnWidth, .switchPresetColumnWidthBack, .shrinkColumnWidth, .growColumnWidth
         ]
         for action in Self.allActions {
             setUp()
             apply(action)
-            XCTAssertEqual(engineCalls, engineActions.contains(action) ? 1 : 0, "\(action)")
+            XCTAssertEqual(engineCalls > 0, engineActions.contains(action), "\(action)")
             XCTAssertEqual(modeCalls, modeActions.contains(action) ? 1 : 0, "\(action)")
             XCTAssertEqual(fallbackCalls, 0, "\(action): a display exists")
         }

@@ -45,14 +45,14 @@ public struct OnboardingState: Equatable, Sendable {
     public private(set) var step: OnboardingStep
     public private(set) var accessibilityGranted: Bool
     public private(set) var screenRecordingGranted: Bool
-    /// DD-06: the motion preset the last step offers; Recommended is the
-    /// default, so a flow nobody touches writes the defaults.
+    /// DD-06 / DD-10: the motion preset the last step offers; Fast is the
+    /// recommended default, so a flow nobody touches writes the defaults.
     public private(set) var motion: MotionPreset
 
     /// A `step` the flow leaves out starts on the next one that is shown.
     public init(
         accessibilityGranted: Bool, screenRecordingGranted: Bool, screenRecordingAvailable: Bool,
-        step: OnboardingStep = .welcome, motion: MotionPreset = .recommended
+        step: OnboardingStep = .welcome, motion: MotionPreset = .fast
     ) {
         let steps = onboardingSteps(screenRecordingAvailable: screenRecordingAvailable)
         self.steps = steps

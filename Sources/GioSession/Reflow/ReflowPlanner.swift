@@ -271,7 +271,41 @@ public final class ReflowPlanner: @unchecked Sendable {
                 _ = hiddenBook.reveal([id])
             }
         }
+        rescueStranded(unmanaged, shown: active, displays: all, visibleFrames: visibleFrames, manager: manager, physical: physical, into: &plan)
         return plan
+    }
+
+    /// FI-13: a yielded window its shown workspace leaves off every display
+    /// (it yielded while parked) is written once fully on its workspace's
+    /// display; from there the app keeps it as before. One on screen
+    /// anywhere, even on another display, is the app's (FI-10).
+    private func rescueStranded(
+        _ unmanaged: [ManagedWindow], shown active: [WindowID], displays all: [DisplayState],
+        visibleFrames: [DisplayID: CGRect], manager: WorkspaceManager, physical: [WindowID: CGRect],
+        into plan: inout ParkingPlan
+    ) {
+        let active = Set(active)
+        let screens = all.map { visibleFrames[$0.id] ?? $0.frame }
+        var area: [WindowID: CGRect] = [:]
+        for display in all {
+            for id in manager.workspace(id: display.workspace)?.columns.flatMap(\.windows) ?? [] {
+                area[id] = visibleFrames[display.id] ?? display.frame
+            }
+        }
+        for window in unmanaged where !window.isMinimized && active.contains(window.id) {
+            guard let frame = physical[window.id], let visible = area[window.id],
+                  screens.allSatisfy({ rescuedFrame(frame, into: $0) != nil }),
+                  let rescued = rescuedFrame(frame, into: visible)
+            else {
+                continue
+            }
+            plan.visible[window.id] = rescued
+            GioLog.record(
+                .info,
+                "float rescue id=\(window.id.pid):\(window.id.elementID) app=\(window.application)"
+                    + " from=\(logFrame(frame)) to=\(logFrame(rescued))"
+            )
+        }
     }
 
     /// FI-09: a settled pass wrote these frames (`visible`), minus the

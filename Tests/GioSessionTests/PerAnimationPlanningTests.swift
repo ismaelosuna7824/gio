@@ -76,7 +76,7 @@ final class PerAnimationPlanningTests: XCTestCase {
     }
 
     func testEachFlightTakesItsKindsSpring() throws {
-        var settings = AnimationsSectionConfig()
+        var settings = AnimationsSectionConfig(enabled: true)
         settings.overrides[.windowOpen] = AnimationOverride(springStiffness: 300)
 
         let result = ReflowPlanner.applyingAnimationSettings(
@@ -89,7 +89,7 @@ final class PerAnimationPlanningTests: XCTestCase {
     }
 
     func testEaseOutKindUsesItsOwnDuration() {
-        var settings = AnimationsSectionConfig()
+        var settings = AnimationsSectionConfig(enabled: true)
         settings.overrides[.windowMovement] = AnimationOverride(curve: .easeOut, durationMilliseconds: 90)
 
         let result = ReflowPlanner.applyingAnimationSettings(
@@ -102,7 +102,7 @@ final class PerAnimationPlanningTests: XCTestCase {
     }
 
     func testDisabledKindJumpsOnTheNextFrameInsteadOfWaitingForTheFinalPass() {
-        var settings = AnimationsSectionConfig()
+        var settings = AnimationsSectionConfig(enabled: true)
         settings.overrides[.workspaceSwitch] = AnimationOverride(enabled: false)
         var flight = flights()
         flight[2].sizeSchedule = .atStart
@@ -121,7 +121,7 @@ final class PerAnimationPlanningTests: XCTestCase {
 
     func testWithoutOverridesMatchesTheGlobalCurve() {
         for curve in [MotionCurveKind.spring, .easeOut] {
-            var settings = AnimationsSectionConfig()
+            var settings = AnimationsSectionConfig(enabled: true)
             settings.curve = curve
             XCTAssertEqual(
                 ReflowPlanner.applyingAnimationSettings(

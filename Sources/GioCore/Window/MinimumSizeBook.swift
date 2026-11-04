@@ -25,7 +25,7 @@ public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat
         guard requestedMax - requestedMin >= minimumEvidenceExtent else {
             return 0
         }
-        let grew = (actualMax - actualMin) - (requestedMax - requestedMin) > tolerance
+        let grew = (actualMax - actualMin) - (requestedMax - requestedMin) > max(tolerance, minimumClampSlack)
         let anchored = abs(actualMin - requestedMin) <= tolerance || abs(actualMax - requestedMax) <= tolerance
         return grew && anchored ? actualMax - actualMin : 0
     }
@@ -41,6 +41,11 @@ public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat
 
 /// FX-05: the smallest request a clamp is learned from.
 public let minimumEvidenceExtent: CGFloat = 100
+
+/// NC-15: growth up to this much is an app rounding the size to its grid
+/// (Terminal's character cells: half a cell either way), never a minimum.
+/// Learned, it kept a stretched column from shrinking back.
+public let minimumClampSlack: CGFloat = 16
 
 private extension CGRect {
     var isFinite: Bool {

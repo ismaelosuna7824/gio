@@ -11,6 +11,7 @@ final class FocusDimPublisherTests: XCTestCase {
     private var scheduler: ManualScheduler!
     private var hop: HopRecorder!
     private var delivered: Recorder<FocusDimState>!
+    private var windowNumbers: [WindowID: UInt32] = [:]
 
     override func setUp() {
         fixture = SessionFixture(frames: [left, right], focus: 0)
@@ -27,6 +28,7 @@ final class FocusDimPublisherTests: XCTestCase {
         let fixture = fixture!
         let probe = probe!
         let delivered = delivered!
+        let windowNumbers = windowNumbers
         return FocusDimPublisher(
             context: .init(
                 session: { fixture.session },
@@ -39,7 +41,8 @@ final class FocusDimPublisherTests: XCTestCase {
                 isShuttingDown: { fixture.shuttingDown },
                 frontToBack: { probe.windowServerWindows(displayHeight: 1169) },
                 mainHop: hop.hop,
-                deliver: { delivered.append($0) }
+                deliver: { delivered.append($0) },
+                windowNumber: { windowNumbers[$0] }
             ),
             scheduler: scheduler
         )
@@ -55,6 +58,21 @@ final class FocusDimPublisherTests: XCTestCase {
             return true
         }
         return false
+    }
+
+    /// WS-04: the recorded window number picks the entry the window draws,
+    /// over a closer frame of another window of the app.
+    func testTheRecordedWindowNumberPicksTheDimmedEntry() {
+        let drawn = right.offsetBy(dx: 0, dy: 8)
+        probe.serverWindows = [
+            ServerWindow(pid: 1, bounds: left), ServerWindow(pid: 2, bounds: right, number: 20),
+            ServerWindow(pid: 2, bounds: drawn, number: 21),
+        ]
+        windowNumbers = [SessionFixture.id(1, pid: 2): 21]
+        guard case .shown(let regions, _) = makePublisher().snapshot() else {
+            return XCTFail("expected the dim to show")
+        }
+        XCTAssertEqual(regions.first?.windows.first?.bounds, drawn)
     }
 
     func testUpdatesCoalesceIntoOneRecomputeAfter50ms() {

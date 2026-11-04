@@ -237,6 +237,18 @@ necesidad de modificar el config.toml").
   Accessibility; `tccutil reset ScreenCapture dev.gio.windowmanager` cleared it. Views have no unit
   tests (the phase function is tested). GREEN: as NF-10; signed build OK. LIVE PENDING: request,
   grant, **Relaunch Gio**, the row reads Granted.
+- [ ] DA-16 (`32bcd12`) — Gio's window hides when you leave it (user report 2026-11-04, screenshot of
+  the window cut off behind Terminal; user choice of: always in front, hide when you leave, leave
+  as is). `mainWindowHidesOnActivation` (pure): another app activated hides the open window (the
+  Cmd+W path: accessory policy, menu bar brings it back), except Gio itself, while the setup cover
+  shows and System Settings. `MainWindowController` applies it on
+  `NSWorkspace.didActivateApplicationNotification` and, while the window is open, on a global click
+  in another app (`NSEvent` global monitor, then the frontmost app): live, a window shown without
+  Gio becoming active (after `gio restart`, macOS refused the activation; front stayed Tern) got no
+  activation to hide on. RED: compile (`MainWindowModelTests`, 2). LIVE (dev build, 2026-11-04):
+  after `gio restart` the window was on screen with Tern frontmost; a posted click at (1400, 900)
+  on Activity Monitor hid it. Not verified live: the System Settings exception (the second
+  click landed on Tern).
 
 Evidence DA-01..03 (route: one delegated writer): MainWindow (NavigationSplitView) in GioUI,
 policy .regular while visible / .accessory when closed, Gio pid excluded from discovery,

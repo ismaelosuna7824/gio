@@ -86,6 +86,54 @@ final class RenderVerificationTests: XCTestCase {
         XCTAssertEqual(matches[id(1, 1)], .matched(stale))
     }
 
+    // MARK: Recorded window numbers (WS-04)
+
+    func testARecordedWindowNumberPicksItsEntryAmongSameSizeOnes() {
+        let mine = frame.offsetBy(dx: 300, dy: 0)
+        let matches = matchServerWindows(
+            axFrames: [id(1): frame],
+            server: [
+                ServerWindow(pid: 1, bounds: frame.offsetBy(dx: -300, dy: 0), number: 40),
+                ServerWindow(pid: 1, bounds: mine, number: 41),
+            ],
+            known: [id(1): 41]
+        )
+        XCTAssertEqual(matches[id(1)], .matched(mine))
+    }
+
+    func testARecordedWindowNumberBeatsAnExactFrameOfAnotherEntry() {
+        let mine = frame.offsetBy(dx: 300, dy: 0)
+        let matches = matchServerWindows(
+            axFrames: [id(1): frame],
+            server: [ServerWindow(pid: 1, bounds: frame, number: 40), ServerWindow(pid: 1, bounds: mine, number: 41)],
+            known: [id(1): 41]
+        )
+        XCTAssertEqual(matches[id(1)], .matched(mine))
+    }
+
+    func testARecordedWindowNumberNotListedFallsBackToTheFrameRules() {
+        let matches = matchServerWindows(
+            axFrames: [id(1): frame],
+            server: [
+                ServerWindow(pid: 1, bounds: frame.offsetBy(dx: 300, dy: 0), number: 40),
+                ServerWindow(pid: 1, bounds: frame, number: 41),
+            ],
+            known: [id(1): 99]
+        )
+        XCTAssertEqual(matches[id(1)], .matched(frame))
+    }
+
+    func testEvaluateRenderUsesTheRecordedWindowNumber() {
+        let elsewhere = frame.offsetBy(dx: 50, dy: 0)
+        let verdict = evaluateRender(
+            axFrames: [id(1): frame],
+            server: [ServerWindow(pid: 1, bounds: frame, number: 40), ServerWindow(pid: 1, bounds: elsewhere, number: 41)],
+            targets: [id(1): frame], viewports: [CGRect(x: 0, y: 0, width: 2000, height: 1200)],
+            known: [id(1): 41]
+        )
+        XCTAssertEqual(verdict.mismatches, [RenderMismatch(id: id(1), ax: frame, ws: elsewhere)])
+    }
+
     // MARK: Tolerant matching (SM-02c)
 
     func testALearnedMinimumSizeStillMatchesTheUniqueNearFrame() {
