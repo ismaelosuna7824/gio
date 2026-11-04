@@ -101,4 +101,20 @@ final class WindowFactsDecodingTests: XCTestCase {
         XCTAssertFalse(facts.roleReadable)
         XCTAssertFalse(facts.elementGone)
     }
+
+    /// FI-14 (live 2026-11-04, v0.1.7): while the screen was locked every
+    /// app's windows answered no role; the scan logged them `notAWindow`,
+    /// counted their apps as fully read and purged Music, Figma, OrbStack
+    /// and Bitwarden, which stayed parked off screen after the unlock. An
+    /// unreadable role says nothing: the window is skipped (its app is not
+    /// fully read); a readable non-window role or a destroyed element is an
+    /// answer.
+    func testAnUnreadableRoleIsSkippedNotIgnored() {
+        let busy = decodeWindowFacts(status: .cannotComplete, values: nil)
+        XCTAssertTrue(discoverySkips(busy))
+        XCTAssertTrue(discoverySkips(decodeWindowFacts(status: .success, values: slots(role: error(.cannotComplete)))))
+        XCTAssertFalse(discoverySkips(decodeWindowFacts(status: .invalidUIElement, values: nil)), "destroyed: an answer")
+        XCTAssertFalse(discoverySkips(decodeWindowFacts(status: .success, values: slots(role: "AXSheet" as NSString))))
+        XCTAssertFalse(discoverySkips(decodeWindowFacts(status: .success, values: slots())))
+    }
 }
