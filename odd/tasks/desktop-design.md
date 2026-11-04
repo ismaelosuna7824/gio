@@ -170,7 +170,7 @@ DD-01..DD-05 delegated writers, sequential, after the in-flight native-zoom fix 
 - 2026-09-30: DD-03 done, pushed. Next: DD-04 + DD-05 (+ DD-03 follow-ups).
 - 2026-09-30: DD-04 + DD-05 done, pushed. Next: user live review of the redesigned app.
 
-- [x] DD-10 (`DONE`, commit below) — Fast is the recommended motion preset (user, 2026-11-04: "pon como
+- [x] DD-10 (`DONE`, `c11d0d2`) — Fast is the recommended motion preset (user, 2026-11-04: "pon como
   recomendado el fast", after Gio measured 52 MB in Fast). `AnimationsSectionConfig` defaults to
   `enabled = false` and `renderer = ax`; the config template ships the same; `MotionPreset` is `.fast`
   (first, default) and `.animated` (was `.recommended`); the first-run *Pick a Feel* step preselects
