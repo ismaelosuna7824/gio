@@ -108,11 +108,20 @@ public struct BehaviorSectionConfig: Equatable, Sendable {
     /// (`consume-or-expel-window-*`, `move-up/down`, `gio move`) at the
     /// workspace's edge sends the window (`moveWindowOrToDisplay`).
     public var moveCrossesMonitorAtEdge: Bool
+    /// MD-01 `mouse-move-window`, `mouse-resize-window` and
+    /// `mouse-drag-modifier`: modifier + left drag moves a tiled window,
+    /// modifier + right drag resizes it; consumed by the session's mouse
+    /// drag gate.
+    public var mouseDrag: MouseDragSettings
 
-    public init(focusFollowsMouse: Bool = false, mouseFollowsFocus: Bool = true, moveCrossesMonitorAtEdge: Bool = false) {
+    public init(
+        focusFollowsMouse: Bool = false, mouseFollowsFocus: Bool = true, moveCrossesMonitorAtEdge: Bool = false,
+        mouseDrag: MouseDragSettings = MouseDragSettings()
+    ) {
         self.focusFollowsMouse = focusFollowsMouse
         self.mouseFollowsFocus = mouseFollowsFocus
         self.moveCrossesMonitorAtEdge = moveCrossesMonitorAtEdge
+        self.mouseDrag = mouseDrag
     }
 }
 

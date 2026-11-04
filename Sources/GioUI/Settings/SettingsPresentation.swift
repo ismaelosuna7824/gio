@@ -438,6 +438,8 @@ public struct FocusSectionDraft: Equatable, Sendable {
     public var moveCrossesMonitorAtEdge: Bool
     /// TG-02 `[gestures]`.
     public var gestures: GesturesSettingsForm
+    /// MD-01 `[behavior]` mouse drags.
+    public var mouseDrag: MouseDragSettings
 
     public init(config: GioConfig) {
         indicator = FocusSettingsForm(config: config.focus)
@@ -447,6 +449,7 @@ public struct FocusSectionDraft: Equatable, Sendable {
         mouseFollowsFocus = config.behavior.mouseFollowsFocus
         moveCrossesMonitorAtEdge = config.behavior.moveCrossesMonitorAtEdge
         gestures = GesturesSettingsForm(config: config.gestures)
+        mouseDrag = config.behavior.mouseDrag
     }
 
     /// Ring problems only count while the ring is the indicator: its
@@ -461,6 +464,7 @@ public struct FocusSectionDraft: Equatable, Sendable {
                 focusFollowsMouse: focusFollowsMouse, mouseFollowsFocus: mouseFollowsFocus,
                 moveCrossesMonitorAtEdge: moveCrossesMonitorAtEdge
             )
+            + mouseDragEdits(mouseDrag)
             + ring.edits + indicator.edits + gestures.edits
     }
 }

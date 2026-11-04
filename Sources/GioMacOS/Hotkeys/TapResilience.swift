@@ -12,7 +12,8 @@ enum TapReenableReason: String, Equatable {
 /// What the tap callback does with one event type.
 enum TapEventAction: Equatable {
     case reenable(TapReenableReason)
-    case mouseDown
+    /// MD-01: a press, drag or release of a mouse button.
+    case mouseButton(MouseButtonPhase, MouseButton)
     case mouseMoved
     case keyDown
     case passThrough
@@ -25,17 +26,28 @@ func tapEventAction(for type: CGEventType) -> TapEventAction {
     switch type {
     case .tapDisabledByTimeout: return .reenable(.timeout)
     case .tapDisabledByUserInput: return .reenable(.userInput)
-    case .leftMouseDown, .rightMouseDown, .otherMouseDown: return .mouseDown
+    case .leftMouseDown: return .mouseButton(.down, .left)
+    case .rightMouseDown: return .mouseButton(.down, .right)
+    case .otherMouseDown: return .mouseButton(.down, .other)
+    case .leftMouseDragged: return .mouseButton(.dragged, .left)
+    case .rightMouseDragged: return .mouseButton(.dragged, .right)
+    case .leftMouseUp: return .mouseButton(.up, .left)
+    case .rightMouseUp: return .mouseButton(.up, .right)
     case .mouseMoved: return .mouseMoved
     case .keyDown: return .keyDown
     default: return .passThrough
     }
 }
 
-/// Keys and clicks always; pointer moves only for focus-follows-mouse, so an
-/// idle setting costs no main-thread callbacks per mouse move.
+/// Keys, clicks and (MD-01) left and right drags and releases always: a drag
+/// only reaches the callback while a button is held, and the mouse drag
+/// gate answers it under a lock. Pointer moves only for focus-follows-mouse,
+/// so an idle setting costs no callbacks per mouse move.
 func tapEventMask(observingMouseMoved: Bool) -> CGEventMask {
-    var types: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
+    var types: [CGEventType] = [
+        .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown,
+        .leftMouseDragged, .rightMouseDragged, .leftMouseUp, .rightMouseUp,
+    ]
     if observingMouseMoved {
         types.append(.mouseMoved)
     }

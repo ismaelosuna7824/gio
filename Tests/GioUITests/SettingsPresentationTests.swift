@@ -345,6 +345,7 @@ final class SettingsPresentationTests: XCTestCase {
         config.behavior.focusFollowsMouse = true
         config.behavior.moveCrossesMonitorAtEdge = true
         config.gestures.scrollFingers = 4
+        config.behavior.mouseDrag = MouseDragSettings(move: false, resize: true, modifiers: [.ctrl, .alt])
         let draft = FocusSectionDraft(config: config)
         XCTAssertEqual(draft.centerFocusedColumn, .onOverflow)
         XCTAssertTrue(draft.focusFollowsMouse)
@@ -354,6 +355,11 @@ final class SettingsPresentationTests: XCTestCase {
             draft.edits,
             [.set(table: "layout", key: "center-focused-column", value: .string("on-overflow"))]
                 + behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true, moveCrossesMonitorAtEdge: true)
+                + [
+                    .set(table: "behavior", key: "mouse-move-window", value: .bool(false)),
+                    .set(table: "behavior", key: "mouse-resize-window", value: .bool(true)),
+                    .set(table: "behavior", key: "mouse-drag-modifier", value: .string("Ctrl+Alt")),
+                ]
                 + draft.ring.edits + draft.indicator.edits + draft.gestures.edits
         )
         XCTAssertTrue(draft.problems.isEmpty)

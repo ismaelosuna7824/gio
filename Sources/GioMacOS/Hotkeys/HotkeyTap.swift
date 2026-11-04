@@ -35,8 +35,12 @@ func tapCombo(from event: CGEvent) -> HotkeyCombo? {
     guard let key = tapKeyNames[event.getIntegerValueField(.keyboardEventKeycode)] else {
         return nil
     }
+    return HotkeyCombo(modifiers: tapModifiers(event.flags), key: key)
+}
+
+/// The hotkey modifiers held in `flags`.
+func tapModifiers(_ flags: CGEventFlags) -> Set<HotkeyModifier> {
     var modifiers = Set<HotkeyModifier>()
-    let flags = event.flags
     if flags.contains(.maskAlternate) {
         modifiers.insert(.alt)
     }
@@ -49,7 +53,7 @@ func tapCombo(from event: CGEvent) -> HotkeyCombo? {
     if flags.contains(.maskCommand) {
         modifiers.insert(.cmd)
     }
-    return HotkeyCombo(modifiers: modifiers, key: key)
+    return modifiers
 }
 
 /// PF-AB: an event's location (global display space, top-left origin of the
@@ -77,10 +81,20 @@ private func tapCallback(
         // stays dead for the whole session.
         box.reenable(reason)
         return Unmanaged.passUnretained(event)
-    case .mouseDown:
-        // Observed only, never swallowed. Cocoa coordinates: the space the
-        // window frames are kept in.
-        box.onMouseDown?(tapCocoaLocation(of: event))
+    case .mouseButton(let phase, let button):
+        // MD-01: a modifier drag on a tiled window is Gio's: the press, its
+        // drags and its release are swallowed together. Cocoa coordinates:
+        // the space the window frames are kept in.
+        let location = tapCocoaLocation(of: event)
+        if let onMouseButton = box.onMouseButton,
+           onMouseButton(MouseButtonEvent(phase: phase, button: button, location: location, modifiers: tapModifiers(event.flags)))
+        {
+            return nil
+        }
+        // Any other click is observed only, never swallowed.
+        if phase == .down {
+            box.onMouseDown?(location)
+        }
         return Unmanaged.passUnretained(event)
     case .mouseMoved:
         box.onMouseMoved?(tapCocoaLocation(of: event))
@@ -108,6 +122,7 @@ final class TapBox: @unchecked Sendable {
     let onCombo: @Sendable (HotkeyCombo) -> Bool
     let onMouseDown: (@Sendable (CGPoint) -> Void)?
     let onMouseMoved: (@Sendable (CGPoint) -> Void)?
+    let onMouseButton: (@Sendable (MouseButtonEvent) -> Bool)?
     let onKeyDown: (@Sendable () -> Void)?
     /// The callback (tap thread) and the watchdog (main) both use these; the
     /// lock keeps `stop()` from racing them. Never held across a call out.
@@ -119,11 +134,13 @@ final class TapBox: @unchecked Sendable {
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
         onMouseDown: (@Sendable (CGPoint) -> Void)?,
         onMouseMoved: (@Sendable (CGPoint) -> Void)?,
+        onMouseButton: (@Sendable (MouseButtonEvent) -> Bool)? = nil,
         onKeyDown: (@Sendable () -> Void)? = nil
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
+        self.onMouseButton = onMouseButton
         self.onKeyDown = onKeyDown
     }
 
@@ -222,6 +239,7 @@ public final class HotkeyTap {
     private let onCombo: @Sendable (HotkeyCombo) -> Bool
     private let onMouseDown: (@Sendable (CGPoint) -> Void)?
     private let onMouseMoved: (@Sendable (CGPoint) -> Void)?
+    private let onMouseButton: (@Sendable (MouseButtonEvent) -> Bool)?
     private let onKeyDown: (@Sendable () -> Void)?
 
     /// Whether this tap subscribes to pointer moves (only when a handler was
@@ -231,18 +249,22 @@ public final class HotkeyTap {
     }
 
     /// `onMouseDown` observes clicks and `onMouseMoved` pointer moves (Cocoa
-    /// global location) without swallowing either. `onKeyDown` observes
+    /// global location) without swallowing either. MD-01: `onMouseButton`
+    /// sees every press, drag and release first; `true` swallows it (and
+    /// the click is not reported to `onMouseDown`). `onKeyDown` observes
     /// every key-down that reaches an app (not the swallowed WM combos).
-    /// All four run on the tap thread (SM-09, PF-AB).
+    /// All of them run on the tap thread (SM-09, PF-AB).
     public init(
         onMouseDown: (@Sendable (CGPoint) -> Void)? = nil,
         onMouseMoved: (@Sendable (CGPoint) -> Void)? = nil,
+        onMouseButton: (@Sendable (MouseButtonEvent) -> Bool)? = nil,
         onKeyDown: (@Sendable () -> Void)? = nil,
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
+        self.onMouseButton = onMouseButton
         self.onKeyDown = onKeyDown
     }
 
@@ -251,7 +273,10 @@ public final class HotkeyTap {
         guard port == nil else {
             return true
         }
-        let box = TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onKeyDown: onKeyDown)
+        let box = TapBox(
+            onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onMouseButton: onMouseButton,
+            onKeyDown: onKeyDown
+        )
         let boxRefcon = Unmanaged.passRetained(box).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,

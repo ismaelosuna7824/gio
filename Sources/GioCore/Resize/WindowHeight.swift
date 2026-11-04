@@ -73,6 +73,7 @@ public func resetWindowHeights(in workspace: Workspace) -> Workspace {
 /// them, split by weight (absent = 1).
 private struct HeightStack {
     let column: Column
+    let columnIndex: Int
     let focused: Int
     let config: LayoutConfig
     /// Usable height plus one gap: the proportion base (like the width strip).
@@ -80,9 +81,19 @@ private struct HeightStack {
     let available: CGFloat
 
     init?(_ workspace: Workspace, config: LayoutConfig, viewportHeight: CGFloat) {
-        guard let column = workspace.focusedColumnRef, column.windows.count > 1,
-              column.focusedWindowIndex >= 0, column.focusedWindowIndex < column.windows.count
-        else {
+        guard let column = workspace.focusedColumnRef else {
+            return nil
+        }
+        self.init(workspace, column: workspace.focusedColumn, row: column.focusedWindowIndex, config: config, viewportHeight: viewportHeight)
+    }
+
+    /// MD-01: the arithmetic for the window at `row` of column `columnIndex`.
+    init?(_ workspace: Workspace, column columnIndex: Int, row: Int, config: LayoutConfig, viewportHeight: CGFloat) {
+        guard workspace.columns.indices.contains(columnIndex) else {
+            return nil
+        }
+        let column = workspace.columns[columnIndex]
+        guard column.windows.count > 1, row >= 0, row < column.windows.count else {
             return nil
         }
         let usable = viewportHeight - config.padding * 2
@@ -91,7 +102,8 @@ private struct HeightStack {
             return nil
         }
         self.column = column
-        self.focused = column.focusedWindowIndex
+        self.columnIndex = columnIndex
+        self.focused = row
         self.config = config
         self.strip = usable + config.gap
         self.available = available
@@ -132,7 +144,22 @@ private struct HeightStack {
             return workspace
         }
         var next = workspace
-        next.columns[next.focusedColumn].heightWeights[focusedID] = clamped * otherWeights / (available - clamped)
+        next.columns[columnIndex].heightWeights[focusedID] = clamped * otherWeights / (available - clamped)
         return next
     }
+}
+
+/// MD-01: window `id` of a stacked column at `height` (clamped so every
+/// window of the column keeps `minimumWindowHeight`); the others keep their
+/// weights. A window alone in its column, or not in the workspace: no-op.
+public func settingWindowHeight(
+    _ id: WindowID, to height: CGFloat, in workspace: Workspace, config: LayoutConfig, viewportHeight: CGFloat
+) -> Workspace {
+    guard let columnIndex = workspace.columns.firstIndex(where: { $0.windows.contains(id) }),
+          let row = workspace.columns[columnIndex].windows.firstIndex(of: id),
+          let stack = HeightStack(workspace, column: columnIndex, row: row, config: config, viewportHeight: viewportHeight)
+    else {
+        return workspace
+    }
+    return stack.setting(height, in: workspace)
 }
