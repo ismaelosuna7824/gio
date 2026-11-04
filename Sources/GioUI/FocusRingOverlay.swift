@@ -72,19 +72,30 @@ public final class FocusRingController {
 
     public init() {}
 
-    /// Start following which app is frontmost: the ring hides while Gio is
-    /// (main window, an activating launcher) and returns when another app is.
-    /// The mask reads the frontmost app, not `NSApplication.isActive`: a key
-    /// non-activating panel (the overview) can report Gio active while another
-    /// app stays frontmost, and a ring published then stayed masked with no
-    /// activation notification to refresh it (live: an overview pick onto
-    /// another app's window). Every app activation refreshes it.
+    /// Start following whether Gio holds the user's attention: the ring hides
+    /// while Gio is the frontmost app (main window) or one of its windows is
+    /// key (the overview and the launcher are non-activating panels: another
+    /// app stays frontmost, and the ring showed through the translucent
+    /// overview). `NSApplication.isActive` is not used: it reads true while
+    /// such a panel is key without posting the app's activation
+    /// notifications, so a ring published then stayed masked (live: an
+    /// overview pick onto another app's window). Every app activation and
+    /// every key change of Gio's windows refreshes it; key changes on the next
+    /// turn, once AppKit updated the key window.
     public func start() {
         let center = NotificationCenter.default
-        for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification] {
+        for name in [
+            NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+            NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+        ] {
             observers.append(
                 center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.refresh() }
+                    MainActor.assumeIsolated {
+                        self?.refresh()
+                        DispatchQueue.main.async { [weak self] in
+                            MainActor.assumeIsolated { self?.refresh() }
+                        }
+                    }
                 }
             )
         }
@@ -123,9 +134,9 @@ public final class FocusRingController {
     }
 
     private func refresh() {
-        let gioIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier
-            == ProcessInfo.processInfo.processIdentifier
-        switch systemOverview ? .hidden : state.masked(gioIsFrontmost: gioIsFrontmost) {
+        let gioHoldsFocus = NSApplication.shared.keyWindow != nil
+            || NSWorkspace.shared.frontmostApplication?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        switch systemOverview ? .hidden : state.masked(gioIsFrontmost: gioHoldsFocus) {
         case .hidden:
             if isShown {
                 panel?.orderOut(nil)

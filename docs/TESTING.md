@@ -110,6 +110,14 @@ A green signed build confirms the `Gio` target still compiles and links `GioCore
 
 Run the signed **Gio** scheme from Xcode with several windows open (a browser, a terminal, an editor, an Electron app), and keep `tail -f ~/.config/gio/gio.log` open. Record hardware, macOS version and log lines with your observations. Do not run `gio-poc tile` against a desktop you care about while Gio runs; it is a one-shot placement tool that competes with the session.
 
+Before every live test session, start from a clean install, because macOS ties the Accessibility and Screen Recording grants to the app's signature and opens whichever registered `Gio.app` it finds:
+
+1. Quit Gio, unregister and delete the release (`lsregister -u /Applications/Gio.app`, then remove `/Applications/Gio.app`).
+2. Reset the grants: `tccutil reset Accessibility dev.gio.windowmanager` and `tccutil reset ScreenCapture dev.gio.windowmanager`.
+3. Build and open the dev build, then grant Accessibility (and Screen Recording, followed by a relaunch) to it.
+
+To go back to the release afterwards, repeat steps 1 and 2 for the dev build (`.build/GioAutoTeam/.../Debug/Gio.app` or DerivedData), install the DMG and grant again.
+
 | # | Area | Steps | Expected |
 | --- | --- | --- | --- |
 | 1b | Native tabs (WC-11) | Log level `info`, `tail -f ~/.config/gio/gio.log`. Ghostty and Terminal (also Finder or TextEdit) tiled next to another app. (a) `Cmd+T` twice in one window. (b) Switch tabs by clicking the tab bar and with `Cmd+Shift+]`. (c) Close the shown tab (`Cmd+W`), then a background tab with its close button. (d) Drag a tab out of the tab bar to its own window. (e) Quit Gio with a window holding two tabs, start it again, click the other tab. (f) Two separate Terminal windows (`Cmd+N`) placed at the same frame. | (a) No new column; the window keeps its tile and the new tab shows there: `tab joined id=P:E group=G front=P:E`. (b) The window never hops columns and never covers its neighbour; one `tab front id=P:E` per switch. (c) The tile stays with the tab macOS now shows: `tab left id=P:E reason=closed` and `tab front id=P:E`; closing a background tab logs only `tab left`. (d) The dragged-out window gets a column of its own and the old window keeps its tile: `tab left id=P:E reason=draggedOut`. (e) Startup registers the shown tab only; clicking the other tab logs `tab joined` and adds no column. (f) Two columns, no `tab joined`. No window titles in the log. **Not verified by automated tests** (LIVE PENDING). |

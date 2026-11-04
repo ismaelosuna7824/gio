@@ -768,6 +768,13 @@ public func snapshotRefreshReason(causes: [SnapshotRefreshCause], backdrop: Bool
 
 // MARK: - PF-AS overview thumbnails
 
+/// Whether the overview shows window thumbnails. User choice 2026-11-04:
+/// only in the Fast preset (the configured `ax` renderer) and only with
+/// Screen Recording granted; Recommended (`snapshot`) keeps the app icons.
+public func overviewShowsThumbnails(renderer: RendererKind, screenRecordingGranted: Bool) -> Bool {
+    renderer == .ax && screenRecordingGranted
+}
+
 /// PF-AS: which overview thumbnails come from the cache (shown first,
 /// scaled down to the thumbnail density) and which windows are captured.
 public struct OverviewThumbnailPlan<Image> {

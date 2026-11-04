@@ -255,6 +255,13 @@ final class SessionHost: @unchecked Sendable {
         onRestart?()
     }
 
+    /// WC-21: Accessibility arrived in a session that started without it
+    /// (main thread). The app relaunches; set once before `start()`.
+    var onAccessibilityGranted: (() -> Void)?
+    /// WC-21: `hasAXPermission()` was false at `start()`. Session queue
+    /// after start.
+    private var startedWithoutAccessibility = false
+
     /// Builds the components. Their contexts read host state on the session
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.
@@ -900,7 +907,8 @@ final class SessionHost: @unchecked Sendable {
         for message in configStatus.messages {
             print("[gio] config: \(message)")
         }
-        if !hasAXPermission() {
+        startedWithoutAccessibility = !hasAXPermission()
+        if startedWithoutAccessibility {
             print("[gio] requesting Accessibility permission…")
             _ = requestAXPermission()
         }
@@ -1184,14 +1192,19 @@ final class SessionHost: @unchecked Sendable {
     /// only the rest is captured, in one capture without a backdrop and at
     /// most `overviewThumbnailScale`, and delivered after. `completion` runs
     /// on main once per batch (twice when both exist; the ids are disjoint).
-    /// Empty without Screen Recording or before macOS 14; the panel then
-    /// keeps the app icons. Logs `overview thumbnails cached=N capture=N
+    /// Empty unless `overviewShowsThumbnails` (the Fast preset with Screen
+    /// Recording, on macOS 14 and later); the panel then keeps the app
+    /// icons. Logs `overview thumbnails cached=N capture=N
     /// scaleMs=S` once, the capture its own summary (counts only).
     func captureOverviewThumbnails(
         _ ids: [String], completion: @escaping @Sendable ([String: OverviewThumbnail]) -> Void
     ) {
         queue.async { [weak self] in
-            guard let self, SnapshotCapturer.isSupported, screenRecording.granted() else {
+            guard let self, SnapshotCapturer.isSupported,
+                  overviewShowsThumbnails(
+                      renderer: session.config.animations.renderer, screenRecordingGranted: screenRecording.granted()
+                  )
+            else {
                 DispatchQueue.main.async { completion([:]) }
                 return
             }
@@ -2317,6 +2330,16 @@ final class SessionHost: @unchecked Sendable {
         if hotkeyTap == nil {
             startTap()
             if hotkeyTap != nil {
+                // WC-21: a session started without Accessibility relaunches
+                // once it arrives: some apps (live: Tern) keep refusing the
+                // process that asked before the grant, so their windows stay
+                // unmanaged until a fresh process reads them.
+                if startedWithoutAccessibility, let onAccessibilityGranted {
+                    startedWithoutAccessibility = false
+                    GioLog.record(.info, "accessibility granted mid-session; relaunching")
+                    DispatchQueue.main.async { onAccessibilityGranted() }
+                    return
+                }
                 // Permission regained: observers built without it are dead,
                 // and every verdict is stale. The one full rebuild, placed
                 // without motion like a fresh start.

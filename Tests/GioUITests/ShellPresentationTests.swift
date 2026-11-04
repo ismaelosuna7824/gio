@@ -179,6 +179,22 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertNil(OnboardingStore(defaults: defaults).consumeResumeStep())
     }
 
+    /// WC-21: Gio relaunches when Accessibility arrives mid-session; an
+    /// unfinished setup picks up after the Accessibility step.
+    func testAccessibilityRelaunchResumesAnUnfinishedSetupAfterItsStep() {
+        let store = temporaryStore()
+        store.prepareAccessibilityRelaunch()
+        XCTAssertEqual(store.consumeResumeStep(), .screenRecording)
+    }
+
+    /// A re-grant after the setup was finished reopens nothing.
+    func testAccessibilityRelaunchLeavesAFinishedSetupClosed() {
+        let store = temporaryStore()
+        store.markCompleted()
+        store.prepareAccessibilityRelaunch()
+        XCTAssertNil(store.consumeResumeStep())
+    }
+
     @MainActor
     func testPresenterReopensOnTheResumeStepOnceAfterCompletion() {
         let store = temporaryStore()

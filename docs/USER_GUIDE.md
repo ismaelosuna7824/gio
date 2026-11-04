@@ -519,7 +519,7 @@ The status item is a small three-column glyph with the active workspace's number
 
 `Alt+O` (or `gio overview`) covers the display you are on with a dimmed panel (the display holding the focused window, else the one under the cursor, else the focused display; it becomes the focused display, so `1`-`9` and clicks act there; the log says `overview display id=N reason=focusedWindow|cursor|focusedDisplay`) that shows every workspace of its stack as a row, top to bottom, like niri's overview. Each row draws the workspace's strip to scale: the frame is the screen (what the workspace shows when it is the display's), windows outside it are faded, and a strip wider than the screen shrinks to fit. Named workspaces show their icon and `1 · Code` title; the display's current workspace is marked **Current**.
 
-Windows show a thumbnail as soon as the panel opens: a recent image Gio already keeps of the window (scaled down to the panel's size), then a fresh capture for the rest (parked windows included); each one fades in over the app-icon placeholder. Thumbnails need **Screen Recording** and macOS 14; without them each window shows its app icon on the app's color. Window titles appear only in the panel, never in the log.
+In the **Fast** motion preset (`[animations] renderer = "ax"`), windows show a thumbnail as soon as the panel opens, captured at their frames (parked windows included); each one fades in over the app-icon placeholder. Thumbnails need **Screen Recording** and macOS 14. In **Recommended** (`renderer = "snapshot"`), or without Screen Recording, each window shows its app icon on the app's color. Window titles appear only in the panel, never in the log.
 
 | Input | Effect |
 | --- | --- |
