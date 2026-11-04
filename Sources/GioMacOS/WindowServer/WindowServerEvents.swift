@@ -15,12 +15,16 @@ public struct SkyLightEventSymbols: @unchecked Sendable {
     typealias Handler = @convention(c) (UInt32, UnsafeMutableRawPointer?, Int, UnsafeMutableRawPointer?, Int32) -> Void
     typealias MainConnection = @convention(c) () -> Int32
     typealias Register = @convention(c) (Int32, Handler, UInt32, UnsafeMutableRawPointer?) -> Int32
+    /// (connection, window numbers, count): replaces the set of windows whose
+    /// moved/resized notices the connection receives.
+    typealias RequestWindows = @convention(c) (Int32, UnsafePointer<UInt32>?, Int32) -> Int32
 
     static let path = "/System/Library/PrivateFrameworks/SkyLight.framework/SkyLight"
-    static let names = ["SLSMainConnectionID", "SLSRegisterConnectionNotifyProc"]
+    static let names = ["SLSMainConnectionID", "SLSRegisterConnectionNotifyProc", "SLSRequestNotificationsForWindows"]
 
     let mainConnection: MainConnection
     let register: Register
+    let requestWindows: RequestWindows
 
     /// Every symbol through `lookup`; the table only when none is missing.
     static func resolve(
@@ -34,7 +38,8 @@ public struct SkyLightEventSymbols: @unchecked Sendable {
         return (
             SkyLightEventSymbols(
                 mainConnection: unsafeBitCast(pointers[0]!, to: MainConnection.self),
-                register: unsafeBitCast(pointers[1]!, to: Register.self)
+                register: unsafeBitCast(pointers[1]!, to: Register.self),
+                requestWindows: unsafeBitCast(pointers[2]!, to: RequestWindows.self)
             ),
             []
         )
@@ -99,6 +104,15 @@ public final class WindowServerEventSource: @unchecked Sendable {
         return WindowServerEventType.all.filter { type in
             symbols.register(connection, windowServerNotification, type, context) == 0
         }.count
+    }
+
+    /// WS-03, main thread: the windows whose moved/resized notices arrive
+    /// (the full list; it replaces the previous one). False when refused.
+    @discardableResult
+    public func subscribe(_ numbers: [UInt32]) -> Bool {
+        numbers.withUnsafeBufferPointer { buffer in
+            symbols.requestWindows(symbols.mainConnection(), buffer.baseAddress, Int32(buffer.count)) == 0
+        }
     }
 }
 

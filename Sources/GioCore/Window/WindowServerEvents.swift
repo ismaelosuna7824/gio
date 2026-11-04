@@ -8,28 +8,41 @@ import Foundation
 public enum WindowServerEvent: Equatable, Sendable {
     case created(UInt32)
     case destroyed(UInt32)
+    /// WS-03: only for windows Gio subscribed (`SLSRequestNotificationsForWindows`).
+    case moved(UInt32)
+    case resized(UInt32)
 }
 
 /// Notification types, as measured on macOS 27 (throwaway probe, 2026-11-04):
-/// a window opening and closing posted 1325 and 1326 with a 12-byte payload.
+/// a window opening and closing posted 1325 and 1326 with a 12-byte payload;
+/// a subscribed window moving or resizing posted 806 and 807 with 4 bytes.
 public enum WindowServerEventType {
+    public static let windowMoved: UInt32 = 806
+    public static let windowResized: UInt32 = 807
     public static let spaceWindowCreated: UInt32 = 1325
     public static let spaceWindowDestroyed: UInt32 = 1326
-    public static let all: [UInt32] = [spaceWindowCreated, spaceWindowDestroyed]
+    public static let all: [UInt32] = [windowMoved, windowResized, spaceWindowCreated, spaceWindowDestroyed]
 }
 
-/// Decodes one notification: the space id (UInt64) and then the window
-/// number (UInt32). Anything shorter, or of another type, is nothing.
+/// Decodes one notification. Created and destroyed carry the space id
+/// (UInt64) and then the window number (UInt32); moved and resized the
+/// window number alone. Anything shorter, or of another type, is nothing.
 public func decodeWindowServerEvent(type: UInt32, payload: [UInt8]) -> WindowServerEvent? {
-    guard payload.count >= 12 else {
-        return nil
+    func number(at offset: Int) -> UInt32? {
+        guard payload.count >= offset + 4 else {
+            return nil
+        }
+        return (0..<4).reduce(UInt32(0)) { $0 | UInt32(payload[offset + $1]) << (8 * UInt32($1)) }
     }
-    let number = payload[8..<12].enumerated().reduce(UInt32(0)) { $0 | UInt32($1.element) << (8 * UInt32($1.offset)) }
     switch type {
     case WindowServerEventType.spaceWindowCreated:
-        return .created(number)
+        return number(at: 8).map(WindowServerEvent.created)
     case WindowServerEventType.spaceWindowDestroyed:
-        return .destroyed(number)
+        return number(at: 8).map(WindowServerEvent.destroyed)
+    case WindowServerEventType.windowMoved:
+        return number(at: 0).map(WindowServerEvent.moved)
+    case WindowServerEventType.windowResized:
+        return number(at: 0).map(WindowServerEvent.resized)
     default:
         return nil
     }
@@ -45,6 +58,11 @@ public struct WindowNumberBook: Equatable, Sendable {
 
     public func window(for number: UInt32) -> WindowID? {
         byNumber[number]
+    }
+
+    /// WS-03: every recorded number, ascending (the subscription list).
+    public var numbers: [UInt32] {
+        byNumber.keys.sorted()
     }
 
     public mutating func record(_ id: WindowID, number: UInt32) {
@@ -69,6 +87,9 @@ public enum WindowServerEventAction: Equatable, Sendable {
     /// A registered window went away: ask for the proof scan of its app
     /// (rule 10: the event alone purges nothing).
     case proveVanished(WindowID)
+    /// WS-03: a registered window moved or resized; handled like the AX
+    /// event unless one arrived for the same change.
+    case frameChanged(WindowID, resized: Bool)
     case ignore
 }
 
@@ -78,7 +99,26 @@ public func windowServerEventAction(_ event: WindowServerEvent, book: WindowNumb
         return book.window(for: number) == nil ? .checkArrival(number) : .ignore
     case .destroyed(let number):
         return book.window(for: number).map(WindowServerEventAction.proveVanished) ?? .ignore
+    case .moved(let number):
+        return book.window(for: number).map { .frameChanged($0, resized: false) } ?? .ignore
+    case .resized(let number):
+        return book.window(for: number).map { .frameChanged($0, resized: true) } ?? .ignore
     }
+}
+
+/// WS-03: how far before a window-server notice an AX event of the same
+/// window still counts as covering it (the two arrive through different
+/// channels, a few milliseconds apart either way).
+public let windowServerFrameSkew: TimeInterval = 0.05
+
+/// WS-03: a notice needs handling only when no AX moved/resized event of
+/// that window arrived around or after it: the app posts none for this kind
+/// of change. Handling both would count one change twice (snap-backs).
+public func windowServerFrameChangeNeedsHandling(noticeAt: TimeInterval, lastAccessibilityEvent: TimeInterval?) -> Bool {
+    guard let lastAccessibilityEvent else {
+        return true
+    }
+    return lastAccessibilityEvent < noticeAt - windowServerFrameSkew
 }
 
 /// The owner of a window-server window, read when the grace ends.

@@ -794,6 +794,36 @@ final class WindowEventRouterTests: XCTestCase {
         XCTAssertEqual(world.tileabilityInvalidated, [id])
     }
 
+    /// WS-03: an app that posts no AX moved/resized for a change (the window
+    /// server saw it) gets the same handling as an AX event.
+    func testWindowServerFrameChangeWithoutAnAXEventIsHandledLikeOne() {
+        scheduler.advance(by: 5)
+        router.windowServerFrameChanged(id, resized: true, noticeAt: 5)
+        XCTAssertEqual(world.frameReads, [id])
+        XCTAssertEqual(world.trustInvalidated.last, id)
+        XCTAssertEqual(world.tileabilityInvalidated, [id])
+        XCTAssertEqual(world.scheduledReflows, [false])
+    }
+
+    /// The AX event for the same change already ran: nothing twice (a doubled
+    /// event would also count a snap-back twice).
+    func testWindowServerFrameChangeCoveredByAnAXEventIsDropped() {
+        scheduler.advance(by: 5)
+        send(.window(.moved), element: element)
+        let reads = world.frameReads.count
+        router.windowServerFrameChanged(id, resized: false, noticeAt: 5)
+        XCTAssertEqual(world.frameReads.count, reads)
+        XCTAssertEqual(world.scheduledReflows, [false])
+    }
+
+    /// Gio's own animation writes are dropped like their AX echoes.
+    func testWindowServerFrameChangeOfAnAnimatingAppIsDropped() {
+        world.animating = [7]
+        router.windowServerFrameChanged(id, resized: false, noticeAt: 0)
+        XCTAssertTrue(world.frameReads.isEmpty)
+        XCTAssertTrue(world.scheduledReflows.isEmpty)
+    }
+
     /// PA-18c: a user drag raises ~60 moved events a second. The first one
     /// holds the dim, drops trust and asks for the pass that runs after the
     /// mouse-up; the others are not even read.

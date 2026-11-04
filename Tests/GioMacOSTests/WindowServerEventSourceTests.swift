@@ -9,7 +9,7 @@ final class WindowServerEventSourceTests: XCTestCase {
     func testAMissingSymbolIsNamedAndNothingIsBuilt() {
         let resolved = SkyLightEventSymbols.resolve { $0 == "SLSMainConnectionID" ? self.dummy : nil }
         XCTAssertNil(resolved.symbols)
-        XCTAssertEqual(resolved.missing, ["SLSRegisterConnectionNotifyProc"])
+        XCTAssertEqual(resolved.missing, ["SLSRegisterConnectionNotifyProc", "SLSRequestNotificationsForWindows"])
     }
 
     func testAllSymbolsPresentBuildTheTable() {

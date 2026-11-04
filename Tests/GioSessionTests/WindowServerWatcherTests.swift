@@ -11,6 +11,8 @@ final class WindowServerWatcherTests: XCTestCase {
     private var owners: [UInt32: WindowServerWindowOwner] = [:]
     private var scans: [pid_t] = []
     private var proofs: [WindowID] = []
+    private var frameChanges: [(WindowID, Bool, TimeInterval)] = []
+    private var subscriptions: [[UInt32]] = []
     private var watcher: WindowServerWatcher!
     private let ownPID: pid_t = 1
 
@@ -19,6 +21,9 @@ final class WindowServerWatcherTests: XCTestCase {
         owners = [:]
         scans = []
         proofs = []
+        frameChanges = []
+        subscriptions = []
+        let scheduler = scheduler!
         watcher = WindowServerWatcher(
             context: .init(
                 windowOwner: { [unowned self] in owners[$0] },
@@ -26,6 +31,9 @@ final class WindowServerWatcherTests: XCTestCase {
                 allowsWindowWork: { true },
                 scanApp: { [unowned self] in scans.append($0) },
                 proveVanished: { [unowned self] in proofs.append($0) },
+                frameChanged: { [unowned self] in frameChanges.append(($0, $1, $2)) },
+                subscribe: { [unowned self] in subscriptions.append($0) },
+                now: { scheduler.now },
                 log: { _, _ in }
             ),
             scheduler: scheduler
@@ -88,5 +96,45 @@ final class WindowServerWatcherTests: XCTestCase {
         scheduler.runPending()
         scheduler.advance(by: WindowServerWatcher.arrivalGrace)
         XCTAssertTrue(scans.isEmpty)
+    }
+
+    // MARK: WS-03 frame notices
+
+    /// The window server only reports a window's moves once it is asked to:
+    /// every registration and removal re-sends the full list, once per turn.
+    func testRegisteredNumbersAreSubscribedOncePerTurn() {
+        watcher.noteRegistered(WindowID(pid: 42, elementID: 3), number: 9)
+        watcher.noteRegistered(WindowID(pid: 42, elementID: 4), number: 7)
+        scheduler.runPending()
+        XCTAssertEqual(subscriptions, [[7, 9]])
+        watcher.forget(WindowID(pid: 42, elementID: 3))
+        scheduler.runPending()
+        XCTAssertEqual(subscriptions, [[7, 9], [7]])
+    }
+
+    /// A burst of notices for one window is one check after the grace, with
+    /// the first notice's time (the AX event that covers it may come later).
+    func testFrameNoticesOfOneWindowCoalesceIntoOneCheck() {
+        let id = WindowID(pid: 42, elementID: 3)
+        watcher.noteRegistered(id, number: 7)
+        scheduler.advance(by: 1)
+        watcher.post(.moved(7))
+        scheduler.runPending()
+        scheduler.advance(by: 0.05)
+        watcher.post(.resized(7))
+        scheduler.runPending()
+        XCTAssertTrue(frameChanges.isEmpty, "the AX path gets its chance first")
+        scheduler.advance(by: WindowServerWatcher.frameGrace)
+        XCTAssertEqual(frameChanges.count, 1)
+        XCTAssertEqual(frameChanges.first?.0, id)
+        XCTAssertEqual(frameChanges.first?.1, true, "a resize in the burst counts")
+        XCTAssertEqual(frameChanges.first?.2, 1)
+    }
+
+    func testFrameNoticeOfAnUnknownWindowDoesNothing() {
+        watcher.post(.moved(7))
+        scheduler.runPending()
+        scheduler.advance(by: WindowServerWatcher.frameGrace)
+        XCTAssertTrue(frameChanges.isEmpty)
     }
 }

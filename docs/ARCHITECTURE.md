@@ -79,9 +79,11 @@ Once the main window made Gio a regular app, clicking it made Gio the frontmost 
 
 Any new code path that enumerates windows or adopts focus must go through these guards.
 
-### Window-server notifications (WS-01, WS-02)
+### Window-server notifications (WS-01..WS-03)
 
 `WindowServerEventSource` (`GioMacOS`) resolves `SLSMainConnectionID` and `SLSRegisterConnectionNotifyProc` from the private SkyLight framework at runtime and registers for 1325 (a window was created) and 1326 (destroyed); both carry the window number at byte 8 (`decodeWindowServerEvent`, `GioCore`). They arrive on the main thread while the app's event loop runs, for every app, whether or not it answers Accessibility; the C callback only decodes and posts to `WindowServerWatcher`, which handles them on the session queue. Registration records each window's number (`_AXUIElementGetWindow`) in a `WindowNumberBook`; `forgetWindow` drops it. A created window still unknown after `WindowServerWatcher.arrivalGrace` (1.5 s, longer than the AX registration retries) and still a layer-0 window of another app gets its app scanned (`DiscoveryService.appAttached`, one scan per app per batch, logged `window server scan pid=N reason=unregistered`); a destroyed registered window asks for its app's proof scan (`noteSettled(vanished:)`, rule 10), never a direct purge. Read-only: nothing moves, orders or changes a window through SkyLight (PF-S showed SkyLight moves of other apps' windows do nothing on macOS 27).
+
+WS-03: the source also registers 806 (moved) and 807 (resized), which carry the window number alone and arrive only for the windows a connection asks for: every change of the book re-sends the full list once per turn (`SLSRequestNotificationsForWindows`, on main). A burst of notices for one registered window becomes one call after `WindowServerWatcher.frameGrace` (0.25 s) to `WindowEventRouter.windowServerFrameChanged`, with the burst's first time. The router drops it when an AX moved/resized event of that window arrived since (`windowServerFrameChangeNeedsHandling`, 50 ms skew: handling both would count one change twice in `SnapBackBook`), when the app is animating (like its AX echoes) or a native zoom is in flight; otherwise it runs the same `handleFrameChange` as the AX event (echo gate, drag dedupe, snap-backs, reflow).
 
 ## State model
 

@@ -702,6 +702,14 @@ final class SessionHost: @unchecked Sendable {
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 scanApp: { [unowned self] in discovery.appAttached($0) },
                 proveVanished: { [unowned self] in discovery.noteSettled(vanished: [$0], alive: []) },
+                frameChanged: { [unowned self] id, resized, at in
+                    events.windowServerFrameChanged(id, resized: resized, noticeAt: at)
+                },
+                subscribe: { [weak self] numbers in
+                    // The source lives on main (WS-01).
+                    DispatchQueue.main.async { self?.windowServerSource?.subscribe(numbers) }
+                },
+                now: { ProcessInfo.processInfo.systemUptime },
                 log: { GioLog.record($0, $1) }
             ),
             scheduler: scheduler

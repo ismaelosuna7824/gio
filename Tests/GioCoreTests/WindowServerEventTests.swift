@@ -23,7 +23,38 @@ final class WindowServerEventTests: XCTestCase {
 
     func testShortPayloadsAndOtherTypesDecodeToNothing() {
         XCTAssertNil(decodeWindowServerEvent(type: 1325, payload: [1, 0, 0, 0]))
-        XCTAssertNil(decodeWindowServerEvent(type: 806, payload: spacePayload(space: 1, number: 9)))
+        XCTAssertNil(decodeWindowServerEvent(type: 808, payload: spacePayload(space: 1, number: 9)))
+        XCTAssertNil(decodeWindowServerEvent(type: 806, payload: [1, 0]))
+    }
+
+    /// WS-03: moved and resized carry the window number alone (len=4, live).
+    func testDecodesMovedAndResizedWindowNumbers() {
+        XCTAssertEqual(decodeWindowServerEvent(type: 806, payload: [0x37, 0, 0, 0]), .moved(55))
+        XCTAssertEqual(decodeWindowServerEvent(type: 807, payload: [0xFE, 0x03, 0, 0]), .resized(1022))
+    }
+
+    func testFrameChangeOfAKnownWindowIsHandledUnknownIgnored() {
+        var book = WindowNumberBook()
+        book.record(terminal, number: 7)
+        XCTAssertEqual(windowServerEventAction(.moved(7), book: book), .frameChanged(terminal, resized: false))
+        XCTAssertEqual(windowServerEventAction(.resized(7), book: book), .frameChanged(terminal, resized: true))
+        XCTAssertEqual(windowServerEventAction(.moved(8), book: book), .ignore)
+    }
+
+    func testBookListsItsNumbersInOrder() {
+        var book = WindowNumberBook()
+        book.record(terminal, number: 9)
+        book.record(WindowID(pid: 1, elementID: 1), number: 3)
+        XCTAssertEqual(book.numbers, [3, 9])
+    }
+
+    /// WS-03: the AX path already saw this window's change (at or after the
+    /// notice, give or take the delivery skew): the notice adds nothing.
+    func testFrameNoticeDefersToTheAccessibilityEvent() {
+        XCTAssertTrue(windowServerFrameChangeNeedsHandling(noticeAt: 10, lastAccessibilityEvent: nil))
+        XCTAssertTrue(windowServerFrameChangeNeedsHandling(noticeAt: 10, lastAccessibilityEvent: 9))
+        XCTAssertFalse(windowServerFrameChangeNeedsHandling(noticeAt: 10, lastAccessibilityEvent: 9.98))
+        XCTAssertFalse(windowServerFrameChangeNeedsHandling(noticeAt: 10, lastAccessibilityEvent: 10.1))
     }
 
     func testBookMapsBothWaysAndForgets() {
