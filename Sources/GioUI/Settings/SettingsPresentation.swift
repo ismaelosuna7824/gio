@@ -190,31 +190,22 @@ public func layoutPreviewGeometry(
 
 /// MD-02: one key hint under the Layout preview.
 public struct LayoutKeyHint: Equatable, Sendable {
-    public enum Trigger: Equatable, Sendable {
-        case combo(HotkeyCombo)
-        /// Modifiers held plus a mouse gesture ("drag", "right-drag").
-        case mouse(Set<HotkeyModifier>, String)
-    }
-
-    public let trigger: Trigger
+    public let combo: HotkeyCombo
     public let label: String
 }
 
-/// The strip's everyday moves as the config binds them now: move the window
-/// down its column, cycle the width presets, the mouse resize and move
-/// drags, focus right. An unbound action or a drag turned off is left out.
+/// The strip's everyday keys as the config binds them now: move the window
+/// down its column, put it into the column on the left, cycle and step the
+/// width, focus right. An unbound action is left out.
 public func layoutKeyHints(_ config: GioConfig) -> [LayoutKeyHint] {
-    func combo(_ action: HotkeyAction, _ label: String) -> LayoutKeyHint? {
-        shownHotkey(for: action, in: config).map { LayoutKeyHint(trigger: .combo($0), label: label) }
+    let shown: [(HotkeyAction, String)] = [
+        (.moveDown, "Move down"), (.consumeOrExpelLeft, "Stack left"),
+        (.switchPresetColumnWidth, "Cycle width"), (.growColumnWidth, "Wider"),
+        (.shrinkColumnWidth, "Narrower"), (.focusRight, "Focus right"),
+    ]
+    return shown.compactMap { action, label in
+        shownHotkey(for: action, in: config).map { LayoutKeyHint(combo: $0, label: label) }
     }
-    let drag = config.behavior.mouseDrag
-    return [
-        combo(.moveDown, "Move down"),
-        combo(.switchPresetColumnWidth, "Cycle width"),
-        drag.resize ? LayoutKeyHint(trigger: .mouse(drag.modifiers, "right-drag"), label: "Resize") : nil,
-        drag.move ? LayoutKeyHint(trigger: .mouse(drag.modifiers, "drag"), label: "Move") : nil,
-        combo(.focusRight, "Focus right"),
-    ].compactMap { $0 }
 }
 
 /// "Reset section" for Layout: every layout default except the centering
@@ -467,8 +458,6 @@ public struct FocusSectionDraft: Equatable, Sendable {
     public var moveCrossesMonitorAtEdge: Bool
     /// TG-02 `[gestures]`.
     public var gestures: GesturesSettingsForm
-    /// MD-01 `[behavior]` mouse drags.
-    public var mouseDrag: MouseDragSettings
 
     public init(config: GioConfig) {
         indicator = FocusSettingsForm(config: config.focus)
@@ -478,7 +467,6 @@ public struct FocusSectionDraft: Equatable, Sendable {
         mouseFollowsFocus = config.behavior.mouseFollowsFocus
         moveCrossesMonitorAtEdge = config.behavior.moveCrossesMonitorAtEdge
         gestures = GesturesSettingsForm(config: config.gestures)
-        mouseDrag = config.behavior.mouseDrag
     }
 
     /// Ring problems only count while the ring is the indicator: its
@@ -493,7 +481,6 @@ public struct FocusSectionDraft: Equatable, Sendable {
                 focusFollowsMouse: focusFollowsMouse, mouseFollowsFocus: mouseFollowsFocus,
                 moveCrossesMonitorAtEdge: moveCrossesMonitorAtEdge
             )
-            + mouseDragEdits(mouseDrag)
             + ring.edits + indicator.edits + gestures.edits
     }
 }

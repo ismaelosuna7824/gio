@@ -107,7 +107,7 @@ extension WorkspaceManager {
 /// Take `id` out of its stacked `column` (its focus repaired as
 /// `WorkspaceManager`'s detach does) and return it as its own column with
 /// the column's width spec and its height weight. The id is a placeholder.
-func leave(_ id: WindowID, column: inout Column) -> Column {
+private func leave(_ id: WindowID, column: inout Column) -> Column {
     let row = column.windows.firstIndex(of: id)!
     let weight = column.heightWeights.removeValue(forKey: id)
     column.windows.remove(at: row)
@@ -124,7 +124,7 @@ func leave(_ id: WindowID, column: inout Column) -> Column {
 }
 
 /// `column` under an id unused in `workspace`.
-func relabeled(_ column: Column, in workspace: Workspace) -> Column {
+private func relabeled(_ column: Column, in workspace: Workspace) -> Column {
     var placed = Column(
         id: ColumnID((workspace.columns.map(\.id.rawValue).max() ?? 0) + 1), width: 0,
         windows: column.windows, focusedWindowIndex: column.focusedWindowIndex,

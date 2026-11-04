@@ -422,20 +422,6 @@ func applyBehaviorKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
             config.behavior.moveCrossesMonitorAtEdge = $0
         }
-    case "mouse-move-window":
-        applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
-            config.behavior.mouseDrag.move = $0
-        }
-    case "mouse-resize-window":
-        applyBoolKey(key, expected: key, value: value, line: line, table: "behavior", errors: &errors) {
-            config.behavior.mouseDrag.resize = $0
-        }
-    case "mouse-drag-modifier":
-        if case .string(let text) = value, let modifiers = parseModifiers(text) {
-            config.behavior.mouseDrag.modifiers = modifiers
-        } else {
-            errors.append("line \(line): behavior.mouse-drag-modifier expects modifiers like \"Alt\" or \"Ctrl+Alt\"")
-        }
     default:
         warnings.append("line \(line): unknown behavior key '\(key)', ignored")
     }

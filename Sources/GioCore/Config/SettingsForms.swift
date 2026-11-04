@@ -303,15 +303,6 @@ public func behaviorEdits(focusFollowsMouse: Bool, mouseFollowsFocus: Bool, move
     ]
 }
 
-/// MD-01: `[behavior]` mouse drag keys.
-public func mouseDragEdits(_ settings: MouseDragSettings) -> [ConfigEdit] {
-    [
-        .set(table: "behavior", key: "mouse-move-window", value: .bool(settings.move)),
-        .set(table: "behavior", key: "mouse-resize-window", value: .bool(settings.resize)),
-        .set(table: "behavior", key: "mouse-drag-modifier", value: .string(describeModifiers(settings.modifiers))),
-    ]
-}
-
 /// DA-07: `[logging] level`, the minimum severity written to `gio.log`.
 public func logLevelEdits(_ level: LogLevel) -> [ConfigEdit] {
     [.set(table: "logging", key: "level", value: .string(level.name))]

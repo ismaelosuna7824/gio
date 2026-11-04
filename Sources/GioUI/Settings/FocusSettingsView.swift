@@ -143,47 +143,14 @@ struct FocusSettingsView: View {
                     isOn: current.mouseFollowsFocus
                 )
             }
-            CardRow {
+            CardRow(divider: false) {
                 ToggleRow(
                     "Focus follows mouse",
                     caption: "Focuses the window the pointer rests on for about 100 ms. Never scrolls the strip.",
                     isOn: current.focusFollowsMouse
                 )
             }
-            CardRow {
-                ToggleRow(
-                    "Drag to move windows",
-                    caption: "Hold the drag modifier and drag a tiled window: drop on another window's center to swap them, near its left or right edge for a column of its own, near its top or bottom edge to stack it there.",
-                    isOn: current.mouseDrag.move
-                )
-            }
-            CardRow {
-                ToggleRow(
-                    "Right-drag to resize windows",
-                    caption: "Hold the drag modifier and right-drag a tiled window: the nearest edges follow the pointer, its column width and its height in a stacked column, and the strip reflows as you drag.",
-                    isOn: current.mouseDrag.resize
-                )
-            }
-            CardRow(divider: false) {
-                SettingRow("Drag modifier", caption: "Held while you drag. Over a tiled window its clicks go to Gio, not the app.") {
-                    GioPopup(
-                        title: "Drag modifier", selection: current.mouseDrag.modifiers,
-                        options: dragModifierOptions.map { ($0, describeModifiers($0).replacingOccurrences(of: "Alt", with: "Option")) },
-                        width: 160
-                    )
-                }
-            }
-            .disabled(!draft.current.mouseDrag.move && !draft.current.mouseDrag.resize)
         }
-    }
-
-    /// MD-01: the modifier sets offered (any other comes from config.toml
-    /// and is listed too, so the popup shows it).
-    private static let baseDragModifiers: [Set<HotkeyModifier>] = [[.alt], [.ctrl, .alt], [.cmd, .alt], [.ctrl, .cmd]]
-
-    private var dragModifierOptions: [Set<HotkeyModifier>] {
-        let current = draft.current.mouseDrag.modifiers
-        return Self.baseDragModifiers.contains(current) ? Self.baseDragModifiers : Self.baseDragModifiers + [current]
     }
 
     private var displaysCard: some View {

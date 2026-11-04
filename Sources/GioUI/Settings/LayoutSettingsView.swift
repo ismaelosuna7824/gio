@@ -367,15 +367,7 @@ struct LayoutPreviewView: View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: GioSpacing.s) {
             ForEach(Array(hints.enumerated()), id: \.offset) { _, hint in
                 HStack(spacing: GioSpacing.xs) {
-                    switch hint.trigger {
-                    case .combo(let combo):
-                        KeyCombo(combo)
-                    case .mouse(let modifiers, let gesture):
-                        HStack(spacing: 3) {
-                            ForEach(modifierGlyphs(modifiers), id: \.self) { Keycap($0) }
-                            Keycap(gesture)
-                        }
-                    }
+                    KeyCombo(hint.combo)
                     Text(hint.label)
                         .font(GioFont.caption)
                         .foregroundStyle(GioColor.secondaryText)
@@ -385,10 +377,6 @@ struct LayoutPreviewView: View {
         }
         .padding(.horizontal, GioSpacing.s)
         .padding(.bottom, GioSpacing.xs)
-    }
-
-    private func modifierGlyphs(_ modifiers: Set<HotkeyModifier>) -> [String] {
-        [(HotkeyModifier.ctrl, "⌃"), (.alt, "⌥"), (.shift, "⇧"), (.cmd, "⌘")].filter { modifiers.contains($0.0) }.map(\.1)
     }
 
     /// A width scale from the left padding: the default width as a bar,

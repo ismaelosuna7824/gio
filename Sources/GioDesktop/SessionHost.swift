@@ -146,9 +146,6 @@ final class SessionHost: @unchecked Sendable {
     /// (session queue), fed by the mailbox (its own lock) from
     /// MultitouchSupport's callback thread, which never touches session state.
     private var gestures: GestureController!
-    /// MD-01: modifier drags (session queue) and their tap-thread gate.
-    private var mouseDrags: MouseDragController!
-    private var mouseDragGate: MouseDragGate!
     private var touchMailbox: TouchFrameMailbox!
     /// TG-03: the release of a trackpad scroll, consumed by the next pass.
     private var pendingGestureRelease: GestureRelease?
@@ -329,7 +326,7 @@ final class SessionHost: @unchecked Sendable {
                 session: { [unowned self] in session },
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 displays: { [unowned self] in displays.allDisplays() },
-                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking || mouseDrags.isTracking },
+                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isNativeZoomActive: { [unowned self] in nativeZoom.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
@@ -382,7 +379,7 @@ final class SessionHost: @unchecked Sendable {
         renderVerifier = RenderVerifier(
             context: .init(
                 isShuttingDown: { [unowned self] in isShuttingDown },
-                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking || mouseDrags.isTracking },
+                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
                 isMouseDown: { [unowned self] in probe.isMouseDown },
                 isReady: { [unowned self] in reconciler != nil },
@@ -405,7 +402,7 @@ final class SessionHost: @unchecked Sendable {
                 physicalFrame: { [unowned self] in physicalFrames[$0] },
                 isShuttingDown: { [unowned self] in isShuttingDown },
                 isFlightActive: { [unowned self] in overlayFlight.isActive },
-                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking || mouseDrags.isTracking },
+                isMotionActive: { [unowned self] in motion.isActive || gestures.isTracking },
                 rendererAvailable: { [unowned self] in
                     SnapshotCapturer.isSupported
                         && effectiveRenderer(
@@ -776,7 +773,7 @@ final class SessionHost: @unchecked Sendable {
                 updateDim: { [unowned self] in focusDim.update() },
                 holdDimForDrag: { [unowned self] in focusDim.holdForDrag() },
                 animatingPids: { [unowned self] in
-                    motion.animatingPids.union(gestures.animatingPids).union(mouseDrags.animatingPids)
+                    gestures.isTracking ? motion.animatingPids.union(gestures.animatingPids) : motion.animatingPids
                 },
                 knownWindow: { [unowned self] in actuator?.id(matching: $0, pid: $1) },
                 isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
@@ -947,46 +944,6 @@ final class SessionHost: @unchecked Sendable {
             log: { GioLog.record($0, $1) }
         ))
         touchMailbox = TouchFrameMailbox(scheduler: scheduler) { [unowned self] in gestures.deliver($0) }
-        mouseDrags = MouseDragController(context: .init(
-            surface: { [unowned self] in gestureSurface(at: $0) },
-            physicalFrames: { [unowned self] in physicalFrames },
-            sink: { [unowned self] in reconciler },
-            updateManager: { [unowned self] body in body(&session.manager) },
-            beginTracking: { [unowned self] in
-                // The pointer takes the strip from wherever a motion left
-                // it; passes wait for the release (`performReflow`).
-                motion.stop()
-                renderVerifier.cancel()
-                focusDim.update()
-            },
-            recordSampled: { [unowned self] id, frame, now in
-                physicalFrames[id] = frame
-                echoGate.recordApplied(id, frame: frame, at: now)
-            },
-            markUnverified: { [unowned self] id in
-                trustedFrames.invalidate(id)
-                renderVerifier.insertCandidate(id)
-            },
-            focusedWindow: { [unowned self] in session.manager.currentWorkspace().focusedWindow },
-            publishFocusRing: { [unowned self] in publishFocusRing() },
-            settle: { [unowned self] _, focusChanged in
-                // The press never reached the app: the dragged window is
-                // focused like a click would, without centering or warp.
-                if focusChanged {
-                    focus.requestUncenteredIntent()
-                }
-                motionCauses.note(.windowMovement)
-                performReflow()
-            },
-            abandon: { [unowned self] in reflowAll() },
-            log: { GioLog.record($0, $1) }
-        ))
-        // The frontmost window at the press, Gio's own panels (the ring sits
-        // right above its window, NF-13) skipped.
-        let ownPID = getpid()
-        mouseDragGate = MouseDragGate(
-            scheduler: scheduler, ownPID: ownPID, topWindowPID: { clickTarget(atCocoa: $0, ownPID: ownPID).ownerPID }
-        ) { [unowned self] in mouseDrags.deliver($0) }
     }
 
     // MARK: - Lifecycle
@@ -1500,7 +1457,6 @@ final class SessionHost: @unchecked Sendable {
     private func applyGestureConfig() {
         let gestures = session.config.gestures
         touchMailbox.setMinimumFingers(gestures.recognizerSettings.minimumFingers)
-        mouseDragGate.configure(session.config.behavior.mouseDrag)
         // TG-04: a reload re-reads macOS's swipe settings for the facts.
         trackpadPreferencesRead = nil
         DispatchQueue.main.async { [weak self] in
@@ -1561,9 +1517,9 @@ final class SessionHost: @unchecked Sendable {
 
     /// Session queue: the strip a scroll moves (the display under the
     /// pointer, else the focused one), with what laying it out needs.
-    private func gestureSurface(at point: CGPoint? = nil) -> GestureSurface? {
+    private func gestureSurface() -> GestureSurface? {
         let all = displays.allDisplays()
-        guard let display = gestureDisplay(at: point ?? probe.mouseLocation, displays: all, focused: session.manager.focusedDisplay),
+        guard let display = gestureDisplay(at: probe.mouseLocation, displays: all, focused: session.manager.focusedDisplay),
               let workspace = session.manager.workspace(id: display.workspace)
         else {
             return nil
@@ -1574,18 +1530,6 @@ final class SessionHost: @unchecked Sendable {
             otherDisplays: all.filter { $0.id != display.id }.map(\.frame),
             centering: session.config.layout.centerFocusedColumn == .always
         )
-    }
-
-    /// MD-01, session queue after every pass: the shown tiled windows of
-    /// scrolling strips without a fullscreen window, the ones a modifier
-    /// drag may take.
-    private func publishMouseDragFrames(_ hovered: [WindowID: CGRect]) {
-        let modes = tileableModes()
-        let strips = displays.allDisplays().compactMap { session.manager.workspace(id: $0.workspace) }.filter { workspace in
-            workspace.layout == .scrolling && !workspace.columns.contains { $0.windows.contains { modes[$0] == .fullscreen } }
-        }
-        let draggable = Set(strips.flatMap { $0.columns.flatMap(\.windows) })
-        mouseDragGate.publish(hovered.filter { draggable.contains($0.key) && (modes[$0.key] ?? .tiled) == .tiled })
     }
 
     /// Read-only state for the main window. Never waits on the session
@@ -1960,7 +1904,7 @@ final class SessionHost: @unchecked Sendable {
         defer { GioSignpost.end("reflow", signpost) }
         // TG-03: while the fingers move a strip, every pass waits; the
         // release (or the abandon) runs one that covers them all.
-        guard !gestures.isTracking, !mouseDrags.isTracking else {
+        guard !gestures.isTracking else {
             return
         }
         let gestureRelease = pendingGestureRelease
@@ -2034,7 +1978,6 @@ final class SessionHost: @unchecked Sendable {
         var animations = pass.animations
         let prepositions = pass.prepositions
         focus.setHoverFrames(pass.hovered)
-        publishMouseDragFrames(pass.hovered)
         nativeZoom.dropUnjudged(unjudgedZooms)
         animations = ReflowPlanner.applyingAnimationSettings(
             animations, settings: settings, kinds: pass.kinds, fallback: cause.kind
@@ -2656,10 +2599,6 @@ final class SessionHost: @unchecked Sendable {
                 self?.recordClick(at: location)
             },
             onMouseMoved: moveHandler,
-            onMouseButton: { [weak self] event in
-                // MD-01, tap thread: the gate answers under its own lock.
-                self?.mouseDragGate.handle(event) ?? false
-            },
             onKeyDown: { [weak self] in
                 self?.noteTyping()
             },

@@ -65,14 +65,6 @@ public func defaultConfigTemplate() -> String {
     # stacked into the column nearest that edge; the column move
     # (Alt+Shift+< / >) at the first / last column sends the column there.
     move-crosses-monitor-at-edge = false
-    # Hold the drag modifier over a tiled window: drag to move it (drop on a
-    # window's center to swap, near its side edges for a column of its own,
-    # near its top or bottom edge to stack it there); right-drag to resize it
-    # (column width and height in the column). The modifier's clicks on tiled
-    # windows go to Gio, not the app. Modifiers: "Alt", "Ctrl+Alt", ...
-    mouse-move-window = true
-    mouse-resize-window = true
-    mouse-drag-modifier = "Alt"
 
     [animations]
     enabled = true

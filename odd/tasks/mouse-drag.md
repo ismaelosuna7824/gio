@@ -73,3 +73,11 @@ README was read for behavior, no code.
   observed). Visual check: `SnapshotHarness` renders of the preview in Columns, Maximized and Fullscreen,
   dark and light (throwaway, deleted). Full `swift test`: Core 2281, Session 607, UI 389 (snapshots on),
   POC 7, Mac 19, macOS 120; signed build OK. NOT viewed in the running app.
+- [x] MD-03 (`DONE`, commit below) — mouse drags removed (user, 2026-11-04: "creo que vamos a quitar la
+  funcionalidad del drag, mejor hay que eliminarla"). `fc21c58` reverted: no `[behavior] mouse-*` keys
+  (an old line now warns as an unknown key), no drag/up events in the tap mask, no `MouseDragGate`,
+  `MouseDragController` or Core drag code, no Settings > Focus > Pointer rows; `settingWindowHeight`,
+  `parseModifiers` and the shared overview-move helpers went with it. The Layout preview (MD-02) keeps
+  its keyboard hints: move down, stack left, cycle width, wider, narrower, focus right. The bug in the
+  same report (Activity Monitor active but invisible) was not the drag (no `mouse move` line at the
+  time): FI-13 in `fidelity.md`.

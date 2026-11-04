@@ -34,24 +34,6 @@ private let modifierNames: [String: HotkeyModifier] = [
     "cmd": .cmd, "command": .cmd,
 ]
 
-/// MD-01: `"Ctrl+Option"`-style modifier text (case-insensitive, the hotkey
-/// names); nil for empty text or an unknown name.
-public func parseModifiers(_ text: String) -> Set<HotkeyModifier>? {
-    var modifiers = Set<HotkeyModifier>()
-    for name in text.split(separator: "+", omittingEmptySubsequences: false) {
-        guard let modifier = modifierNames[name.trimmingCharacters(in: .whitespaces).lowercased()] else {
-            return nil
-        }
-        modifiers.insert(modifier)
-    }
-    return modifiers.isEmpty ? nil : modifiers
-}
-
-/// MD-01: modifiers as config text, in the hotkeys' order (`"Ctrl+Alt"`).
-public func describeModifiers(_ modifiers: Set<HotkeyModifier>) -> String {
-    [HotkeyModifier.ctrl, .alt, .shift, .cmd].filter(modifiers.contains).map { $0.rawValue.capitalized }.joined(separator: "+")
-}
-
 /// Why a hotkey text did not parse.
 public enum HotkeyFailure: Error, Equatable, Sendable {
     /// Missing modifier, empty key or unknown modifier.

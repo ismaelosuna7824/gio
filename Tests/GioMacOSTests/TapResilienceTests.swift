@@ -17,13 +17,9 @@ final class TapResilienceTests: XCTestCase {
     func testOrdinaryEventsKeepTheirRoutes() {
         XCTAssertEqual(tapEventAction(for: .keyDown), .keyDown)
         XCTAssertEqual(tapEventAction(for: .mouseMoved), .mouseMoved)
-        XCTAssertEqual(tapEventAction(for: .leftMouseDown), .mouseButton(.down, .left))
-        XCTAssertEqual(tapEventAction(for: .rightMouseDown), .mouseButton(.down, .right))
-        XCTAssertEqual(tapEventAction(for: .otherMouseDown), .mouseButton(.down, .other))
-        XCTAssertEqual(tapEventAction(for: .leftMouseDragged), .mouseButton(.dragged, .left))
-        XCTAssertEqual(tapEventAction(for: .rightMouseDragged), .mouseButton(.dragged, .right))
-        XCTAssertEqual(tapEventAction(for: .leftMouseUp), .mouseButton(.up, .left))
-        XCTAssertEqual(tapEventAction(for: .rightMouseUp), .mouseButton(.up, .right))
+        XCTAssertEqual(tapEventAction(for: .leftMouseDown), .mouseDown)
+        XCTAssertEqual(tapEventAction(for: .rightMouseDown), .mouseDown)
+        XCTAssertEqual(tapEventAction(for: .otherMouseDown), .mouseDown)
         XCTAssertEqual(tapEventAction(for: .scrollWheel), .passThrough)
     }
 
@@ -33,12 +29,8 @@ final class TapResilienceTests: XCTestCase {
         let on = tapEventMask(observingMouseMoved: true)
         XCTAssertEqual(off & moved, 0)
         XCTAssertEqual(on & moved, moved)
-        // Keys, clicks and (MD-01) drags and releases are always observed.
-        let always: [CGEventType] = [
-            .keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown,
-            .leftMouseDragged, .rightMouseDragged, .leftMouseUp, .rightMouseUp,
-        ]
-        for type in always {
+        // Keys and clicks are always observed.
+        for type in [CGEventType.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown] {
             let bit = CGEventMask(1) << type.rawValue
             XCTAssertEqual(off & bit, bit)
             XCTAssertEqual(on & bit, bit)

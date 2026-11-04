@@ -343,17 +343,13 @@ final class SettingsPresentationTests: XCTestCase {
     /// and drag modifier; an unbound action or a drag turned off drops out.
     func testLayoutKeyHintsFollowTheConfig() throws {
         let defaults = layoutKeyHints(GioConfig())
-        XCTAssertEqual(defaults.map(\.label), ["Move down", "Cycle width", "Resize", "Move", "Focus right"])
-        XCTAssertEqual(defaults[1].trigger, .combo(try XCTUnwrap(parseHotkey("Alt+R"))))
-        XCTAssertEqual(defaults[2].trigger, .mouse([.alt], "right-drag"))
-        XCTAssertEqual(defaults[3].trigger, .mouse([.alt], "drag"))
+        XCTAssertEqual(defaults.map(\.label), ["Move down", "Stack left", "Cycle width", "Wider", "Narrower", "Focus right"])
+        XCTAssertEqual(defaults[2].combo, try XCTUnwrap(parseHotkey("Alt+R")))
 
-        var config = try parseGioConfig("[keybindings]\n\"Alt+R\" = \"none\"\n\"Alt+Period\" = \"switch-preset-column-width\"\n\"Alt+Shift+J\" = \"none\"\n").get().0
-        config.behavior.mouseDrag = MouseDragSettings(move: false, resize: true, modifiers: [.ctrl, .alt])
+        let config = try parseGioConfig("[keybindings]\n\"Alt+R\" = \"none\"\n\"Alt+Period\" = \"switch-preset-column-width\"\n\"Alt+Shift+J\" = \"none\"\n").get().0
         let custom = layoutKeyHints(config)
-        XCTAssertEqual(custom.map(\.label), ["Cycle width", "Resize", "Focus right"])
-        XCTAssertEqual(custom[0].trigger, .combo(try XCTUnwrap(parseHotkey("Alt+Period"))))
-        XCTAssertEqual(custom[1].trigger, .mouse([.ctrl, .alt], "right-drag"))
+        XCTAssertEqual(custom.map(\.label), ["Stack left", "Cycle width", "Wider", "Narrower", "Focus right"])
+        XCTAssertEqual(custom[1].combo, try XCTUnwrap(parseHotkey("Alt+Period")))
     }
 
     // MARK: - Focus section
@@ -364,7 +360,6 @@ final class SettingsPresentationTests: XCTestCase {
         config.behavior.focusFollowsMouse = true
         config.behavior.moveCrossesMonitorAtEdge = true
         config.gestures.scrollFingers = 4
-        config.behavior.mouseDrag = MouseDragSettings(move: false, resize: true, modifiers: [.ctrl, .alt])
         let draft = FocusSectionDraft(config: config)
         XCTAssertEqual(draft.centerFocusedColumn, .onOverflow)
         XCTAssertTrue(draft.focusFollowsMouse)
@@ -374,11 +369,6 @@ final class SettingsPresentationTests: XCTestCase {
             draft.edits,
             [.set(table: "layout", key: "center-focused-column", value: .string("on-overflow"))]
                 + behaviorEdits(focusFollowsMouse: true, mouseFollowsFocus: true, moveCrossesMonitorAtEdge: true)
-                + [
-                    .set(table: "behavior", key: "mouse-move-window", value: .bool(false)),
-                    .set(table: "behavior", key: "mouse-resize-window", value: .bool(true)),
-                    .set(table: "behavior", key: "mouse-drag-modifier", value: .string("Ctrl+Alt")),
-                ]
                 + draft.ring.edits + draft.indicator.edits + draft.gestures.edits
         )
         XCTAssertTrue(draft.problems.isEmpty)
