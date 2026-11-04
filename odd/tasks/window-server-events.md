@@ -82,7 +82,7 @@ session (no false scans for windows the AX path registers). NOT verified live: t
   same AppleScript resize logged one `window server frame change id=24818:7 resized=true` and
   Terminal stayed `mode=tiled`. The debug line now appears only when a notice acts (Gio's own
   moves no longer log it).
-- WS-05 (`PENDING`) — Diagnostics (stability follow-up, user 2026-11-04 "necesitamos estabilidad"):
+- WS-05 (`6e51bee`) — Diagnostics (stability follow-up, user 2026-11-04 "necesitamos estabilidad"):
   a **Window server** card (`WindowServerStatus` in `SessionFacts`: notices registered of total or
   the missing symbols, notices received, rescue scans, windows with a number of managed), the
   Session card **Paused** while another window manager runs (WC-22), and the Displays card's
