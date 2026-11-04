@@ -165,12 +165,14 @@ final class SessionFactsBuilderTests: XCTestCase {
         XCTAssertEqual(prefetches.values, [snapshot, snapshot])
     }
 
-    /// PF-S: the default renderer is snapshot again: with Screen Recording
-    /// the log names it and the snapshot content is prefetched; without it
-    /// the motion falls back to the AX renderer and says why.
-    func testTheDefaultSnapshotRendererFallsBackToAXWithoutScreenRecording() {
+    /// PF-S: the snapshot renderer (the Animated preset; DD-10 made `ax` the
+    /// default): with Screen Recording the log names it and the snapshot
+    /// content is prefetched; without it the motion falls back to the AX
+    /// renderer and says why.
+    func testTheSnapshotRendererFallsBackToAXWithoutScreenRecording() {
         let fixture = SessionFixture(frames: [CGRect(x: 0, y: 0, width: 900, height: 1000)], focus: 0)
-        XCTAssertEqual(fixture.session.config.animations.renderer, .snapshot)
+        fixture.session.config.animations.enabled = true
+        fixture.session.config.animations.renderer = .snapshot
         let logs = Recorder<String>()
         let prefetches = Recorder<Bool>()
         _ = make(fixture, logs: logs, prefetches: prefetches).facts()

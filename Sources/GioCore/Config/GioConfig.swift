@@ -127,7 +127,8 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     /// NA-04: `[animations.window-open] offset`, in points.
     public static let openOffsetRange = 0.0...200.0
 
-    /// Scroll/focus motion (MO-04). Off means every reflow is instant.
+    /// Scroll/focus motion (MO-04). Off means every reflow is instant; off
+    /// by default (DD-10: the Fast preset ships).
     public var enabled: Bool
     /// Length of one animation, clamped to `durationRange` by the parser.
     public var durationMilliseconds: Int
@@ -138,7 +139,8 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var springStiffness: Double
     /// PA-06: whether growing windows interpolate their size during flight.
     public var resize: ResizeMode
-    /// SM-01: `snapshot` (default) needs Screen Recording; falls back to `ax`.
+    /// SM-01: `snapshot` needs Screen Recording and falls back to `ax`;
+    /// `ax` by default (DD-10: the Fast preset's renderer).
     public var renderer: RendererKind
     /// When the focused window that grows gets its final size: `start`
     /// (default, first frame) or `end` (FI-03, final pass).
@@ -157,12 +159,12 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var openOffset: Double
 
     public init(
-        enabled: Bool = true, durationMilliseconds: Int = 200,
+        enabled: Bool = false, durationMilliseconds: Int = 200,
         curve: MotionCurveKind = .spring,
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .snapshot,
+        renderer: RendererKind = .ax,
         focusedGrow: FocusedGrowMode = .start,
         nativeZoom: Bool = true,
         closeGhost: Bool = false,

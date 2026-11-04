@@ -67,7 +67,10 @@ public func defaultConfigTemplate() -> String {
     move-crosses-monitor-at-edge = false
 
     [animations]
-    enabled = true
+    # Fast (recommended, default): every move is instant and the real windows
+    # move through Accessibility. Settings > Animations > Preset > Animated
+    # turns the spring motion on (enabled = true, renderer = "snapshot").
+    enabled = false
     # "spring" (Niri-style, default) or "ease-out". A spring keeps the speed
     # of a move it interrupts, so rapid key presses flow; duration-ms only
     # sets the length of "ease-out" (0 still means instant for both).
@@ -94,12 +97,12 @@ public func defaultConfigTemplate() -> String {
     # corrects or falls back to a normal write otherwise. Stacked columns and
     # apps without a zoom button use the normal write. Set false to disable.
     native-zoom = true
-    # How motion is drawn: "snapshot" (default) slides images of the windows at
-    # the display's refresh rate, the same speed with every app, and moves the
-    # real windows once; it needs the Screen Recording permission (Gio uses "ax"
-    # while it is missing). "ax" moves the real windows every frame, so content
-    # stays live, but slow apps move at their own pace.
-    renderer = "snapshot"
+    # How motion is drawn: "ax" (default, the Fast preset) moves the real
+    # windows, so content stays live, but slow apps move at their own pace.
+    # "snapshot" slides images of the windows at the display's refresh rate,
+    # the same speed with every app, and moves the real windows once; it needs
+    # the Screen Recording permission (Gio uses "ax" while it is missing).
+    renderer = "ax"
 
     # Per-animation tuning, with Niri's names. Each table inherits every key
     # of [animations] and may set its own: enabled, curve, duration-ms,

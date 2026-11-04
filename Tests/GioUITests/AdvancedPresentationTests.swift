@@ -264,6 +264,7 @@ final class AdvancedPresentationTests: XCTestCase {
 
     func testScreenRecordingOnlyMattersForTheSnapshotRenderer() {
         var config = GioConfig()
+        config.animations.enabled = true
         config.animations.renderer = .ax
         XCTAssertEqual(check(checklist(facts(sr: false), config: config), "permissions").status, .ok)
         config.animations.renderer = .snapshot
@@ -305,12 +306,15 @@ final class AdvancedPresentationTests: XCTestCase {
 
     func testRendererOffWhenAnimationsAreDisabled() {
         var config = GioConfig()
+        config.animations.enabled = true
+        XCTAssertNotEqual(check(checklist(facts(), config: config), "renderer").badge, "Off")
         config.animations.enabled = false
         XCTAssertEqual(check(checklist(facts(), config: config), "renderer").badge, "Off")
     }
 
     func testSnapshotCaptureTestOnlyWithTheSnapshotRenderer() {
         var config = GioConfig()
+        config.animations.enabled = true
         config.animations.renderer = .ax
         XCTAssertFalse(showsSnapshotCaptureTest(config: config, screenRecording: true))
         config.animations.renderer = .snapshot

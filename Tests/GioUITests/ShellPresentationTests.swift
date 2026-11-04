@@ -42,13 +42,14 @@ final class ShellPresentationTests: XCTestCase {
         XCTAssertEqual(state.step, .keys)
     }
 
-    /// DD-06: the last step offers the motion presets; Recommended is the
-    /// default, so the flow writes Gio's defaults unless someone picks Fast.
-    func testMotionPresetsDefaultToRecommended() {
+    /// DD-06 / DD-10: the last step offers the motion presets; Fast is the
+    /// recommended default, so the flow writes Gio's defaults unless someone
+    /// picks Animated.
+    func testMotionPresetsDefaultToFast() {
         var state = onboarding(ax: true, sr: true)
-        XCTAssertEqual(state.motion, .recommended)
-        state.selectMotion(.fast)
         XCTAssertEqual(state.motion, .fast)
+        state.selectMotion(.animated)
+        XCTAssertEqual(state.motion, .animated)
         var last = onboarding(ax: true, sr: true)
         while !last.isLastStep {
             last.advance()

@@ -168,7 +168,9 @@ final class SettingsPresentationTests: XCTestCase {
     }
 
     func testAnimationsFormRoundTripsConfigAndBuildsEdits() {
-        let config = AnimationsSectionConfig(curve: .easeOut, springDampingRatio: 0.7, springStiffness: 900)
+        let config = AnimationsSectionConfig(
+            enabled: true, curve: .easeOut, springDampingRatio: 0.7, springStiffness: 900, renderer: .snapshot
+        )
         var form = AnimationsForm(config: config)
         XCTAssertEqual(form.curve, .easeOut)
         XCTAssertEqual(form.preview.dampingRatio, 0.7)
@@ -195,7 +197,7 @@ final class SettingsPresentationTests: XCTestCase {
     }
 
     func testPerAnimationFormRoundTripsThroughTheConfigFile() throws {
-        var config = AnimationsSectionConfig()
+        var config = AnimationsSectionConfig(enabled: true)
         config.overrides[.windowMovement] = AnimationOverride(curve: .easeOut, durationMilliseconds: 120)
         config.overrides[.workspaceSwitch] = AnimationOverride(curve: .spring, springDampingRatio: 0.6, springStiffness: 500)
         config.overrides[.windowClose] = AnimationOverride(enabled: false)
@@ -213,7 +215,7 @@ final class SettingsPresentationTests: XCTestCase {
     }
 
     func testTheResizeRowIsOffByDefaultAndTurningItOnWritesTheTable() throws {
-        var form = AnimationsForm(config: AnimationsSectionConfig())
+        var form = AnimationsForm(config: AnimationsSectionConfig(enabled: true))
         XCTAssertFalse(form.kinds[.windowResize]!.enabled)
         XCTAssertTrue(form.kinds[.windowMovement]!.enabled)
         XCTAssertFalse(form.preview(for: .windowResize).enabled)

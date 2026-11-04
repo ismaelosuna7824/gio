@@ -3,12 +3,17 @@ import XCTest
 
 /// MO-04 config: `[animations] enabled / duration-ms`.
 final class MotionConfigTests: XCTestCase {
-    func testDefaultsAnimateFor200Ms() {
+    /// DD-10: the Fast preset is the default — animations off, 200 ms kept
+    /// for when they are turned on.
+    func testDefaultsAreOffWith200Ms() {
         let animations = defaultGioConfig().animations
-        XCTAssertTrue(animations.enabled)
+        XCTAssertFalse(animations.enabled)
         XCTAssertEqual(animations.durationMilliseconds, 200)
         XCTAssertEqual(animations.duration, 0.2, accuracy: 1e-9)
-        XCTAssertTrue(animations.isActive)
+        XCTAssertFalse(animations.isActive)
+        var on = animations
+        on.enabled = true
+        XCTAssertTrue(on.isActive)
     }
 
     func testParsesEnabledAndDuration() throws {

@@ -4,8 +4,9 @@ import XCTest
 /// SM-01: `[animations] renderer` and the pure choice between the snapshot
 /// (ScreenCaptureKit) renderer and the Accessibility motion.
 final class RendererSettingTests: XCTestCase {
-    func testDefaultIsSnapshotAndBothValuesParse() throws {
-        XCTAssertEqual(defaultGioConfig().animations.renderer, .snapshot)
+    /// DD-10: the Fast preset is the default, so the renderer is `ax`.
+    func testDefaultIsAXAndBothValuesParse() throws {
+        XCTAssertEqual(defaultGioConfig().animations.renderer, .ax)
         for kind in ["snapshot", "ax"] {
             let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"\(kind)\"\n").get()
             XCTAssertTrue(warnings.isEmpty)
@@ -15,17 +16,17 @@ final class RendererSettingTests: XCTestCase {
 
     func testUnknownRendererWarnsAndKeepsDefault() throws {
         let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"gpu\"\n").get()
-        XCTAssertEqual(config.animations.renderer, .snapshot)
+        XCTAssertEqual(config.animations.renderer, .ax)
         XCTAssertEqual(warnings.count, 1)
         XCTAssertTrue(warnings[0].contains("animations.renderer"))
     }
 
     /// PF-S: the live renderer was removed with SkyLight. A config that still
-    /// says `"live"` gets the ordinary unknown-value warning and the snapshot
-    /// default; nothing else in the file is affected.
-    func testRemovedLiveRendererWarnsAndKeepsTheSnapshotDefault() throws {
+    /// says `"live"` gets the ordinary unknown-value warning and the default
+    /// (`ax`, DD-10); nothing else in the file is affected.
+    func testRemovedLiveRendererWarnsAndKeepsTheDefault() throws {
         let (config, warnings) = try parseGioConfig("[animations]\nrenderer = \"live\"\nduration-ms = 180\n").get()
-        XCTAssertEqual(config.animations.renderer, .snapshot)
+        XCTAssertEqual(config.animations.renderer, .ax)
         XCTAssertEqual(config.animations.durationMilliseconds, 180)
         XCTAssertEqual(
             warnings, ["line 2: animations.renderer 'live' is not \"snapshot\" or \"ax\", using the default"]
@@ -40,7 +41,7 @@ final class RendererSettingTests: XCTestCase {
     func testTemplateDeclaresRenderer() throws {
         let (config, warnings) = try parseGioConfig(defaultConfigTemplate()).get()
         XCTAssertTrue(warnings.isEmpty)
-        XCTAssertEqual(config.animations.renderer, .snapshot)
+        XCTAssertEqual(config.animations.renderer, .ax)
     }
 
     func testAnimationEditsCarryRendererWhenGiven() {

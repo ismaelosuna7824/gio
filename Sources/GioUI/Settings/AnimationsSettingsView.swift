@@ -73,15 +73,15 @@ struct AnimationsSettingsView: View {
                 // anyone who skipped it finds them here.
                 SegmentedRow(
                     "Preset",
-                    caption: "Recommended keeps the spring motion below and the Snapshot renderer. Fast turns every animation off and moves the real windows through Accessibility: the most fluid feel, no Screen Recording.",
+                    caption: "Fast (recommended) turns every animation off and moves the real windows through Accessibility: the most fluid feel, the least memory, no Screen Recording. Animated keeps the spring motion below and the Snapshot renderer.",
                     selection: Binding<MotionPreset>(
-                        get: { draft.current.enabled ? .recommended : .fast },
+                        get: { draft.current.enabled ? .animated : .fast },
                         set: { preset in
-                            form.enabled.wrappedValue = preset == .recommended
+                            form.enabled.wrappedValue = preset == .animated
                             form.renderer.wrappedValue = preset.renderer
                         }
                     ),
-                    options: [(.recommended, "Recommended"), (.fast, "Fast")], width: 220
+                    options: [(.fast, "Fast (Recommended)"), (.animated, "Animated")], width: 280
                 )
             }
             CardRow {

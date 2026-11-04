@@ -433,8 +433,8 @@ struct OnboardingContent: View {
         }
     }
 
-    /// DD-06: the last step. Two presets, Recommended selected, and the hint
-    /// that everything else is editable from Settings.
+    /// DD-06 / DD-10: the last step. Two presets, Fast (recommended)
+    /// selected, and the hint that everything else is editable from Settings.
     private var motion: some View {
         VStack(spacing: 20) {
             Spacer(minLength: 0)
@@ -451,12 +451,12 @@ struct OnboardingContent: View {
                 .frame(maxWidth: 540)
             HStack(spacing: GioSpacing.m) {
                 motionOption(
-                    .recommended, symbol: "sparkles", tint: .green, title: "Recommended",
-                    detail: "Spring motion for every move and the Snapshot renderer: what Gio does out of the box."
+                    .fast, symbol: "bolt.fill", tint: .green, title: "Fast (Recommended)",
+                    detail: "No animations, real windows moved through Accessibility: the most fluid feel, the least memory, no Screen Recording. What Gio does out of the box."
                 )
                 motionOption(
-                    .fast, symbol: "bolt.fill", tint: .orange, title: "Fast",
-                    detail: "No animations, real windows moved through Accessibility: the most fluid feel, no Screen Recording."
+                    .animated, symbol: "sparkles", tint: .orange, title: "Animated",
+                    detail: "Spring motion for every move, drawn with window images (the Snapshot renderer): needs Screen Recording."
                 )
             }
             .frame(maxWidth: 580)
