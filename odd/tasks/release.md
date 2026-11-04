@@ -196,7 +196,7 @@ critical or high issue; every finding below was checked against the code before 
   skipped job passes the required check); fork PRs still run. Prepare Release writes `<!-- release notes -->`
   after its instructions and publish keeps only what follows (CRLF-safe awk, whole body as fallback).
   `actionlint` clean; awk checked on a CRLF sample. LIVE PENDING: the next release PR and push to `dev`.
-- [ ] RL-14 (`PENDING`) — Beta releases (stability follow-up from the OmniWM comparison; user choice 2026-11-04:
+- [ ] RL-14 (`0503332`) — Beta releases (stability follow-up from the OmniWM comparison; user choice 2026-11-04:
   a beta release PR, over a daily canary from `dev`, which would open the `release` environment to `dev`, or
   a local beta). Prepare Release gains **beta**: label `release:beta`; `release-version.sh` makes it the next
   patch's `-beta.N` (`BETA_TAGS`: the `v*-beta.*` tags, N one past that version's highest; a newline in them is
