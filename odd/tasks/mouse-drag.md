@@ -41,7 +41,7 @@ README was read for behavior, no code.
 
 ## Tasks
 
-- [x] MD-01 (`DONE`, commit below) — move and resize drags.
+- [x] MD-01 (`DONE`, `fc21c58`) — move and resize drags.
   RED: compile failure of `MouseDragTests` (GioCoreTests, 18: trigger, resize edges/clamps/height/fill
   baking, drop zones, swap/new column/stack/no-op, config) and `MouseDragControllerTests`
   (GioSessionTests, 8: live writes and commit, follow-the-pointer swap, click and drop-nowhere abandon,
