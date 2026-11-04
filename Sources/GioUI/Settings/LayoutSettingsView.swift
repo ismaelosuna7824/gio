@@ -117,6 +117,13 @@ struct LayoutSettingsView: View {
             }
             CardRow {
                 ToggleRow(
+                    "Fill empty space",
+                    caption: "Columns that fit the screen stretch to fill it, keeping their relative sizes; more windows bring their widths back. A width you set by hand stays until a window opens or closes.",
+                    isOn: form.fillEmptySpace
+                )
+            }
+            CardRow {
+                ToggleRow(
                     "Center a lone column",
                     caption: "A workspace with a single column shows it in the middle instead of at the left edge.",
                     isOn: form.alwaysCenterSingleColumn

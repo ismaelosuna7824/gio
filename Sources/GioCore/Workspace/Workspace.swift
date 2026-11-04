@@ -30,6 +30,10 @@ public struct Workspace: Equatable, Sendable {
     /// list); empty while `layout` is `.scrolling`. `reconcileDwindle`
     /// (run by `WorkspaceManager` on every write) keeps it in sync.
     public var dwindle: DwindleState
+    /// NC-15: a resize by hand (width presets, width steps) keeps its width
+    /// while the workspace has this many columns; `fill-empty-space` resumes
+    /// once a column is added or closed (`reconcileFillPause`). Nil: filling.
+    public var fillPausedAtColumnCount: Int?
 
     public init(
         id: WorkspaceID,
@@ -63,6 +67,23 @@ public struct Workspace: Equatable, Sendable {
             return nil
         }
         return columns[focusedColumn]
+    }
+
+    /// The columns that hold windows (what the engine lays out).
+    public var filledColumnCount: Int {
+        columns.filter { !$0.windows.isEmpty }.count
+    }
+
+    /// NC-15: the user sized a column by hand at this column count.
+    public mutating func noteColumnsResized() {
+        fillPausedAtColumnCount = filledColumnCount
+    }
+
+    /// NC-15: a column added or closed since the resize: filling resumes.
+    public mutating func reconcileFillPause() {
+        if let paused = fillPausedAtColumnCount, paused != filledColumnCount {
+            fillPausedAtColumnCount = nil
+        }
     }
 
     /// Remove every listed window (reaped processes, stale records),

@@ -30,6 +30,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// NC-13 niri `always-center-single-column`: a workspace with a single
     /// column shows it in the middle; consumed by the layout engine.
     public var alwaysCenterSingleColumn: Bool
+    /// NC-15 `fill-empty-space`: columns that fit stretch to fill the strip;
+    /// consumed by the layout engine.
+    public var fillEmptySpace: Bool
     /// DW-03 `default-layout`: the layout new workspaces start with;
     /// consumed by `WorkspaceManager.applyLayoutDefaults`.
     public var defaultLayout: WorkspaceLayoutKind
@@ -48,6 +51,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         maximizeSingleWindow: Bool = true,
         presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights,
         alwaysCenterSingleColumn: Bool = false,
+        fillEmptySpace: Bool = true,
         defaultLayout: WorkspaceLayoutKind = .scrolling,
         newWindowPosition: NewWindowPosition = .end
     ) {
@@ -61,6 +65,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.presetWindowHeights = presetWindowHeights
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
+        self.fillEmptySpace = fillEmptySpace
         self.defaultLayout = defaultLayout
         self.newWindowPosition = newWindowPosition
     }
@@ -271,6 +276,7 @@ public struct GioConfig: Sendable {
             fullscreenGap: layout.resolvedFullscreenGap,
             maximizeSingleWindow: layout.maximizeSingleWindow,
             alwaysCenterSingleColumn: layout.alwaysCenterSingleColumn,
+            fillEmptySpace: layout.fillEmptySpace,
             dwindle: DwindleSettings(
                 splitRatio: dwindle.defaultSplitRatio, splitWidthMultiplier: dwindle.splitWidthMultiplier
             ),

@@ -37,6 +37,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     /// `[layout] new-window-position`.
     public var newWindowPosition: NewWindowPosition
     public var maximizeSingleWindow: Bool
+    /// NC-15 `fill-empty-space`.
+    public var fillEmptySpace: Bool
     /// NC-13 `always-center-single-column`.
     public var alwaysCenterSingleColumn: Bool
     /// DW-03 `[layout] default-layout` and `[dwindle]`.
@@ -63,6 +65,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         centerFocusedColumn = config.centerFocusedColumn
         newWindowPosition = config.newWindowPosition
         maximizeSingleWindow = config.maximizeSingleWindow
+        fillEmptySpace = config.fillEmptySpace
         alwaysCenterSingleColumn = config.alwaysCenterSingleColumn
         defaultLayout = config.defaultLayout
         splitRatio = Double(dwindle.defaultSplitRatio)
@@ -134,6 +137,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             .set(table: "layout", key: "center-focused-column", value: .string(centerFocusedColumn.rawValue)),
             .set(table: "layout", key: "new-window-position", value: .string(newWindowPosition.rawValue)),
             .set(table: "layout", key: "maximize-single-window", value: .bool(maximizeSingleWindow)),
+            .set(table: "layout", key: "fill-empty-space", value: .bool(fillEmptySpace)),
             .set(table: "layout", key: "always-center-single-column", value: .bool(alwaysCenterSingleColumn)),
             .set(
                 table: "layout", key: "preset-column-widths",

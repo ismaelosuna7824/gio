@@ -31,6 +31,10 @@ public func defaultConfigTemplate() -> String {
     # A workspace with a single window shows it at full width (like Alt+F);
     # a second window brings the column widths back. false keeps the width.
     maximize-single-window = true
+    # Columns that fit the screen stretch to fill it, keeping their relative
+    # sizes; more windows bring their widths back. A width you set by hand
+    # (Alt+R, width steps) stays until a window opens or closes.
+    fill-empty-space = true
     # A workspace with a single column shows it in the middle of the screen
     # instead of at the left edge (niri always-center-single-column).
     always-center-single-column = false

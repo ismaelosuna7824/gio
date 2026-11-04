@@ -202,6 +202,34 @@ SettingsFormTests 0 failures; GioSessionTests.ActionApplierTests 23, 0 failures.
 (UI wording for the shared chips) was written before its test (`SettingsFollowUpTests`), so no RED
 was observed for it. Full `swift test` (2026-10-08, shared tree with the window-rules and updater work): GioUITests 303 (53 skipped), GioSessionTests 384, GioPOCTests 7, GioMacTests 19, GioMacOSTests 68, GioCoreTests 1628, all 0 failures; `git diff --check` clean. Signed build: parent. LIVE PENDING (TESTING row 7b).
 
+- [x] NC-15 (`DONE`) — Fill empty space (OmniWM comparison 2026-11-04, user: "su tiling es mejor ... se
+  adapta mejor"; choice "Fill empty space" over vertical monitors and tabbed columns). OmniWM's
+  "Visible Containers": columns that fit grow proportionally to fill the strip and return to their
+  widths when more arrive; a resize by hand keeps its size until the column count changes. Gio:
+  `[layout] fill-empty-space` (default true; Settings > Layout **Fill empty space**) reaches
+  `LayoutConfig.fillEmptySpace`; `ScrollableLayoutEngine` stretches two or more fitting columns with
+  `filledColumnWidths` (proportional, a rule's `max-width` caps a column and the others share the
+  rest; stored widths untouched; a lone window stays `maximize-single-window`'s). Width actions
+  (presets both ways, width steps) start from the displayed width (`displayedWidth`, read by
+  `ActionApplier` from the laid-out workspace) and set `Workspace.fillPausedAtColumnCount`;
+  `WorkspaceManager.store` clears it once the count differs (`reconcileFillPause`). RED: compile
+  (`FillEmptySpaceTests`, 8). `ActionApplierTests.testOnlySizingAndCenter...` updated: the width
+  actions now lay the workspace out (modes probed once).
+
+  Live 2026-11-04 (dev build, clean setup, two Terminal windows on an empty workspace, 1512 pt
+  display, widths read from the window server) found a min-size learning bug the filling exposed:
+  Terminal rounds sizes to its character grid (893 → 895, 491 → 496) and FI-02's `learnedMinimum`
+  took each +2..+5 pt as the window's minimum (`min size learned ... w=895`, persisted as a PA-24
+  candidate), so a stretched column could not shrink back and the strip overflowed. Fix: growth must
+  exceed `minimumClampSlack` (16 pt) to count as a clamp (RED:
+  `MinimumSizeTests.testGridRoundingIsNotLearnedButARealClampIs`, compile failure). After it: two
+  0.5 columns 741+741; Alt+Shift+R back 741+496 (space kept, paused); a third window 741+496+741
+  (stored widths, scrolled); third closed → 895+594 (0.5:0.33 stretched, 1488 pt); Alt+R on the
+  narrow one → 741+741 (from the shown 595 to the 0.5 preset, paused); Alt+R on the other → 993
+  (0.667), overflowing as chosen; no Terminal minimum learned. GREEN: Core 2262, Session 599, UI 388
+  (54 skipped), POC 7, Mac 19, macOS 120; signed build OK; `git diff --check` clean. Not viewed live:
+  the Settings toggle and a rule's `max-width` cap (unit-tested).
+
 ## Acceptance criteria
 - Each binding works live and animates; toggles are reversible without drift.
 - Switching workspaces shows only the active workspace's windows.

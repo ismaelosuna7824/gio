@@ -146,18 +146,20 @@ public enum ActionApplier {
             effect.fullscreenToggle = fullscreenToggle(manager: manager, context: context)
         case .switchPresetColumnWidth:
             let config = context.engine().config
-            let viewportWidth = focusedViewport(manager: manager, context: context).width
+            let viewport = focusedViewport(manager: manager, context: context)
             let next = switchPresetColumnWidth(
                 in: workspace, presets: context.layout.presetColumnWidths,
-                config: config, viewportWidth: viewportWidth
+                config: config, viewportWidth: viewport.width,
+                displayedWidth: displayedFocusedColumnWidth(workspace, viewport: viewport, context: context)
             )
             commit(next, over: workspace, manager: &manager)
         case .shrinkColumnWidth, .growColumnWidth:
             let config = context.engine().config
-            let viewportWidth = focusedViewport(manager: manager, context: context).width
+            let viewport = focusedViewport(manager: manager, context: context)
             let next = stepFocusedColumnWidth(
                 in: workspace, by: action == .growColumnWidth ? 0.1 : -0.1,
-                config: config, viewportWidth: viewportWidth
+                config: config, viewportWidth: viewport.width,
+                displayedWidth: displayedFocusedColumnWidth(workspace, viewport: viewport, context: context)
             )
             commit(next, over: workspace, manager: &manager)
         case .maximizeColumn:
@@ -244,10 +246,11 @@ public enum ActionApplier {
             effect.syncsShownWorkspace = manager.focusWindowOrWorkspaceUp()
         case .switchPresetColumnWidthBack:
             let config = context.engine().config
-            let viewportWidth = focusedViewport(manager: manager, context: context).width
+            let viewport = focusedViewport(manager: manager, context: context)
             let next = switchPresetColumnWidthBack(
                 in: workspace, presets: context.layout.presetColumnWidths,
-                config: config, viewportWidth: viewportWidth
+                config: config, viewportWidth: viewport.width,
+                displayedWidth: displayedFocusedColumnWidth(workspace, viewport: viewport, context: context)
             )
             commit(next, over: workspace, manager: &manager)
         case .expandColumnToAvailableWidth:
@@ -467,6 +470,20 @@ public enum ActionApplier {
     public static func focusedViewport(manager: WorkspaceManager, context: Context) -> CGRect {
         focusedDisplay(manager: manager, context: context).map { context.visibleFrames[$0.id] ?? $0.frame }
             ?? context.fallbackViewport() ?? CGRect(x: 0, y: 0, width: 1800, height: 1000)
+    }
+
+    /// NC-15: the width the focused column is shown at (`fill-empty-space`
+    /// may stretch it past its stored width), so width actions step from
+    /// what the user sees. Nil when it is not laid out.
+    static func displayedFocusedColumnWidth(_ workspace: Workspace, viewport: CGRect, context: Context) -> CGFloat? {
+        guard let id = workspace.focusedColumnRef?.focusedWindowID,
+              let layout = try? context.engine().calculate(
+                  workspace: tilingWorkspace(from: workspace, modes: context.modes()), viewport: viewport
+              )
+        else {
+            return nil
+        }
+        return layout.frames[id]?.width
     }
 
     /// The display showing the current workspace; before the next

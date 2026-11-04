@@ -18,7 +18,8 @@ public func switchPresetColumnWidth(
     in workspace: Workspace,
     presets: [ColumnWidthSpec],
     config: LayoutConfig,
-    viewportWidth: CGFloat
+    viewportWidth: CGFloat,
+    displayedWidth: CGFloat? = nil
 ) -> Workspace {
     guard !presets.isEmpty,
           workspace.focusedColumn >= 0, workspace.focusedColumn < workspace.columns.count
@@ -26,13 +27,14 @@ public func switchPresetColumnWidth(
         return workspace
     }
     var next = workspace
-    let current = config.resolvedWidth(
+    let current = displayedWidth ?? config.resolvedWidth(
         of: next.columns[next.focusedColumn].widthSpec, viewportWidth: viewportWidth
     )
     let chosen = presets.first {
         config.resolvedWidth(of: $0, viewportWidth: viewportWidth) > current + widthEpsilon
     } ?? presets[0]
     next.columns[next.focusedColumn].widthSpec = chosen
+    next.noteColumnsResized()
     return next
 }
 
@@ -44,7 +46,8 @@ public func switchPresetColumnWidthBack(
     in workspace: Workspace,
     presets: [ColumnWidthSpec],
     config: LayoutConfig,
-    viewportWidth: CGFloat
+    viewportWidth: CGFloat,
+    displayedWidth: CGFloat? = nil
 ) -> Workspace {
     guard let last = presets.last,
           workspace.focusedColumn >= 0, workspace.focusedColumn < workspace.columns.count
@@ -52,25 +55,29 @@ public func switchPresetColumnWidthBack(
         return workspace
     }
     var next = workspace
-    let current = config.resolvedWidth(
+    let current = displayedWidth ?? config.resolvedWidth(
         of: next.columns[next.focusedColumn].widthSpec, viewportWidth: viewportWidth
     )
     let chosen = presets.last {
         config.resolvedWidth(of: $0, viewportWidth: viewportWidth) < current - widthEpsilon
     } ?? last
     next.columns[next.focusedColumn].widthSpec = chosen
+    next.noteColumnsResized()
     return next
 }
 
 /// Niri `set-column-width "+10%"` / `"-10%"`: move the focused column's
 /// proportion by `fraction` (0.1 = 10% of the viewport strip), clamped
 /// between the minimum column width and the full strip. The result is always
-/// a proportion so it keeps adapting across displays.
+/// a proportion so it keeps adapting across displays. NC-15: the step starts
+/// from `displayedWidth` (what `fill-empty-space` shows) when given, and
+/// every width action keeps its width at this column count.
 public func stepFocusedColumnWidth(
     in workspace: Workspace,
     by fraction: CGFloat,
     config: LayoutConfig,
-    viewportWidth: CGFloat
+    viewportWidth: CGFloat,
+    displayedWidth: CGFloat? = nil
 ) -> Workspace {
     guard workspace.focusedColumn >= 0, workspace.focusedColumn < workspace.columns.count else {
         return workspace
@@ -80,12 +87,13 @@ public func stepFocusedColumnWidth(
         return workspace
     }
     var next = workspace
-    let current = config.resolvedWidth(
+    let current = displayedWidth ?? config.resolvedWidth(
         of: next.columns[next.focusedColumn].widthSpec, viewportWidth: viewportWidth
     )
     let smallest = min((config.minimumColumnWidth + config.gap) / strip, 1)
     let proposed = (current + config.gap) / strip + fraction
     next.columns[next.focusedColumn].widthSpec = .proportion(min(max(proposed, smallest), 1))
+    next.noteColumnsResized()
     return next
 }
 
