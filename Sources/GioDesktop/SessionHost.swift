@@ -255,6 +255,13 @@ final class SessionHost: @unchecked Sendable {
         onRestart?()
     }
 
+    /// WC-21: Accessibility arrived in a session that started without it
+    /// (main thread). The app relaunches; set once before `start()`.
+    var onAccessibilityGranted: (() -> Void)?
+    /// WC-21: `hasAXPermission()` was false at `start()`. Session queue
+    /// after start.
+    private var startedWithoutAccessibility = false
+
     /// Builds the components. Their contexts read host state on the session
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.
@@ -900,7 +907,8 @@ final class SessionHost: @unchecked Sendable {
         for message in configStatus.messages {
             print("[gio] config: \(message)")
         }
-        if !hasAXPermission() {
+        startedWithoutAccessibility = !hasAXPermission()
+        if startedWithoutAccessibility {
             print("[gio] requesting Accessibility permission…")
             _ = requestAXPermission()
         }
@@ -2317,6 +2325,16 @@ final class SessionHost: @unchecked Sendable {
         if hotkeyTap == nil {
             startTap()
             if hotkeyTap != nil {
+                // WC-21: a session started without Accessibility relaunches
+                // once it arrives: some apps (live: Tern) keep refusing the
+                // process that asked before the grant, so their windows stay
+                // unmanaged until a fresh process reads them.
+                if startedWithoutAccessibility, let onAccessibilityGranted {
+                    startedWithoutAccessibility = false
+                    GioLog.record(.info, "accessibility granted mid-session; relaunching")
+                    DispatchQueue.main.async { onAccessibilityGranted() }
+                    return
+                }
                 // Permission regained: observers built without it are dead,
                 // and every verdict is stale. The one full rebuild, placed
                 // without motion like a fresh start.

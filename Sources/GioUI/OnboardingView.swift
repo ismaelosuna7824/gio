@@ -39,6 +39,17 @@ public struct OnboardingStore {
         clearResume()
         return stored.flatMap(OnboardingStep.init(rawValue:))
     }
+
+    /// WC-21: Accessibility arrived while Gio ran, so Gio relaunches (some
+    /// apps keep refusing the process that asked without it). An unfinished
+    /// setup resumes after the Accessibility step; a finished one stays
+    /// closed. A Mac without Screen Recording support skips to the next step
+    /// (`OnboardingState` moves an unavailable step forward).
+    public func prepareAccessibilityRelaunch() {
+        if !hasCompleted {
+            markResume(.screenRecording)
+        }
+    }
 }
 
 /// Main-window state for the onboarding sheet: decided once per launch,
