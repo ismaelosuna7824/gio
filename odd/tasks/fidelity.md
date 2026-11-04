@@ -187,3 +187,14 @@ Review: UNAVAILABLE.
   Mac 19, macOS 120; signed build OK. Live: after the relaunch all Terminal windows are tiled, no
   `yields` line, the window server shows no window over the visible tiles. Not reproduced live with
   the burst itself (no debug log of the original event).
+- 2026-11-04: FI-13 (`DONE`, commit below) — a yielded window left off screen. User screenshot: Activity
+  Monitor frontmost, nothing of it on screen. Log: `window yields to app id=43492:11 ... snapBacks=3` at
+  06:36:49 (the session before FI-12), then `overview move ... workspace=5` and `focus reveal id=43492:11
+  workspace=5 source=activation`: it had yielded while its workspace was hidden, so it stayed at its
+  parking sliver, and FI-10 never writes a yielded window again. The planner now brings a yielded window
+  that its shown workspace leaves off every display fully on screen once (`rescuedFrame`, size kept,
+  nearest place inside the display's visible frame; `float rescue` log line); one on screen anywhere,
+  another display included, stays the app's. RED: `ReflowPlannerTests.testAWindowThatYieldedToItsApp...`
+  (it asserted the stranding) and `testRescuedFrameKeepsTheSizeInsideTheVisibleArea` (compile failure).
+  Still open: a Terminal window yielded again at 06:42:52 with the FI-12 build (three Terminal windows
+  report the same frame, (771,69,741,872): likely one Terminal tab group; not reproduced).
