@@ -94,6 +94,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         overview.start()
         systemOverview = overview
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
+        host.onFocusedWindowReordered = { [focusRing] in focusRing.focusedWindowReordered() }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
         // PA-16: resolved per `gio update`, so the updater (code signature,

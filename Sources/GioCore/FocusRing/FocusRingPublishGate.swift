@@ -1,8 +1,9 @@
 import CoreGraphics
 
 /// PA-04: publishes the focus ring only when what the overlay draws changed:
-/// visibility, style, or the frame by at least `threshold` points on any edge
-/// (measured against the last published frame, so slow drift still lands).
+/// visibility, style, the window it sits above (NF-13), or the frame by at
+/// least `threshold` points on any edge (measured against the last published
+/// frame, so slow drift still lands).
 public struct FocusRingPublishGate: Sendable {
     public let threshold: CGFloat
     private var last: FocusRingState?
@@ -32,7 +33,7 @@ public struct FocusRingPublishGate: Sendable {
         case (.hidden, .hidden):
             return false
         case (.shown(let old), .shown(let new)):
-            guard old.width == new.width, old.color == new.color else {
+            guard old.width == new.width, old.color == new.color, old.windowNumber == new.windowNumber else {
                 return true
             }
             return abs(old.frame.origin.x - new.frame.origin.x) >= threshold

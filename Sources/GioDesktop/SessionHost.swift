@@ -234,6 +234,9 @@ final class SessionHost: @unchecked Sendable {
     private var focusRing: FocusRingPublisher!
     /// Focus ring hook, always invoked on the main thread.
     var onFocusRing: ((FocusRingState) -> Void)?
+    /// NF-13: the focused window moved in the window stack (main thread);
+    /// the ring is ordered back right above it. Set once before `start()`.
+    var onFocusedWindowReordered: (() -> Void)?
     /// NF-06: the dim overlay, same hand-off as the ring; one coalesced
     /// recompute (one on-screen CGWindowList query), no timer at rest.
     private var focusDim: FocusDimPublisher!
@@ -299,7 +302,8 @@ final class SessionHost: @unchecked Sendable {
             isZoomBusy: { [unowned self] in nativeZoom.isBusy($0) },
             isFullscreen: { [unowned self] in fullscreen.isFullscreen($0) },
             mainHop: mainQueueHop,
-            deliver: { [unowned self] in onFocusRing?($0) }
+            deliver: { [unowned self] in onFocusRing?($0) },
+            windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) }
         ))
         focusDim = FocusDimPublisher(
             context: .init(
@@ -708,6 +712,12 @@ final class SessionHost: @unchecked Sendable {
                 subscribe: { [weak self] numbers in
                     // The source lives on main (WS-01).
                     DispatchQueue.main.async { self?.windowServerSource?.subscribe(numbers) }
+                },
+                reordered: { [unowned self] id in
+                    guard id == session.manager.currentWorkspace().focusedWindow else {
+                        return
+                    }
+                    DispatchQueue.main.async { [weak self] in self?.onFocusedWindowReordered?() }
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
                 log: { GioLog.record($0, $1) }
