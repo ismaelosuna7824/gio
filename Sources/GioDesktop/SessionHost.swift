@@ -225,6 +225,9 @@ final class SessionHost: @unchecked Sendable {
     private var windowServerSource: WindowServerEventSource?
     /// WC-22: main thread; kept for the app's life.
     private var windowManagerMonitor: WindowManagerMonitor?
+    /// WS-01 diagnostics, session queue: how many notices the window server
+    /// accepted at start (nil before, or when symbols are missing).
+    private var windowServerStart: (registered: Int?, missing: [String]) = (nil, [])
     private var events: WindowEventRouter!
     /// Focus adoption, keyboard intent, centering, cursor warp and
     /// focus-follows-mouse (clicks and pointer handed over under their locks).
@@ -362,6 +365,15 @@ final class SessionHost: @unchecked Sendable {
             },
             gestureConflicts: { [unowned self] in gestureConflicts() },
             windowManagerConflicts: { [unowned self] in space.conflicts },
+            windowServerStatus: { [unowned self] in
+                WindowServerStatus(
+                    registered: windowServerStart.registered, total: WindowServerEventType.all.count,
+                    missingSymbols: windowServerStart.missing, notices: windowServer.noticeCount,
+                    rescueScans: windowServer.rescueScanCount, numberedWindows: windowServer.numberedWindowCount,
+                    managedWindows: session.registry.managedWindows().count
+                )
+            },
+            displaysHaveSeparateSpaces: { displaysHaveSeparateSpaces() },
             log: { GioLog.record($0, $1) }
         ))
         renderVerifier = RenderVerifier(
@@ -1401,10 +1413,14 @@ final class SessionHost: @unchecked Sendable {
         let watcher = windowServer!
         let loaded = WindowServerEventSource.load { watcher.post($0) }
         windowServerSource = loaded.source
-        if let source = loaded.source {
-            GioLog.record(.info, "window server events registered=\(source.start())/\(WindowServerEventType.all.count)")
+        let registered = loaded.source?.start()
+        if let registered {
+            GioLog.record(.info, "window server events registered=\(registered)/\(WindowServerEventType.all.count)")
         } else {
             GioLog.record(.warn, "window server events off missing-symbols:\(loaded.missing.joined(separator: ","))")
+        }
+        queue.async { [weak self] in
+            self?.windowServerStart = (registered, loaded.missing)
         }
     }
 

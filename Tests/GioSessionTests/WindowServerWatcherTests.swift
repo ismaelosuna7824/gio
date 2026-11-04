@@ -151,4 +151,17 @@ final class WindowServerWatcherTests: XCTestCase {
         scheduler.runPending()
         XCTAssertEqual(reorders, [id])
     }
+
+    /// Diagnostics: what the notices did this session.
+    func testCountsNoticesRescueScansAndNumberedWindows() {
+        owners[7] = WindowServerWindowOwner(pid: 42, layer: 0)
+        watcher.noteRegistered(WindowID(pid: 43, elementID: 1), number: 9)
+        watcher.post(.created(7))
+        watcher.post(.moved(9))
+        scheduler.runPending()
+        scheduler.advance(by: WindowServerWatcher.arrivalGrace)
+        XCTAssertEqual(watcher.noticeCount, 2)
+        XCTAssertEqual(watcher.rescueScanCount, 1)
+        XCTAssertEqual(watcher.numberedWindowCount, 1)
+    }
 }

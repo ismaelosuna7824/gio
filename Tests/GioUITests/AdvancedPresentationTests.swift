@@ -136,18 +136,66 @@ final class AdvancedPresentationTests: XCTestCase {
         list.first { $0.id == id }!
     }
 
-    func testChecklistHasTheSevenCardsInOrder() {
+    func testChecklistHasTheEightCardsInOrder() {
         XCTAssertEqual(
             checklist(facts()).map(\.title),
-            ["Permissions", "Session", "Configuration", "Displays", "Renderer", "Gestures", "Logging"]
+            ["Permissions", "Session", "Configuration", "Displays", "Renderer", "Gestures", "Window server", "Logging"]
         )
+    }
+
+    private func facts(windowServer: WindowServerStatus, displays: Int = 1, separateSpaces: Bool = true,
+                       windowManagers: [String] = []) -> SessionFacts {
+        SessionFacts(
+            configPath: "x", configExists: true, configMessages: [], accessibilityGranted: true,
+            currentWorkspace: 1, displays: (0..<displays).map { DisplayFact(id: UInt32($0 + 1), workspace: 1) },
+            windows: [], windowManagerConflicts: windowManagers, windowServer: windowServer,
+            displaysHaveSeparateSpaces: separateSpaces
+        )
+    }
+
+    /// Stability: a macOS that broke the private window-server calls shows
+    /// here at once (Gio then runs on Accessibility alone).
+    func testWindowServerCardSaysWhetherThePrivateCallsRun() {
+        let running = WindowServerStatus(
+            registered: 5, total: 5, missingSymbols: [], notices: 40, rescueScans: 1, numberedWindows: 9, managedWindows: 10
+        )
+        let ok = check(checklist(facts(windowServer: running)), "window-server")
+        XCTAssertEqual(ok.status, .ok)
+        XCTAssertEqual(ok.details, ["Notices registered: 5 of 5", "Notices received: 40", "Rescue scans: 1",
+                                    "Windows with a number: 9 of 10"])
+
+        let broken = WindowServerStatus(registered: nil, total: 5, missingSymbols: ["SLSRegisterConnectionNotifyProc"])
+        XCTAssertEqual(check(checklist(facts(windowServer: broken)), "window-server").status, .warning)
+
+        let partial = WindowServerStatus(registered: 3, total: 5, missingSymbols: [])
+        XCTAssertEqual(check(checklist(facts(windowServer: partial)), "window-server").status, .warning)
+
+        let starting = WindowServerStatus(registered: nil, total: 5, missingSymbols: [])
+        XCTAssertEqual(check(checklist(facts(windowServer: starting)), "window-server").status, .neutral)
+    }
+
+    /// Gio's known gap: with separate Spaces on several displays, a Space
+    /// change on a secondary display goes unseen.
+    func testDisplaysCardWarnsAboutSeparateSpacesOnSeveralDisplays() {
+        let status = WindowServerStatus(registered: nil, total: 5, missingSymbols: [])
+        XCTAssertEqual(check(checklist(facts(windowServer: status, displays: 2, separateSpaces: true)), "displays").status, .warning)
+        XCTAssertEqual(check(checklist(facts(windowServer: status, displays: 2, separateSpaces: false)), "displays").status, .ok)
+        XCTAssertEqual(check(checklist(facts(windowServer: status, displays: 1, separateSpaces: true)), "displays").status, .ok)
+    }
+
+    /// WC-22: the Session card says tiling is paused and why.
+    func testSessionCardSaysTilingIsPausedForAnotherWindowManager() {
+        let status = WindowServerStatus(registered: nil, total: 5, missingSymbols: [])
+        let card = check(checklist(facts(windowServer: status, windowManagers: ["yabai"])), "session")
+        XCTAssertEqual(card.status, .warning)
+        XCTAssertEqual(card.badge, "Paused")
     }
 
     /// DA-08: the report's `system.txt` repeats the checklist, one line per
     /// card (status, title, badge, summary; no details).
     func testIssueReportHealthLinesRepeatTheChecklist() {
         let lines = issueReportHealthLines(checklist(facts(ax: false)))
-        XCTAssertEqual(lines.count, 7)
+        XCTAssertEqual(lines.count, 8)
         XCTAssertEqual(
             lines[0],
             "[error] Permissions: Accessibility missing — Gio cannot move windows or hear shortcuts until Accessibility is granted."

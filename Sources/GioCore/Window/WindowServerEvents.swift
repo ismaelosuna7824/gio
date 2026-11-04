@@ -160,3 +160,33 @@ public func windowServerArrivalScanPID(
     }
     return owner.pid
 }
+
+/// Diagnostics: whether the private window-server calls run on this macOS
+/// and what they did this session. `registered` nil: not started yet (or
+/// off when `missingSymbols` is not empty).
+public struct WindowServerStatus: Equatable, Sendable {
+    public var registered: Int?
+    public var total: Int
+    public var missingSymbols: [String]
+    public var notices: Int
+    public var rescueScans: Int
+    public var numberedWindows: Int
+    public var managedWindows: Int
+
+    public init(
+        registered: Int?, total: Int, missingSymbols: [String], notices: Int = 0, rescueScans: Int = 0,
+        numberedWindows: Int = 0, managedWindows: Int = 0
+    ) {
+        self.registered = registered
+        self.total = total
+        self.missingSymbols = missingSymbols
+        self.notices = notices
+        self.rescueScans = rescueScans
+        self.numberedWindows = numberedWindows
+        self.managedWindows = managedWindows
+    }
+
+    public static let notStarted = WindowServerStatus(
+        registered: nil, total: WindowServerEventType.all.count, missingSymbols: []
+    )
+}

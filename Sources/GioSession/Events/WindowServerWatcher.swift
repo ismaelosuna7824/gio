@@ -96,6 +96,14 @@ public final class WindowServerWatcher: @unchecked Sendable {
         scheduleSubscription()
     }
 
+    /// Diagnostics, session queue: notices handled, rescue scans run and
+    /// windows with a recorded number.
+    public private(set) var noticeCount = 0
+    public private(set) var rescueScanCount = 0
+    public var numberedWindowCount: Int {
+        book.numbers.count
+    }
+
     /// NF-13: the window-server number of a registered window.
     public func windowNumber(of id: WindowID) -> UInt32? {
         book.number(of: id)
@@ -129,6 +137,7 @@ public final class WindowServerWatcher: @unchecked Sendable {
         pending.removeAll(keepingCapacity: true)
         drainScheduled = false
         lock.unlock()
+        noticeCount += events.count
         for event in events {
             handle(event)
         }
@@ -191,6 +200,7 @@ public final class WindowServerWatcher: @unchecked Sendable {
         }
         for pid in pids {
             context.log(.info, "window server scan pid=\(pid) reason=unregistered")
+            rescueScanCount += 1
             context.scanApp(pid)
         }
     }

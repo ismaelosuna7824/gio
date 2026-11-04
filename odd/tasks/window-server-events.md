@@ -82,3 +82,14 @@ session (no false scans for windows the AX path registers). NOT verified live: t
   same AppleScript resize logged one `window server frame change id=24818:7 resized=true` and
   Terminal stayed `mode=tiled`. The debug line now appears only when a notice acts (Gio's own
   moves no longer log it).
+- WS-05 (`PENDING`) — Diagnostics (stability follow-up, user 2026-11-04 "necesitamos estabilidad"):
+  a **Window server** card (`WindowServerStatus` in `SessionFacts`: notices registered of total or
+  the missing symbols, notices received, rescue scans, windows with a number of managed), the
+  Session card **Paused** while another window manager runs (WC-22), and the Displays card's
+  `Displays have separate Spaces: on|off` detail, a warning with several displays (Gio's known
+  gap: a Space change on a secondary display is not seen; OmniWM requires the setting on, but
+  for Gio neither value is validated, so it informs and does not prescribe). RED: compile
+  (`AdvancedPresentationTests`: card order, window-server card, displays warning, paused session;
+  `WindowServerWatcherTests.testCountsNoticesRescueScansAndNumberedWindows`). GREEN: Core 2253,
+  Session 599, UI 388 (54 skipped), POC 7, Mac 19, macOS 120; signed build OK. LIVE PENDING: open
+  Diagnostics, read the Window server card.

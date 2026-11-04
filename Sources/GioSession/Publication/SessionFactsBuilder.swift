@@ -30,6 +30,9 @@ public final class SessionFactsBuilder: @unchecked Sendable {
         public var gestureConflicts: () -> [GestureConflict]
         /// WC-22: other window managers running.
         public var windowManagerConflicts: () -> [String]
+        /// Diagnostics: the private window-server calls.
+        public var windowServerStatus: () -> WindowServerStatus
+        public var displaysHaveSeparateSpaces: () -> Bool
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -43,11 +46,15 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             gestureStatus: @escaping () -> GestureSourceStatus,
             gestureConflicts: @escaping () -> [GestureConflict],
             windowManagerConflicts: @escaping () -> [String] = { [] },
+            windowServerStatus: @escaping () -> WindowServerStatus = { .notStarted },
+            displaysHaveSeparateSpaces: @escaping () -> Bool = { true },
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.gestureStatus = gestureStatus
             self.gestureConflicts = gestureConflicts
             self.windowManagerConflicts = windowManagerConflicts
+            self.windowServerStatus = windowServerStatus
+            self.displaysHaveSeparateSpaces = displaysHaveSeparateSpaces
             self.session = session
             self.displays = displays
             self.visibleFrame = visibleFrame
@@ -134,7 +141,9 @@ public final class SessionFactsBuilder: @unchecked Sendable {
             },
             windows: windows, screenRecordingGranted: screenRecording,
             strip: workspaceStrip(), gestures: gestures, gestureConflicts: conflicts,
-            windowManagerConflicts: context.windowManagerConflicts()
+            windowManagerConflicts: context.windowManagerConflicts(),
+            windowServer: context.windowServerStatus(),
+            displaysHaveSeparateSpaces: context.displaysHaveSeparateSpaces()
         )
     }
 
