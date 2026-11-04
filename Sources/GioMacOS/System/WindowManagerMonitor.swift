@@ -3,20 +3,32 @@ import Darwin
 import Foundation
 import GioCore
 
-/// WC-22: the names of every running process (public libproc), so a window
-/// manager that runs as a daemon (yabai) is found like one that is an app.
+/// WC-22: the names of every running process, so a window manager that runs
+/// as a daemon (yabai) is found like one that is an app. One public
+/// `sysctl(KERN_PROC_ALL)` read of every process's `p_comm` (the executable
+/// name, 16 characters at most). Not `proc_name`: it answered ESRCH for other
+/// processes (live 2026-11-04), so a running `yabai` went unseen.
 public func runningProcessNames() -> Set<String> {
-    let capacity = Int(proc_listallpids(nil, 0)) + 64
-    guard capacity > 64 else {
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0]
+    var size = 0
+    guard sysctl(&mib, UInt32(mib.count), nil, &size, nil, 0) == 0, size > 0 else {
         return []
     }
-    var pids = [pid_t](repeating: 0, count: capacity)
-    let count = Int(proc_listallpids(&pids, Int32(capacity * MemoryLayout<pid_t>.size)))
+    // Room for processes started between the two calls.
+    let capacity = size / MemoryLayout<kinfo_proc>.stride + 32
+    var processes = [kinfo_proc](repeating: kinfo_proc(), count: capacity)
+    size = capacity * MemoryLayout<kinfo_proc>.stride
+    guard sysctl(&mib, UInt32(mib.count), &processes, &size, nil, 0) == 0 else {
+        return []
+    }
     var names = Set<String>()
-    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
-    for pid in pids.prefix(max(0, count)) where pid > 0 {
-        if proc_name(pid, &buffer, UInt32(buffer.count)) > 0 {
-            names.insert(String(cString: buffer))
+    for index in 0..<(size / MemoryLayout<kinfo_proc>.stride) {
+        var command = processes[index].kp_proc.p_comm
+        let name = withUnsafeBytes(of: &command) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
+        if !name.isEmpty {
+            names.insert(name)
         }
     }
     return names

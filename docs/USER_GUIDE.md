@@ -82,6 +82,7 @@ Gio hides the columns and workspaces you are not looking at just off the edge of
 - **Separate Spaces on several displays.** With System Settings > Desktop & Dock > **Displays have separate Spaces** on (macOS's default), a Space change on a secondary display is not seen. Multiple displays are covered by automated tests but not yet validated on real hardware.
 - **Native fullscreen** (the green button) windows are left alone. `Alt+Shift+F` is Gio's own fullscreen, a layout mode inside the Space.
 - **Stage Manager is not supported.** Turn it off (Control Center, or System Settings > Desktop & Dock > Stage Manager) while you use Gio.
+- **One window manager at a time.** While yabai, AeroSpace, Amethyst or OmniWM runs, Gio pauses: it brings every window it parked back on screen, stops moving windows, and the Overview says which one runs (`window manager running: <names>; pausing layout` in the log). It resumes on its own within about 20 seconds after the other one quits.
 - **Mission Control shows tiny windows**, because it also lays out the windows Gio parks off-screen. Turn on System Settings > Desktop & Dock > **Group windows by application**, or use Gio's overview (`Alt+O`).
 - **English only.** The app's interface is in English.
 - **The dwindle layout is experimental:** covered by automated tests, not yet validated on a real desktop.
