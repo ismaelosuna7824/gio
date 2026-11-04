@@ -30,6 +30,9 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// NC-13 niri `always-center-single-column`: a workspace with a single
     /// column shows it in the middle; consumed by the layout engine.
     public var alwaysCenterSingleColumn: Bool
+    /// NC-15 `fill-empty-space`: columns that fit stretch to fill the strip;
+    /// consumed by the layout engine.
+    public var fillEmptySpace: Bool
     /// DW-03 `default-layout`: the layout new workspaces start with;
     /// consumed by `WorkspaceManager.applyLayoutDefaults`.
     public var defaultLayout: WorkspaceLayoutKind
@@ -48,6 +51,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         maximizeSingleWindow: Bool = true,
         presetWindowHeights: [ColumnWidthSpec] = defaultPresetWindowHeights,
         alwaysCenterSingleColumn: Bool = false,
+        fillEmptySpace: Bool = true,
         defaultLayout: WorkspaceLayoutKind = .scrolling,
         newWindowPosition: NewWindowPosition = .end
     ) {
@@ -61,6 +65,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.presetWindowHeights = presetWindowHeights
         self.maximizeSingleWindow = maximizeSingleWindow
         self.alwaysCenterSingleColumn = alwaysCenterSingleColumn
+        self.fillEmptySpace = fillEmptySpace
         self.defaultLayout = defaultLayout
         self.newWindowPosition = newWindowPosition
     }
@@ -122,7 +127,8 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     /// NA-04: `[animations.window-open] offset`, in points.
     public static let openOffsetRange = 0.0...200.0
 
-    /// Scroll/focus motion (MO-04). Off means every reflow is instant.
+    /// Scroll/focus motion (MO-04). Off means every reflow is instant; off
+    /// by default (DD-10: the Fast preset ships).
     public var enabled: Bool
     /// Length of one animation, clamped to `durationRange` by the parser.
     public var durationMilliseconds: Int
@@ -133,7 +139,8 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var springStiffness: Double
     /// PA-06: whether growing windows interpolate their size during flight.
     public var resize: ResizeMode
-    /// SM-01: `snapshot` (default) needs Screen Recording; falls back to `ax`.
+    /// SM-01: `snapshot` needs Screen Recording and falls back to `ax`;
+    /// `ax` by default (DD-10: the Fast preset's renderer).
     public var renderer: RendererKind
     /// When the focused window that grows gets its final size: `start`
     /// (default, first frame) or `end` (FI-03, final pass).
@@ -152,12 +159,12 @@ public struct AnimationsSectionConfig: Equatable, Sendable {
     public var openOffset: Double
 
     public init(
-        enabled: Bool = true, durationMilliseconds: Int = 200,
+        enabled: Bool = false, durationMilliseconds: Int = 200,
         curve: MotionCurveKind = .spring,
         springDampingRatio: Double = SpringParameters.niri.dampingRatio,
         springStiffness: Double = SpringParameters.niri.stiffness,
         resize: ResizeMode = .never,
-        renderer: RendererKind = .snapshot,
+        renderer: RendererKind = .ax,
         focusedGrow: FocusedGrowMode = .start,
         nativeZoom: Bool = true,
         closeGhost: Bool = false,
@@ -271,6 +278,7 @@ public struct GioConfig: Sendable {
             fullscreenGap: layout.resolvedFullscreenGap,
             maximizeSingleWindow: layout.maximizeSingleWindow,
             alwaysCenterSingleColumn: layout.alwaysCenterSingleColumn,
+            fillEmptySpace: layout.fillEmptySpace,
             dwindle: DwindleSettings(
                 splitRatio: dwindle.defaultSplitRatio, splitWidthMultiplier: dwindle.splitWidthMultiplier
             ),

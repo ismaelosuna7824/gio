@@ -27,6 +27,8 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         var imageScale: CGFloat?
         /// PF-AL: displays captured besides the fixture's screen (id 1).
         var extraScreens: [SnapshotDisplay] = []
+        /// WS-04: window numbers recorded at registration.
+        var windowNumbers: [WindowID: UInt32] = [:]
     }
 
     private let a = CGRect(x: 0, y: 100, width: 800, height: 900)
@@ -79,7 +81,8 @@ final class SnapshotCacheRefresherTests: XCTestCase {
                 log: { world.logs.append(($0, $1)) },
                 appName: { "app\($0)" },
                 physicalMemory: physicalMemory,
-                now: { scheduler.now }
+                now: { scheduler.now },
+                windowNumber: { world.windowNumbers[$0] }
             ),
             scheduler: scheduler
         )
@@ -126,6 +129,15 @@ final class SnapshotCacheRefresherTests: XCTestCase {
         cache.schedule()
         scheduler.advance(by: 0.3)
         complete(images, backdrop: backdrop, misses: misses)
+    }
+
+    /// WS-04: the capture request carries the recorded window numbers of
+    /// the windows it matches, built on the session queue.
+    func testTheCaptureRequestCarriesTheRecordedWindowNumbers() {
+        world.windowNumbers = [idA: 41]
+        cache.schedule()
+        scheduler.advance(by: 0.3)
+        XCTAssertEqual(lastRequest?.windowNumbers, [idA: 41])
     }
 
     /// A parking frame at the right edge (1 pt sliver), as Gio writes it.

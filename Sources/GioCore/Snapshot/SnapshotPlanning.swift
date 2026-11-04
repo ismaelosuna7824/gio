@@ -97,6 +97,14 @@ public func backingScale(for frame: CGRect, displays: [SnapshotDisplay]) -> CGFl
     return best?.scale ?? displays.first?.scale ?? 2
 }
 
+/// WS-04: the `known` numbers for `matchSnapshotCandidates`. A number
+/// recorded at registration wins over one `SnapshotWindowIDBook` learned.
+public func snapshotKnownWindowNumbers(
+    learned: [WindowID: UInt32], recorded: [WindowID: UInt32]
+) -> [WindowID: UInt32] {
+    learned.merging(recorded) { _, recorded in recorded }
+}
+
 /// Maps each managed window to a candidate without private APIs, like
 /// `matchServerWindows` (FI-05). SM-13 pass 0: a window whose CGWindowID was
 /// learned while visible (`known`, `SnapshotWindowIDBook`) takes that entry

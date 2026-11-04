@@ -15,12 +15,15 @@ public final class FocusRingPublisher: @unchecked Sendable {
         public var isFullscreen: (WindowID) -> Bool
         public var mainHop: MainHop
         public var deliver: (FocusRingState) -> Void
+        /// NF-13: the window-server number of a registered window.
+        public var windowNumber: (WindowID) -> UInt32?
 
         public init(
             session: @escaping () -> CommandSession, physicalFrame: @escaping (WindowID) -> CGRect?,
             displayFrames: @escaping () -> [CGRect], isFlightActive: @escaping () -> Bool,
             isZoomBusy: @escaping (WindowID) -> Bool, isFullscreen: @escaping (WindowID) -> Bool,
-            mainHop: @escaping MainHop, deliver: @escaping (FocusRingState) -> Void
+            mainHop: @escaping MainHop, deliver: @escaping (FocusRingState) -> Void,
+            windowNumber: @escaping (WindowID) -> UInt32? = { _ in nil }
         ) {
             self.session = session
             self.physicalFrame = physicalFrame
@@ -30,6 +33,7 @@ public final class FocusRingPublisher: @unchecked Sendable {
             self.isFullscreen = isFullscreen
             self.mainHop = mainHop
             self.deliver = deliver
+            self.windowNumber = windowNumber
         }
     }
 
@@ -79,7 +83,7 @@ public final class FocusRingPublisher: @unchecked Sendable {
         let workspace = session.manager.currentWorkspace()
         let frame = context.physicalFrame(id)
         let displays = context.displayFrames()
-        return focusRingState(
+        let state = focusRingState(
             config: config,
             focused: FocusRingWindow(
                 frame: frame, isMinimized: window.isMinimized,
@@ -93,6 +97,11 @@ public final class FocusRingPublisher: @unchecked Sendable {
                 focusRingIsAlone(focused: $0, others: neighbourFrames(of: id, session: session), displays: displays)
             } ?? false
         )
+        guard case .shown(var ring) = state else {
+            return state
+        }
+        ring.windowNumber = context.windowNumber(id)
+        return .shown(ring)
     }
 
     /// NF-02: where the other windows of the shown workspace physically are.

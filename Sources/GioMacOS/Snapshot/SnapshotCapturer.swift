@@ -71,6 +71,10 @@ public struct SnapshotCaptureRequest: Sendable {
     public var logLevel: LogLevel
     /// Why the capture runs, carried into the summary line.
     public var reason: SnapshotCaptureReason
+    /// WS-04: window numbers recorded at registration (captured windows and
+    /// backdrop exclusions), built on the session queue; they win over
+    /// learned ids and frames when the app still lists them.
+    public var windowNumbers: [WindowID: UInt32]
 
     /// Cap used in measure mode so slow captures still report their latency.
     public static let measureCapMilliseconds = 2000
@@ -80,7 +84,8 @@ public struct SnapshotCaptureRequest: Sendable {
         primaryDisplayHeight: CGFloat,
         includeBackdrop: Bool = true, backdropDisplayIDs: [UInt32] = [], backdropExclusions: [WindowID: CGRect] = [:],
         budgetMilliseconds: Int = SnapshotBudget.defaultMilliseconds,
-        measure: Bool = false, logLevel: LogLevel = .info, reason: SnapshotCaptureReason = .settle
+        measure: Bool = false, logLevel: LogLevel = .info, reason: SnapshotCaptureReason = .settle,
+        windowNumbers: [WindowID: UInt32] = [:]
     ) {
         self.logLevel = logLevel
         self.windows = windows
@@ -93,6 +98,7 @@ public struct SnapshotCaptureRequest: Sendable {
         self.budgetMilliseconds = budgetMilliseconds
         self.measure = measure
         self.reason = reason
+        self.windowNumbers = windowNumbers
     }
 }
 
@@ -209,12 +215,15 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// that cannot be matched or captured is left out (`unknown` for the
     /// caller). Nothing is cached; one debug line per check.
     public func paintCheck(
-        windows: [WindowID: SnapshotPaintProbe], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+        windows: [WindowID: SnapshotPaintProbe], displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
+        windowNumbers: [WindowID: UInt32] = [:]
     ) async -> SnapshotPaintAnswer {
         guard #available(macOS 14.0, *) else {
             return SnapshotPaintAnswer()
         }
-        return await paintCheckSCK(windows: windows, primaryDisplayHeight: primaryDisplayHeight)
+        return await paintCheckSCK(
+            windows: windows, primaryDisplayHeight: primaryDisplayHeight, windowNumbers: windowNumbers
+        )
     }
 
     /// SM-30: one capture of `id` at its probe's target frame, full
@@ -225,27 +234,37 @@ public final class SnapshotCapturer: @unchecked Sendable {
     /// Nil when the window cannot be matched or captured. Nothing is cached
     /// here; one debug line per capture.
     public func freshCapture(
-        _ id: WindowID, probe: SnapshotFreshProbe<CGImage>, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+        _ id: WindowID, probe: SnapshotFreshProbe<CGImage>, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
+        windowNumber: UInt32? = nil
     ) async -> SnapshotFreshRead<CGImage>? {
         guard #available(macOS 14.0, *) else {
             return nil
         }
-        return await freshCaptureSCK(id, probe: probe, displays: displays, primaryDisplayHeight: primaryDisplayHeight)
+        return await freshCaptureSCK(
+            id, probe: probe, displays: displays, primaryDisplayHeight: primaryDisplayHeight,
+            windowNumbers: windowNumber.map { [id: $0] } ?? [:]
+        )
     }
 
-    /// SM-13/SM-17/SM-20: matches `managed` (learned ids first, then
-    /// frames), breaks the ties of same-size windows by title, then by
+    /// SM-13/SM-17/SM-20: matches `managed` (recorded window numbers first,
+    /// WS-04, then learned ids, then frames), breaks the ties of same-size
+    /// windows by title, then by
     /// stacking order, and teaches the book: the on-screen matches when
     /// `displays` are given (a capture run), and always the title-broken
     /// ones (`snapshot match tie-break`, debug). Order-broken matches are
     /// never learned: a wrong rank would outlive the window showing (the
     /// learned id beats the frame), so they are derived again each run and
-    /// a visible window is matched (and learned) by its frame.
+    /// a visible window is matched (and learned) by its frame. `recorded`
+    /// numbers are merged at match time only, never stored in the book.
     private func match(
-        _ managed: [WindowID: CGRect], candidates: [SnapshotCandidate], learningOn displays: [CGRect]?
+        _ managed: [WindowID: CGRect], candidates: [SnapshotCandidate], learningOn displays: [CGRect]?,
+        recorded: [WindowID: UInt32]
     ) -> [WindowID: SnapshotMatch] {
         var matches = lock.withLock {
-            matchSnapshotCandidates(managed: managed, candidates: candidates, known: windowIDs.known)
+            matchSnapshotCandidates(
+                managed: managed, candidates: candidates,
+                known: snapshotKnownWindowNumbers(learned: windowIDs.known, recorded: recorded)
+            )
         }
         let ties = titleTieBreaks(managed, candidates: candidates, matches: matches)
         for (id, windowID) in ties.sorted(by: { $0.key < $1.key }) {
@@ -316,14 +335,15 @@ public final class SnapshotCapturer: @unchecked Sendable {
 
     @available(macOS 14.0, *)
     private func paintCheckSCK(
-        windows probes: [WindowID: SnapshotPaintProbe], primaryDisplayHeight: CGFloat
+        windows probes: [WindowID: SnapshotPaintProbe], primaryDisplayHeight: CGFloat,
+        windowNumbers: [WindowID: UInt32]
     ) async -> SnapshotPaintAnswer {
         let began = DispatchTime.now().uptimeNanoseconds
         let windows = probes.mapValues(\.frame)
         let candidates = windowServerSnapshotCandidates(
             pids: Set(windows.keys.map(\.pid)), displayHeight: primaryDisplayHeight
         )
-        let matches = match(windows, candidates: candidates, learningOn: nil)
+        let matches = match(windows, candidates: candidates, learningOn: nil, recorded: windowNumbers)
         let matched = windows.keys.sorted().compactMap { id -> (id: WindowID, windowID: UInt32)? in
             guard case .matched(let windowID)? = matches[id] else {
                 return nil
@@ -380,12 +400,15 @@ public final class SnapshotCapturer: @unchecked Sendable {
 
     @available(macOS 14.0, *)
     private func freshCaptureSCK(
-        _ id: WindowID, probe: SnapshotFreshProbe<CGImage>, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat
+        _ id: WindowID, probe: SnapshotFreshProbe<CGImage>, displays: [SnapshotDisplay], primaryDisplayHeight: CGFloat,
+        windowNumbers: [WindowID: UInt32]
     ) async -> SnapshotFreshRead<CGImage>? {
         let began = DispatchTime.now().uptimeNanoseconds
         let frame = probe.paint.frame
         let candidates = windowServerSnapshotCandidates(pids: [id.pid], displayHeight: primaryDisplayHeight)
-        guard case .matched(let windowID)? = match([id: frame], candidates: candidates, learningOn: nil)[id],
+        guard case .matched(let windowID)? = match(
+            [id: frame], candidates: candidates, learningOn: nil, recorded: windowNumbers
+        )[id],
               let window = await ensureCache(managed: [id], needed: [windowID], needsDisplays: false).cache?
                   .windows[windowID]
         else {
@@ -433,10 +456,14 @@ public final class SnapshotCapturer: @unchecked Sendable {
     }
 
     @available(macOS 14.0, *)
-    func liveWindows(_ windows: [WindowID: CGRect], primaryDisplayHeight: CGFloat) async -> [WindowID: SCWindow] {
+    func liveWindows(
+        _ windows: [WindowID: CGRect], primaryDisplayHeight: CGFloat, windowNumbers: [WindowID: UInt32] = [:]
+    ) async -> [WindowID: SCWindow] {
         let pids = Set(windows.keys.map(\.pid))
         let candidates = windowServerSnapshotCandidates(pids: pids, displayHeight: primaryDisplayHeight)
-        let matched = match(windows, candidates: candidates, learningOn: nil).compactMapValues { match -> UInt32? in
+        let matched = match(
+            windows, candidates: candidates, learningOn: nil, recorded: windowNumbers
+        ).compactMapValues { match -> UInt32? in
             guard case .matched(let windowID) = match else {
                 return nil
             }
@@ -621,7 +648,9 @@ public final class SnapshotCapturer: @unchecked Sendable {
         let pids = Set(ids.map(\.pid)).union(exclusions.keys.map(\.pid))
         let candidates = windowServerSnapshotCandidates(pids: pids, displayHeight: request.primaryDisplayHeight)
         let managed = request.windows.merging(exclusions) { captured, _ in captured }
-        let allMatches = match(managed, candidates: candidates, learningOn: request.displays.map(\.frame))
+        let allMatches = match(
+            managed, candidates: candidates, learningOn: request.displays.map(\.frame), recorded: request.windowNumbers
+        )
         let matches = allMatches.filter { request.windows[$0.key] != nil }
         let excludedMatches = allMatches.compactMap { entry -> UInt32? in
             guard exclusions[entry.key] != nil, case .matched(let windowID) = entry.value else {

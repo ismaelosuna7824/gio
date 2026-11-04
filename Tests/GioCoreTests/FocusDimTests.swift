@@ -126,6 +126,35 @@ final class FocusDimTests: XCTestCase {
         XCTAssertEqual(regions.first?.windows.first?.bounds, drawn)
     }
 
+    func testARecordedWindowNumberPicksTheEntryOverACloserFrame() {
+        // WS-04: two entries of the pid within the tolerance; the recorded
+        // number names the one drawing the window, not the closest frame.
+        let mine = right.offsetBy(dx: 8, dy: 0)
+        let regions = focusDimRegions(
+            focused: DimWindow(pid: 1, frame: left),
+            windows: [DimWindow(pid: 2, frame: right, number: 21)],
+            frontToBack: [
+                ServerWindow(pid: 1, bounds: left), ServerWindow(pid: 2, bounds: right, number: 20),
+                ServerWindow(pid: 2, bounds: mine, number: 21),
+            ],
+            displays: [display]
+        )
+        XCTAssertEqual(regions.first?.windows.first?.bounds, mine)
+    }
+
+    func testARecordedWindowNumberNotListedFallsBackToTheClosestFrame() {
+        let regions = focusDimRegions(
+            focused: DimWindow(pid: 1, frame: left),
+            windows: [DimWindow(pid: 2, frame: right, number: 99)],
+            frontToBack: [
+                ServerWindow(pid: 1, bounds: left), ServerWindow(pid: 2, bounds: right, number: 20),
+                ServerWindow(pid: 2, bounds: right.offsetBy(dx: 8, dy: 0), number: 21),
+            ],
+            displays: [display]
+        )
+        XCTAssertEqual(regions.first?.windows.first?.bounds, right)
+    }
+
     func testNothingIsDimmedWithoutAVisibleFocusedWindow() {
         let windows = [DimWindow(pid: 2, frame: right)]
         let server = [ServerWindow(pid: 2, bounds: right)]

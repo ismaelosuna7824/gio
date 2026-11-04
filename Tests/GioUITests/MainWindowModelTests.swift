@@ -22,4 +22,30 @@ final class MainWindowModelTests: XCTestCase {
         XCTAssertEqual(desiredActivationPolicy(windowVisible: true), .regular)
         XCTAssertEqual(desiredActivationPolicy(windowVisible: false), .accessory)
     }
+
+    /// DA-16 (user choice 2026-11-04): another app taking focus hides the
+    /// open window instead of leaving it cut off behind that app.
+    func testWindowHidesWhenAnotherAppIsActivated() {
+        XCTAssertTrue(mainWindowHidesOnActivation(
+            windowVisible: true, setupShowing: false, activatedPID: 42, activatedBundleID: "com.apple.Terminal", ownPID: 1
+        ))
+    }
+
+    /// Gio itself, the setup (its steps send you to System Settings) and a
+    /// trip to System Settings (permissions, login items) keep it open.
+    func testWindowStaysForGioTheSetupAndSystemSettings() {
+        XCTAssertFalse(mainWindowHidesOnActivation(
+            windowVisible: true, setupShowing: false, activatedPID: 1, activatedBundleID: "dev.gio.windowmanager", ownPID: 1
+        ))
+        XCTAssertFalse(mainWindowHidesOnActivation(
+            windowVisible: true, setupShowing: true, activatedPID: 42, activatedBundleID: "com.apple.Terminal", ownPID: 1
+        ))
+        XCTAssertFalse(mainWindowHidesOnActivation(
+            windowVisible: true, setupShowing: false, activatedPID: 42, activatedBundleID: "com.apple.systempreferences",
+            ownPID: 1
+        ))
+        XCTAssertFalse(mainWindowHidesOnActivation(
+            windowVisible: false, setupShowing: false, activatedPID: 42, activatedBundleID: "com.apple.Terminal", ownPID: 1
+        ))
+    }
 }

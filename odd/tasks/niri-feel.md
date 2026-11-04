@@ -159,6 +159,19 @@ LIVE PENDING. Review: UNAVAILABLE.
   UI 383 (54 skipped), POC 7, Mac 19, macOS 116; signed build OK. LIVE (dev build, clean grants,
   2026-11-04): `gio overview` open, no ring panel listed (only the overview's screen-sized panel);
   after a pick the ring sits at the picked window's frame.
+- [ ] NF-13 (`7d9ca86`) — The ring drew over Gio's own window (user screenshot 2026-11-04: its edge
+  across the Overview while System Settings had the focus). The panel sat at `.floating`, above
+  every ordinary window. Now `FocusRingGeometry.windowNumber` (the focused window's number from the
+  WS-02 book, `FocusRingPublisher` context) puts the panel at `.normal`, ordered right above that
+  window (`order(.above, relativeTo:)`; throwaway probe: a panel lands one place in front of
+  another app's window, two of two); whatever covers the window covers the ring. A click raising
+  the focused window over the ring posts 808 (subscribed): the watcher passes `.reordered`, the
+  host calls `focusedWindowReordered` and the ring is put back. No number: `.floating` as before.
+  `FocusRingPublishGate` publishes a change of number at the same frame. RED: compile (publisher
+  `windowNumber`, gate, Core 808 decode, watcher `reordered`). LIVE (dev build, 2026-11-04): z-order
+  front to back `Gio main window > System Settings > ring > Activity Monitor` (focused), then `ring >
+  Music`, `ring > Terminal` after activating each. Not verified live: a click raising the focused
+  window (no click into it was posted).
 
 ## Acceptance criteria
 - Ring visibly tracks focus during scroll animations without lag spikes or blocking hotkeys.

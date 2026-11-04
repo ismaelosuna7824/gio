@@ -20,6 +20,9 @@ public enum SnapBackVerdict: Equatable, Sendable {
 /// A non-echo frame change counts when it comes at most `window` (1.5 s)
 /// after Gio's last write to that window (a debounced write-back plus the
 /// app's reaction) and no mouse button is down (a user drag never counts).
+/// Every change after the same write is one snap-back: one restore raises a
+/// burst (AX moved and resized, the window server's notices), which counted
+/// three times made windows yield at once (live 2026-11-04, NC-15 testing).
 /// `cap` (3) counts within `span` (10 s) make the window yield: the caller
 /// floats it as `FloatReason.appControlled` and Gio stops writing it. The
 /// count starts over at the yield and when the window is forgotten (purge,
@@ -30,6 +33,8 @@ public struct SnapBackBook: Sendable {
     public static let cap = 3
 
     private var snaps: [WindowID: [TimeInterval]] = [:]
+    /// The write each window's latest counted snap-back answered.
+    private var answered: [WindowID: TimeInterval] = [:]
 
     public init() {}
 
@@ -42,6 +47,10 @@ public struct SnapBackBook: Sendable {
             return .ignored
         }
         var recent = (snaps[id] ?? []).filter { time - $0 <= Self.span }
+        guard answered[id] != lastWrite else {
+            return .counted(max(recent.count, 1))
+        }
+        answered[id] = lastWrite
         recent.append(time)
         guard recent.count >= Self.cap else {
             snaps[id] = recent
@@ -53,5 +62,6 @@ public struct SnapBackBook: Sendable {
 
     public mutating func forget(_ id: WindowID) {
         snaps.removeValue(forKey: id)
+        answered.removeValue(forKey: id)
     }
 }

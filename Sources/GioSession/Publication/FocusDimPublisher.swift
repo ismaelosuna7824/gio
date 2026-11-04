@@ -20,6 +20,8 @@ public final class FocusDimPublisher: @unchecked Sendable {
         public var frontToBack: () -> [ServerWindow]
         public var mainHop: MainHop
         public var deliver: (FocusDimState) -> Void
+        /// WS-04: the window number recorded at registration, if any.
+        public var windowNumber: (WindowID) -> UInt32?
 
         public init(
             session: @escaping () -> CommandSession, physicalFrame: @escaping (WindowID) -> CGRect?,
@@ -27,7 +29,8 @@ public final class FocusDimPublisher: @unchecked Sendable {
             isFlightActive: @escaping () -> Bool, isNativeZoomActive: @escaping () -> Bool,
             isMouseDown: @escaping () -> Bool, isShuttingDown: @escaping () -> Bool,
             frontToBack: @escaping () -> [ServerWindow], mainHop: @escaping MainHop,
-            deliver: @escaping (FocusDimState) -> Void
+            deliver: @escaping (FocusDimState) -> Void,
+            windowNumber: @escaping (WindowID) -> UInt32? = { _ in nil }
         ) {
             self.session = session
             self.physicalFrame = physicalFrame
@@ -40,6 +43,7 @@ public final class FocusDimPublisher: @unchecked Sendable {
             self.frontToBack = frontToBack
             self.mainHop = mainHop
             self.deliver = deliver
+            self.windowNumber = windowNumber
         }
     }
 
@@ -155,11 +159,12 @@ public final class FocusDimPublisher: @unchecked Sendable {
                 else {
                     continue
                 }
-                windows.append(DimWindow(pid: id.pid, frame: frame))
+                windows.append(DimWindow(pid: id.pid, frame: frame, number: context.windowNumber(id)))
             }
         }
         let regions = focusDimRegions(
-            focused: DimWindow(pid: focusedID.pid, frame: focusedFrame), windows: windows,
+            focused: DimWindow(pid: focusedID.pid, frame: focusedFrame, number: context.windowNumber(focusedID)),
+            windows: windows,
             frontToBack: context.frontToBack(),
             displays: context.displays().map(\.frame)
         )

@@ -7,14 +7,17 @@ import Foundation
 // and its bounds. The adapter reads the WindowServer; the reconciler writes.
 
 /// One on-screen window as the WindowServer reports it, already converted to
-/// Cocoa coordinates. Only pid and bounds; titles are never read.
+/// Cocoa coordinates. Pid, bounds and the window number; titles are never read.
 public struct ServerWindow: Equatable, Sendable {
     public let pid: pid_t
     public let bounds: CGRect
+    /// `kCGWindowNumber` (CGWindowID); `nil` when the listing lacks it.
+    public let number: UInt32?
 
-    public init(pid: pid_t, bounds: CGRect) {
+    public init(pid: pid_t, bounds: CGRect, number: UInt32? = nil) {
         self.pid = pid
         self.bounds = bounds
+        self.number = number
     }
 }
 
@@ -77,19 +80,30 @@ func plausiblySame(_ a: CGRect, _ b: CGRect) -> Bool {
 }
 
 /// Maps each managed window to a WindowServer entry without private APIs.
-/// Candidates share the pid. Pass 1: an entry whose bounds equal the AX
+/// Candidates share the pid. Pass 0 (WS-04): the entry with the window's
+/// recorded number (`known`) when the pid still lists it. Pass 1: an entry whose bounds equal the AX
 /// frame is that window's (each entry is claimed once). Pass 2, for the rest:
 /// unclaimed entries of the same size; exactly one matches, several are
 /// ambiguous. Pass 3 (SM-02c), when no same-size entry exists: the unclaimed
 /// entries of the pid that are `plausiblySame`; one matches, several are
 /// ambiguous, none is missing.
 public func matchServerWindows(
-    axFrames: [WindowID: CGRect], server: [ServerWindow]
+    axFrames: [WindowID: CGRect], server: [ServerWindow], known: [WindowID: UInt32] = [:]
 ) -> [WindowID: ServerMatch] {
     var claimed: Set<Int> = []
     var result: [WindowID: ServerMatch] = [:]
     let ids = axFrames.keys.sorted()
+    // WS-04 pass 0: the window number recorded at registration, when the
+    // pid still lists it; otherwise the frame rules below decide.
     for id in ids {
+        if let number = known[id], let index = server.indices.first(where: {
+            !claimed.contains($0) && server[$0].pid == id.pid && server[$0].number == number
+        }) {
+            claimed.insert(index)
+            result[id] = .matched(server[index].bounds)
+        }
+    }
+    for id in ids where result[id] == nil {
         let ax = axFrames[id]!
         if let index = server.indices.first(where: { !claimed.contains($0) && server[$0].pid == id.pid && near(server[$0].bounds, ax) }) {
             claimed.insert(index)
@@ -194,7 +208,7 @@ private func visibleRatio(_ frame: CGRect, viewports: [CGRect]) -> CGFloat {
 /// the reconciler accepted, not the requested ones.
 public func evaluateRender(
     axFrames: [WindowID: CGRect], server: [ServerWindow],
-    targets: [WindowID: CGRect], viewports: [CGRect]
+    targets: [WindowID: CGRect], viewports: [CGRect], known: [WindowID: UInt32] = [:]
 ) -> RenderVerdict {
     var unmatched: [RenderUnmatched] = []
     var checked: [WindowID: CGRect] = [:]
@@ -211,7 +225,7 @@ public func evaluateRender(
         }
         checked[id] = frame
     }
-    let matches = matchServerWindows(axFrames: checked, server: server)
+    let matches = matchServerWindows(axFrames: checked, server: server, known: known)
     var mismatches: [RenderMismatch] = []
     for id in checked.keys.sorted() {
         let frame = checked[id]!
@@ -238,9 +252,9 @@ public func evaluateRender(
 /// Mismatches only; see `evaluateRender`.
 public func findRenderMismatches(
     axFrames: [WindowID: CGRect], server: [ServerWindow],
-    targets: [WindowID: CGRect], viewports: [CGRect]
+    targets: [WindowID: CGRect], viewports: [CGRect], known: [WindowID: UInt32] = [:]
 ) -> [RenderMismatch] {
-    evaluateRender(axFrames: axFrames, server: server, targets: targets, viewports: viewports).mismatches
+    evaluateRender(axFrames: axFrames, server: server, targets: targets, viewports: viewports, known: known).mismatches
 }
 
 /// PF-C: how hard a nudge pushes. `position` moves the window 1 pt and back;

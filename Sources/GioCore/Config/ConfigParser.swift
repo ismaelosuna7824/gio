@@ -370,6 +370,10 @@ func applyLayoutKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
             config.layout.maximizeSingleWindow = $0
         }
+    case "fill-empty-space":
+        applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
+            config.layout.fillEmptySpace = $0
+        }
     case "default-layout":
         // DW-03: an unknown layout warns and keeps the default (the brief's
         // rule for the layout keys; the WM always has a valid layout).

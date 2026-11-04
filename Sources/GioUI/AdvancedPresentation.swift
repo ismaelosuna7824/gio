@@ -229,10 +229,14 @@ public func diagnosticChecklist(
     }
 
     let versionLine = "Version " + (build.map { "\(version) (build \($0))" } ?? version)
+    let paused = facts.windowManagerConflicts.joined(separator: ", ")
     let session = DiagnosticCheck(
         id: "session", title: "Session", symbol: "bolt.fill", tint: .green,
-        status: socketExists ? .ok : .error, badge: socketExists ? "Running" : "No CLI socket",
-        summary: socketExists
+        status: !socketExists ? .error : (paused.isEmpty ? .ok : .warning),
+        badge: !socketExists ? "No CLI socket" : (paused.isEmpty ? "Running" : "Paused"),
+        summary: !paused.isEmpty
+            ? "Tiling is paused while \(paused) runs; it resumes on its own when that window manager quits."
+            : socketExists
             ? "Tiling is running and the gio command-line tool can connect."
             : "Tiling is running, but the gio command-line tool cannot connect.",
         details: [versionLine, "Socket \(socketPath)"]
@@ -268,14 +272,19 @@ public func diagnosticChecklist(
     }
 
     let count = facts.displays.count
+    let spacesUnseen = count > 1 && facts.displaysHaveSeparateSpaces
     let displays = DiagnosticCheck(
         id: "displays", title: "Displays", symbol: "display", tint: .indigo,
-        status: count == 0 ? .warning : .ok, badge: count == 0 ? "None" : plural(count, "display"),
-        summary: count == 0 ? "No display is being tiled yet." : "Workspace \(facts.currentWorkspace) is in focus.",
+        status: count == 0 || spacesUnseen ? .warning : .ok, badge: count == 0 ? "None" : plural(count, "display"),
+        summary: count == 0
+            ? "No display is being tiled yet."
+            : spacesUnseen
+            ? "\"Displays have separate Spaces\" is on: Gio does not see a Space change on a secondary display."
+            : "Workspace \(facts.currentWorkspace) is in focus.",
         details: facts.displays.map { display in
             "Display \(display.id) · workspace \(display.workspace)"
                 + (display.stack.isEmpty ? "" : " of \(display.stack.count)")
-        }
+        } + ["Displays have separate Spaces: \(facts.displaysHaveSeparateSpaces ? "on" : "off")"]
     )
 
     let renderer: DiagnosticCheck
@@ -308,8 +317,46 @@ public func diagnosticChecklist(
 
     return [
         permissions, session, configuration, displays, renderer,
-        gesturesCheck(facts.gestures, conflicts: facts.gestureConflicts), logging,
+        gesturesCheck(facts.gestures, conflicts: facts.gestureConflicts), windowServerCheck(facts.windowServer), logging,
     ]
+}
+
+/// WS-01..WS-04: whether the private window-server notices run, and what
+/// they did. Without them Gio works on Accessibility alone.
+private func windowServerCheck(_ status: WindowServerStatus) -> DiagnosticCheck {
+    func card(_ kind: StatusKind, badge: String, summary: String, details: [String] = []) -> DiagnosticCheck {
+        DiagnosticCheck(
+            id: "window-server", title: "Window server", symbol: "macwindow.on.rectangle", tint: .purple,
+            status: kind, badge: badge, summary: summary, details: details
+        )
+    }
+    if !status.missingSymbols.isEmpty {
+        return card(
+            .warning, badge: "Unavailable",
+            summary: "This macOS lacks the private SkyLight calls; Gio relies on Accessibility alone.",
+            details: ["Missing: \(status.missingSymbols.joined(separator: ", "))"]
+        )
+    }
+    guard let registered = status.registered else {
+        return card(.neutral, badge: "Starting", summary: "The window-server notices are not registered yet.")
+    }
+    let details = [
+        "Notices registered: \(registered) of \(status.total)",
+        "Notices received: \(status.notices)",
+        "Rescue scans: \(status.rescueScans)",
+        "Windows with a number: \(status.numberedWindows) of \(status.managedWindows)",
+    ]
+    if registered < status.total {
+        return card(
+            .warning, badge: "Partial",
+            summary: "The window server refused some notices; those changes are left to Accessibility.", details: details
+        )
+    }
+    return card(
+        .ok, badge: "Running",
+        summary: "Backs up Accessibility: windows opening, closing, moving and changing order, for every app.",
+        details: details
+    )
 }
 
 /// DA-08: the checklist as plain lines for the report's `system.txt`

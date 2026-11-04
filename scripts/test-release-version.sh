@@ -67,6 +67,29 @@ expect_refused "a push to another branch never publishes" "dev"
 run push main "" v0.1.0 patch v0.1.0
 expect_refused "a commit that is already released" "v0.1.1"
 
+# beta <name> <latest stable> <beta tags> <expected version>: release:beta publishes a prerelease of
+# the next patch, numbered after the betas of that version already published.
+beta() {
+    : > "${work}/output"
+    log="$(EVENT_NAME=push REF_NAME=main LATEST_TAG="$2" BUMP=beta BETA_TAGS="$3" HEAD_TAGS="" \
+        GITHUB_OUTPUT="${work}/output" bash "${subject}" 2>&1)"
+    status=$?
+    out="$(cat "${work}/output")"
+    expect_ok "$1" "tag=v$4${nl}version=$4${nl}publish=true${nl}prerelease=true"
+}
+
+beta "the first beta of the next patch" v0.1.5 "" 0.1.6-beta.1
+beta "betas count up" v0.1.5 "v0.1.6-beta.1 v0.1.6-beta.2" 0.1.6-beta.3
+beta "betas of other versions do not count" v0.1.5 "v0.1.5-beta.4 v0.2.0-beta.1" 0.1.6-beta.1
+beta "beta numbers grow past 9" v0.1.5 "v0.1.6-beta.9 v0.1.6-beta.10" 0.1.6-beta.11
+
+: > "${work}/output"
+log="$(EVENT_NAME=push REF_NAME=main LATEST_TAG=v0.1.5 BUMP=beta BETA_TAGS="v0.1.6-beta.1${nl}tag=v9.9.9" HEAD_TAGS="" \
+    GITHUB_OUTPUT="${work}/output" bash "${subject}" 2>&1)"
+status=$?
+out="$(cat "${work}/output")"
+expect_refused "beta tags with a newline" "v9.9.9"
+
 run workflow_dispatch main 0.2.0-rc.1
 expect_ok "dispatch is a dry run" "tag=v0.2.0-rc.1${nl}version=0.2.0-rc.1${nl}publish=false${nl}prerelease=true"
 

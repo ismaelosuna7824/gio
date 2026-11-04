@@ -149,14 +149,39 @@ public final class FocusRingController {
             if panel.frame != ring.frame {
                 panel.setFrame(ring.frame, display: false)
             }
+            place(panel, above: ring.windowNumber)
             if !isShown {
-                // Front without activating: the app and the focused window
-                // keep key status.
-                panel.orderFrontRegardless()
                 isShown = true
                 GioLog.record(.debug, "focus ring shown")
             }
         }
+    }
+
+    /// NF-13: a ring whose window's number is known sits right above that
+    /// window at its level, so Gio's own window, a floating popup or another
+    /// app's window over it covers the ring too (before: the ring floated
+    /// above everything, across Gio's main window). Without a number it stays
+    /// at `.floating`, above every ordinary window. Front without activating:
+    /// the app and the focused window keep key status.
+    private func place(_ panel: FocusRingPanel, above number: UInt32?) {
+        if let number {
+            if panel.level != .normal {
+                panel.level = .normal
+            }
+            panel.order(.above, relativeTo: Int(number))
+        } else if panel.level != .floating || !isShown {
+            panel.level = .floating
+            panel.orderFrontRegardless()
+        }
+    }
+
+    /// NF-13, main thread: the focused window moved in the stack (a click
+    /// raised it over the ring); put the ring back right above it.
+    public func focusedWindowReordered() {
+        guard isShown, let panel, case .shown(let ring) = state, let number = ring.windowNumber else {
+            return
+        }
+        panel.order(.above, relativeTo: Int(number))
     }
 
     private func makePanel() -> (FocusRingPanel, FocusRingView) {
@@ -171,9 +196,9 @@ public final class FocusRingController {
         panel.backgroundColor = .clear
         panel.hasShadow = false
         panel.ignoresMouseEvents = true
-        // `.floating` keeps the ring above ordinary app windows (level 0) so
-        // it is never covered by the window it frames or its neighbours, yet
-        // below menus, Spotlight and the screen saver.
+        // Without a window number (`place`), `.floating` keeps the ring above
+        // ordinary app windows (level 0), below menus, Spotlight and the
+        // screen saver.
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         panel.hidesOnDeactivate = false

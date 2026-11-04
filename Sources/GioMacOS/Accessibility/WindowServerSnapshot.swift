@@ -26,7 +26,8 @@ func parseWindowServerEntries(_ entries: [[String: Any]], displayHeight: CGFloat
             return nil
         }
         return ServerWindow(
-            pid: pid_t(pid), bounds: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight)
+            pid: pid_t(pid), bounds: cocoaFrame(fromWindowServer: bounds, displayHeight: displayHeight),
+            number: (entry[kCGWindowNumber as String] as? Int).flatMap { UInt32(exactly: $0) }
         )
     }
 }

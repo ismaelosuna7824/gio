@@ -50,6 +50,20 @@ public func desiredActivationPolicy(windowVisible: Bool) -> NSApplication.Activa
     windowVisible ? .regular : .accessory
 }
 
+/// System Settings' bundle identifier: Gio's permission and login-item rows
+/// send you there and you come back.
+let systemSettingsBundleID = "com.apple.systempreferences"
+
+/// DA-16 (user choice 2026-11-04): when another app takes focus, the open
+/// window hides (as Cmd+W does) instead of staying cut off behind that app;
+/// the menu bar brings it back. It stays for Gio itself, while the setup
+/// shows (its steps send you to System Settings) and for System Settings.
+public func mainWindowHidesOnActivation(
+    windowVisible: Bool, setupShowing: Bool, activatedPID: pid_t, activatedBundleID: String?, ownPID: pid_t
+) -> Bool {
+    windowVisible && !setupShowing && activatedPID != ownPID && activatedBundleID != systemSettingsBundleID
+}
+
 public struct GioMainView: View {
     @State private var selection: MainSection? = .overview
     @ObservedObject private var model: DesktopModel
@@ -219,14 +233,53 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
     private let updates: UpdateController?
     /// PF-AG: a flight's overlay covering the window is not "hidden".
     private var occlusion = OcclusionGate()
+    private var activationObserver: NSObjectProtocol?
+    /// DA-16: clicks in other apps while the window is open. A window shown
+    /// without Gio becoming active (macOS refused the activation: a relaunch,
+    /// `open` from a script) gets no activation of another app to hide on;
+    /// the user's next click elsewhere is the leave.
+    private var outsideClickMonitor: Any?
 
     public init(model: DesktopModel, updates: UpdateController? = nil) {
         self.model = model
         self.updates = updates
         super.init()
+        activationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main
+        ) { [weak self] note in
+            let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication
+            MainActor.assumeIsolated { self?.appActivated(app) }
+        }
+    }
+
+    /// DA-16: another app took focus, or the user clicked in one.
+    private func appActivated(_ app: NSRunningApplication?) {
+        guard let app, mainWindowHidesOnActivation(
+            windowVisible: window?.isVisible ?? false, setupShowing: isSetupCoverShowing,
+            activatedPID: app.processIdentifier, activatedBundleID: app.bundleIdentifier,
+            ownPID: ProcessInfo.processInfo.processIdentifier
+        ) else {
+            return
+        }
+        hide()
     }
 
     public var isVisible: Bool { window?.isVisible ?? false }
+
+    private func watchOutsideClicks(_ watching: Bool) {
+        if watching, outsideClickMonitor == nil {
+            outsideClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) {
+                [weak self] _ in
+                // After the click, the app it went to is frontmost.
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { self?.appActivated(NSWorkspace.shared.frontmostApplication) }
+                }
+            }
+        } else if !watching, let monitor = outsideClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            outsideClickMonitor = nil
+        }
+    }
 
     public func show() {
         if window == nil {
@@ -247,6 +300,7 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
         window?.orderFrontRegardless()
         window?.makeKeyAndOrderFront(nil)
         model.setWindowVisible(true)
+        watchOutsideClicks(true)
     }
 
     /// PA-21: the session published its first snapshot; show it now rather
@@ -286,6 +340,7 @@ public final class MainWindowController: NSObject, NSWindowDelegate {
     public func hide() {
         window?.orderOut(nil)
         model.setWindowVisible(false)
+        watchOutsideClicks(false)
         NSApplication.shared.setActivationPolicy(desiredActivationPolicy(windowVisible: false))
     }
 

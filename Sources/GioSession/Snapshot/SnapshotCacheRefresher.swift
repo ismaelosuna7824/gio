@@ -119,6 +119,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         /// SM-22: bytes of RAM, read once by the host; bounds the cap.
         public var physicalMemory: UInt64
         public var now: () -> TimeInterval
+        /// WS-04: the window number recorded at registration, if any.
+        public var windowNumber: (WindowID) -> UInt32?
 
         public init(
             session: @escaping () -> CommandSession, displays: @escaping () -> [DisplayState],
@@ -134,7 +136,8 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             log: @escaping (LogLevel, String) -> Void,
             appName: @escaping (pid_t) -> String = { _ in "?" },
             physicalMemory: UInt64,
-            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+            now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+            windowNumber: @escaping (WindowID) -> UInt32? = { _ in nil }
         ) {
             self.session = session
             self.displays = displays
@@ -153,6 +156,7 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
             self.appName = appName
             self.physicalMemory = physicalMemory
             self.now = now
+            self.windowNumber = windowNumber
         }
     }
 
@@ -835,11 +839,13 @@ public final class SnapshotCacheRefresher: @unchecked Sendable {
         let half = Set(requested.keys.filter { snapshotCaptureResolution($0, shown: shown) == .half })
         tried.formUnion(requested.keys)
         stripPass.formUnion(requested.keys)
+        let numbered = Set(requested.keys).union(managed.keys)
         let request = SnapshotCaptureRequest(
             windows: requested, halfResolution: half,
             displays: screens, primaryDisplayHeight: primary, includeBackdrop: false,
             backdropDisplayIDs: backdropIDs, backdropExclusions: managed,
-            budgetMilliseconds: 1500, logLevel: .debug, reason: reason
+            budgetMilliseconds: 1500, logLevel: .debug, reason: reason,
+            windowNumbers: numbered.reduce(into: [:]) { numbers, id in numbers[id] = context.windowNumber(id) }
         )
         busy = true
         context.capture(request) { [weak self] outcome in

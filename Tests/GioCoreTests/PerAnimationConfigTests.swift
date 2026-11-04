@@ -24,7 +24,7 @@ final class PerAnimationConfigTests: XCTestCase {
     }
 
     func testEveryKindInheritsTheGlobalSettings() {
-        var config = AnimationsSectionConfig()
+        var config = AnimationsSectionConfig(enabled: true)
         config.curve = .easeOut
         config.durationMilliseconds = 320
         config.springStiffness = 500
@@ -43,10 +43,13 @@ final class PerAnimationConfigTests: XCTestCase {
     /// the default. `[animations.window-resize] enabled = true` brings the
     /// animation back.
     func testResizesAreInstantByDefaultAndTheirTableTurnsThemOn() {
-        let defaults = AnimationsSectionConfig()
+        let defaults = AnimationsSectionConfig(enabled: true)
         XCTAssertFalse(defaults.resolved(.windowResize).isActive)
         XCTAssertTrue(defaults.resolved(.windowMovement).isActive)
         let (config, warnings) = parse("""
+        [animations]
+        enabled = true
+
         [animations.window-resize]
         enabled = true
         """)
@@ -59,7 +62,7 @@ final class PerAnimationConfigTests: XCTestCase {
     }
 
     func testOverridesReplaceOnlyWhatTheySet() {
-        var config = AnimationsSectionConfig()
+        var config = AnimationsSectionConfig(enabled: true)
         config.overrides[.windowMovement] = AnimationOverride(curve: .easeOut, durationMilliseconds: 90)
         config.overrides[.workspaceSwitch] = AnimationOverride(springDampingRatio: 0.7)
         config.overrides[.windowClose] = AnimationOverride(enabled: false)
@@ -78,7 +81,7 @@ final class PerAnimationConfigTests: XCTestCase {
         var config = AnimationsSectionConfig(enabled: false)
         config.overrides[.windowOpen] = AnimationOverride(enabled: true)
         XCTAssertFalse(config.resolved(.windowOpen).isActive)
-        config = AnimationsSectionConfig()
+        config = AnimationsSectionConfig(enabled: true)
         config.overrides[.windowResize] = AnimationOverride(durationMilliseconds: 0)
         XCTAssertFalse(config.resolved(.windowResize).isActive, "0 ms is instant, like the global value")
     }

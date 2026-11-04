@@ -87,6 +87,8 @@ final class EventWorld: @unchecked Sendable {
     var zoomBusy: Set<WindowID> = []
     var zoomForgotten: [WindowID] = []
     var suppressed: Set<WindowID> = []
+    /// WS-03: the time each echo-suppression question was asked for.
+    var echoQueryTimes: [TimeInterval] = []
     var echoes: Set<WindowID> = []
     var frameReads: [WindowID] = []
     var tileabilityInvalidated: [WindowID] = []
@@ -193,7 +195,10 @@ final class EventWorld: @unchecked Sendable {
             },
             isZoomBusy: { self.zoomBusy.contains($0) },
             forgetZoom: { self.zoomForgotten.append($0) },
-            isEchoSuppressed: { id, _ in self.suppressed.contains(id) },
+            isEchoSuppressed: { id, at in
+                self.echoQueryTimes.append(at)
+                return self.suppressed.contains(id)
+            },
             frame: { id in
                 self.frameReads.append(id)
                 return CGRect(x: 0, y: 0, width: 100, height: 100)
@@ -792,6 +797,56 @@ final class WindowEventRouterTests: XCTestCase {
 
         send(.window(.resized), element: element)
         XCTAssertEqual(world.tileabilityInvalidated, [id])
+    }
+
+    /// WS-03: an app that posts no AX moved/resized for a change (the window
+    /// server saw it) gets the same handling as an AX event.
+    func testWindowServerFrameChangeWithoutAnAXEventIsHandledLikeOne() {
+        scheduler.advance(by: 5)
+        router.windowServerFrameChanged(id, resized: true, noticeAt: 5)
+        XCTAssertEqual(world.frameReads, [id])
+        XCTAssertEqual(world.trustInvalidated.last, id)
+        XCTAssertEqual(world.tileabilityInvalidated, [id])
+        XCTAssertEqual(world.scheduledReflows, [false])
+    }
+
+    /// The AX event for the same change already ran: nothing twice (a doubled
+    /// event would also count a snap-back twice).
+    func testWindowServerFrameChangeCoveredByAnAXEventIsDropped() {
+        scheduler.advance(by: 5)
+        send(.window(.moved), element: element)
+        let reads = world.frameReads.count
+        router.windowServerFrameChanged(id, resized: false, noticeAt: 5)
+        XCTAssertEqual(world.frameReads.count, reads)
+        XCTAssertEqual(world.scheduledReflows, [false])
+    }
+
+    /// Gio's own animation writes are dropped like their AX echoes.
+    func testWindowServerFrameChangeOfAnAnimatingAppIsDropped() {
+        world.animating = [7]
+        router.windowServerFrameChanged(id, resized: false, noticeAt: 0)
+        XCTAssertTrue(world.frameReads.isEmpty)
+        XCTAssertTrue(world.scheduledReflows.isEmpty)
+    }
+
+    /// Live 2026-11-04: Terminal snapping to its grid right after Gio's write
+    /// was handled 0.25 s later, past the echo window, so it counted as a
+    /// snap-back next to the late check and Terminal yielded. The echo window
+    /// is asked at the notice's time, not at the handling time.
+    func testWindowServerFrameChangeIsJudgedAtTheNoticeTime() {
+        scheduler.advance(by: 5.25)
+        router.windowServerFrameChanged(id, resized: true, noticeAt: 5)
+        XCTAssertEqual(world.echoQueryTimes.last, 5)
+    }
+
+    /// A resize notice up to the late check's time after Gio's write is the
+    /// late check's (FI-11); handling both would count one change twice.
+    func testWindowServerResizeBeforeTheLateCheckIsLeftToIt() {
+        world.lastWrites[id] = 5
+        scheduler.advance(by: 5.6)
+        router.windowServerFrameChanged(id, resized: true, noticeAt: 5.38)
+        XCTAssertTrue(world.frameReads.isEmpty)
+        XCTAssertTrue(world.scheduledReflows.isEmpty)
     }
 
     /// PA-18c: a user drag raises ~60 moved events a second. The first one

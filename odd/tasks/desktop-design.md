@@ -169,3 +169,15 @@ DD-01..DD-05 delegated writers, sequential, after the in-flight native-zoom fix 
 - 2026-09-30: DD-01 + DD-02 done, pushed. Next: DD-03 (after focus-indicator decision).
 - 2026-09-30: DD-03 done, pushed. Next: DD-04 + DD-05 (+ DD-03 follow-ups).
 - 2026-09-30: DD-04 + DD-05 done, pushed. Next: user live review of the redesigned app.
+
+- [x] DD-10 (`DONE`, `c11d0d2`) — Fast is the recommended motion preset (user, 2026-11-04: "pon como
+  recomendado el fast", after Gio measured 52 MB in Fast). `AnimationsSectionConfig` defaults to
+  `enabled = false` and `renderer = ax`; the config template ships the same; `MotionPreset` is `.fast`
+  (first, default) and `.animated` (was `.recommended`); the first-run *Pick a Feel* step preselects
+  **Fast (Recommended)** and lists **Animated** second; Settings > Animations > Preset reads **Fast
+  (Recommended)** / **Animated**. Existing configs keep their own `[animations]` lines: only a missing
+  key now means Fast. RED: `MotionPresetTests` (compile failure on `.animated`) and
+  `ShellPresentationTests.testMotionPresetsDefaultToFast`. Tests that pinned the old defaults now
+  expect the new ones; tests that used them as a precondition for motion set `enabled = true` (and
+  `renderer = .snapshot` where the snapshot path is under test). Full `swift test`: Core 2264,
+  Session 600, UI 389 (54 skipped), POC 7, Mac 19, macOS 120; signed build below.

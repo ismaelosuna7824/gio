@@ -94,6 +94,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         overview.start()
         systemOverview = overview
         host.onFocusRing = { [focusRing] state in focusRing.apply(state) }
+        host.onFocusedWindowReordered = { [focusRing] in focusRing.focusedWindowReordered() }
         host.onFocusDim = { [focusDim] state in focusDim.apply(state) }
         wireSnapshotOverlay()
         // PA-16: resolved per `gio update`, so the updater (code signature,
@@ -132,7 +133,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.stateProvider = { [host] in host.barState() }
         bar.updateTitleProvider = { [updates] in updateMenuTitle(updates.state) }
         // Read when the menu opens (no wait on the session queue).
-        bar.launcherHotkeyProvider = { [host] in launcherHotkey(in: host.snapshot().config) }
+        bar.launcherHotkeyProvider = { [host] in shownHotkey(for: .toggleLauncher, in: host.snapshot().config) }
         bar.onUpdate = { [weak self] in
             self?.mainWindow.show()
             self?.updates.notesPresented = true
@@ -321,7 +322,7 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         let snapshot = host.snapshot()
         let facts = snapshot.facts
         launcher.summon(
-            source: source, requestedAt: requestedAt, hotkey: launcherHotkey(in: snapshot.config),
+            source: source, requestedAt: requestedAt, hotkey: shownHotkey(for: .toggleLauncher, in: snapshot.config),
             windows: { facts?.windows ?? [] },
             workspaces: { launcherWorkspaceEntries(from: facts) },
             apps: { [launcherCatalog] in launcherCatalog.apps }

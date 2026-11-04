@@ -7,7 +7,8 @@
 #   EVENT_NAME=workflow_dispatch INPUT_VERSION=0.2.0-rc.1 GITHUB_OUTPUT=<file> scripts/release-version.sh
 #
 # A merge to main publishes the next version: the latest stable tag (LATEST_TAG, empty before the
-# first release) bumped by BUMP (patch, the default when empty; minor; major). HEAD_TAGS lists the
+# first release) bumped by BUMP (patch, the default when empty; minor; major; beta: a prerelease
+# vX.Y.Z-beta.N of the next patch, N one past the highest in BETA_TAGS). HEAD_TAGS lists the
 # v* tags already on the merged commit: a commit that is already released is refused, so a re-run
 # never publishes it twice. A manual run is a dry run of INPUT_VERSION. Appends tag=, version=,
 # publish= and prerelease= to $GITHUB_OUTPUT, or fails without writing anything. Every input is
@@ -38,15 +39,31 @@ case "${EVENT_NAME:-}" in
         minor="${BASH_REMATCH[2]}"
         patch="${BASH_REMATCH[3]}"
         case "${BUMP:-patch}" in
-            patch) patch=$((10#${patch} + 1)) ;;
+            patch|beta) patch=$((10#${patch} + 1)) ;;
             minor) minor=$((10#${minor} + 1)); patch=0 ;;
             major) major=$((10#${major} + 1)); minor=0; patch=0 ;;
             *)
-                echo "::error::The version bump must be patch, minor or major"
+                echo "::error::The version bump must be patch, minor, major or beta"
                 exit 1
                 ;;
         esac
         version="$((10#${major})).$((10#${minor})).$((10#${patch}))"
+        if [[ "${BUMP:-patch}" == "beta" ]]; then
+            # A prerelease of the next patch, after its betas already published
+            # (BETA_TAGS: the v*-beta.* tags, separated by spaces).
+            beta_tags="${BETA_TAGS:-}"
+            if [[ "${beta_tags}" == *$'\n'* || "${beta_tags}" == *$'\r'* ]]; then
+                echo "::error::The beta tags must be one line"
+                exit 1
+            fi
+            last=0
+            for beta_tag in ${beta_tags}; do
+                if [[ "${beta_tag}" =~ ^v${version//./\\.}-beta\.([0-9]+)$ ]] && ((10#${BASH_REMATCH[1]} > last)); then
+                    last=$((10#${BASH_REMATCH[1]}))
+                fi
+            done
+            version="${version}-beta.$((last + 1))"
+        fi
         tag="v${version}"
         publish=true
         ;;
