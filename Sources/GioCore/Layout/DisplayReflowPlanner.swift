@@ -45,7 +45,7 @@ public func planDisplayLayout(
         // window parks where its column already is, so leaving fullscreen
         // finds the strip exactly as it was.
         var plan = ParkingPlan(
-            visible: [covering: fullscreenFrame(display: display, usable: viewport, gap: engine.config.fullscreenGap)],
+            visible: [covering: engine.config.fullscreenFrame(display: display, usable: viewport)],
             parked: parkAll(
                 frames: layout.frames, viewport: viewport, display: display,
                 otherDisplays: otherDisplays
@@ -127,7 +127,7 @@ private func layoutKeepingFullscreenSize(
     workspace: Workspace, modes: [WindowID: WindowMode], layoutModes: [WindowID: WindowMode],
     engine: ScrollableLayoutEngine, viewport: CGRect, display: CGRect
 ) throws -> LayoutResult {
-    let frame = fullscreenFrame(display: display, usable: viewport, gap: engine.config.fullscreenGap)
+    let frame = engine.config.fullscreenFrame(display: display, usable: viewport)
     var widened = workspace
     widened.columns = workspace.columns.map { column in
         var widened = column
@@ -196,7 +196,7 @@ func planDwindleDisplayLayout(
         var parked = parkAll(frames: frames, viewport: viewport, display: display, otherDisplays: otherDisplays)
         parked.removeValue(forKey: covering)
         let plan = ParkingPlan(
-            visible: [covering: fullscreenFrame(display: display, usable: viewport, gap: config.fullscreenGap)],
+            visible: [covering: config.fullscreenFrame(display: display, usable: viewport)],
             parked: parked
         )
         return DisplayLayoutPlan(workspace: workspace, layout: layout, plan: plan)

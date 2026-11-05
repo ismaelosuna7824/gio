@@ -33,6 +33,10 @@ public struct LayoutConfig: Equatable, Sendable {
     /// shared display edge when this is `.never` (a centered strip keeps
     /// its offset on passive passes).
     public var centerFocusedColumn: CenterFocusedColumnMode
+    /// SB-01 `[layout] reserved-top`: the band the host already took off the
+    /// top of the viewport; a fullscreen window gets it back
+    /// (`fullscreenFrame(display:usable:gap:reservedTop:)`).
+    public var reservedTop: CGFloat
 
     public init(
         padding: CGFloat = 8,
@@ -45,7 +49,8 @@ public struct LayoutConfig: Equatable, Sendable {
         alwaysCenterSingleColumn: Bool = false,
         fillEmptySpace: Bool = false,
         dwindle: DwindleSettings = DwindleSettings(),
-        centerFocusedColumn: CenterFocusedColumnMode = .never
+        centerFocusedColumn: CenterFocusedColumnMode = .never,
+        reservedTop: CGFloat = 0
     ) {
         self.padding = padding
         self.gap = gap
@@ -58,6 +63,15 @@ public struct LayoutConfig: Equatable, Sendable {
         self.fillEmptySpace = fillEmptySpace
         self.dwindle = dwindle
         self.centerFocusedColumn = centerFocusedColumn
+        self.reservedTop = reservedTop
+    }
+}
+
+extension LayoutConfig {
+    /// A fullscreen window's frame with this config's gap, covering the
+    /// reserved band again (SB-01).
+    public func fullscreenFrame(display: CGRect, usable: CGRect) -> CGRect {
+        GioCore.fullscreenFrame(display: display, usable: usable, gap: fullscreenGap, reservedTop: reservedTop)
     }
 }
 

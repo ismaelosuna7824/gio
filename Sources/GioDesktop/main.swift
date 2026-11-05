@@ -17,8 +17,8 @@ func activateGio() {
 /// The unified Gio app: menu bar, main window and launcher over one
 /// session host (config, lock, IPC server, registry, workspaces, displays,
 /// actuator, event intake, hotkey tap). One process; activation policy is
-/// regular while the main window is visible and accessory otherwise. The `gio` CLI talks to it over IPC; the signed
-/// .app bundle is 1.0 packaging work.
+/// regular while the main window is visible and accessory otherwise. The `gio` CLI talks to it over IPC; the
+/// app binary itself is that CLI when started as `gio` (SB-01, below).
 @MainActor
 final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
     private let host = SessionHost()
@@ -372,6 +372,12 @@ func relaunchGio(done: @escaping @MainActor () -> Void) {
         }
     }
     done()
+}
+
+// SB-01 CLI mode: started as `gio` (the ~/.local/bin/gio link), the app
+// binary is the IPC client. No app, no lock, no log, no UI.
+if isGioCLIInvocation(CommandLine.arguments) {
+    exit(runGioCLI(arguments: Array(CommandLine.arguments.dropFirst())))
 }
 
 // Guardian mode (spawned by Gio itself): no app, no Dock icon, no lock, no IPC.

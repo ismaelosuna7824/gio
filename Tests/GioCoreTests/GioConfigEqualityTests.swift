@@ -46,6 +46,7 @@ final class GioConfigEqualityTests: XCTestCase {
         changed { $0.workspaces = [WorkspaceDefinition(name: "code")] }
         changed { $0.dwindle.defaultSplitRatio += 0.1 }
         changed { $0.gestures.scroll.toggle() }
+        changed { $0.hooks.onWorkspaceChange = "true" }
         for (index, config) in changes.enumerated() {
             XCTAssertNotEqual(config, base, "change \(index) is ignored by ==")
         }
