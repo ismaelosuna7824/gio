@@ -106,6 +106,11 @@ final class EventWorld: @unchecked Sendable {
     var writtenFrames: [WindowID: CGRect] = [:]
     var learnsLateClamp = false
     var lateClampAsks: [(WindowID, CGRect, CGRect)] = []
+    /// FI-15: recorded window-server numbers, the numbers the window server
+    /// lists, and how often it was asked.
+    var windowNumbers: [WindowID: UInt32] = [:]
+    var liveNumbers: Set<UInt32> = []
+    var liveNumberQueries = 0
 
     func known(_ element: AXUIElement) -> WindowID? {
         handles.first { CFEqual($0.0, element) }?.1
@@ -167,7 +172,12 @@ final class EventWorld: @unchecked Sendable {
             followArrival: { self.follows.append($0) },
             focusArrival: { self.arrivalFocus.append($0) },
             log: { self.logs.append(($0, $1)) },
-            newWindowPosition: { self.session.config.layout.newWindowPosition }
+            newWindowPosition: { self.session.config.layout.newWindowPosition },
+            windowNumber: { self.windowNumbers[$0] },
+            liveWindowNumbers: {
+                self.liveNumberQueries += 1
+                return self.liveNumbers
+            }
         )
     }
 

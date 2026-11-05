@@ -76,6 +76,8 @@ Gio hides the columns and workspaces you are not looking at just off the edge of
 2. Or, while Gio runs, use **Diagnostics > Restore All Windows** (every parked window on screen without quitting; the next layout change parks them again).
 3. From a source checkout: `swift run gio-poc restore` (see [gio-poc](#gio-poc)).
 
+Locking the screen or putting the Mac to sleep does not make Gio drop your windows: while the screen is locked apps stop describing their windows, so Gio keeps every window macOS still has (`window kept ... reason=window-server-alive` in the log) and re-reads them all once the Mac wakes or you unlock (`session rescan reason=wake` / `unlock`).
+
 ## Known limitations
 
 - **One Space.** Gio manages only the macOS Space it started on. Windows on other Spaces are left alone, and Gio never moves windows between Spaces; coming back re-places the managed windows.

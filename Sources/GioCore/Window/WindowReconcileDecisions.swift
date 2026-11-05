@@ -55,3 +55,44 @@ public func vanishedWindowIDs(
         .map(\.id)
         .sorted()
 }
+
+/// FI-15: the absence purge split by the window server's word.
+public struct VanishConfirmation: Equatable, Sendable {
+    /// Gone: purge them. Sorted.
+    public var purge: [WindowID]
+    /// The window server still lists their recorded number. Sorted.
+    public var kept: [WindowID]
+
+    public init(purge: [WindowID], kept: [WindowID]) {
+        self.purge = purge
+        self.kept = kept
+    }
+}
+
+/// FI-15: absence from a complete scan is confirmed by the window server
+/// (rule 10). While the screen locks, the apps' Accessibility lists hold no
+/// window although every window is still there: a candidate whose recorded
+/// window number the window server still lists is kept. A destroyed notice
+/// is the window server's own proof, and a window without a recorded number
+/// cannot be asked about: both are purged as before.
+public func confirmedVanished(
+    candidates: [WindowID], numbers: [WindowID: UInt32], liveNumbers: Set<UInt32>, destroyed: Set<WindowID>
+) -> VanishConfirmation {
+    var result = VanishConfirmation(purge: [], kept: [])
+    for id in candidates.sorted() {
+        if !destroyed.contains(id), let number = numbers[id], liveNumbers.contains(number) {
+            result.kept.append(id)
+        } else {
+            result.purge.append(id)
+        }
+    }
+    return result
+}
+
+/// FI-15: the window server needs asking only when a recorded number could
+/// keep a candidate (one query per purge batch, none for an empty one).
+public func vanishNeedsWindowServer(
+    candidates: [WindowID], numbers: [WindowID: UInt32], destroyed: Set<WindowID>
+) -> Bool {
+    candidates.contains { numbers[$0] != nil && !destroyed.contains($0) }
+}

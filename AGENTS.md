@@ -46,7 +46,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 7. **Session state mutates only on the `gio.session` queue.** Never nest `queue.sync` (deadlock). Do not add shared mutable state without a lock and a comment.
 8. **Cocoa coordinates inside Core, AX coordinates only at the adapter boundary** (`AXVerticalFlip`). Layout frames are screen-space; `viewportOffset` is content-space; convert before comparing (fix `592c89d`).
 9. **An invalid config never breaks the WM**, and config writes preserve unrelated lines and comments (`patchGioConfig`).
-10. **Absence is not death.** Remove windows only on proof (destroyed event, terminated pid, complete scan).
+10. **Absence is not death.** Remove windows only on proof (destroyed event, terminated pid, complete scan). A complete scan's absence also needs the window server's agreement: a window whose recorded number it still lists is kept (`confirmedVanished`, FI-15; the AX lists empty out during a screen lock).
 
 ## Workflow rules
 

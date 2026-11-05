@@ -77,6 +77,8 @@ final class SessionHost: @unchecked Sendable {
     var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
     private var desktopPictureObservers: [NSObjectProtocol] = []
+    /// FI-15: a system wake or a screen unlock asks for one full rescan.
+    private var wakeObservers: [NSObjectProtocol] = []
     /// SM-20: system memory pressure trims the snapshot cache (set once at
     /// start, events on the session queue, cancelled at shutdown).
     private var memoryPressure: DispatchSourceMemoryPressure?
@@ -747,7 +749,9 @@ final class SessionHost: @unchecked Sendable {
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 listedWindows: { axWindowElements(pid: $0) },
                 windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
-                newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition }
+                newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition },
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) },
+                liveWindowNumbers: { windowServerListedNumbers() }
             ),
             scheduler: scheduler
         )
@@ -757,7 +761,7 @@ final class SessionHost: @unchecked Sendable {
                 ownPID: ProcessInfo.processInfo.processIdentifier,
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 scanApp: { [unowned self] in discovery.appAttached($0) },
-                proveVanished: { [unowned self] in discovery.noteSettled(vanished: [$0], alive: []) },
+                proveVanished: { [unowned self] in discovery.noteDestroyed($0) },
                 frameChanged: { [unowned self] id, resized, at in
                     events.windowServerFrameChanged(id, resized: resized, noticeAt: at)
                 },
@@ -1056,6 +1060,7 @@ final class SessionHost: @unchecked Sendable {
         // the first layout.
         watchDisplays()
         watchDesktopPicture()
+        watchWake()
         watchMemoryPressure()
         watchManagedSpace()
         watchWindowManagers()
@@ -2582,6 +2587,32 @@ final class SessionHost: @unchecked Sendable {
             ),
             NSWorkspace.shared.notificationCenter.addObserver(
                 forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main, using: handler
+            ),
+        ]
+    }
+
+    /// FI-15: while the screen locks the apps' Accessibility answers go
+    /// blank; windows the window server kept alive meanwhile are re-read by
+    /// one full rescan after a wake or an unlock (the debounced resync).
+    private func watchWake() {
+        func handler(_ reason: String) -> (Notification) -> Void {
+            { [weak self] _ in
+                self?.queue.async {
+                    guard let self, !self.isShuttingDown else {
+                        return
+                    }
+                    GioLog.record(.info, "session rescan reason=\(reason)")
+                    self.scheduleReflow(full: true)
+                }
+            }
+        }
+        wakeObservers = [
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: handler("wake")
+            ),
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main,
+                using: handler("unlock")
             ),
         ]
     }
