@@ -448,8 +448,8 @@ read for the snap and focus rules.
   by TG-12 (vertical only, default 0.1).
 - [x] TG-12 — The armed horizontal stroke drives the TG-03 scroll (follows the fingers, snaps
   and focuses); vertical stays one workspace per stroke (default 0.1); Gio is in the
-  scroll-event path only while armed (`ScrollSuppressionTap`, hotkey tap reverted). NOT
-  verified live (TESTING.md 15l).
+  scroll-event path only while armed (`ScrollSuppressionTap`, hotkey tap reverted). Commit
+  `809d746`. NOT verified live (TESTING.md 15l).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -610,3 +610,5 @@ read for the snap and focus rules.
   (TESTING.md 15l).
 - 2026-11-05: TG-11 committed `f65e89a` on `dev` (tap-to-swipe distance). Not pushed; NOT
   verified live (TESTING.md 15l (j)).
+- 2026-11-05: TG-12 committed `809d746` on `dev` (armed horizontal stroke drives the strip,
+  scroll tap only while armed). Not pushed; NOT verified live (TESTING.md 15l).
