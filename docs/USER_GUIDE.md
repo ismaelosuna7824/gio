@@ -500,7 +500,7 @@ The status item is a small three-column glyph with the active workspace's number
 - A header: **Gio** and the same summary (`Code (1 of 4) · 5 windows` on a named workspace; `Starting…` while there is no session).
 - The workspace stack of each display (**Workspaces**, or **Display 1**, **Display 2**, ... with several displays): one row per workspace with its window count (`Empty`, `2 windows`) and a check mark on the active one; a named workspace shows its icon, its name and its `Alt` number (**Code** `⌥1 · 2 windows`). Only the focused display's rows switch workspace.
 - **Move Window to Display** (with two or more displays): one row per display, `N  name`, numbered like `display = N`; the display the focused window is on is checked; sends `move-window-to-display N`.
-- **Update to vX.Y.Z…** while an update is available (see [Updates](#updates)).
+- **Update to vX.Y.Z and Restart** while an update is available (see [Updates](#updates)): downloads, verifies and installs it, then reopens Gio (the main window shows the progress). A copy that cannot replace itself shows **Update to vX.Y.Z…**, which opens the release notes.
 - **Open Gio** (`Cmd+,`): the main window.
 - **Launcher**: the [launcher](#launcher) panel.
 - **Reload Config** (`Cmd+R`; disabled without a session).
@@ -593,7 +593,7 @@ Gio updates itself from the GitHub releases of `ismaelosuna7824/gio` (the `GioUp
 | Where | What |
 | --- | --- |
 | **Overview > Updates** | The running version and the updater status: **Check Now**, **Update and Restart** (with a progress bar while downloading), **Release Notes…** (the release's notes in a sheet, with **Update and Restart** and **View on GitHub**). |
-| Menu bar | **Update to vX.Y.Z…** appears while an update is available; it opens Gio with the release notes. |
+| Menu bar | **Update to vX.Y.Z and Restart** appears while an update is available: the same as **Update and Restart** (Gio opens to show the progress, replaces itself and reopens). A copy that only notifies shows **Update to vX.Y.Z…**, which opens the release notes. |
 | **Diagnostics > Updates** | **Automatically check for updates** (on by default) and **Include beta versions** (off by default). |
 | `gio update`, `gio update --install` | The same check and install from a terminal (source checkout; see the table above). |
 

@@ -62,12 +62,22 @@ final class UpdatePresentationTests: XCTestCase {
     }
 
     func testMenuTitle() {
-        XCTAssertEqual(updateMenuTitle(.available(update)), "Update to v0.3.0…")
-        XCTAssertEqual(updateMenuTitle(.readyToInstall(update, stagedApp: "/x")), "Update to v0.3.0…")
-        XCTAssertEqual(updateMenuTitle(.failed(.checksumMismatch, update: update)), "Update to v0.3.0…")
-        XCTAssertNil(updateMenuTitle(.upToDate))
-        XCTAssertNil(updateMenuTitle(.downloading(update, progress: 0.1)))
-        XCTAssertNil(updateMenuTitle(.failed(.rateLimited, update: nil)))
+        let installable = InstallEligibility.installable(target: "/Applications/Gio.app")
+        XCTAssertEqual(updateMenuTitle(.available(update), eligibility: installable), "Update to v0.3.0 and Restart")
+        XCTAssertEqual(updateMenuTitle(.readyToInstall(update, stagedApp: "/x"), eligibility: installable), "Update to v0.3.0 and Restart")
+        XCTAssertEqual(updateMenuTitle(.failed(.checksumMismatch, update: update), eligibility: installable), "Update to v0.3.0 and Restart")
+        XCTAssertEqual(updateMenuTitle(.available(update), eligibility: .notifyOnly(.buildFolder)), "Update to v0.3.0…")
+        XCTAssertNil(updateMenuTitle(.upToDate, eligibility: installable))
+        XCTAssertNil(updateMenuTitle(.downloading(update, progress: 0.1), eligibility: installable))
+        XCTAssertNil(updateMenuTitle(.failed(.rateLimited, update: nil), eligibility: installable))
+    }
+
+    /// DD-11 (user 2026-11-04): the menu bar item updates in place (download,
+    /// verify, replace, reopen) instead of only opening the notes; a copy that
+    /// cannot replace itself still shows the notes with the release page.
+    func testTheMenuItemInstallsWhenThisCopyCan() {
+        XCTAssertEqual(updateMenuAction(eligibility: .installable(target: "/Applications/Gio.app")), .install)
+        XCTAssertEqual(updateMenuAction(eligibility: .notifyOnly(.readOnlyLocation)), .showNotes)
     }
 
     func testReleaseNoteBlocks() {
