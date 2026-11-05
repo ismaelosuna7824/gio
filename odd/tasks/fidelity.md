@@ -211,7 +211,7 @@ Review: UNAVAILABLE.
   dev session quit at 07:18 during a lock (`readbackFailed -25204`) restored 0 windows, so they started
   the release parked; the first release launch had no Accessibility yet (expected: nothing managed
   until the grant relaunch). NOT verified live with a real lock.
-- 2026-11-05: FI-15 (`DONE`, `<hash>`) — every window purged when the Mac locked. Live debug log
+- 2026-11-05: FI-15 (`DONE`, `546854e`) — every window purged when the Mac locked. Live debug log
   (`~/.config/gio/gio.log`, ~3600-3660), the Mac going to sleep/lock at 02:14:20, in one burst:
   ```
   [DEBUG] reconcile applied=0 parked=0 already=8 skippedReads=8 vanished=1 failed=0
