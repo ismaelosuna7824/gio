@@ -61,6 +61,26 @@ final class GestureConflictTests: XCTestCase {
         XCTAssertEqual(detect(config, trackpad: [:]), [], "gestures that are off collide with nothing")
     }
 
+    /// TG-10: a three-finger tap is macOS's Look up & data detectors when
+    /// `TrackpadThreeFingerTapGesture` is 2 (off, 0, by default: Force
+    /// Touch trackpads look up with a force click).
+    func testTapToSwipeMeetsThreeFingerLookUp() {
+        let config = GesturesSectionConfig(tapToSwipe: true)
+        XCTAssertEqual(detect(config, trackpad: [:]), [], "macOS's default looks up with a force click")
+        var bluetooth = off
+        bluetooth["TrackpadThreeFingerTapGesture"] = 2
+        XCTAssertEqual(
+            detect(config, trackpad: off, bluetooth: bluetooth),
+            [GestureConflict(gesture: .tapToSwipe, fingers: 3, system: .lookUp)]
+        )
+        XCTAssertEqual(detect(GesturesSectionConfig(), trackpad: bluetooth), [], "off collides with nothing")
+        XCTAssertTrue(TrackpadSystemPreferences.trackpadKeys.contains("TrackpadThreeFingerTapGesture"))
+        XCTAssertEqual(
+            gestureConflictMessage(GestureConflict(gesture: .tapToSwipe, fingers: 3, system: .lookUp)),
+            "Tap to swipe (3 fingers) also triggers macOS Look up & data detectors: change it in System Settings > Trackpad > Point & Click > Look up & data detectors, or turn Tap to swipe off."
+        )
+    }
+
     func testThreeFingerDragCollidesWithEveryThreeFingerGesture() {
         var trackpad = off
         trackpad["TrackpadThreeFingerDrag"] = 1

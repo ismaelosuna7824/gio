@@ -9,6 +9,7 @@ public struct TrackpadSystemPreferences: Equatable, Sendable {
     public static let trackpadKeys = [
         "TrackpadThreeFingerHorizSwipeGesture", "TrackpadThreeFingerVertSwipeGesture",
         "TrackpadFourFingerHorizSwipeGesture", "TrackpadFourFingerVertSwipeGesture", "TrackpadThreeFingerDrag",
+        "TrackpadThreeFingerTapGesture",
     ]
     public static let dockKeys = ["showMissionControlGestureEnabled", "showAppExposeGestureEnabled"]
 
@@ -40,6 +41,8 @@ public enum SystemTrackpadGesture: String, Equatable, Hashable, Sendable {
     case missionControl = "mission-control"
     case appExpose = "app-expose"
     case threeFingerDrag = "three-finger-drag"
+    /// TG-10: "Look up & data detectors" set to "Tap with three fingers".
+    case lookUp = "look-up"
 
     public var title: String {
         switch self {
@@ -48,6 +51,7 @@ public enum SystemTrackpadGesture: String, Equatable, Hashable, Sendable {
         case .missionControl: return "Mission Control"
         case .appExpose: return "App Exposé"
         case .threeFingerDrag: return "three-finger drag"
+        case .lookUp: return "Look up & data detectors"
         }
     }
 
@@ -58,6 +62,8 @@ public enum SystemTrackpadGesture: String, Equatable, Hashable, Sendable {
             return "System Settings > Trackpad > More Gestures > \(title)"
         case .threeFingerDrag:
             return "System Settings > Accessibility > Pointer Control > Trackpad Options > Dragging style"
+        case .lookUp:
+            return "System Settings > Trackpad > Point & Click > \(title)"
         }
     }
 }
@@ -67,12 +73,14 @@ public enum GioTrackpadGesture: String, Equatable, Hashable, Sendable {
     case scroll
     case workspaceSwipe = "workspace-swipe"
     case overview
+    case tapToSwipe = "tap-to-swipe"
 
     var title: String {
         switch self {
         case .scroll: return "Scroll"
         case .workspaceSwipe: return "Workspace swipe"
         case .overview: return "Overview swipe"
+        case .tapToSwipe: return "Tap to swipe"
         }
     }
 }
@@ -96,7 +104,10 @@ public struct GestureConflict: Equatable, Hashable, Sendable {
 /// gesture is on, the default) and App Exposé (down, when it is on, off by
 /// default). macOS's defaults are 2 for all four swipes. Three-finger drag
 /// turns every three-finger swipe into a mouse drag. Five fingers meet no
-/// swipe. Only gestures that are on count.
+/// swipe. TG-10: `TrackpadThreeFingerTapGesture` 2 is Look up with a
+/// three-finger tap (0 by default: Force Touch trackpads look up with a
+/// force click), which the tap-to-swipe tap also triggers. Only gestures
+/// that are on count.
 public func detectGestureConflicts(
     _ config: GesturesSectionConfig, preferences: TrackpadSystemPreferences
 ) -> [GestureConflict] {
@@ -152,13 +163,18 @@ public func detectGestureConflicts(
     if config.overview {
         add(.overview, config.overviewFingers, vertical(config.overviewFingers, upOnly: true))
     }
+    if config.tapToSwipe, preferences.trackpadValues("TrackpadThreeFingerTapGesture", default: 0).contains(2) {
+        conflicts.append(GestureConflict(gesture: .tapToSwipe, fingers: TapToSwipe.tapFingers, system: .lookUp))
+    }
     return conflicts
 }
 
 /// TG-04: the warning shown in Diagnostics, the Overview and Settings.
 public func gestureConflictMessage(_ conflict: GestureConflict) -> String {
-    "\(conflict.gesture.title) (\(conflict.fingers) fingers) also triggers macOS \(conflict.system.title): "
-        + "change it in \(conflict.system.settingsPath), or give Gio other fingers."
+    // TG-10: the tap has no finger setting to move it to.
+    let remedy = conflict.gesture == .tapToSwipe ? "turn Tap to swipe off" : "give Gio other fingers"
+    return "\(conflict.gesture.title) (\(conflict.fingers) fingers) also triggers macOS \(conflict.system.title): "
+        + "change it in \(conflict.system.settingsPath), or \(remedy)."
 }
 
 /// TG-04: `gestures conflict=<gesture-fingers:system,...>` (or `none`) once,

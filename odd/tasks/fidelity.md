@@ -211,3 +211,39 @@ Review: UNAVAILABLE.
   dev session quit at 07:18 during a lock (`readbackFailed -25204`) restored 0 windows, so they started
   the release parked; the first release launch had no Accessibility yet (expected: nothing managed
   until the grant relaunch). NOT verified live with a real lock.
+- 2026-11-05: FI-15 (`DONE`, `546854e`) — every window purged when the Mac locked. Live debug log
+  (`~/.config/gio/gio.log`, ~3600-3660), the Mac going to sleep/lock at 02:14:20, in one burst:
+  ```
+  [DEBUG] reconcile applied=0 parked=0 already=8 skippedReads=8 vanished=1 failed=0
+  [INFO] window register retry pid=412 attempt=1 reason=frameUnreadable   (412 = loginwindow)
+  [INFO] discovery exclude pid=33460 app=System Settings ignore(notAWindow)
+  [DEBUG] window vanished scan pids=1 purged=1 registered=0
+  [DEBUG] reconcile ... vanished=2 ...
+  [INFO] discovery exclude pid=20267 app=Music ignore(notAWindow)
+  ... (repeats until every app: Music, T3 Code, Figma, OrbStack, Tern, Slack, Finder, Zen purged)
+  ```
+  Root cause: while the screen locks, the reconciler's AX reads find the elements invalid (SM-31
+  `vanished`), each asks for a proof scan of its pid, and the app's window list then holds only
+  non-window elements whose role does answer (`notAWindow`, so FI-14's unreadable-role skip does not
+  apply): the pid counts as fully read and `vanishedWindowIDs` purges its windows. After the wake
+  the window server still listed them, but Gio managed only the 3 that raised a new "window created"
+  event. Rule 10 broken again: the AX list's silence was taken as proof. Fix: absence must be
+  confirmed by the window server. Before the scan purge (`vanishedWindowIDs`, used by full scans,
+  launch scans and SM-31 proof scans alike), `confirmedVanished` (Core) keeps every candidate whose
+  recorded window number (WS-04, `WindowNumberBook`) the window server still lists (one
+  `CGWindowListCopyWindowInfo(.optionAll)` per purge batch, `windowServerListedNumbers`, asked only
+  when a number could keep a window): `window kept id=P:E reason=window-server-alive`. A window with no
+  recorded number is purged as before; a destroyed notice (WS-02, now `DiscoveryService.noteDestroyed`)
+  is proof on its own and rescans even a vanish already scanned. Unchanged proof paths: the AX
+  destroyed event (`WindowEventRouter` `.remove`), a terminated app (`appTerminated`) and a dead pid
+  (`reapDeadPids`). A kept window is re-read by the next scan: a system wake
+  (`NSWorkspace.didWakeNotification`) and a screen unlock (`com.apple.screenIsUnlocked`) now ask for one
+  full, debounced resync (`session rescan reason=<wake|unlock>`); if the app hands it a new AX element,
+  its registration takes over the number and the old id, numberless, is purged by the same scan. Risk
+  [INFERENCE]: an app that hides a closed window instead of destroying it keeps its tile until the AX
+  destroyed event or the app's quit (the AX event is the normal close path; the scan purge is a
+  fallback). RED: compile failure (`VanishConfirmationTests`: `confirmedVanished`, `VanishConfirmation`,
+  `vanishNeedsWindowServer` missing; `VanishedWindowScanTests` FI-15 cases: context `windowNumber`,
+  `liveWindowNumbers`, `noteDestroyed` missing; `WindowServerSnapshotTests.testListedNumbersKeepEvery...`).
+  GREEN: Core 2298, Session 621, UI 391 (54 skipped), POC 7, Mac 19, macOS 127; `git diff --check`
+  clean; signed build not run (a dev Gio was running). NOT verified live with a real lock or sleep.

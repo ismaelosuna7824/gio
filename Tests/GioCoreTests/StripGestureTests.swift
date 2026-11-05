@@ -215,4 +215,116 @@ final class StripGestureTests: XCTestCase {
         XCTAssertEqual(workspaceSwipeAction(.up, natural: false), .focusWorkspaceUp)
         XCTAssertEqual(workspaceSwipeAction(.down, natural: false), .focusWorkspaceDown)
     }
+
+    // MARK: - TG-13 paging for the armed two-finger stroke
+
+    /// 300, 900 and 300 pt columns: content x 8-308, 316-1216, 1224-1524.
+    private func mixedWidths(focused: Int, offset: CGFloat) -> Workspace {
+        let widths: [CGFloat] = [300, 900, 300]
+        return Workspace(
+            id: WorkspaceID(1),
+            columns: widths.enumerated().map { Column(id: ColumnID(UInt64($0 + 1)), width: $1, windows: [id(UInt64($0 + 1))]) },
+            focusedColumn: focused, focusedWindow: id(UInt64(focused + 1)), viewportOffset: offset
+        )
+    }
+
+    func testAShortSlowDragGoesBackToTheStartColumn() {
+        // 0.2 of the 600 pt start column is 120 pt.
+        XCTAssertEqual(pageGestureScroll(strip(), from: 0, travel: 100, velocity: 100), GestureSnap(offset: 0, column: 0))
+        XCTAssertEqual(gesturePageTravel, 0.2)
+    }
+
+    func testAShortFastFlickPagesOnce() {
+        XCTAssertGreaterThan(2000, gesturePageVelocity)
+        // The neighbour is revealed from the committed offset like `focus-right`: right-aligned at 224.
+        XCTAssertEqual(pageGestureScroll(strip(), from: 0, travel: 40, velocity: 2000), GestureSnap(offset: 224, column: 1))
+    }
+
+    func testALongFastFlickStillPagesOnlyOnce() {
+        XCTAssertEqual(pageGestureScroll(strip(), from: 0, travel: 900, velocity: 3000), GestureSnap(offset: 224, column: 1))
+    }
+
+    func testASlowDragPastTheTravelThresholdPages() {
+        XCTAssertEqual(pageGestureScroll(strip(), from: 0, travel: 130, velocity: 0), GestureSnap(offset: 224, column: 1))
+        let second = strip(workspace(focused: 1, offset: 224))
+        XCTAssertEqual(pageGestureScroll(second, from: 1, travel: -130, velocity: 0), GestureSnap(offset: 0, column: 0))
+    }
+
+    func testTheFlicksDirectionWinsOverTheDraggedTravel() {
+        let second = strip(workspace(focused: 1, offset: 224))
+        XCTAssertEqual(pageGestureScroll(second, from: 1, travel: 200, velocity: -2000), GestureSnap(offset: 0, column: 0))
+    }
+
+    func testPagingClampsAtTheStripEnds() {
+        let last = strip(workspace(focused: 3, offset: 1440))
+        XCTAssertEqual(pageGestureScroll(last, from: 3, travel: 500, velocity: 3000), GestureSnap(offset: 1440, column: 3))
+        XCTAssertEqual(pageGestureScroll(strip(), from: 0, travel: -500, velocity: -3000), GestureSnap(offset: 0, column: 0))
+        XCTAssertNil(pageGestureScroll(GestureStrip(
+            columns: [], viewportWidth: 1000, padding: 8, contentWidth: 0, committedOffset: 0, centering: false
+        ), from: 0, travel: 0, velocity: 0))
+    }
+
+    func testTheTravelThresholdIsAFractionOfTheStartColumnsWidth() {
+        // Narrow start (300 pt): 70 pt is past 0.2 of it.
+        let narrow = strip(mixedWidths(focused: 0, offset: 0))
+        XCTAssertEqual(pageGestureScroll(narrow, from: 0, travel: 70, velocity: 0), GestureSnap(offset: 224, column: 1))
+        // Wide start (900 pt): 150 pt is short of 180.
+        let wide = strip(mixedWidths(focused: 1, offset: 224))
+        XCTAssertEqual(pageGestureScroll(wide, from: 1, travel: 150, velocity: 0), GestureSnap(offset: 224, column: 1))
+        XCTAssertEqual(pageGestureScroll(wide, from: 1, travel: 190, velocity: 0), GestureSnap(offset: 532, column: 2))
+    }
+
+    func testCenteredStripsPageToTheCenteredNeighbour() {
+        XCTAssertEqual(
+            pageGestureScroll(strip(centering: true), from: 0, travel: 40, velocity: 2000), GestureSnap(offset: 416, column: 1)
+        )
+    }
+
+    func testTheStrokesStartColumnIsTheFocusedOne() {
+        XCTAssertEqual(gesturePageStartColumn(strip(workspace(focused: 2, offset: 832)), focused: id(3)), 2)
+        var scrolled = strip()
+        scrolled.committedOffset = 300
+        XCTAssertEqual(gesturePageStartColumn(scrolled, focused: nil), 1, "else the first one fully in view")
+        XCTAssertEqual(gesturePageStartColumn(scrolled, focused: id(9)), 1, "a focus outside the strip too")
+    }
+
+    // MARK: - TG-13 the finger-driven settle always springs
+
+    func testTheFastPresetStillSpringsTheGestureSettleOnly() {
+        let fast = AnimationsSectionConfig()
+        XCTAssertFalse(fast.resolved(.horizontalViewMovement).isActive, "the Fast preset is instant")
+        let settle = gestureSettleAnimations(fast)
+        let scroll = settle.resolved(.horizontalViewMovement)
+        XCTAssertTrue(scroll.isActive)
+        XCTAssertEqual(scroll.curve, .spring)
+        XCTAssertEqual(scroll.spring, SpringParameters.niri, "niri's spring when the kind is off")
+        for kind in AnimationKind.allCases where kind != .horizontalViewMovement {
+            XCTAssertFalse(settle.resolved(kind).isActive, "\(kind) stays instant")
+        }
+    }
+
+    func testAnOffScrollKindSpringsButTheOthersKeepTheirSettings() {
+        var config = AnimationsSectionConfig(enabled: true)
+        config.overrides[.horizontalViewMovement] = AnimationOverride(enabled: false)
+        let settle = gestureSettleAnimations(config)
+        XCTAssertTrue(settle.resolved(.horizontalViewMovement).isActive)
+        XCTAssertEqual(settle.resolved(.windowMovement), config.resolved(.windowMovement))
+        XCTAssertEqual(settle.resolved(.windowResize), config.resolved(.windowResize), "off by default, still off")
+    }
+
+    func testAnActiveScrollKindKeepsItsSpringAndAnEaseOutBecomesASpring() {
+        var config = AnimationsSectionConfig(enabled: true)
+        config.overrides[.horizontalViewMovement] = AnimationOverride(curve: .easeOut, springDampingRatio: 0.8, springStiffness: 500)
+        let scroll = gestureSettleAnimations(config).resolved(.horizontalViewMovement)
+        XCTAssertEqual(scroll.curve, .spring, "the release velocity needs a spring")
+        XCTAssertEqual(scroll.spring.dampingRatio, 0.8)
+        XCTAssertEqual(scroll.spring.stiffness, 500)
+    }
+
+    func testAZeroDurationStillSettlesWithASpring() {
+        let config = AnimationsSectionConfig(enabled: true, durationMilliseconds: 0)
+        let settle = gestureSettleAnimations(config)
+        XCTAssertTrue(settle.resolved(.horizontalViewMovement).isActive)
+        XCTAssertFalse(settle.resolved(.workspaceSwitch).isActive)
+    }
 }

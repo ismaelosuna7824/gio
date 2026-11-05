@@ -325,6 +325,100 @@ read for the snap and focus rules.
   Settings: "Swipe distance" slider (percent) in the Trackpad Gestures card, finger rows
   labelled per gesture ("Fingers to scroll", "Fingers to switch workspaces", "Fingers for the
   overview").
+- TG-10 tap to swipe (user decision, 2026-11-04: change window or workspace with gestures
+  without losing native two-finger scrolling and without macOS's three-finger Space
+  switching). Decision: a three-finger tap arms a mode in which two-finger strokes step.
+  `TapToSwipe` (`GioCore/Gestures/TapToSwipe.swift`, pure, frame clock): a tap is a touch with
+  exactly 3 contacts at its peak, lifted (below 3) within `maxTapDuration` 0.3 s of its first
+  three-finger frame, its centroid never more than `maxTapTravel` 0.02 from where it landed;
+  it arms when off and disarms (`tap`) when on. Armed, `armedUntil` is `armedWindow` 2.5 s
+  after the last frame seen (the arming tap, every frame of a stroke, its lift), so the mode
+  never expires under the fingers and each step renews it; a frame past it disarms
+  (`expired`) first. A stroke starts at the first two-finger frame after a lift; at
+  `stepDistance` 0.1 of travel on the dominant axis, at least `verticalDominance` (2.0) times
+  the other, it fires one `step(left|right|up|down)`; a diagonal, a third finger or any other
+  count consumes it; either way the fingers must lift below two before the next stroke. The
+  arming tap's own lifting fingers never start a stroke. `tapSwipeAction`: natural swipe left
+  shows the window on the right (`focus-right`), vertical steps use `workspaceSwipeAction`;
+  `GestureController` performs them through `Context.perform` (the keyboard path, focus
+  intent). Gate: `TouchFrameGate.tapToSwipe` follows an admitted touch down to its lift below
+  two fingers (otherwise the tap's lift could be lost while the gate is not yet armed), and
+  `armedUntil` (frame clock, `TouchFrameMailbox.setArmedUntil` under the mailbox's lock) lets
+  two-finger frames cross; a stroke begun while armed crosses to its lift. Plain two-finger
+  scrolling never crosses otherwise. Scroll swallowing: the hotkey tap subscribes to
+  `scrollWheel` only while `tap-to-swipe` is on (`TapSubscriptions`, generalizing the
+  focus-follows-mouse restart: `tapNeedsRestart(current:wanted:)`, ConfigCoordinator
+  `setTapSubscriptions`/`tapSubscriptions`; a scroll event costs a tap callback, so always
+  subscribing was rejected) and returns nil for it while `TapScrollSuppression` (lock-guarded
+  system-uptime deadline set from the session queue) says armed. The session deadline is
+  `now + (armedUntil - last frame)`; one expiry timer at a time re-arms itself while the
+  deadline is renewed. Disarm: expiry, a second tap, a mouse button (`recordClick` hops to
+  `GestureController.mouseDown()` only while a deadline is set; a button held during a drain
+  also disarms), the setting turned off. Notices: "Gestures on: swipe with two fingers" on arm
+  and "Gestures off" when a tap disarms; expiry and clicks stay quiet (the click already ends
+  it visibly, and expiry after 2.5 s needs no banner). Conflict: `TrackpadThreeFingerTapGesture`
+  2 is macOS Look up & data detectors on a three-finger tap (default 0: Force Touch trackpads
+  look up with a force click) → `tap-to-swipe-3:look-up`, System Settings > Trackpad > Point &
+  Click > Look up & data detectors. Config `[gestures] tap-to-swipe = false` (TG-09: off),
+  counted by `anyEnabled` and `recognizerSettings.minimumFingers` (`tapFingers`).
+- TG-11 tap-to-swipe distance (user live feedback, 2026-11-05, real trackpad: tap-to-swipe
+  works, the log shows armed/step/disarmed as designed, but "se siente un poco duro ... tal vez
+  sensibilidad muy alta": steps fired too early at 0.1 of travel). Decision: the fixed
+  `TapToSwipe.stepDistance = 0.1` becomes an instance value, `TapToSwipe.defaultStepDistance`
+  0.2 (a fifth of the trackpad), configured by `[gestures] tap-to-swipe-distance` (fraction of
+  the trackpad on the stroke's axis, `tapToSwipeDistanceRange` 0.05-0.5, clamped with a
+  warning like `swipe-distance`, a non-number keeps 0.2). `GestureController` sets it on every
+  drain like the recognizer settings, so a reload applies from the next frame. Settings: a
+  "Swipe distance for Tap to swipe" slider (percent, step 0.01), shown only while Tap to swipe
+  is on; the form validates the range and writes two decimals.
+- TG-12 tap-to-swipe follows the fingers (user live feedback, 2026-11-05, after TG-11: "no se
+  siente fluido como cuando presiones las teclas ... con el scroll no se siente fluido
+  también ... tengo que hacer un gesto grande"). The log showed Gio answering fast (step to
+  reflow 10-90 ms); the causes were (a) nothing moved until the step distance, then a jump,
+  and (b) with `tap-to-swipe` on the hotkey tap subscribed `.scrollWheel` all the time, so
+  every scroll event of every app went through Gio's active tap. User decision: while armed
+  the horizontal two-finger stroke makes the strip follow the fingers and settles like the
+  TG-03 scroll. Decision: `TapToSwipe` commits a stroke at the recognizer's
+  `defaultCommitDistance` (0.03); horizontal emits `scrollBegan` / `scrollChanged(dx)` /
+  `scrollEnded(velocity)` (80 ms `SwipeVelocityTracker`) / `scrollCancelled` (extra finger,
+  disarm, expiry), and `GestureController` feeds them into the existing TG-03 scroll (`begin`,
+  tracker with `scroll-sensitivity` and `natural`, `release` with snap, State commit, settle
+  with the uncentered focus intent, overlay/AX transport, `isTracking`); no second scroll
+  path. Vertical keeps one `focus-workspace-*` per stroke (`workspaceSwipeAction`) at
+  `tap-to-swipe-distance`, default back to 0.1 (range unchanged); left/right steps
+  (`tapSwipeAction`, `focus-left/right`) are gone. A third finger landing on a moving stroke
+  can no longer start a tap. A click mid-scroll abandons with `.mouse`. Scroll interception
+  (item 3): the hotkey tap's `.scrollWheel` subscription, `TapSubscriptions` and the generalized
+  restart were reverted to the pre-TG-10 code; `ScrollSuppressionTap` (GioMacOS) is a
+  scroll-only active tap on its own `TapThread`, started on main while `tap-to-swipe` is on
+  (`scrollTapLifecycle`), created disabled (a disabled tap is not in the event path), enabled
+  only when `TapScrollSuppression.suppress` reports that arming flipped on and disabled when it
+  flips off; its callback swallows while the deadline holds, passes and disables itself at a
+  scroll event past it, re-enables after a macOS disable only while armed, and `shutdown()`
+  stops it. Chosen over creating and destroying a tap per arming: no tap creation or thread
+  start on main at the moment the first stroke begins (one `CGEvent.tapEnable`), and no live
+  tap left behind by a missed teardown.
+- TG-13 native-feeling release (user live feedback, 2026-11-05, after TG-12: "el drag aún se
+  siente un poco raro, no tiene la sensación nativa que tiene cambiar entre spaces"). Log
+  (`~/.config/gio/gio.log`, 06:56, Fast preset: `[animations] enabled = false`, renderer ax):
+  every armed stroke was a quick flick (begin to end 40-90 ms, velocity 2000-3000), e.g.
+  `gesture scroll end offset=1670 snap=3008 column=3 velocity=-2121` and `offset=1213 snap=0
+  column=0 velocity=2970`: the projected niri snap skipped columns and, with animations off,
+  the settle pass was instant, so the strip jumped from under the fingers to the target.
+  Native Space switching pages one Space per flick and always springs the rest of the way
+  with the finger's velocity. Decision: (1) `gestureSettleAnimations` (pure): the pass after
+  a gesture release (TG-03 and tap-to-swipe) always springs the `horizontal-view-movement`
+  kind from the release velocity (its spring when active, niri's otherwise), every other kind
+  keeps its configured on/off, so keyboard and window moves stay instant in Fast;
+  `performReflow` uses it, with the scroll kind for the pass and as the fallback kind, when
+  `pendingGestureRelease` is set, and the overlay hold asks the same settings. (2)
+  `pageGestureScroll` (pure) for the armed two-finger stroke: at most one column from the
+  column focused at the stroke's start (`gesturePageStartColumn`); a release faster than
+  `gesturePageVelocity` (500 pt/s of offset) pages in its direction (a flick's direction wins
+  over its travel), else a travel of `gesturePageTravel` (0.2) of the start column's width
+  pages, else the strip goes back; clamped at the ends; the target is revealed from the
+  committed offset like `focus-left/right` (centered with centering). The 3-5 finger scroll
+  keeps the projected niri snap. The end log adds `page=<bool>`.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -366,6 +460,20 @@ read for the snap and focus rules.
   fixtures that exercise gestures now turn them on explicitly (GestureControllerTests,
   GestureConflictTests, GesturesConfigTests, SettingsPresentationTests). GREEN: Core 2025,
   Session 516, UI 313 (53 skipped), MacOS 91, Mac 19, POC 7, 0 failures.
+- [x] TG-10 — Tap to swipe: a three-finger tap arms two-finger steps (window left/right,
+  workspace up/down), the gate lets two-finger frames cross only while armed, the tap swallows
+  scrolling while armed, notice, `tap-to-swipe` key, Settings toggle, Look up conflict.
+  Commit `a8f84c5`. NOT verified live (TESTING.md 15l).
+- [x] TG-11 — `tap-to-swipe-distance` (default 0.2, was a fixed 0.1), template, Settings slider,
+  form round-trip. Commit `f65e89a`. NOT verified live (TESTING.md 15l (j)). Superseded in part
+  by TG-12 (vertical only, default 0.1).
+- [x] TG-12 — The armed horizontal stroke drives the TG-03 scroll (follows the fingers, snaps
+  and focuses); vertical stays one workspace per stroke (default 0.1); Gio is in the
+  scroll-event path only while armed (`ScrollSuppressionTap`, hotkey tap reverted). Commit
+  `809d746`. NOT verified live (TESTING.md 15l).
+- [x] TG-13 — The gesture settle always springs from the release velocity (also in Fast); the
+  armed two-finger stroke pages one column per flick. Commit `c8131b3`. NOT verified live
+  (TESTING.md 15i (o), 15l (b)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -457,6 +565,66 @@ read for the snap and focus rules.
   (53 skipped), GioMacOSTests 91, GioMacTests 19, GioPOCTests 7, 0 failures. Signed
   `xcodebuild` (`Gio` scheme, Release, arm64): BUILD SUCCEEDED. LIVE PENDING: the user tries
   three-finger scrolls (no workspace change) and deliberate three-finger swipes up and down.
+- TG-10: RED `swift build --build-tests` failed (`cannot find 'TapToSwipe' in scope`,
+  `cannot find 'TapSubscriptions' in scope`, `cannot find 'TapScrollSuppression' in scope`,
+  `cannot find 'tapSwallowsScroll' in scope`, `cannot find 'tapToSwipeNotice' in scope`,
+  `value of type 'GesturesSectionConfig' has no member 'tapToSwipe'`, `type
+  'GioTrackpadGesture' has no member 'tapToSwipe'`, `type 'SystemTrackpadGesture' has no member
+  'lookUp'`, `type 'TapEventAction' has no member 'scrollWheel'`, `incorrect argument label in
+  call (have 'current:wanted:', expected 'observingMouseMoved:wanted:')`, `extra argument
+  'tapToSwipe' in call`). The first run after the implementation failed every new
+  `GestureControllerTests` case (`XCTUnwrap failed: expected non-nil value`, notices `[true,
+  true]` instead of `[true, false]`): arming did not set `armedUntil`; fixed in `TapToSwipe.feed`.
+  GREEN: TapToSwipeTests 18 (new), GestureRecognizerTests 23 (+2 gate), GesturesConfigTests 12
+  (+1), GestureConflictTests 10 (+1), TapResilienceTests 9 (+2), TouchFrameMailboxTests 5 (+1),
+  TapScrollSuppressionTests 3 (new), ConfigCoordinatorTests 9 (+1), GestureControllerTests 26
+  (+8), NoticePanelTests 4 (+1), 0 failures. Full `swift test`: GioCoreTests 2286,
+  GioSessionTests 613, GioUITests 391 (54 skipped), GioMacOSTests 123, GioMacTests 19,
+  GioPOCTests 7, 0 failures. Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD
+  SUCCEEDED (the built app was unregistered with `lsregister -u` and deleted). `git diff
+  --check` clean. NOT verified live: no trackpad session was possible here (TESTING.md 15l);
+  unproven live: that swallowing `scrollWheel` in the session tap also stops browser
+  swipe-back, how MultitouchSupport reports a real tap's staggered lift, and the 0.3 s / 0.02
+  / 0.1 thresholds on real hands [INFERENCE].
+- TG-11: RED `swift build --build-tests` failed (`type 'TapToSwipe' has no member
+  'defaultStepDistance'`, `value of type 'GesturesSectionConfig' has no member
+  'tapToSwipeDistance'`, `value of type 'GesturesSettingsForm' has no member
+  'tapToSwipeDistance'`, `extra argument 'tapToSwipeDistance' in call`). The TG-10 diagonal
+  test was widened (0.4 by 0.3) so it is decided before the extra frame at the 0.2 default.
+  GREEN: TapToSwipeTests 19 (+1), GesturesConfigTests 13 (+1, plus edits/problems in two
+  more), GestureControllerTests 27 (+1), 0 failures. Full `swift test`: GioCoreTests 2288,
+  GioSessionTests 614, GioUITests 391 (54 skipped), GioMacOSTests 123, GioMacTests 19,
+  GioPOCTests 7, 0 failures. `git diff --check` clean. Signed `xcodebuild` not run here (a dev
+  Gio runs from `.build/GioAutoTeam`; the coordinator builds and relaunches). NOT verified live.
+- TG-12: RED `swift build --build-tests` failed (`type 'TapToSwipeEvent' has no member
+  'scrollBegan'` / `'scrollCancelled'`, and the scroll payload patterns in TapToSwipeTests; the
+  session and macOS tests for `suppress(until:) -> Bool`, `scrollTapEventAction`,
+  `scrollTapEventMask` and `scrollTapLifecycle` were written in the same step against missing
+  API). TG-10/TG-11 tests moved to the new contract: horizontal strokes scroll, steps are
+  vertical, the diagonal case is now vertical-ish, the 0.2 default is 0.1 again; the hotkey
+  tap's TG-10 mask/restart tests reverted with the code (`tapEventAction(.scrollWheel)` is
+  `.passThrough` again, `ScrollSuppressionTapTests` asserts the hotkey mask has no scroll bit).
+  GREEN: TapToSwipeTests 23, GestureControllerTests 31 (+4 TG-12), ScrollSuppressionTapTests 5
+  (new), TapScrollSuppressionTests 3, TapResilienceTests 7, ConfigCoordinatorTests 8,
+  GesturesConfigTests 13, 0 failures. Full `swift test`: GioCoreTests 2292, GioSessionTests
+  617, GioUITests 391 (54 skipped), GioMacOSTests 126, GioMacTests 19, GioPOCTests 7, 0
+  failures. `git diff --check` clean. Signed `xcodebuild` not run here (the coordinator builds
+  and relaunches). NOT verified live: the scroll tap's enable latency, that a disabled tap
+  really leaves scrolling untouched, and the strip following two fingers [INFERENCE until
+  TESTING.md 15l].
+- TG-13: RED `swift build --build-tests` failed (`cannot find 'pageGestureScroll' in scope`,
+  `cannot find 'gesturePageTravel' in scope`, `cannot find 'gesturePageVelocity' in scope`;
+  the first errors shown, the other new names were missing too). TG-12's controller test that expected the flick to
+  land at the strip's end (offset 1440) moved to the paging contract (224, column 2's window).
+  GREEN: StripGestureTests 31 (+13: paging 9, settle settings 4), PerAnimationPlanningTests 7
+  (+1: Fast preset springs the swiped windows with the velocity, another kind jumps),
+  GestureControllerTests 33 (+2: a short slow armed drag goes back, the three-finger scroll
+  still projects with `page=false`), 0 failures. Full `swift test`: GioCoreTests 2311,
+  GioSessionTests 624, GioUITests 391 (54 skipped), GioMacOSTests 127, GioMacTests 19,
+  GioPOCTests 7, 0 failures. `git diff --check` clean. Signed `xcodebuild` not run here (the
+  coordinator builds and relaunches). NOT verified live: whether one page per flick and the
+  spring with the release velocity feel like a Space switch, and the 0.2 / 500 pt/s thresholds
+  on real hands [INFERENCE].
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
@@ -475,3 +643,11 @@ read for the snap and focus rules.
   both fixed). Not pushed; LIVE PENDING.
 - 2026-10-16: TG-08 committed `5c53bf4` on `feat/app-polish` (deliberate vertical swipe,
   `swipe-distance`). Not pushed; LIVE PENDING.
+- 2026-11-04: TG-10 committed `a8f84c5` on `dev` (tap to swipe). Not pushed; NOT verified live
+  (TESTING.md 15l).
+- 2026-11-05: TG-11 committed `f65e89a` on `dev` (tap-to-swipe distance). Not pushed; NOT
+  verified live (TESTING.md 15l (j)).
+- 2026-11-05: TG-12 committed `809d746` on `dev` (armed horizontal stroke drives the strip,
+  scroll tap only while armed). Not pushed; NOT verified live (TESTING.md 15l).
+- 2026-11-05: TG-13 committed `c8131b3` on `dev` (gesture settle always springs, armed stroke
+  pages one column). Not pushed; NOT verified live.

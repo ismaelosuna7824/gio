@@ -77,6 +77,8 @@ final class SessionHost: @unchecked Sendable {
     var onBarState: ((BarSessionState?) -> Void)?
     private var displayObserver: NSObjectProtocol?
     private var desktopPictureObservers: [NSObjectProtocol] = []
+    /// FI-15: a system wake or a screen unlock asks for one full rescan.
+    private var wakeObservers: [NSObjectProtocol] = []
     /// SM-20: system memory pressure trims the snapshot cache (set once at
     /// start, events on the session queue, cancelled at shutdown).
     private var memoryPressure: DispatchSourceMemoryPressure?
@@ -147,6 +149,14 @@ final class SessionHost: @unchecked Sendable {
     /// MultitouchSupport's callback thread, which never touches session state.
     private var gestures: GestureController!
     private var touchMailbox: TouchFrameMailbox!
+    /// TG-10: whether the scroll tap swallows scroll events (armed
+    /// tap-to-swipe); its own lock, read on the tap thread, set on the
+    /// session queue.
+    private let tapScrollSuppression: TapScrollSuppression
+    /// TG-12: the scroll-only tap, running while tap-to-swipe is on and in
+    /// the event path only while armed (`setEnabled`, any thread); started
+    /// and stopped on main.
+    private let scrollTap: ScrollSuppressionTap
     /// TG-03: the release of a trackpad scroll, consumed by the next pass.
     private var pendingGestureRelease: GestureRelease?
     /// TG-03, session queue: the symbols MultitouchSupport lacks (nil until
@@ -259,6 +269,10 @@ final class SessionHost: @unchecked Sendable {
     /// FX-06: a switch to dwindle was refused; the focused display's visible
     /// frame (Cocoa global) for the notice. Main thread; set before `start()`.
     var onDwindleRefused: ((DwindleRefusal, CGRect) -> Void)?
+    /// TG-10: tap-to-swipe armed (true) or a tap disarmed it (false); the
+    /// focused display's visible frame for the notice. Main thread; set
+    /// before `start()`.
+    var onTapToSwipe: ((Bool, CGRect) -> Void)?
     /// UP-06: `gio update [--install]`, answered by the app's updater on the
     /// IPC thread (it may block for the network, so never on `queue`). Set
     /// once before `start()`; read-only afterwards.
@@ -279,6 +293,9 @@ final class SessionHost: @unchecked Sendable {
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.
     init() {
+        let suppression = TapScrollSuppression()
+        tapScrollSuppression = suppression
+        scrollTap = ScrollSuppressionTap { suppression.swallows(at: ProcessInfo.processInfo.systemUptime) }
         space = SpaceCoordinator(context: .init(
             reflowAll: { [unowned self] in reflowAll() },
             discardPendingAdoptions: { [unowned self] in focus.discardPendingAdoptions() },
@@ -732,7 +749,9 @@ final class SessionHost: @unchecked Sendable {
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 listedWindows: { axWindowElements(pid: $0) },
                 windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
-                newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition }
+                newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition },
+                windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) },
+                liveWindowNumbers: { windowServerListedNumbers() }
             ),
             scheduler: scheduler
         )
@@ -742,7 +761,7 @@ final class SessionHost: @unchecked Sendable {
                 ownPID: ProcessInfo.processInfo.processIdentifier,
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
                 scanApp: { [unowned self] in discovery.appAttached($0) },
-                proveVanished: { [unowned self] in discovery.noteSettled(vanished: [$0], alive: []) },
+                proveVanished: { [unowned self] in discovery.noteDestroyed($0) },
                 frameChanged: { [unowned self] id, resized, at in
                     events.windowServerFrameChanged(id, resized: resized, noticeAt: at)
                 },
@@ -901,7 +920,8 @@ final class SessionHost: @unchecked Sendable {
                 focusDim.update()
             },
             holdOverlay: { [unowned self] frames, display, lost in
-                let settle = session.config.animations.resolved(MotionCause.viewScroll.kind)
+                // TG-13: the settle after the fingers always springs.
+                let settle = gestureSettleAnimations(session.config.animations).resolved(MotionCause.viewScroll.kind)
                 let transport = overlayFlight.holdGesture(
                     frames: frames, display: display, spring: settle.spring, animates: settle.isActive, lost: lost
                 )
@@ -941,6 +961,22 @@ final class SessionHost: @unchecked Sendable {
             toggleOverview: { [weak self] in
                 DispatchQueue.main.async { self?.onToggleOverview?() }
             },
+            armTouchGate: { [unowned self] in touchMailbox.setArmedUntil($0) },
+            suppressScroll: { [unowned self] deadline in
+                // TG-12: in or out of the scroll-event path only when arming flips.
+                if tapScrollSuppression.suppress(until: deadline) {
+                    scrollTap.setEnabled(deadline != nil)
+                }
+            },
+            announceTapToSwipe: { [unowned self] armed in
+                guard let frame = visibleFrames[session.manager.focusedDisplay] ?? probe.primaryScreenVisibleFrame else {
+                    return
+                }
+                DispatchQueue.main.async { [weak self] in
+                    self?.onTapToSwipe?(armed, frame)
+                }
+            },
+            after: { [unowned self] delay, work in scheduler.asyncAfter(delay, work) },
             log: { GioLog.record($0, $1) }
         ))
         touchMailbox = TouchFrameMailbox(scheduler: scheduler) { [unowned self] in gestures.deliver($0) }
@@ -1025,6 +1061,7 @@ final class SessionHost: @unchecked Sendable {
         // the first layout.
         watchDisplays()
         watchDesktopPicture()
+        watchWake()
         watchMemoryPressure()
         watchManagedSpace()
         watchWindowManagers()
@@ -1063,6 +1100,8 @@ final class SessionHost: @unchecked Sendable {
         multitouch?.stop()
         multitouchRunning = false
         mainShutDown = true
+        // TG-12: Gio leaves the scroll-event path whatever the arming state.
+        scrollTap.stop()
         queue.sync {
             guard !isShuttingDown else {
                 return
@@ -1456,11 +1495,32 @@ final class SessionHost: @unchecked Sendable {
     /// only while a gesture is on.
     private func applyGestureConfig() {
         let gestures = session.config.gestures
-        touchMailbox.setMinimumFingers(gestures.recognizerSettings.minimumFingers)
+        touchMailbox.configure(
+            minimumFingers: gestures.recognizerSettings.minimumFingers, tapToSwipe: gestures.tapToSwipe
+        )
         // TG-04: a reload re-reads macOS's swipe settings for the facts.
         trackpadPreferencesRead = nil
         DispatchQueue.main.async { [weak self] in
             self?.setMultitouchRunning(gestures.anyEnabled)
+            self?.setScrollTapRunning(gestures.tapToSwipe)
+        }
+    }
+
+    /// TG-12, main thread: the scroll-only tap exists while tap-to-swipe is
+    /// on (disabled, out of the event path, until armed).
+    private func setScrollTapRunning(_ wanted: Bool) {
+        switch scrollTapLifecycle(running: scrollTap.isRunning, wanted: wanted && !mainShutDown) {
+        case .start:
+            if scrollTap.start() {
+                GioLog.record(.info, "scroll tap started (disabled until tap-to-swipe arms)")
+            } else {
+                GioLog.record(.warn, "scroll tap refused; tap-to-swipe strokes also scroll the app underneath")
+            }
+        case .stop:
+            scrollTap.stop()
+            GioLog.record(.info, "scroll tap stopped")
+        case .none:
+            break
         }
     }
 
@@ -1929,11 +1989,15 @@ final class SessionHost: @unchecked Sendable {
             enhancedUI: AXEnhancedUserInterfaceSwitch()
         )
         self.reconciler = reconciler
-        let settings = session.config.animations
+        // TG-13: the pass that settles a released gesture always springs
+        // from the fingers' velocity, even with the Fast preset; the other
+        // kinds of that pass keep their settings.
+        let settings = gestureRelease == nil
+            ? session.config.animations : gestureSettleAnimations(session.config.animations)
         // NA-04: the triggering action picks the pass's animation; a kind
         // that is off makes its pass instant.
         let cause = motionCauses.take()
-        let passAnimation = settings.resolved(cause.kind)
+        let passAnimation = settings.resolved(gestureRelease == nil ? cause.kind : MotionCause.viewScroll.kind)
         let placement = instantPlacement.decide(requested: animate && passAnimation.isActive)
         if case .instant(let reason?) = placement {
             GioLog.record(reason == .mouse ? .debug : .info, instantPlacementLogLine(reason))
@@ -1980,7 +2044,8 @@ final class SessionHost: @unchecked Sendable {
         focus.setHoverFrames(pass.hovered)
         nativeZoom.dropUnjudged(unjudgedZooms)
         animations = ReflowPlanner.applyingAnimationSettings(
-            animations, settings: settings, kinds: pass.kinds, fallback: cause.kind
+            animations, settings: settings, kinds: pass.kinds,
+            fallback: gestureRelease == nil ? cause.kind : MotionCause.viewScroll.kind
         )
         // TG-03: the strip keeps the velocity the fingers left it with.
         if let gestureRelease {
@@ -2532,6 +2597,32 @@ final class SessionHost: @unchecked Sendable {
         ]
     }
 
+    /// FI-15: while the screen locks the apps' Accessibility answers go
+    /// blank; windows the window server kept alive meanwhile are re-read by
+    /// one full rescan after a wake or an unlock (the debounced resync).
+    private func watchWake() {
+        func handler(_ reason: String) -> (Notification) -> Void {
+            { [weak self] _ in
+                self?.queue.async {
+                    guard let self, !self.isShuttingDown else {
+                        return
+                    }
+                    GioLog.record(.info, "session rescan reason=\(reason)")
+                    self.scheduleReflow(full: true)
+                }
+            }
+        }
+        wakeObservers = [
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didWakeNotification, object: nil, queue: .main, using: handler("wake")
+            ),
+            DistributedNotificationCenter.default().addObserver(
+                forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main,
+                using: handler("unlock")
+            ),
+        ]
+    }
+
     /// SM-20: warning and critical memory pressure drop snapshot images
     /// (`SnapshotCacheRefresher.noteMemoryPressure`); SM-21: normal after
     /// them re-captures what the shown strips lack. Event-driven: a
@@ -2582,6 +2673,12 @@ final class SessionHost: @unchecked Sendable {
         }
         // A click is the user choosing the focus: drop any pending keyboard intent.
         focus.recordClick(at: location)
+        // TG-10: a click ends an armed tap-to-swipe (no hop otherwise).
+        if tapScrollSuppression.isArmed {
+            queue.async { [weak self] in
+                self?.gestures.mouseDown()
+            }
+        }
     }
 
     private func startTap() {

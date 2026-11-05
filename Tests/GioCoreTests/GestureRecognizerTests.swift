@@ -263,14 +263,55 @@ final class GestureRecognizerTests: XCTestCase {
     /// session queue.
     func testFrameGateAdmitsGestureCountsAndTheFrameThatEndsThem() {
         var gate = TouchFrameGate(minimumFingers: 3)
-        XCTAssertFalse(gate.admits(1), "pointer movement stays on the callback thread")
-        XCTAssertFalse(gate.admits(2))
-        XCTAssertTrue(gate.admits(3))
-        XCTAssertTrue(gate.admits(3))
-        XCTAssertTrue(gate.admits(2), "the drop below the minimum is delivered once")
-        XCTAssertFalse(gate.admits(1))
-        XCTAssertFalse(gate.admits(0))
+        XCTAssertFalse(gate.admits(1, at: 0), "pointer movement stays on the callback thread")
+        XCTAssertFalse(gate.admits(2, at: 0))
+        XCTAssertTrue(gate.admits(3, at: 0))
+        XCTAssertTrue(gate.admits(3, at: 0))
+        XCTAssertTrue(gate.admits(2, at: 0), "the drop below the minimum is delivered once")
+        XCTAssertFalse(gate.admits(1, at: 0))
+        XCTAssertFalse(gate.admits(0, at: 0))
         gate.minimumFingers = 0
-        XCTAssertFalse(gate.admits(4), "no gesture enabled: nothing crosses")
+        XCTAssertFalse(gate.admits(4, at: 0), "no gesture enabled: nothing crosses")
+    }
+
+    /// TG-10: two-finger scrolling stays on the callback thread until a
+    /// three-finger tap armed tap-to-swipe; then two-finger frames cross
+    /// until the armed deadline (the frames' own clock).
+    func testFrameGateLetsTwoFingersCrossOnlyWhileArmed() {
+        var gate = TouchFrameGate(minimumFingers: 3, tapToSwipe: true)
+        XCTAssertFalse(gate.admits(2, at: 0), "not armed: two fingers are the system's scrolling")
+        gate.armedUntil = 5
+        XCTAssertFalse(gate.admits(1, at: 1))
+        XCTAssertTrue(gate.admits(2, at: 1))
+        XCTAssertTrue(gate.admits(2, at: 2))
+        XCTAssertTrue(gate.admits(1, at: 2.1), "the lift is delivered once")
+        XCTAssertFalse(gate.admits(0, at: 2.2))
+        XCTAssertFalse(gate.admits(2, at: 6), "past the deadline")
+        XCTAssertTrue(gate.admits(3, at: 6), "the arming tap's fingers still cross")
+        gate.armedUntil = nil
+        gate.minimumFingers = 0
+        XCTAssertFalse(gate.admits(2, at: 7))
+    }
+
+    /// TG-10: a stroke that started while armed crosses to its lift even
+    /// past the deadline, and with tap-to-swipe on a three-finger touch is
+    /// delivered down to its lift (the tap's fingers lift one by one).
+    func testFrameGateFollowsATouchToItsLift() {
+        var gate = TouchFrameGate(minimumFingers: 3, tapToSwipe: true)
+        XCTAssertTrue(gate.admits(3, at: 0))
+        XCTAssertTrue(gate.admits(2, at: 0.1))
+        XCTAssertTrue(gate.admits(2, at: 0.2), "still the tap's fingers")
+        XCTAssertTrue(gate.admits(1, at: 0.3), "the lift below two")
+        XCTAssertFalse(gate.admits(1, at: 0.4))
+        gate.armedUntil = 1
+        XCTAssertTrue(gate.admits(2, at: 0.9))
+        XCTAssertTrue(gate.admits(2, at: 1.5), "a stroke begun while armed runs to its lift")
+        XCTAssertTrue(gate.admits(0, at: 1.6))
+        XCTAssertFalse(gate.admits(2, at: 1.7))
+
+        var plain = TouchFrameGate(minimumFingers: 3)
+        XCTAssertTrue(plain.admits(3, at: 0))
+        XCTAssertTrue(plain.admits(2, at: 0.1))
+        XCTAssertFalse(plain.admits(2, at: 0.2), "without tap-to-swipe only the one drop frame")
     }
 }

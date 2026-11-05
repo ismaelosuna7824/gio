@@ -113,4 +113,80 @@ final class VanishedWindowScanTests: XCTestCase {
         XCTAssertFalse(world.registered.contains { $0.id == ids[0] })
         XCTAssertTrue(world.follows.isEmpty)
     }
+
+    /// FI-15 (live, screen lock): the reconciler reports every window
+    /// vanished and the proof scan reads apps whose lists hold no window,
+    /// yet the window server still lists their numbers. Kept, not purged.
+    func testAWindowTheWindowServerStillListsSurvivesAnEmptyProofScan() {
+        let ids = register([discovered(pid: 7), discovered(pid: 7)])
+        world.windowNumbers = [ids[0]: 41, ids[1]: 42]
+        world.liveNumbers = [41, 42, 500]
+        world.scan = SystemWindowDiscoveryResult(windows: [], completePIDs: [7])
+
+        discovery.noteSettled(vanished: ids, alive: [])
+        scheduler.runPending()
+
+        XCTAssertEqual(Set(world.registered.map(\.id)), Set(ids))
+        XCTAssertTrue(world.forgotten.isEmpty)
+        XCTAssertEqual(world.liveNumberQueries, 1, "one window-server query per purge batch")
+        XCTAssertEqual(world.reflows, 0, "nothing changed")
+        let kept = world.logs.map(\.1).filter { $0.hasPrefix("window kept") }
+        XCTAssertEqual(kept, ids.map { "window kept id=\($0.pid):\($0.elementID) reason=window-server-alive" })
+        XCTAssertTrue(world.logs.contains { $0.1.hasPrefix("window vanished scan pids=1 purged=0 ") })
+
+        // Later the window server drops them too: the next scan purges them.
+        world.scan = SystemWindowDiscoveryResult(windows: [], completePIDs: [7])
+        world.liveNumbers = [500]
+        discovery.enumerateAndPlace()
+        XCTAssertTrue(world.registered.isEmpty, "once the window server drops them, the scan purges them")
+    }
+
+    func testAWindowWithoutARecordedNumberIsPurgedAsBefore() {
+        let ids = register([discovered(pid: 7)])
+        world.liveNumbers = [41]
+        world.scan = SystemWindowDiscoveryResult(windows: [], completePIDs: [7])
+
+        discovery.noteSettled(vanished: ids, alive: [])
+        scheduler.runPending()
+
+        XCTAssertTrue(world.registered.isEmpty)
+        XCTAssertEqual(world.liveNumberQueries, 0, "no number, nothing to ask")
+    }
+
+    /// A destroyed notice is the window server's own proof: its proof scan
+    /// purges even a window already kept once (its vanish was scanned).
+    func testADestroyedNoticeStillRemovesTheWindow() {
+        let ids = register([discovered(pid: 7)])
+        world.windowNumbers = [ids[0]: 41]
+        world.liveNumbers = [41]
+        world.scan = SystemWindowDiscoveryResult(windows: [], completePIDs: [7])
+        discovery.noteSettled(vanished: ids, alive: [])
+        scheduler.runPending()
+        XCTAssertEqual(world.registered.map(\.id), ids, "kept during the lock")
+
+        discovery.noteDestroyed(ids[0])
+        scheduler.runPending()
+
+        XCTAssertTrue(world.registered.isEmpty)
+        XCTAssertEqual(world.forgotten, ids)
+        XCTAssertEqual(world.reflows, 1)
+    }
+
+    /// A destroyed window the app still lists (a tab, a reopened element)
+    /// stays, and its notice does not outlive the scan.
+    func testADestroyedNoticeForAListedWindowPurgesNothing() {
+        let window = discovered(pid: 7)
+        let ids = register([window])
+        world.windowNumbers = [ids[0]: 41]
+        world.liveNumbers = [41]
+        world.scan = SystemWindowDiscoveryResult(windows: [window], completePIDs: [7])
+
+        discovery.noteDestroyed(ids[0])
+        scheduler.runPending()
+        XCTAssertEqual(world.registered.map(\.id), ids)
+
+        world.scan = SystemWindowDiscoveryResult(windows: [], completePIDs: [7])
+        discovery.enumerateAndPlace()
+        XCTAssertEqual(world.registered.map(\.id), ids, "the old notice proves nothing now")
+    }
 }

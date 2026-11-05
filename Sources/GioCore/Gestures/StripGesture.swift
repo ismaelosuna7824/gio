@@ -223,6 +223,83 @@ public func snapGestureScroll(_ strip: GestureStrip, offset: CGFloat, velocity: 
     return GestureSnap(offset: best.offset, column: column)
 }
 
+/// TG-13: travel, as a fraction of the start column's width, that pages a
+/// slow armed two-finger stroke to the neighbour.
+public let gesturePageTravel: CGFloat = 0.2
+/// TG-13: release speed (viewport points per second) that pages whatever
+/// the travel; a flick's direction wins over its travel. Live flicks
+/// measured 2000-3000.
+public let gesturePageVelocity: CGFloat = 500
+
+/// TG-13: the column a paging stroke starts from: the focused window's,
+/// else the first column fully in view at the committed offset, else the
+/// first.
+public func gesturePageStartColumn(_ strip: GestureStrip, focused: WindowID?) -> Int {
+    if let focused, let index = strip.columns.firstIndex(where: { $0.focus == focused }) {
+        return index
+    }
+    let left = strip.committedOffset
+    let right = left + strip.viewportWidth
+    return strip.columns.firstIndex { $0.start - strip.padding >= left && $0.end + strip.padding <= right } ?? 0
+}
+
+/// TG-13: the armed two-finger stroke pages like a macOS Space switch: at
+/// most one column from `start`. A release faster than
+/// `gesturePageVelocity` goes to the neighbour in its direction, else a
+/// `travel` (offset points since the stroke began) of `gesturePageTravel`
+/// of the start column's width does, else the strip goes back. Clamped at
+/// the strip's ends. The target is revealed from the committed offset like
+/// a keyboard focus move (minimal scroll; centered with centering).
+public func pageGestureScroll(_ strip: GestureStrip, from start: Int, travel: CGFloat, velocity: CGFloat) -> GestureSnap? {
+    guard let last = strip.columns.indices.last else {
+        return nil
+    }
+    let origin = min(max(start, 0), last)
+    let width = strip.columns[origin].end - strip.columns[origin].start
+    var step = 0
+    if abs(velocity) >= gesturePageVelocity {
+        step = velocity > 0 ? 1 : -1
+    } else if abs(travel) >= gesturePageTravel * width {
+        step = travel > 0 ? 1 : -1
+    }
+    let index = min(max(origin + step, 0), last)
+    let column = strip.columns[index]
+    let pad = strip.padding
+    let viewport = strip.viewportWidth
+    let offset: CGFloat
+    if strip.centering {
+        offset = (column.start + column.end - viewport) / 2
+    } else {
+        offset = min(max(strip.committedOffset, column.end + pad - viewport), column.start - pad)
+    }
+    return GestureSnap(offset: min(max(offset, 0), strip.maxOffset), column: index)
+}
+
+/// TG-13: the settings of the pass that settles a released gesture. A
+/// settle the fingers started always springs from the release velocity,
+/// like a native Space switch, even with the Fast preset (`enabled =
+/// false`) or `horizontal-view-movement` off: that kind becomes an active
+/// spring (its own spring when it was active, niri's otherwise; a 0 ms
+/// duration becomes the default). Every other kind keeps exactly its
+/// on/off state, so the rest of the pass stays as instant as configured.
+public func gestureSettleAnimations(_ settings: AnimationsSectionConfig) -> AnimationsSectionConfig {
+    let scroll = settings.resolved(.horizontalViewMovement)
+    var settled = settings
+    settled.enabled = true
+    for kind in AnimationKind.allCases where kind != .horizontalViewMovement {
+        var custom = settings.overrides[kind] ?? AnimationOverride()
+        custom.enabled = settings.resolved(kind).enabled
+        settled.overrides[kind] = custom
+    }
+    let spring = scroll.isActive ? scroll.spring : SpringParameters.niri
+    settled.overrides[.horizontalViewMovement] = AnimationOverride(
+        enabled: true, curve: .spring, springDampingRatio: spring.dampingRatio, springStiffness: spring.stiffness,
+        durationMilliseconds: scroll.durationMilliseconds > 0
+            ? scroll.durationMilliseconds : AnimationsSectionConfig().durationMilliseconds
+    )
+    return settled
+}
+
 /// The settle in State (invariant 1): the workspace takes the snapped offset
 /// and focuses the snapped column's window, and the display the fingers
 /// moved takes the focus when it shows that workspace. True when the
