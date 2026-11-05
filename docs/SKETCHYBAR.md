@@ -9,7 +9,7 @@
 | `gio workspace N` | A click on a workspace item switches to it. |
 | `[layout] reserved-top` | Keeps the bar's height free at the top of every display, so tiled windows never sit under the bar ([reference](USER_GUIDE.md#layout)). |
 
-> Status: the hooks, the JSON, the command line tool and the reserved space are covered by Gio's automated tests; this SketchyBar setup has not been run live yet. Report what you find.
+> Status: tried live on a notched MacBook Pro (macOS 26) with Gio's dev build: hooks fire on every switch (`hook ran ... status=0`, 12-30 ms), the bar follows a workspace change in about 150 ms, a click on an item switches workspace, and the `gio` link answers. The macOS 26 notes below come from that run.
 
 ## 1. Install the `gio` command
 
@@ -50,6 +50,10 @@ Fullscreen windows (`Alt+Shift+F`) still cover the reserved band; every other la
 SketchyBar draws at the top of the screen, where the menu bar is. Let macOS hide it: **System Settings > Control Center > Automatically hide and show the menu bar: Always** (on macOS 13 the setting is under **Desktop & Dock**). The menu bar then slides in only when the pointer touches the top edge, and Gio's usable area starts at the top of the display, less `reserved-top`.
 
 To keep the menu bar instead, put the bar under it (`sketchybar --bar y_offset=<menu bar height>`) and keep `reserved-top` equal to the bar's height: the menu bar is already outside Gio's usable area.
+
+**Notched displays.** With the menu bar hidden, macOS still keeps the notch row out of the usable area, so a 32 pt bar in that row (`y_offset` about 2) needs `reserved-top = 0`: Gio already tiles below the row.
+
+**macOS 26: hidden menu bar items still take the pointer.** The hidden menu bar stays as one invisible window over the top row, above SketchyBar. Where a hidden status item sits (third-party apps on the right, such as Tinybar or Droppy), the first click goes to that item and its tooltip shows up over the bar. Turn those apps off in **System Settings > Menu Bar > Allow in the Menu Bar**, keep clickable bar items away from them, or put the bar under the row. SketchyBar's aliases of status items do not work there either: macOS 26 draws every status item inside that one window, so an alias captures the wrong window.
 
 ## 4. `~/.config/sketchybar/sketchybarrc`
 
@@ -159,3 +163,4 @@ To show the apps, read `.apps | join(" ")` in the `jq` filter and set it as the 
 - **Nothing updates.** Set `[logging] level = "debug"`, `gio reload`, switch workspace and look for `hook ran name=on-workspace-change ms=... status=0` in the Logs section. `status=127` means the shell did not find `sketchybar`; use its full path (`/opt/homebrew/bin/sketchybar`). `status=timeout` means the command ran longer than 5 s.
 - **Items stay hidden.** Run `~/.config/sketchybar/plugins/gio.sh` in Terminal; `jq` errors show there. Check that `gio list-workspaces --json` answers (Gio must be running).
 - **Windows sit under the bar.** `reserved-top` must be at least the bar's height (plus its `y_offset` when the menu bar is hidden and the bar is offset).
+- **Fonts show as text (`:safari:`) or boxes.** A font installed by Homebrew can stay quarantined and inactive: `xattr -d com.apple.quarantine ~/Library/Fonts/<font>.ttf`, then `brew services restart sketchybar`. SF Symbols need Apple's SF Pro (`brew install --cask font-sf-pro`, asks for your password); `font-symbols-only-nerd-font` gives icons without it.
