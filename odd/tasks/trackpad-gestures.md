@@ -405,7 +405,7 @@ read for the snap and focus rules.
 - [x] TG-10 — Tap to swipe: a three-finger tap arms two-finger steps (window left/right,
   workspace up/down), the gate lets two-finger frames cross only while armed, the tap swallows
   scrolling while armed, notice, `tap-to-swipe` key, Settings toggle, Look up conflict.
-  NOT verified live (TESTING.md 15l).
+  Commit `a8f84c5`. NOT verified live (TESTING.md 15l).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -536,3 +536,5 @@ read for the snap and focus rules.
   both fixed). Not pushed; LIVE PENDING.
 - 2026-10-16: TG-08 committed `5c53bf4` on `feat/app-polish` (deliberate vertical swipe,
   `swipe-distance`). Not pushed; LIVE PENDING.
+- 2026-11-04: TG-10 committed `a8f84c5` on `dev` (tap to swipe). Not pushed; NOT verified live
+  (TESTING.md 15l).
