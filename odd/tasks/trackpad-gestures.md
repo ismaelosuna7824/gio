@@ -472,8 +472,8 @@ read for the snap and focus rules.
   scroll-event path only while armed (`ScrollSuppressionTap`, hotkey tap reverted). Commit
   `809d746`. NOT verified live (TESTING.md 15l).
 - [x] TG-13 — The gesture settle always springs from the release velocity (also in Fast); the
-  armed two-finger stroke pages one column per flick. NOT verified live (TESTING.md 15i (o),
-  15l (b)).
+  armed two-finger stroke pages one column per flick. Commit `c8131b3`. NOT verified live
+  (TESTING.md 15i (o), 15l (b)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -649,5 +649,5 @@ read for the snap and focus rules.
   verified live (TESTING.md 15l (j)).
 - 2026-11-05: TG-12 committed `809d746` on `dev` (armed horizontal stroke drives the strip,
   scroll tap only while armed). Not pushed; NOT verified live (TESTING.md 15l).
-- 2026-11-05: TG-13 on `dev` (gesture settle always springs, armed stroke pages one column).
-  Not pushed; NOT verified live.
+- 2026-11-05: TG-13 committed `c8131b3` on `dev` (gesture settle always springs, armed stroke
+  pages one column). Not pushed; NOT verified live.
