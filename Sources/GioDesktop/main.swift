@@ -131,12 +131,23 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         bar.onOpenLauncher = { [weak self] in self?.showLauncher(source: .menu) }
         bar.onOpenMain = { [weak self] in self?.mainWindow.show() }
         bar.stateProvider = { [host] in host.barState() }
-        bar.updateTitleProvider = { [updates] in updateMenuTitle(updates.state) }
+        bar.updateTitleProvider = { [updates] in updateMenuTitle(updates.state, eligibility: updates.eligibility) }
         // Read when the menu opens (no wait on the session queue).
         bar.launcherHotkeyProvider = { [host] in shownHotkey(for: .toggleLauncher, in: host.snapshot().config) }
         bar.onUpdate = { [weak self] in
-            self?.mainWindow.show()
-            self?.updates.notesPresented = true
+            guard let self else {
+                return
+            }
+            // DD-11: the item updates in place; the main window shows the
+            // download progress (or, for a copy that cannot replace itself,
+            // the notes with the release page).
+            mainWindow.show()
+            switch updateMenuAction(eligibility: updates.eligibility) {
+            case .install:
+                updates.startUpdate()
+            case .showNotes:
+                updates.notesPresented = true
+            }
         }
         host.onBarState = { [weak bar] state in bar?.apply(state) }
         bar.start()

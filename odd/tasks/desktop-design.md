@@ -181,3 +181,13 @@ DD-01..DD-05 delegated writers, sequential, after the in-flight native-zoom fix 
   expect the new ones; tests that used them as a precondition for motion set `enabled = true` (and
   `renderer = .snapshot` where the snapshot path is under test). Full `swift test`: Core 2264,
   Session 600, UI 389 (54 skipped), POC 7, Mac 19, macOS 120; signed build below.
+
+- [x] DD-11 (`DONE`, commit below) — update from the menu bar in place (user, 2026-11-04: "de ahí mismo se
+  tiene que descargar y actualizar ... no tener que estar yendo a los releases"). The in-app updater
+  already replaced the bundle (live: 0.1.7 in /Applications → `gio update --install` → `update 0.1.8
+  download started`, `verified and staged`, `installing; quitting for the helper`, reopened as 0.1.8 in
+  0.5 s), but the menu bar's **Update to vX…** only opened the notes, so the update looked like a link.
+  Now an installable copy's item reads **Update to vX and Restart** and starts the update
+  (`updateMenuAction`), the main window showing the progress; a copy that only notifies keeps the notes
+  with the release page. RED: `UpdatePresentationTests.testTheMenuItemInstallsWhenThisCopyCan` and the
+  new `updateMenuTitle(_:eligibility:)` (compile failure).

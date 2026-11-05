@@ -92,14 +92,33 @@ public func updateRowPresentation(
     return row
 }
 
-/// The menu bar item while an update waits for the user.
-public func updateMenuTitle(_ state: UpdateState) -> String? {
+/// The menu bar item while an update waits for the user. DD-11: a copy
+/// that can replace itself says so ("and Restart").
+public func updateMenuTitle(_ state: UpdateState, eligibility: InstallEligibility) -> String? {
     switch state {
     case .available(let update), .readyToInstall(let update, _), .failed(_, let update?):
+        if case .installable = eligibility {
+            return "Update to \(update.version.tag) and Restart"
+        }
         return "Update to \(update.version.tag)…"
     default:
         return nil
     }
+}
+
+/// DD-11: what the menu bar's update item does.
+public enum UpdateMenuAction: Equatable, Sendable {
+    /// Download, verify, replace this copy and reopen it.
+    case install
+    /// This copy cannot replace itself: the notes, with the release page.
+    case showNotes
+}
+
+public func updateMenuAction(eligibility: InstallEligibility) -> UpdateMenuAction {
+    if case .installable = eligibility {
+        return .install
+    }
+    return .showNotes
 }
 
 /// Release notes reduced to what the sheet renders: headings, bullets and
