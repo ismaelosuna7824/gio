@@ -417,7 +417,7 @@ read for the snap and focus rules.
   scrolling while armed, notice, `tap-to-swipe` key, Settings toggle, Look up conflict.
   Commit `a8f84c5`. NOT verified live (TESTING.md 15l).
 - [x] TG-11 — `tap-to-swipe-distance` (default 0.2, was a fixed 0.1), template, Settings slider,
-  form round-trip. NOT verified live (TESTING.md 15l (j)).
+  form round-trip. Commit `f65e89a`. NOT verified live (TESTING.md 15l (j)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -560,3 +560,5 @@ read for the snap and focus rules.
   `swipe-distance`). Not pushed; LIVE PENDING.
 - 2026-11-04: TG-10 committed `a8f84c5` on `dev` (tap to swipe). Not pushed; NOT verified live
   (TESTING.md 15l).
+- 2026-11-05: TG-11 committed `f65e89a` on `dev` (tap-to-swipe distance). Not pushed; NOT
+  verified live (TESTING.md 15l (j)).
