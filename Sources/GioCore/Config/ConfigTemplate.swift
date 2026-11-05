@@ -42,6 +42,10 @@ public func defaultConfigTemplate() -> String {
     # (a split tree that keeps every window on screen). Alt+Shift+T switches
     # the current workspace; [[workspace]] layout = "..." sets one workspace.
     default-layout = "scrolling"
+    # Points (0-200) kept free at the top of every display for a custom bar
+    # such as SketchyBar, below the macOS menu bar when it shows. Fullscreen
+    # windows still cover it. See docs/SKETCHYBAR.md.
+    # reserved-top = 32
 
     [dwindle]
     # Dwindle workspaces. A new window splits the focused one; this is the
@@ -161,6 +165,15 @@ public func defaultConfigTemplate() -> String {
     # Minimum severity written to ~/.config/gio/gio.log: trace, debug, info,
     # warn or error. Lines below it cost nothing; use "debug" to troubleshoot.
     level = "info"
+
+    [hooks]
+    # Shell commands run with /bin/sh -c when the bar state changes (off the
+    # window manager's queue, output discarded, stopped after 5 s, one run at
+    # a time). They see GIO_FOCUSED_WORKSPACE, GIO_FOCUSED_WORKSPACE_NAME,
+    # GIO_PREV_WORKSPACE and GIO_DISPLAY. Empty or commented out: off. Use
+    # single quotes inside the command. See docs/SKETCHYBAR.md.
+    # on-workspace-change = "sketchybar --trigger gio_workspace_change"
+    # on-windows-change = "sketchybar --trigger gio_windows_change"
 
     [gestures]
     # Trackpad swipes (3-5 fingers), all off until you turn them on. macOS

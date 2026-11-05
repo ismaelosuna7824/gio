@@ -40,6 +40,7 @@ private enum ConfigSection: Equatable {
     case windowRules
     case workspaceEntry
     case dwindle
+    case hooks
     case ignored(String)
 }
 
@@ -120,6 +121,7 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             case "gestures": section = .gestures
             case "keybindings": section = .keybindings
             case "dwindle": section = .dwindle
+            case "hooks": section = .hooks
             case let name where name.hasPrefix("animations."):
                 // NA-04: `[animations.<niri name>]`.
                 if let kind = AnimationKind(rawValue: String(name.dropFirst("animations.".count))) {
@@ -171,6 +173,8 @@ public func parseGioConfig(_ text: String) -> Result<(GioConfig, [String]), Conf
             applyLoggingKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .dwindle:
             applyDwindleKey(key, value: value, line: line, warnings: &warnings, config: &config)
+        case .hooks:
+            applyHooksKey(key, value: value, line: line, errors: &errors, warnings: &warnings, config: &config)
         case .gestures:
             applyGesturesKey(key, value: value, line: line, warnings: &warnings, config: &config)
         case .keybindings:
@@ -386,6 +390,20 @@ func applyLayoutKey(
         applyBoolKey(key, expected: key, value: value, line: line, table: "layout", errors: &errors) {
             config.layout.alwaysCenterSingleColumn = $0
         }
+    case "reserved-top":
+        // SB-01: room for a custom bar; out of range clamps (the WM keeps working).
+        guard let number = value.number, number.isFinite else {
+            errors.append("line \(line): layout.reserved-top expects a number of points")
+            return
+        }
+        let range = LayoutSectionConfig.reservedTopRange
+        let clamped = min(max(number, Double(range.lowerBound)), Double(range.upperBound))
+        if clamped != number {
+            warnings.append(
+                "line \(line): layout.reserved-top expects \(range.lowerBound) to \(range.upperBound) points, clamped to \(Int(clamped))"
+            )
+        }
+        config.layout.reservedTop = CGFloat(clamped)
     default:
         warnings.append("line \(line): unknown layout key '\(key)', ignored")
     }

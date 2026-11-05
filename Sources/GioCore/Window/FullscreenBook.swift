@@ -8,9 +8,11 @@ import Foundation
 /// never uses native fullscreen Spaces. `usable` is the display's
 /// visible frame (Cocoa, y up), so its `maxY` is the menu bar's lower edge.
 /// `gap` insets the frame on every side (`[layout] fullscreen-gap`), keeping
-/// it under the menu bar; it never collapses below zero size.
-public func fullscreenFrame(display: CGRect, usable: CGRect, gap: CGFloat = 0) -> CGRect {
-    let top = min(max(usable.maxY, display.minY), display.maxY)
+/// it under the menu bar; it never collapses below zero size. SB-01:
+/// `usable` has `reservedTop` taken off its top (`usableFrame`); the
+/// fullscreen window covers that band again.
+public func fullscreenFrame(display: CGRect, usable: CGRect, gap: CGFloat = 0, reservedTop: CGFloat = 0) -> CGRect {
+    let top = min(max(usable.maxY + max(reservedTop, 0), display.minY), display.maxY)
     let base = CGRect(
         x: display.minX, y: display.minY, width: display.width, height: top - display.minY
     )

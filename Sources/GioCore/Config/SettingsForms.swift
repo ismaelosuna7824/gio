@@ -47,6 +47,8 @@ public struct LayoutSettingsForm: Equatable, Sendable {
     public var splitWidthMultiplier: Double
     /// FX-04 `[dwindle] max-windows`.
     public var maxWindows: Int
+    /// SB-01 `[layout] reserved-top`.
+    public var reservedTop: Double
 
     public init(config: LayoutSectionConfig, dwindle: DwindleSectionConfig = DwindleSectionConfig()) {
         gaps = Double(config.gaps)
@@ -71,6 +73,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         splitRatio = Double(dwindle.defaultSplitRatio)
         splitWidthMultiplier = Double(dwindle.splitWidthMultiplier)
         maxWindows = dwindle.maxWindows
+        reservedTop = Double(config.reservedTop)
     }
 
     private static func text(_ value: Double) -> String {
@@ -123,6 +126,12 @@ public struct LayoutSettingsForm: Equatable, Sendable {
         if !DwindleSectionConfig.maxWindowsRange.contains(maxWindows) {
             found.append("Dwindle maximum windows must be 1 to 32.")
         }
+        let reservedRange = LayoutSectionConfig.reservedTopRange
+        if !(reservedTop.isFinite && reservedTop >= Double(reservedRange.lowerBound)
+            && reservedTop <= Double(reservedRange.upperBound))
+        {
+            found.append("Space for a custom bar must be \(reservedRange.lowerBound) to \(reservedRange.upperBound) points.")
+        }
         return found
     }
 
@@ -151,6 +160,7 @@ public struct LayoutSettingsForm: Equatable, Sendable {
             .set(table: "dwindle", key: "default-split-ratio", value: .number(splitRatio)),
             .set(table: "dwindle", key: "split-width-multiplier", value: .number(splitWidthMultiplier)),
             .set(table: "dwindle", key: "max-windows", value: .int(maxWindows)),
+            .set(table: "layout", key: "reserved-top", value: .number(reservedTop)),
         ]
     }
 }

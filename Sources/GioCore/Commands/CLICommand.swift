@@ -9,6 +9,9 @@ public enum CLICommand: Equatable, Sendable {
     case restart
     case listWindows
     case listWorkspaces
+    /// SB-01 `gio list-workspaces --json`: every workspace for a custom bar
+    /// (`encodeWorkspaceBarJSON`).
+    case listWorkspacesJSON
     case focus(FocusDirection)
     case move(FocusDirection)
     case workspace(Int)
@@ -53,7 +56,12 @@ public func parseCLICommand(_ args: [String]) -> Result<CLICommand, CLICommandEr
     case "reload": return .success(.reload)
     case "restart": return .success(.restart)
     case "list-windows": return .success(.listWindows)
-    case "list-workspaces": return .success(.listWorkspaces)
+    case "list-workspaces":
+        switch Array(args.dropFirst()) {
+        case []: return .success(.listWorkspaces)
+        case ["--json"]: return .success(.listWorkspacesJSON)
+        default: return .failure(.missingArgument(name: "--json", command: verb))
+        }
     case "focus", "move":
         guard args.count > 1 else {
             return .failure(.missingArgument(name: "left|right|up|down", command: verb))
@@ -143,7 +151,7 @@ public func cliUsage() -> String {
       gio reload
       gio restart
       gio list-windows
-      gio list-workspaces
+      gio list-workspaces [--json]
       gio focus left|right|up|down
       gio move left|right|up/down
       gio workspace 1...9

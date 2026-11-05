@@ -222,6 +222,7 @@ func describeAction(_ command: CLICommand) -> String {
     case .restart: return "restart"
     case .listWindows: return "list-windows"
     case .listWorkspaces: return "list-workspaces"
+    case .listWorkspacesJSON: return "list-workspaces --json"
     case .focus(let direction): return "focus \(direction)"
     case .move(let direction): return "move \(direction)"
     case .workspace(let number): return "workspace \(number)"

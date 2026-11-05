@@ -43,6 +43,7 @@ struct LayoutSettingsView: View {
             widthCard
             heightCard
             fullscreenCard
+            customBarCard
             dwindleCard
         }
         .onReceive(model.$snapshot) { snapshot in
@@ -179,6 +180,21 @@ struct LayoutSettingsView: View {
                 }
             }
             problems(matching: ["Fullscreen"])
+        }
+    }
+
+    /// SB-01 `[layout] reserved-top`.
+    private var customBarCard: some View {
+        SectionCard(
+            "Custom Bar",
+            footer: "Points kept free at the top of every display for a bar such as SketchyBar, below the macOS menu bar when it shows. Fullscreen windows still cover it. See docs/SKETCHYBAR.md."
+        ) {
+            CardRow(divider: false) {
+                SliderRow(
+                    "Space for a custom bar (top)", value: form.reservedTop, in: 0...200, step: 1, format: formatPoints
+                )
+            }
+            problems(matching: ["Space for a custom bar"])
         }
     }
 
