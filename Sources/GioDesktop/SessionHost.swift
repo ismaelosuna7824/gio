@@ -920,7 +920,8 @@ final class SessionHost: @unchecked Sendable {
                 focusDim.update()
             },
             holdOverlay: { [unowned self] frames, display, lost in
-                let settle = session.config.animations.resolved(MotionCause.viewScroll.kind)
+                // TG-13: the settle after the fingers always springs.
+                let settle = gestureSettleAnimations(session.config.animations).resolved(MotionCause.viewScroll.kind)
                 let transport = overlayFlight.holdGesture(
                     frames: frames, display: display, spring: settle.spring, animates: settle.isActive, lost: lost
                 )
@@ -1988,11 +1989,15 @@ final class SessionHost: @unchecked Sendable {
             enhancedUI: AXEnhancedUserInterfaceSwitch()
         )
         self.reconciler = reconciler
-        let settings = session.config.animations
+        // TG-13: the pass that settles a released gesture always springs
+        // from the fingers' velocity, even with the Fast preset; the other
+        // kinds of that pass keep their settings.
+        let settings = gestureRelease == nil
+            ? session.config.animations : gestureSettleAnimations(session.config.animations)
         // NA-04: the triggering action picks the pass's animation; a kind
         // that is off makes its pass instant.
         let cause = motionCauses.take()
-        let passAnimation = settings.resolved(cause.kind)
+        let passAnimation = settings.resolved(gestureRelease == nil ? cause.kind : MotionCause.viewScroll.kind)
         let placement = instantPlacement.decide(requested: animate && passAnimation.isActive)
         if case .instant(let reason?) = placement {
             GioLog.record(reason == .mouse ? .debug : .info, instantPlacementLogLine(reason))
@@ -2039,7 +2044,8 @@ final class SessionHost: @unchecked Sendable {
         focus.setHoverFrames(pass.hovered)
         nativeZoom.dropUnjudged(unjudgedZooms)
         animations = ReflowPlanner.applyingAnimationSettings(
-            animations, settings: settings, kinds: pass.kinds, fallback: cause.kind
+            animations, settings: settings, kinds: pass.kinds,
+            fallback: gestureRelease == nil ? cause.kind : MotionCause.viewScroll.kind
         )
         // TG-03: the strip keeps the velocity the fingers left it with.
         if let gestureRelease {

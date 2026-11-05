@@ -419,7 +419,9 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(world.actions, [], "no discrete step")
     }
 
-    func testTheReleaseSnapsWithTheVelocityAndFocusesTheColumn() throws {
+    /// TG-13: a flick pages one column, like a Space switch, whatever its
+    /// speed; the settle keeps the release velocity.
+    func testAFlickPagesOneColumnAndFocusesIt() throws {
         world.settings.tapToSwipe = true
         controller.deliver(tap(at: 0))
         controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 6) + [frame(0.57, fingers: 0, x: 0)])
@@ -428,9 +430,26 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(release.velocity, -4285.7, accuracy: 0.1, "the same hand-off as the TG-03 scroll")
         XCTAssertTrue(release.focusChanged, "the settle raises the landed column (uncentered intent)")
         let workspace = world.manager.currentWorkspace()
-        XCTAssertEqual(workspace.viewportOffset, 1440)
-        XCTAssertEqual(workspace.focusedWindow, id(4))
-        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll end") })
+        XCTAssertEqual(workspace.viewportOffset, 224, "the neighbour, right-aligned, not the strip's end")
+        XCTAssertEqual(workspace.focusedWindow, id(2))
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll end") && $0.hasSuffix("page=true") })
+    }
+
+    func testAShortSlowArmedDragGoesBack() throws {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 1) + [frame(0.7, fingers: 2, x: 0.45), frame(0.71, fingers: 0, x: 0)])
+        let release = try XCTUnwrap(world.releases.first)
+        XCTAssertFalse(release.focusChanged)
+        XCTAssertEqual(world.manager.currentWorkspace().viewportOffset, 0)
+        XCTAssertEqual(world.manager.currentWorkspace().focusedWindow, id(1))
+    }
+
+    /// TG-13: the configured 3-5 finger scroll keeps niri's projected snap.
+    func testTheThreeFingerScrollStillProjects() {
+        controller.deliver(swipeLeft(steps: 6) + [frame(0.07, fingers: 2, x: 0.2)])
+        XCTAssertEqual(world.manager.currentWorkspace().viewportOffset, 1440)
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll end") && $0.hasSuffix("page=false") })
     }
 
     func testAnExtraFingerOrAClickAbandonsTheArmedScroll() {

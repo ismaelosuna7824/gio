@@ -398,6 +398,27 @@ read for the snap and focus rules.
   stops it. Chosen over creating and destroying a tap per arming: no tap creation or thread
   start on main at the moment the first stroke begins (one `CGEvent.tapEnable`), and no live
   tap left behind by a missed teardown.
+- TG-13 native-feeling release (user live feedback, 2026-11-05, after TG-12: "el drag aún se
+  siente un poco raro, no tiene la sensación nativa que tiene cambiar entre spaces"). Log
+  (`~/.config/gio/gio.log`, 06:56, Fast preset: `[animations] enabled = false`, renderer ax):
+  every armed stroke was a quick flick (begin to end 40-90 ms, velocity 2000-3000), e.g.
+  `gesture scroll end offset=1670 snap=3008 column=3 velocity=-2121` and `offset=1213 snap=0
+  column=0 velocity=2970`: the projected niri snap skipped columns and, with animations off,
+  the settle pass was instant, so the strip jumped from under the fingers to the target.
+  Native Space switching pages one Space per flick and always springs the rest of the way
+  with the finger's velocity. Decision: (1) `gestureSettleAnimations` (pure): the pass after
+  a gesture release (TG-03 and tap-to-swipe) always springs the `horizontal-view-movement`
+  kind from the release velocity (its spring when active, niri's otherwise), every other kind
+  keeps its configured on/off, so keyboard and window moves stay instant in Fast;
+  `performReflow` uses it, with the scroll kind for the pass and as the fallback kind, when
+  `pendingGestureRelease` is set, and the overlay hold asks the same settings. (2)
+  `pageGestureScroll` (pure) for the armed two-finger stroke: at most one column from the
+  column focused at the stroke's start (`gesturePageStartColumn`); a release faster than
+  `gesturePageVelocity` (500 pt/s of offset) pages in its direction (a flick's direction wins
+  over its travel), else a travel of `gesturePageTravel` (0.2) of the start column's width
+  pages, else the strip goes back; clamped at the ends; the target is revealed from the
+  committed offset like `focus-left/right` (centered with centering). The 3-5 finger scroll
+  keeps the projected niri snap. The end log adds `page=<bool>`.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -450,6 +471,9 @@ read for the snap and focus rules.
   and focuses); vertical stays one workspace per stroke (default 0.1); Gio is in the
   scroll-event path only while armed (`ScrollSuppressionTap`, hotkey tap reverted). Commit
   `809d746`. NOT verified live (TESTING.md 15l).
+- [x] TG-13 — The gesture settle always springs from the release velocity (also in Fast); the
+  armed two-finger stroke pages one column per flick. NOT verified live (TESTING.md 15i (o),
+  15l (b)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -588,6 +612,19 @@ read for the snap and focus rules.
   and relaunches). NOT verified live: the scroll tap's enable latency, that a disabled tap
   really leaves scrolling untouched, and the strip following two fingers [INFERENCE until
   TESTING.md 15l].
+- TG-13: RED `swift build --build-tests` failed (`cannot find 'pageGestureScroll' in scope`,
+  `cannot find 'gesturePageTravel' in scope`, `cannot find 'gesturePageVelocity' in scope`;
+  the first errors shown, the other new names were missing too). TG-12's controller test that expected the flick to
+  land at the strip's end (offset 1440) moved to the paging contract (224, column 2's window).
+  GREEN: StripGestureTests 31 (+13: paging 9, settle settings 4), PerAnimationPlanningTests 7
+  (+1: Fast preset springs the swiped windows with the velocity, another kind jumps),
+  GestureControllerTests 33 (+2: a short slow armed drag goes back, the three-finger scroll
+  still projects with `page=false`), 0 failures. Full `swift test`: GioCoreTests 2311,
+  GioSessionTests 624, GioUITests 391 (54 skipped), GioMacOSTests 127, GioMacTests 19,
+  GioPOCTests 7, 0 failures. `git diff --check` clean. Signed `xcodebuild` not run here (the
+  coordinator builds and relaunches). NOT verified live: whether one page per flick and the
+  spring with the release velocity feel like a Space switch, and the 0.2 / 500 pt/s thresholds
+  on real hands [INFERENCE].
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
@@ -612,3 +649,5 @@ read for the snap and focus rules.
   verified live (TESTING.md 15l (j)).
 - 2026-11-05: TG-12 committed `809d746` on `dev` (armed horizontal stroke drives the strip,
   scroll tap only while armed). Not pushed; NOT verified live (TESTING.md 15l).
+- 2026-11-05: TG-13 on `dev` (gesture settle always springs, armed stroke pages one column).
+  Not pushed; NOT verified live.

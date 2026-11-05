@@ -143,17 +143,29 @@ public final class GestureController: @unchecked Sendable {
         var tracker: GestureScrollTracker
         let pump: GestureFramePump
         let windows: Set<WindowID>
+        /// TG-13: an armed two-finger stroke pages one column from
+        /// `startColumn` (`pageGestureScroll`); the 3-5 finger scroll
+        /// projects (`snapGestureScroll`).
+        let paging: Bool
+        let startColumn: Int
+        let startOffset: CGFloat
         var touched: Set<WindowID> = []
         var moved = false
         var overlay = false
         var trackedAt: TimeInterval = 0
 
-        init(surface: GestureSurface, strip: GestureStrip, tracker: GestureScrollTracker, pump: GestureFramePump, windows: Set<WindowID>) {
+        init(
+            surface: GestureSurface, strip: GestureStrip, tracker: GestureScrollTracker, pump: GestureFramePump,
+            windows: Set<WindowID>, paging: Bool
+        ) {
             self.surface = surface
             self.strip = strip
             self.tracker = tracker
             self.pump = pump
             self.windows = windows
+            self.paging = paging
+            startColumn = gesturePageStartColumn(strip, focused: surface.workspace.focusedWindow)
+            startOffset = tracker.offset
         }
     }
 
@@ -232,7 +244,7 @@ public final class GestureController: @unchecked Sendable {
             // by two fingers (no `scroll` setting or finger count of its own).
             case .scrollBegan:
                 if scroll == nil {
-                    handle(.scrollBegan(fingers: TapToSwipe.strokeFingers), settings: settings)
+                    begin(fingers: TapToSwipe.strokeFingers, paging: true)
                 }
             case .scrollChanged(let dx):
                 handle(.scrollChanged(dx: dx), settings: settings)
@@ -302,7 +314,7 @@ public final class GestureController: @unchecked Sendable {
     private func handle(_ event: TrackpadGestureEvent, settings: GesturesSectionConfig) {
         switch event {
         case .scrollBegan(let count):
-            begin(fingers: count)
+            begin(fingers: count, paging: false)
         case .scrollChanged(let dx):
             guard let scroll else {
                 return
@@ -334,7 +346,7 @@ public final class GestureController: @unchecked Sendable {
         }
     }
 
-    private func begin(fingers: Int) {
+    private func begin(fingers: Int, paging: Bool) {
         guard !context.isMouseDown() else {
             context.log(.debug, "gesture scroll ignored fingers=\(fingers) reason=mouse")
             return
@@ -361,7 +373,7 @@ public final class GestureController: @unchecked Sendable {
         }
         let scroll = Scroll(
             surface: surface, strip: strip, tracker: GestureScrollTracker(base: base, maxOffset: strip.maxOffset),
-            pump: GestureFramePump(sink: sink, start: start), windows: windows
+            pump: GestureFramePump(sink: sink, start: start), windows: windows, paging: paging
         )
         self.scroll = scroll
         scroll.trackedAt = context.now()
@@ -450,7 +462,13 @@ public final class GestureController: @unchecked Sendable {
             sensitivity: settings.scrollSensitivity, natural: settings.natural
         )
         self.scroll = nil
-        guard let snap = snapGestureScroll(scroll.strip, offset: scroll.tracker.offset, velocity: offsetVelocity) else {
+        let snap = scroll.paging
+            ? pageGestureScroll(
+                scroll.strip, from: scroll.startColumn, travel: scroll.tracker.offset - scroll.startOffset,
+                velocity: offsetVelocity
+            )
+            : snapGestureScroll(scroll.strip, offset: scroll.tracker.offset, velocity: offsetVelocity)
+        guard let snap else {
             context.abandon(.cancelled)
             return
         }
@@ -463,7 +481,7 @@ public final class GestureController: @unchecked Sendable {
         }
         context.log(
             .info,
-            "gesture scroll end offset=\(Int(scroll.tracker.offset.rounded())) snap=\(Int(snap.offset.rounded())) column=\(snap.column) velocity=\(Int((-offsetVelocity).rounded())) focusChanged=\(focusChanged)"
+            "gesture scroll end offset=\(Int(scroll.tracker.offset.rounded())) snap=\(Int(snap.offset.rounded())) column=\(snap.column) velocity=\(Int((-offsetVelocity).rounded())) focusChanged=\(focusChanged) page=\(scroll.paging)"
         )
         context.settle(GestureRelease(windows: scroll.windows, velocity: -offsetVelocity, focusChanged: focusChanged))
     }
