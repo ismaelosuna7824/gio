@@ -2,9 +2,11 @@ import Foundation
 import XCTest
 @testable import GioSession
 
-/// TG-10: the hotkey tap (its own thread) asks whether to swallow a scroll
-/// event; the session queue sets the armed deadline (system uptime). The
-/// answer is one lock and a comparison.
+/// TG-10: the scroll-suppression tap (its own thread) asks whether to
+/// swallow a scroll event; the session queue sets the armed deadline (system
+/// uptime). The answer is one lock and a comparison. TG-12: `suppress`
+/// reports when armed flips, so the host enables or disables the scroll tap
+/// only then (not on every drain while the fingers move).
 final class TapScrollSuppressionTests: XCTestCase {
     func testSwallowsOnlyUntilTheDeadline() {
         let suppression = TapScrollSuppression()
@@ -20,12 +22,12 @@ final class TapScrollSuppressionTests: XCTestCase {
         XCTAssertFalse(suppression.swallows(at: 5))
     }
 
-    func testTheSubscriptionFlagIsIndependentOfTheDeadline() {
+    func testSuppressReportsOnlyArmedTransitions() {
         let suppression = TapScrollSuppression()
-        XCTAssertFalse(suppression.isEnabled)
-        suppression.isEnabled = true
-        XCTAssertTrue(suppression.isEnabled)
-        XCTAssertFalse(suppression.swallows(at: 0))
+        XCTAssertFalse(suppression.suppress(until: nil), "already off")
+        XCTAssertTrue(suppression.suppress(until: 3), "armed: enable the scroll tap")
+        XCTAssertFalse(suppression.suppress(until: 4), "renewed: nothing to toggle")
+        XCTAssertTrue(suppression.suppress(until: nil), "disarmed: disable it")
     }
 
     func testConcurrentReadersAndAWriterDoNotRace() {

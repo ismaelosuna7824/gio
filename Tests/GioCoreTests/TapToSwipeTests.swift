@@ -1,10 +1,11 @@
 import XCTest
 @testable import GioCore
 
-/// TG-10: a quick three-finger tap arms tap-to-swipe; while armed, each
-/// two-finger stroke is one step (window left/right, workspace up/down) and
-/// the fingers must lift before the next one. Expiry, a second tap or a
-/// mouse button disarm it.
+/// TG-10: a quick three-finger tap arms tap-to-swipe; expiry, a second tap
+/// or a mouse button disarm it. TG-12: while armed a horizontal two-finger
+/// stroke scrolls the strip like the TG-03 scroll (began, changed, ended with
+/// the release velocity, cancelled by an extra finger), a vertical one is one
+/// workspace step at `stepDistance`; the fingers lift before the next stroke.
 final class TapToSwipeTests: XCTestCase {
     /// `count` fingers spread 0.1 apart around (x, y).
     private func frame(_ t: TimeInterval, fingers count: Int, x: Double = 0.5, y: Double = 0.5) -> TouchFrame {
@@ -17,14 +18,33 @@ final class TapToSwipeTests: XCTestCase {
         frames.flatMap { machine.feed($0) }
     }
 
+    /// Event kinds without the floating-point payloads.
+    private func kinds(_ events: [TapToSwipeEvent]) -> [String] {
+        events.map {
+            switch $0 {
+            case .armed: return "armed"
+            case .scrollBegan: return "began"
+            case .scrollChanged: return "changed"
+            case .scrollEnded: return "ended"
+            case .scrollCancelled: return "cancelled"
+            case .step(let direction): return "step-\(direction.rawValue)"
+            case .disarmed(let reason): return "disarmed-\(reason.rawValue)"
+            }
+        }
+    }
+
     /// Three fingers down at `t` for 0.1 s without moving, then lifted.
     private func tap(at t: TimeInterval) -> [TouchFrame] {
         [frame(t, fingers: 3), frame(t + 0.05, fingers: 3, x: 0.505), frame(t + 0.1, fingers: 3), frame(t + 0.11, fingers: 0)]
     }
 
-    /// Two fingers from (x, y) by (dx, dy) in four frames 10 ms apart, then lifted.
+    /// Two fingers from the middle by (dx, dy) in four frames 10 ms apart, then lifted.
     private func stroke(at t: TimeInterval, dx: Double, dy: Double, lift: Bool = true) -> [TouchFrame] {
-        var frames = (0...4).map { frame(t + Double($0) * 0.01, fingers: 2, x: 0.5 + dx * Double($0) / 4, y: 0.5 + dy * Double($0) / 4) }
+        var frames: [TouchFrame] = []
+        for step in 0...4 {
+            let progress = Double(step) / 4
+            frames.append(frame(t + Double(step) * 0.01, fingers: 2, x: 0.5 + dx * progress, y: 0.5 + dy * progress))
+        }
         if lift {
             frames.append(frame(t + 0.05, fingers: 0))
         }
@@ -36,6 +56,8 @@ final class TapToSwipeTests: XCTestCase {
         _ = feed(&machine, tap(at: 0))
         return machine
     }
+
+    // MARK: Arming
 
     func testAQuickStillThreeFingerTapArms() throws {
         var machine = TapToSwipe()
@@ -76,63 +98,114 @@ final class TapToSwipeTests: XCTestCase {
     func testTwoFingerFramesBeforeArmingAreIgnored() {
         var machine = TapToSwipe()
         XCTAssertEqual(feed(&machine, stroke(at: 0, dx: -0.3, dy: 0)), [])
+        XCTAssertEqual(feed(&machine, stroke(at: 1, dx: 0, dy: 0.3)), [])
         XCTAssertFalse(machine.isArmed)
     }
 
-    func testAnArmedStrokeStepsOnceAtTheStepDistance() {
+    // MARK: Horizontal strokes scroll (TG-12)
+
+    func testAnArmedHorizontalStrokeScrollsWithTheFingers() throws {
         var machine = armed()
-        let short = stroke(at: 0.5, dx: -(TapToSwipe.defaultStepDistance - 0.01), dy: 0)
-        XCTAssertEqual(feed(&machine, short), [], "short of the step distance")
-        XCTAssertEqual(feed(&machine, stroke(at: 1, dx: -0.3, dy: 0)), [.step(.left)], "one step per stroke")
-        XCTAssertEqual(feed(&machine, stroke(at: 1.5, dx: 0.3, dy: 0)), [.step(.right)])
-        XCTAssertEqual(feed(&machine, stroke(at: 2, dx: 0, dy: 0.3)), [.step(.up)])
-        XCTAssertEqual(feed(&machine, stroke(at: 2.5, dx: 0, dy: -0.3)), [.step(.down)])
+        let events = feed(&machine, stroke(at: 0.5, dx: -0.3, dy: 0))
+        XCTAssertEqual(kinds(events), ["began", "changed", "changed", "changed", "changed", "ended"])
+        let travel = events.reduce(0.0) { sum, event in
+            if case .scrollChanged(let dx) = event {
+                return sum + dx
+            }
+            return sum
+        }
+        XCTAssertEqual(travel, -0.3, accuracy: 1e-9, "the strip gets every bit of the fingers' travel")
+        guard case .scrollEnded(let velocity) = try XCTUnwrap(events.last) else {
+            return XCTFail("ends with the release velocity")
+        }
+        XCTAssertEqual(velocity, -6, accuracy: 1e-6, "0.3 in 50 ms")
         XCTAssertTrue(machine.isArmed)
     }
 
-    /// TG-11 (user, 2026-11-05: steps at 0.1 of travel felt "un poco duro"):
-    /// the distance is configurable (`[gestures] tap-to-swipe-distance`),
-    /// 0.2 of the trackpad by default.
+    func testAScrollCommitsAtTheSmallCommitDistanceNotTheStepDistance() {
+        var machine = armed()
+        let begin = GestureRecognizerSettings.defaultCommitDistance
+        XCTAssertEqual(feed(&machine, [frame(0.5, fingers: 2), frame(0.51, fingers: 2, x: 0.5 - begin / 2)]), [])
+        XCTAssertEqual(kinds(feed(&machine, [frame(0.52, fingers: 2, x: 0.5 - begin - 0.001)])), ["began", "changed"])
+    }
+
+    func testRestingFingersEndAScrollWithoutVelocity() throws {
+        var machine = armed()
+        let frames = stroke(at: 0.5, dx: -0.2, dy: 0, lift: false) + [frame(0.7, fingers: 2, x: 0.3), frame(0.71, fingers: 0)]
+        let events = feed(&machine, frames)
+        guard case .scrollEnded(let velocity) = try XCTUnwrap(events.last) else {
+            return XCTFail("a lift ends the scroll")
+        }
+        XCTAssertEqual(velocity, 0, accuracy: 1e-9)
+    }
+
+    func testAnExtraFingerCancelsTheScrollUntilTheLift() {
+        var machine = armed()
+        let frames = stroke(at: 0.5, dx: -0.2, dy: 0, lift: false)
+            + [frame(0.6, fingers: 3, x: 0.3), frame(0.61, fingers: 2, x: 0.1), frame(0.62, fingers: 2, x: 0.0)]
+        XCTAssertEqual(kinds(feed(&machine, frames)).suffix(1), ["cancelled"], "no new scroll from the same touch")
+        XCTAssertEqual(kinds(feed(&machine, [frame(0.7, fingers: 0)] + stroke(at: 0.8, dx: 0.2, dy: 0))).first, "began")
+    }
+
+    func testDisarmingMidScrollCancelsItFirst() {
+        var machine = armed()
+        _ = feed(&machine, stroke(at: 0.5, dx: -0.2, dy: 0, lift: false))
+        XCTAssertEqual(machine.disarm(.mouse), [.scrollCancelled, .disarmed(.mouse)])
+        var other = armed()
+        _ = feed(&other, stroke(at: 0.5, dx: -0.2, dy: 0, lift: false))
+        XCTAssertEqual(other.expire(), [.scrollCancelled, .disarmed(.expired)])
+    }
+
+    // MARK: Vertical strokes step
+
+    func testAnArmedVerticalStrokeStepsOnceAtTheStepDistance() {
+        XCTAssertEqual(TapToSwipe.defaultStepDistance, 0.1, "TG-12: back to 0.1 for the vertical step")
+        var machine = armed()
+        let short = stroke(at: 0.5, dx: 0, dy: TapToSwipe.defaultStepDistance - 0.02)
+        XCTAssertEqual(feed(&machine, short), [], "short of the step distance")
+        XCTAssertEqual(feed(&machine, stroke(at: 1, dx: 0, dy: 0.3)), [.step(.up)], "one step per stroke")
+        XCTAssertEqual(feed(&machine, stroke(at: 1.5, dx: 0, dy: -0.3)), [.step(.down)])
+        XCTAssertTrue(machine.isArmed)
+    }
+
     func testTheStepDistanceIsConfigurable() {
-        XCTAssertEqual(TapToSwipe.defaultStepDistance, 0.2)
         XCTAssertEqual(TapToSwipe().stepDistance, TapToSwipe.defaultStepDistance)
         var machine = armed(stepDistance: 0.35)
-        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: -0.3, dy: 0)), [], "under the configured distance")
+        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: 0, dy: 0.3)), [], "under the configured distance")
         XCTAssertEqual(feed(&machine, stroke(at: 1, dx: 0, dy: 0.4)), [.step(.up)], "over it: one step")
-        machine.stepDistance = 0.1
-        XCTAssertEqual(feed(&machine, stroke(at: 1.5, dx: 0.15, dy: 0)), [.step(.right)], "a new distance applies to the next stroke")
+        machine.stepDistance = 0.2
+        XCTAssertEqual(feed(&machine, stroke(at: 1.5, dx: 0, dy: -0.25)), [.step(.down)], "a new distance applies to the next stroke")
     }
 
     func testTheFingersMustLiftBeforeTheNextStep() {
         var machine = armed()
-        let long = (0...12).map { frame(0.5 + Double($0) * 0.01, fingers: 2, x: 0.5 - Double($0) * 0.04) }
-        XCTAssertEqual(feed(&machine, long), [.step(.left)], "a long stroke is still one step")
+        let long = (0...12).map { frame(0.5 + Double($0) * 0.01, fingers: 2, y: 0.5 + Double($0) * 0.03) }
+        XCTAssertEqual(feed(&machine, long), [.step(.up)], "a long stroke is still one step")
         XCTAssertEqual(feed(&machine, [frame(0.7, fingers: 1)]), [])
-        XCTAssertEqual(feed(&machine, stroke(at: 0.8, dx: -0.3, dy: 0)), [.step(.left)], "lifted: the next stroke steps")
+        XCTAssertEqual(feed(&machine, stroke(at: 0.8, dx: 0, dy: 0.3)), [.step(.up)], "lifted: the next stroke steps")
     }
 
     func testADiagonalStrokeIsIgnoredUntilTheLift() {
         var machine = armed()
-        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: -0.4, dy: 0.3, lift: false)), [], "not twice as horizontal as vertical")
-        XCTAssertEqual(feed(&machine, [frame(0.6, fingers: 2, x: 0.05, y: 0.85)]), [], "consumed until the fingers lift")
+        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: 0.3, dy: 0.4, lift: false)), [], "not twice as vertical as horizontal")
+        XCTAssertEqual(feed(&machine, [frame(0.6, fingers: 2, x: 0.8, y: 0.95)]), [], "consumed until the fingers lift")
         XCTAssertEqual(feed(&machine, [frame(0.7, fingers: 0)] + stroke(at: 0.8, dx: 0, dy: -0.3)), [.step(.down)])
+    }
+
+    func testAVerticalStrokeTurningDiagonalIsConsumed() {
+        var machine = armed(stepDistance: 0.3)
+        let frames = [frame(0.5, fingers: 2), frame(0.51, fingers: 2, y: 0.6), frame(0.52, fingers: 2, x: 0.3, y: 0.7),
+                      frame(0.53, fingers: 2, x: 0.3, y: 0.9)]
+        XCTAssertEqual(feed(&machine, frames), [])
     }
 
     func testStrokesWithOtherFingerCountsAreIgnored() {
         var machine = armed()
         let three = (0...4).map { frame(0.5 + Double($0) * 0.01, fingers: 3, x: 0.5 - Double($0) * 0.08) } + [frame(0.6, fingers: 0)]
         XCTAssertEqual(feed(&machine, three), [])
-        let four = (0...4).map { frame(0.7 + Double($0) * 0.01, fingers: 4, x: 0.5 - Double($0) * 0.08) } + [frame(0.8, fingers: 0)]
+        let four = (0...4).map { frame(0.7 + Double($0) * 0.01, fingers: 4, y: 0.5 + Double($0) * 0.08) } + [frame(0.8, fingers: 0)]
         XCTAssertEqual(feed(&machine, four), [])
         XCTAssertTrue(machine.isArmed)
-    }
-
-    func testAThirdFingerLandingMidStrokeEndsTheStroke() {
-        var machine = armed()
-        let frames = stroke(at: 0.5, dx: -0.05, dy: 0, lift: false)
-            + (0...4).map { frame(0.6 + Double($0) * 0.01, fingers: 3, x: 0.45 - Double($0) * 0.08) }
-            + [frame(0.7, fingers: 2, x: 0.1)]
-        XCTAssertEqual(feed(&machine, frames), [], "the two fingers left are still the old touch")
     }
 
     func testTheArmingTapsLiftingFingersAreNotAStroke() {
@@ -142,11 +215,17 @@ final class TapToSwipeTests: XCTestCase {
         XCTAssertEqual(feed(&machine, frames), [.armed], "the tap's own fingers lift before a stroke counts")
     }
 
+    // MARK: Window
+
     func testFingersOnTheTrackpadRenewTheWindow() throws {
         var machine = armed()
         _ = feed(&machine, stroke(at: 2, dx: -0.3, dy: 0))
         XCTAssertEqual(try XCTUnwrap(machine.armedUntil), 2.05 + TapToSwipe.armedWindow, accuracy: 1e-9, "from the stroke's lift")
-        XCTAssertEqual(feed(&machine, stroke(at: 4, dx: 0.3, dy: 0)), [.step(.right)], "renewed: still armed after 4 s")
+        XCTAssertEqual(feed(&machine, stroke(at: 4, dx: 0, dy: 0.3)), [.step(.up)], "renewed: still armed after 4 s")
+        // A long scroll keeps it alive while the fingers move.
+        let long = (0...40).map { frame(5 + Double($0) * 0.1, fingers: 2, x: 0.9 - Double($0) * 0.02) }
+        XCTAssertFalse(kinds(feed(&machine, long)).contains { $0.hasPrefix("disarmed") })
+        XCTAssertEqual(try XCTUnwrap(machine.armedUntil), 9 + TapToSwipe.armedWindow, accuracy: 1e-9)
     }
 
     func testAFrameAfterTheWindowDisarmsFirst() {
@@ -177,17 +256,5 @@ final class TapToSwipeTests: XCTestCase {
         var machine = armed()
         XCTAssertEqual(machine.disarm(.mouse), [.disarmed(.mouse)])
         XCTAssertEqual(machine.disarm(.mouse), [], "already off")
-    }
-
-    /// Natural: the content follows the fingers, so swiping left shows the
-    /// window on the right; vertical steps use the workspace swipe's mapping.
-    func testStepActionsFollowTheNaturalDirection() {
-        XCTAssertEqual(tapSwipeAction(.left, natural: true), .focusRight)
-        XCTAssertEqual(tapSwipeAction(.right, natural: true), .focusLeft)
-        XCTAssertEqual(tapSwipeAction(.left, natural: false), .focusLeft)
-        XCTAssertEqual(tapSwipeAction(.right, natural: false), .focusRight)
-        XCTAssertEqual(tapSwipeAction(.up, natural: true), workspaceSwipeAction(.up, natural: true))
-        XCTAssertEqual(tapSwipeAction(.down, natural: true), .focusWorkspaceUp)
-        XCTAssertEqual(tapSwipeAction(.up, natural: false), .focusWorkspaceUp)
     }
 }

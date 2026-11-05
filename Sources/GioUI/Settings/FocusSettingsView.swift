@@ -221,20 +221,20 @@ struct FocusSettingsView: View {
                     SegmentedRow("Fingers for the overview", selection: current.gestures.overviewFingers, options: Self.fingerOptions, width: 150)
                 }
             }
-            // TG-10: two-finger steps, only after a three-finger tap.
+            // TG-10/TG-12: two-finger strokes, only after a three-finger tap.
             CardRow {
                 ToggleRow(
                     "Tap to swipe",
-                    caption: "Tap three fingers, then swipe with two: left or right changes window, up or down changes workspace, one per swipe. Two-finger scrolling pauses until 2.5 s after your fingers leave the trackpad, a click, or another three-finger tap.",
+                    caption: "Tap three fingers, then swipe with two: left or right moves the strip with your fingers and settles on a column, up or down changes workspace, one per swipe. Two-finger scrolling pauses until 2.5 s after your fingers leave the trackpad, a click, or another three-finger tap.",
                     isOn: current.gestures.tapToSwipe
                 )
             }
-            // TG-11: how far a two-finger stroke travels before it steps.
+            // TG-11/TG-12: how far an up/down stroke travels before it steps.
             if draft.current.gestures.tapToSwipe {
                 CardRow {
                     SliderRow(
-                        "Swipe distance for Tap to swipe",
-                        caption: "How far two fingers must travel before Gio changes window or workspace. Longer feels calmer; shorter is quicker.",
+                        "Up/down distance for Tap to swipe",
+                        caption: "How far two fingers must travel up or down before Gio changes workspace. Left and right follow the fingers.",
                         value: current.gestures.tapToSwipeDistance, in: GesturesSectionConfig.tapToSwipeDistanceRange,
                         step: 0.01, format: { String(format: "%.0f%%", $0 * 100) }
                     )

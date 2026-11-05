@@ -4,7 +4,7 @@ import GioMacOS
 
 /// Config reload and live edits: the effective hotkey table (read by the
 /// main-thread tap under its own lock), the config messages for the
-/// Overview, the tap subscription restart decision, and the ordered
+/// Overview, the focus-follows-mouse tap restart decision, and the ordered
 /// work after `session.config` changed. Everything except `currentDispatcher()`
 /// and `applyConfigEdits(_:)` runs on the session queue.
 public final class ConfigCoordinator: @unchecked Sendable {
@@ -20,11 +20,10 @@ public final class ConfigCoordinator: @unchecked Sendable {
         public var applyLogLevel: (LogLevel) -> Void
         /// Plans and gates that depend on config (inactive parking, ring gate).
         public var invalidateConfigCaches: () -> Void
-        /// Hands the tap's wanted subscriptions to their paths (each has its
-        /// own lock): the focus-follows-mouse flag and TG-10's scroll swallowing.
-        public var setTapSubscriptions: (TapSubscriptions) -> Void
-        /// What the running tap subscribes to; nil without a tap.
-        public var tapSubscriptions: () -> TapSubscriptions?
+        /// Hands the focus-follows-mouse flag to the pointer path (its own lock).
+        public var setFocusFollowsMouse: (Bool) -> Void
+        /// Whether the running tap observes mouse moves; nil without a tap.
+        public var tapObservesMouseMoved: () -> Bool?
         /// Rebuilds the tap on the main thread (it re-checks there).
         public var requestTapRestart: () -> Void
         public var reapplyRules: () -> Void
@@ -38,8 +37,7 @@ public final class ConfigCoordinator: @unchecked Sendable {
             loadStatus: @escaping () -> ConfigLoadStatus,
             patchFile: @escaping ([ConfigEdit]) -> Result<PatchedConfig, ConfigErrors>,
             applyLogLevel: @escaping (LogLevel) -> Void, invalidateConfigCaches: @escaping () -> Void,
-            setTapSubscriptions: @escaping (TapSubscriptions) -> Void,
-            tapSubscriptions: @escaping () -> TapSubscriptions?,
+            setFocusFollowsMouse: @escaping (Bool) -> Void, tapObservesMouseMoved: @escaping () -> Bool?,
             requestTapRestart: @escaping () -> Void, reapplyRules: @escaping () -> Void,
             reflow: @escaping () -> Void, publishSnapshot: @escaping () -> Void,
             publishFocusRing: @escaping () -> Void, log: @escaping (LogLevel, String) -> Void
@@ -50,8 +48,8 @@ public final class ConfigCoordinator: @unchecked Sendable {
             self.patchFile = patchFile
             self.applyLogLevel = applyLogLevel
             self.invalidateConfigCaches = invalidateConfigCaches
-            self.setTapSubscriptions = setTapSubscriptions
-            self.tapSubscriptions = tapSubscriptions
+            self.setFocusFollowsMouse = setFocusFollowsMouse
+            self.tapObservesMouseMoved = tapObservesMouseMoved
             self.requestTapRestart = requestTapRestart
             self.reapplyRules = reapplyRules
             self.reflow = reflow
@@ -88,21 +86,20 @@ public final class ConfigCoordinator: @unchecked Sendable {
         self.status = status
     }
 
-    /// Rebuild the hotkey table and the tap's optional subscriptions from the
+    /// Rebuild the hotkey table and the focus-follows-mouse flag from the
     /// session config; the tap only subscribes to pointer moves while
-    /// focus-follows-mouse is on and to scroll events while tap-to-swipe is
-    /// on (TG-10), so it is rebuilt when a reload flips either.
+    /// focus-follows-mouse is on, so it is rebuilt when a reload flips that.
     public func refreshDispatcher() {
         let config = context.session().config
         let table = config.makeDispatcher()
         dispatcherLock.lock()
         dispatcherTable = table
         dispatcherLock.unlock()
-        let wanted = TapSubscriptions(
-            mouseMoved: config.behavior.focusFollowsMouse, scrollWheel: config.gestures.tapToSwipe
-        )
-        context.setTapSubscriptions(wanted)
-        if let current = context.tapSubscriptions(), tapNeedsRestart(current: current, wanted: wanted) {
+        let wanted = config.behavior.focusFollowsMouse
+        context.setFocusFollowsMouse(wanted)
+        if let observing = context.tapObservesMouseMoved(),
+           tapNeedsRestart(observingMouseMoved: observing, wanted: wanted)
+        {
             context.requestTapRestart()
         }
     }

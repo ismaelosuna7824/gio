@@ -20,14 +20,13 @@ final class TapResilienceTests: XCTestCase {
         XCTAssertEqual(tapEventAction(for: .leftMouseDown), .mouseDown)
         XCTAssertEqual(tapEventAction(for: .rightMouseDown), .mouseDown)
         XCTAssertEqual(tapEventAction(for: .otherMouseDown), .mouseDown)
-        XCTAssertEqual(tapEventAction(for: .scrollWheel), .scrollWheel)
-        XCTAssertEqual(tapEventAction(for: .flagsChanged), .passThrough)
+        XCTAssertEqual(tapEventAction(for: .scrollWheel), .passThrough)
     }
 
     func testMaskOmitsMouseMovedUnlessFocusFollowsMouse() {
         let moved = CGEventMask(1) << CGEventType.mouseMoved.rawValue
-        let off = tapEventMask(TapSubscriptions())
-        let on = tapEventMask(TapSubscriptions(mouseMoved: true))
+        let off = tapEventMask(observingMouseMoved: false)
+        let on = tapEventMask(observingMouseMoved: true)
         XCTAssertEqual(off & moved, 0)
         XCTAssertEqual(on & moved, moved)
         // Keys and clicks are always observed.
@@ -39,39 +38,11 @@ final class TapResilienceTests: XCTestCase {
         XCTAssertEqual(on & ~moved, off)
     }
 
-    /// TG-10: scroll events cost a tap callback each, so the tap only
-    /// subscribes to them while tap-to-swipe is on (to swallow them while armed).
-    func testMaskOmitsScrollWheelUnlessTapToSwipe() {
-        let scroll = CGEventMask(1) << CGEventType.scrollWheel.rawValue
-        let off = tapEventMask(TapSubscriptions())
-        let on = tapEventMask(TapSubscriptions(scrollWheel: true))
-        XCTAssertEqual(off & scroll, 0)
-        XCTAssertEqual(on & scroll, scroll)
-        XCTAssertEqual(on & ~scroll, off)
-        XCTAssertEqual(
-            tapEventMask(TapSubscriptions(mouseMoved: true, scrollWheel: true)),
-            tapEventMask(TapSubscriptions(mouseMoved: true)) | scroll
-        )
-    }
-
-    func testTapRestartOnlyWhenASubscriptionChanges() {
-        let none = TapSubscriptions()
-        let moves = TapSubscriptions(mouseMoved: true)
-        let scrolls = TapSubscriptions(scrollWheel: true)
-        XCTAssertFalse(tapNeedsRestart(current: none, wanted: none))
-        XCTAssertFalse(tapNeedsRestart(current: moves, wanted: moves))
-        XCTAssertTrue(tapNeedsRestart(current: none, wanted: moves))
-        XCTAssertTrue(tapNeedsRestart(current: moves, wanted: none))
-        XCTAssertTrue(tapNeedsRestart(current: moves, wanted: TapSubscriptions(mouseMoved: true, scrollWheel: true)))
-        XCTAssertTrue(tapNeedsRestart(current: scrolls, wanted: none))
-    }
-
-    /// TG-10: only an armed tap-to-swipe swallows scrolling; the tap asks
-    /// the handler, which answers from a lock-guarded deadline.
-    func testScrollWheelIsSwallowedOnlyWhenTheHandlerSaysSo() {
-        XCTAssertFalse(tapSwallowsScroll(handler: nil))
-        XCTAssertFalse(tapSwallowsScroll(handler: { false }))
-        XCTAssertTrue(tapSwallowsScroll(handler: { true }))
+    func testTapRestartOnlyWhenMouseObservationChanges() {
+        XCTAssertFalse(tapNeedsRestart(observingMouseMoved: false, wanted: false))
+        XCTAssertFalse(tapNeedsRestart(observingMouseMoved: true, wanted: true))
+        XCTAssertTrue(tapNeedsRestart(observingMouseMoved: false, wanted: true))
+        XCTAssertTrue(tapNeedsRestart(observingMouseMoved: true, wanted: false))
     }
 
     func testWatchdogReenablesOnlyADisabledTap() {

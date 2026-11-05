@@ -371,6 +371,33 @@ read for the snap and focus rules.
   drain like the recognizer settings, so a reload applies from the next frame. Settings: a
   "Swipe distance for Tap to swipe" slider (percent, step 0.01), shown only while Tap to swipe
   is on; the form validates the range and writes two decimals.
+- TG-12 tap-to-swipe follows the fingers (user live feedback, 2026-11-05, after TG-11: "no se
+  siente fluido como cuando presiones las teclas ... con el scroll no se siente fluido
+  también ... tengo que hacer un gesto grande"). The log showed Gio answering fast (step to
+  reflow 10-90 ms); the causes were (a) nothing moved until the step distance, then a jump,
+  and (b) with `tap-to-swipe` on the hotkey tap subscribed `.scrollWheel` all the time, so
+  every scroll event of every app went through Gio's active tap. User decision: while armed
+  the horizontal two-finger stroke makes the strip follow the fingers and settles like the
+  TG-03 scroll. Decision: `TapToSwipe` commits a stroke at the recognizer's
+  `defaultCommitDistance` (0.03); horizontal emits `scrollBegan` / `scrollChanged(dx)` /
+  `scrollEnded(velocity)` (80 ms `SwipeVelocityTracker`) / `scrollCancelled` (extra finger,
+  disarm, expiry), and `GestureController` feeds them into the existing TG-03 scroll (`begin`,
+  tracker with `scroll-sensitivity` and `natural`, `release` with snap, State commit, settle
+  with the uncentered focus intent, overlay/AX transport, `isTracking`); no second scroll
+  path. Vertical keeps one `focus-workspace-*` per stroke (`workspaceSwipeAction`) at
+  `tap-to-swipe-distance`, default back to 0.1 (range unchanged); left/right steps
+  (`tapSwipeAction`, `focus-left/right`) are gone. A third finger landing on a moving stroke
+  can no longer start a tap. A click mid-scroll abandons with `.mouse`. Scroll interception
+  (item 3): the hotkey tap's `.scrollWheel` subscription, `TapSubscriptions` and the generalized
+  restart were reverted to the pre-TG-10 code; `ScrollSuppressionTap` (GioMacOS) is a
+  scroll-only active tap on its own `TapThread`, started on main while `tap-to-swipe` is on
+  (`scrollTapLifecycle`), created disabled (a disabled tap is not in the event path), enabled
+  only when `TapScrollSuppression.suppress` reports that arming flipped on and disabled when it
+  flips off; its callback swallows while the deadline holds, passes and disables itself at a
+  scroll event past it, re-enables after a macOS disable only while armed, and `shutdown()`
+  stops it. Chosen over creating and destroying a tap per arming: no tap creation or thread
+  start on main at the moment the first stroke begins (one `CGEvent.tapEnable`), and no live
+  tap left behind by a missed teardown.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -417,7 +444,12 @@ read for the snap and focus rules.
   scrolling while armed, notice, `tap-to-swipe` key, Settings toggle, Look up conflict.
   Commit `a8f84c5`. NOT verified live (TESTING.md 15l).
 - [x] TG-11 — `tap-to-swipe-distance` (default 0.2, was a fixed 0.1), template, Settings slider,
-  form round-trip. Commit `f65e89a`. NOT verified live (TESTING.md 15l (j)).
+  form round-trip. Commit `f65e89a`. NOT verified live (TESTING.md 15l (j)). Superseded in part
+  by TG-12 (vertical only, default 0.1).
+- [x] TG-12 — The armed horizontal stroke drives the TG-03 scroll (follows the fingers, snaps
+  and focuses); vertical stays one workspace per stroke (default 0.1); Gio is in the
+  scroll-event path only while armed (`ScrollSuppressionTap`, hotkey tap reverted). NOT
+  verified live (TESTING.md 15l).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -540,6 +572,22 @@ read for the snap and focus rules.
   GioSessionTests 614, GioUITests 391 (54 skipped), GioMacOSTests 123, GioMacTests 19,
   GioPOCTests 7, 0 failures. `git diff --check` clean. Signed `xcodebuild` not run here (a dev
   Gio runs from `.build/GioAutoTeam`; the coordinator builds and relaunches). NOT verified live.
+- TG-12: RED `swift build --build-tests` failed (`type 'TapToSwipeEvent' has no member
+  'scrollBegan'` / `'scrollCancelled'`, and the scroll payload patterns in TapToSwipeTests; the
+  session and macOS tests for `suppress(until:) -> Bool`, `scrollTapEventAction`,
+  `scrollTapEventMask` and `scrollTapLifecycle` were written in the same step against missing
+  API). TG-10/TG-11 tests moved to the new contract: horizontal strokes scroll, steps are
+  vertical, the diagonal case is now vertical-ish, the 0.2 default is 0.1 again; the hotkey
+  tap's TG-10 mask/restart tests reverted with the code (`tapEventAction(.scrollWheel)` is
+  `.passThrough` again, `ScrollSuppressionTapTests` asserts the hotkey mask has no scroll bit).
+  GREEN: TapToSwipeTests 23, GestureControllerTests 31 (+4 TG-12), ScrollSuppressionTapTests 5
+  (new), TapScrollSuppressionTests 3, TapResilienceTests 7, ConfigCoordinatorTests 8,
+  GesturesConfigTests 13, 0 failures. Full `swift test`: GioCoreTests 2292, GioSessionTests
+  617, GioUITests 391 (54 skipped), GioMacOSTests 126, GioMacTests 19, GioPOCTests 7, 0
+  failures. `git diff --check` clean. Signed `xcodebuild` not run here (the coordinator builds
+  and relaunches). NOT verified live: the scroll tap's enable latency, that a disabled tap
+  really leaves scrolling untouched, and the strip following two fingers [INFERENCE until
+  TESTING.md 15l].
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,

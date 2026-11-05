@@ -85,10 +85,6 @@ private func tapCallback(
     case .mouseMoved:
         box.onMouseMoved?(tapCocoaLocation(of: event))
         return Unmanaged.passUnretained(event)
-    case .scrollWheel:
-        // TG-10: returning nil swallows the scroll (no app scroll, no swipe
-        // back) while tap-to-swipe is armed; one lock and a compare.
-        return tapSwallowsScroll(handler: box.onScrollWheel) ? nil : Unmanaged.passUnretained(event)
     case .passThrough:
         return Unmanaged.passUnretained(event)
     case .keyDown:
@@ -113,7 +109,6 @@ final class TapBox: @unchecked Sendable {
     let onMouseDown: (@Sendable (CGPoint) -> Void)?
     let onMouseMoved: (@Sendable (CGPoint) -> Void)?
     let onKeyDown: (@Sendable () -> Void)?
-    let onScrollWheel: (@Sendable () -> Bool)?
     /// The callback (tap thread) and the watchdog (main) both use these; the
     /// lock keeps `stop()` from racing them. Never held across a call out.
     private let lock = NSLock()
@@ -124,14 +119,12 @@ final class TapBox: @unchecked Sendable {
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
         onMouseDown: (@Sendable (CGPoint) -> Void)?,
         onMouseMoved: (@Sendable (CGPoint) -> Void)?,
-        onKeyDown: (@Sendable () -> Void)? = nil,
-        onScrollWheel: (@Sendable () -> Bool)? = nil
+        onKeyDown: (@Sendable () -> Void)? = nil
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
         self.onKeyDown = onKeyDown
-        self.onScrollWheel = onScrollWheel
     }
 
     func attach(_ port: CFMachPort?) {
@@ -167,21 +160,27 @@ final class TapBox: @unchecked Sendable {
 /// PF-AB: the tap's own thread and run loop. On the main run loop every
 /// keystroke and click of every app waited for Gio's main thread (overlay
 /// frames, AX callbacks, SwiftUI): any hitch there was felt system-wide as
-/// input lag. The thread owns the box's retain and releases it after its
-/// run loop stopped, so no callback can outlive it.
-private final class TapThread: Thread, @unchecked Sendable {
+/// input lag. The thread owns the box's retain and releases it (`release`)
+/// after its run loop stopped, so no callback can outlive it. TG-12: the
+/// scroll-suppression tap runs on one too.
+final class TapThread: Thread, @unchecked Sendable {
     private let source: CFRunLoopSource
     private let boxRefcon: UnsafeMutableRawPointer
+    private let release: @Sendable (UnsafeMutableRawPointer) -> Void
     private let ready = DispatchSemaphore(value: 0)
     /// Guards `runLoop`.
     private let lock = NSLock()
     private var runLoop: CFRunLoop?
 
-    init(source: CFRunLoopSource, boxRefcon: UnsafeMutableRawPointer) {
+    init(
+        source: CFRunLoopSource, boxRefcon: UnsafeMutableRawPointer, name: String,
+        release: @escaping @Sendable (UnsafeMutableRawPointer) -> Void
+    ) {
         self.source = source
         self.boxRefcon = boxRefcon
+        self.release = release
         super.init()
-        name = "gio.hotkey-tap"
+        self.name = name
         qualityOfService = .userInteractive
     }
 
@@ -194,7 +193,7 @@ private final class TapThread: Thread, @unchecked Sendable {
         ready.signal()
         CFRunLoopRun()
         CFRunLoopRemoveSource(current, source, .commonModes)
-        Unmanaged<TapBox>.fromOpaque(boxRefcon).release()
+        release(boxRefcon)
     }
 
     /// Starts the thread and returns once its run loop has the source.
@@ -230,32 +229,27 @@ public final class HotkeyTap {
     private let onMouseDown: (@Sendable (CGPoint) -> Void)?
     private let onMouseMoved: (@Sendable (CGPoint) -> Void)?
     private let onKeyDown: (@Sendable () -> Void)?
-    private let onScrollWheel: (@Sendable () -> Bool)?
 
-    /// The optional event types this tap subscribes to: pointer moves and
-    /// scroll events only when a handler was given (the host passes one only
-    /// for focus-follows-mouse and TG-10 tap-to-swipe).
-    public var subscriptions: TapSubscriptions {
-        TapSubscriptions(mouseMoved: onMouseMoved != nil, scrollWheel: onScrollWheel != nil)
+    /// Whether this tap subscribes to pointer moves (only when a handler was
+    /// given; the host passes one only for focus-follows-mouse).
+    public var observesMouseMoved: Bool {
+        onMouseMoved != nil
     }
 
     /// `onMouseDown` observes clicks and `onMouseMoved` pointer moves (Cocoa
     /// global location) without swallowing either. `onKeyDown` observes
     /// every key-down that reaches an app (not the swallowed WM combos).
-    /// `onScrollWheel` answers whether to swallow a scroll event (TG-10).
-    /// All five run on the tap thread (SM-09, PF-AB).
+    /// All four run on the tap thread (SM-09, PF-AB).
     public init(
         onMouseDown: (@Sendable (CGPoint) -> Void)? = nil,
         onMouseMoved: (@Sendable (CGPoint) -> Void)? = nil,
         onKeyDown: (@Sendable () -> Void)? = nil,
-        onScrollWheel: (@Sendable () -> Bool)? = nil,
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
         self.onKeyDown = onKeyDown
-        self.onScrollWheel = onScrollWheel
     }
 
     @discardableResult
@@ -263,16 +257,13 @@ public final class HotkeyTap {
         guard port == nil else {
             return true
         }
-        let box = TapBox(
-            onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onKeyDown: onKeyDown,
-            onScrollWheel: onScrollWheel
-        )
+        let box = TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onKeyDown: onKeyDown)
         let boxRefcon = Unmanaged.passRetained(box).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: tapEventMask(subscriptions),
+            eventsOfInterest: tapEventMask(observingMouseMoved: onMouseMoved != nil),
             callback: tapCallback,
             userInfo: boxRefcon
         ) else {
@@ -287,7 +278,9 @@ public final class HotkeyTap {
         self.port = port
         self.box = box
         box.attach(port)
-        let thread = TapThread(source: source, boxRefcon: boxRefcon)
+        let thread = TapThread(source: source, boxRefcon: boxRefcon, name: "gio.hotkey-tap") {
+            Unmanaged<TapBox>.fromOpaque($0).release()
+        }
         thread.startAndWait()
         self.thread = thread
         CGEvent.tapEnable(tap: port, enable: true)

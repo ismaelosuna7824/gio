@@ -44,11 +44,13 @@ public enum GestureAbandon: String, Equatable, Sendable {
 /// - Vertical swipes switch workspace (`focus-workspace-up/down`) or toggle
 ///   the overview.
 /// - TG-10 tap to swipe (`TapToSwipe`): a three-finger tap arms it (notice,
-///   the mailbox lets two-finger frames cross, the tap swallows scrolling,
-///   all until the armed deadline, renewed while fingers touch); each
-///   two-finger stroke then performs one `focus-left/right` or
-///   `focus-workspace-*` like a key. Expiry (a session timer), a second tap
-///   (notice), a mouse button or the setting turned off disarm it.
+///   the mailbox lets two-finger frames cross, the scroll tap swallows
+///   scrolling, all until the armed deadline, renewed while fingers touch).
+///   TG-12: an armed horizontal two-finger stroke is the scroll above (the
+///   strip follows, the release snaps and focuses); a vertical one performs
+///   one `focus-workspace-*` like a key. Expiry (a session timer), a second
+///   tap (notice), a mouse button or the setting turned off disarm it and
+///   abandon a scroll it drove.
 public final class GestureController: @unchecked Sendable {
     public struct Context {
         public var settings: () -> GesturesSectionConfig
@@ -213,6 +215,9 @@ public final class GestureController: @unchecked Sendable {
         guard tapToSwipe.isArmed else {
             return
         }
+        if scroll != nil {
+            abandon(.mouse)
+        }
         handleTap(tapToSwipe.disarm(.mouse), settings: context.settings())
         syncArming(lastFrame: nil)
     }
@@ -223,8 +228,20 @@ public final class GestureController: @unchecked Sendable {
             case .armed:
                 context.log(.info, "gesture tap-to-swipe armed")
                 context.announceTapToSwipe(true)
+            // TG-12: the armed horizontal stroke is the TG-03 scroll, driven
+            // by two fingers (no `scroll` setting or finger count of its own).
+            case .scrollBegan:
+                if scroll == nil {
+                    handle(.scrollBegan(fingers: TapToSwipe.strokeFingers), settings: settings)
+                }
+            case .scrollChanged(let dx):
+                handle(.scrollChanged(dx: dx), settings: settings)
+            case .scrollEnded(let velocity):
+                handle(.scrollEnded(velocity: velocity), settings: settings)
+            case .scrollCancelled:
+                handle(.scrollCancelled, settings: settings)
             case .step(let direction):
-                let action = tapSwipeAction(direction, natural: settings.natural)
+                let action = workspaceSwipeAction(direction, natural: settings.natural)
                 context.log(.info, "gesture tap-to-swipe step direction=\(direction.rawValue) action=\(action)")
                 context.perform(action)
             case .disarmed(let reason):

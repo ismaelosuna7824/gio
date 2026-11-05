@@ -147,9 +147,14 @@ final class SessionHost: @unchecked Sendable {
     /// MultitouchSupport's callback thread, which never touches session state.
     private var gestures: GestureController!
     private var touchMailbox: TouchFrameMailbox!
-    /// TG-10: whether the tap swallows scroll events (armed tap-to-swipe);
-    /// its own lock, read on the tap thread, set on the session queue.
-    private let tapScrollSuppression = TapScrollSuppression()
+    /// TG-10: whether the scroll tap swallows scroll events (armed
+    /// tap-to-swipe); its own lock, read on the tap thread, set on the
+    /// session queue.
+    private let tapScrollSuppression: TapScrollSuppression
+    /// TG-12: the scroll-only tap, running while tap-to-swipe is on and in
+    /// the event path only while armed (`setEnabled`, any thread); started
+    /// and stopped on main.
+    private let scrollTap: ScrollSuppressionTap
     /// TG-03: the release of a trackpad scroll, consumed by the next pass.
     private var pendingGestureRelease: GestureRelease?
     /// TG-03, session queue: the symbols MultitouchSupport lacks (nil until
@@ -286,6 +291,9 @@ final class SessionHost: @unchecked Sendable {
     /// queue; `unowned` is safe because the host owns them and lives as long
     /// as the app.
     init() {
+        let suppression = TapScrollSuppression()
+        tapScrollSuppression = suppression
+        scrollTap = ScrollSuppressionTap { suppression.swallows(at: ProcessInfo.processInfo.systemUptime) }
         space = SpaceCoordinator(context: .init(
             reflowAll: { [unowned self] in reflowAll() },
             discardPendingAdoptions: { [unowned self] in focus.discardPendingAdoptions() },
@@ -852,14 +860,11 @@ final class SessionHost: @unchecked Sendable {
                     focusRing.resetGate()
                     applyGestureConfig()
                 },
-                setTapSubscriptions: { [unowned self] wanted in
-                    focus.focusFollowsMouse = wanted.mouseMoved
-                    tapScrollSuppression.isEnabled = wanted.scrollWheel
-                },
-                tapSubscriptions: { [unowned self] in hotkeyTap?.subscriptions },
+                setFocusFollowsMouse: { [unowned self] in focus.focusFollowsMouse = $0 },
+                tapObservesMouseMoved: { [unowned self] in hotkeyTap?.observesMouseMoved },
                 requestTapRestart: { [unowned self] in
                     DispatchQueue.main.async { [weak self] in
-                        self?.restartTapForSubscriptions()
+                        self?.restartTapForMouseSetting()
                     }
                 },
                 reapplyRules: { [unowned self] in reapplyRules() },
@@ -952,7 +957,12 @@ final class SessionHost: @unchecked Sendable {
                 DispatchQueue.main.async { self?.onToggleOverview?() }
             },
             armTouchGate: { [unowned self] in touchMailbox.setArmedUntil($0) },
-            suppressScroll: { [unowned self] in tapScrollSuppression.suppress(until: $0) },
+            suppressScroll: { [unowned self] deadline in
+                // TG-12: in or out of the scroll-event path only when arming flips.
+                if tapScrollSuppression.suppress(until: deadline) {
+                    scrollTap.setEnabled(deadline != nil)
+                }
+            },
             announceTapToSwipe: { [unowned self] armed in
                 guard let frame = visibleFrames[session.manager.focusedDisplay] ?? probe.primaryScreenVisibleFrame else {
                     return
@@ -1084,6 +1094,8 @@ final class SessionHost: @unchecked Sendable {
         multitouch?.stop()
         multitouchRunning = false
         mainShutDown = true
+        // TG-12: Gio leaves the scroll-event path whatever the arming state.
+        scrollTap.stop()
         queue.sync {
             guard !isShuttingDown else {
                 return
@@ -1410,26 +1422,19 @@ final class SessionHost: @unchecked Sendable {
         configCoordinator.reloadFromApp()
     }
 
-    /// The optional events the tap should subscribe to now (each flag has
-    /// its own lock): pointer moves for focus-follows-mouse, scroll events
-    /// for TG-10 tap-to-swipe.
-    private var wantedTapSubscriptions: TapSubscriptions {
-        TapSubscriptions(mouseMoved: focus.focusFollowsMouse, scrollWheel: tapScrollSuppression.isEnabled)
-    }
-
-    /// Main thread. Re-creates the tap with the current subscriptions.
-    private func restartTapForSubscriptions() {
+    /// Main thread. Re-creates the tap with the current mouse-move setting.
+    private func restartTapForMouseSetting() {
         guard let tap = hotkeyTap else {
             return
         }
-        let wanted = wantedTapSubscriptions
-        guard tapNeedsRestart(current: tap.subscriptions, wanted: wanted) else {
+        let wanted = focus.focusFollowsMouse
+        guard tapNeedsRestart(observingMouseMoved: tap.observesMouseMoved, wanted: wanted) else {
             return
         }
         tap.stop()
         hotkeyTap = nil
         startTap()
-        GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted.mouseMoved) scroll-wheel=\(wanted.scrollWheel)")
+        GioLog.record(.info, "hotkey tap restarted mouse-moved=\(wanted)")
     }
 
     // MARK: - Window-server notifications (WS-01)
@@ -1491,6 +1496,25 @@ final class SessionHost: @unchecked Sendable {
         trackpadPreferencesRead = nil
         DispatchQueue.main.async { [weak self] in
             self?.setMultitouchRunning(gestures.anyEnabled)
+            self?.setScrollTapRunning(gestures.tapToSwipe)
+        }
+    }
+
+    /// TG-12, main thread: the scroll-only tap exists while tap-to-swipe is
+    /// on (disabled, out of the event path, until armed).
+    private func setScrollTapRunning(_ wanted: Bool) {
+        switch scrollTapLifecycle(running: scrollTap.isRunning, wanted: wanted && !mainShutDown) {
+        case .start:
+            if scrollTap.start() {
+                GioLog.record(.info, "scroll tap started (disabled until tap-to-swipe arms)")
+            } else {
+                GioLog.record(.warn, "scroll tap refused; tap-to-swipe strokes also scroll the app underneath")
+            }
+        case .stop:
+            scrollTap.stop()
+            GioLog.record(.info, "scroll tap stopped")
+        case .none:
+            break
         }
     }
 
@@ -2621,21 +2645,13 @@ final class SessionHost: @unchecked Sendable {
     }
 
     private func startTap() {
-        let wanted = wantedTapSubscriptions
+        let observeMouseMoved = focus.focusFollowsMouse
         // Only subscribed while focus-follows-mouse is on: otherwise every
         // mouse move would cost a tap callback.
         var moveHandler: (@Sendable (CGPoint) -> Void)?
-        if wanted.mouseMoved {
+        if observeMouseMoved {
             moveHandler = { [weak self] location in
                 self?.focus.pointerMoved(location)
-            }
-        }
-        // TG-10: scroll events only while tap-to-swipe is on; swallowed only
-        // while it is armed (one lock and a compare per event).
-        var scrollHandler: (@Sendable () -> Bool)?
-        if wanted.scrollWheel {
-            scrollHandler = { [tapScrollSuppression] in
-                tapScrollSuppression.swallows(at: ProcessInfo.processInfo.systemUptime)
             }
         }
         let tap = HotkeyTap(
@@ -2646,7 +2662,6 @@ final class SessionHost: @unchecked Sendable {
             onKeyDown: { [weak self] in
                 self?.noteTyping()
             },
-            onScrollWheel: scrollHandler,
             onCombo: { [weak self] combo in
                 self?.handleCombo(combo) ?? false
             }

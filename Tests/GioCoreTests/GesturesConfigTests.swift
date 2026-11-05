@@ -26,7 +26,7 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(gestures.overviewFingers, 4)
         XCTAssertEqual(gestures.swipeDistance, 0.15)
         XCTAssertFalse(gestures.tapToSwipe, "TG-10: off like every gesture")
-        XCTAssertEqual(gestures.tapToSwipeDistance, TapToSwipe.defaultStepDistance, "TG-11: 0.2 of the trackpad")
+        XCTAssertEqual(gestures.tapToSwipeDistance, 0.1, "TG-12: the up/down step, 0.1 of the trackpad height")
         XCTAssertFalse(gestures.anyEnabled, "the trackpad is not even opened")
     }
 
@@ -114,7 +114,7 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(badWarnings, ["line 2: gestures.swipe-distance expects a number from 0.05 to 0.5, using 0.15"])
     }
 
-    /// TG-11: how far a tap-to-swipe stroke travels before it steps.
+    /// TG-11: how far an up/down tap-to-swipe stroke travels before it steps.
     func testTapToSwipeDistanceIsClampedAndANonNumberKeepsTheDefault() throws {
         let (low, lowWarnings) = try parse("[gestures]\ntap-to-swipe-distance = 0.01\n")
         XCTAssertEqual(low.gestures.tapToSwipeDistance, 0.05)
@@ -123,8 +123,8 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(high.gestures.tapToSwipeDistance, 0.5)
         XCTAssertEqual(highWarnings, ["line 2: gestures.tap-to-swipe-distance clamped to 0.5 (valid 0.05-0.5)"])
         let (bad, badWarnings) = try parse("[gestures]\ntap-to-swipe-distance = \"far\"\n")
-        XCTAssertEqual(bad.gestures.tapToSwipeDistance, 0.2)
-        XCTAssertEqual(badWarnings, ["line 2: gestures.tap-to-swipe-distance expects a number from 0.05 to 0.5, using 0.2"])
+        XCTAssertEqual(bad.gestures.tapToSwipeDistance, 0.1)
+        XCTAssertEqual(badWarnings, ["line 2: gestures.tap-to-swipe-distance expects a number from 0.05 to 0.5, using 0.1"])
     }
 
     func testWorkspaceSwipeAndOverviewCannotShareTheirFingers() throws {

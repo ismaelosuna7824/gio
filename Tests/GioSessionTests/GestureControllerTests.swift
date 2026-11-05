@@ -374,28 +374,90 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(world.actions, [])
     }
 
-    func testArmedStrokesStepThroughTheKeyboardPath() {
+    /// Up and down stay one workspace per stroke, through the keyboard path.
+    func testArmedVerticalStrokesStepThroughTheKeyboardPath() {
         world.settings.tapToSwipe = true
         controller.deliver(tap(at: 0))
-        controller.deliver(stroke(at: 0.5, dx: -0.3, dy: 0))
-        controller.deliver(stroke(at: 1, dx: 0, dy: 0.3))
-        XCTAssertEqual(world.actions, [.focusRight, .focusWorkspaceDown], "natural: content follows the fingers")
-        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe step direction=left action=focusRight"))
+        controller.deliver(stroke(at: 0.5, dx: 0, dy: 0.3))
+        XCTAssertEqual(world.actions, [.focusWorkspaceDown], "natural: swiping up shows the workspace below")
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe step direction=up action=focusWorkspaceDown"))
         world.settings.natural = false
-        controller.deliver(stroke(at: 1.5, dx: -0.3, dy: 0))
-        XCTAssertEqual(world.actions.last, .focusLeft)
-        XCTAssertEqual(world.calls, [], "two fingers never scroll the strip")
+        controller.deliver(stroke(at: 1, dx: 0, dy: 0.3))
+        XCTAssertEqual(world.actions.last, .focusWorkspaceUp)
+        XCTAssertEqual(world.calls, [], "a vertical stroke never scrolls the strip")
     }
 
-    /// TG-11: the configured `tap-to-swipe-distance` decides when a stroke steps.
+    /// TG-11: the configured `tap-to-swipe-distance` decides when an up/down stroke steps.
     func testStepsUseTheConfiguredDistance() {
         world.settings.tapToSwipe = true
         world.settings.tapToSwipeDistance = 0.4
         controller.deliver(tap(at: 0))
-        controller.deliver(stroke(at: 0.5, dx: -0.3, dy: 0))
+        controller.deliver(stroke(at: 0.5, dx: 0, dy: 0.3))
         XCTAssertEqual(world.actions, [], "under the configured distance")
-        controller.deliver(stroke(at: 1, dx: -0.5, dy: 0))
-        XCTAssertEqual(world.actions, [.focusRight])
+        controller.deliver(stroke(at: 1, dx: 0, dy: -0.45))
+        XCTAssertEqual(world.actions, [.focusWorkspaceUp])
+    }
+
+    // MARK: TG-12 the armed horizontal stroke scrolls the strip
+
+    /// Two fingers from x 0.5 leftwards in `steps` steps of 0.05, 10 ms apart, from `t`.
+    private func twoFingerSwipeLeft(at t: TimeInterval, steps: Int) -> [TouchFrame] {
+        (0...steps).map { frame(t + Double($0) * 0.01, fingers: 2, x: 0.5 - Double($0) * 0.05) }
+    }
+
+    func testAnArmedHorizontalStrokeMovesTheStripThroughTheSink() {
+        world.settings.tapToSwipe = true
+        world.settings.scroll = false
+        controller.deliver(tap(at: 0))
+        controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 1))
+        XCTAssertEqual(world.calls, ["begin"], "the TG-03 scroll, without its own finger setting")
+        XCTAssertTrue(controller.isTracking, "passes wait for the release")
+        XCTAssertEqual(world.sampled[id(1)]?.minX, -42, "natural: 0.05 to the left scrolls 50 pt to the right")
+        XCTAssertEqual(world.sampled[id(2)]?.minX, 566)
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll begin") && $0.contains("fingers=2") })
+        XCTAssertEqual(world.manager.currentWorkspace().viewportOffset, 0, "State does not move while the fingers do")
+        XCTAssertEqual(world.actions, [], "no discrete step")
+    }
+
+    func testTheReleaseSnapsWithTheVelocityAndFocusesTheColumn() throws {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 6) + [frame(0.57, fingers: 0, x: 0)])
+        XCTAssertFalse(controller.isTracking)
+        let release = try XCTUnwrap(world.releases.first)
+        XCTAssertEqual(release.velocity, -4285.7, accuracy: 0.1, "the same hand-off as the TG-03 scroll")
+        XCTAssertTrue(release.focusChanged, "the settle raises the landed column (uncentered intent)")
+        let workspace = world.manager.currentWorkspace()
+        XCTAssertEqual(workspace.viewportOffset, 1440)
+        XCTAssertEqual(workspace.focusedWindow, id(4))
+        XCTAssertTrue(world.logs.contains { $0.hasPrefix("gesture scroll end") })
+    }
+
+    func testAnExtraFingerOrAClickAbandonsTheArmedScroll() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 2) + [frame(0.53, fingers: 3, x: 0.4)])
+        XCTAssertEqual(world.abandons, [.cancelled])
+        XCTAssertFalse(controller.isTracking)
+        XCTAssertEqual(world.manager.currentWorkspace().viewportOffset, 0)
+
+        controller.deliver([frame(0.6, fingers: 0, x: 0)] + twoFingerSwipeLeft(at: 0.7, steps: 2))
+        XCTAssertTrue(controller.isTracking)
+        world.mouseDown = true
+        controller.deliver([frame(0.73, fingers: 2, x: 0.3)])
+        XCTAssertEqual(world.abandons, [.cancelled, .mouse])
+        XCTAssertTrue(world.releases.isEmpty)
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=mouse"))
+    }
+
+    func testExpiryMidScrollAbandonsIt() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 2))
+        XCTAssertTrue(controller.isTracking)
+        advance(TapToSwipe.armedWindow + 0.1)
+        XCTAssertEqual(world.abandons, [.cancelled], "frames stopped: the strip goes back")
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=expired"))
     }
 
     func testTwoFingerStrokesDoNothingUnlessArmed() {
@@ -425,12 +487,12 @@ final class GestureControllerTests: XCTestCase {
         world.settings.tapToSwipe = true
         controller.deliver(tap(at: 0))
         advance(2)
-        controller.deliver(stroke(at: 2, dx: -0.3, dy: 0))
+        controller.deliver(stroke(at: 2, dx: 0, dy: 0.3))
         XCTAssertEqual(try XCTUnwrap(world.scrollDeadlines.last ?? nil), 2 + TapToSwipe.armedWindow, accuracy: 1e-9)
         advance(0.6)
         XCTAssertFalse(world.logs.contains { $0.hasPrefix("gesture tap-to-swipe disarmed") }, "renewed by the stroke")
-        controller.deliver(stroke(at: 2.6, dx: 0.3, dy: 0))
-        XCTAssertEqual(world.actions, [.focusRight, .focusLeft])
+        controller.deliver(stroke(at: 2.6, dx: 0, dy: -0.3))
+        XCTAssertEqual(world.actions, [.focusWorkspaceDown, .focusWorkspaceUp])
         advance(TapToSwipe.armedWindow)
         XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=expired"))
         XCTAssertEqual(world.logs.filter { $0.hasPrefix("gesture tap-to-swipe disarmed") }.count, 1)

@@ -32,11 +32,12 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     /// TG-08: vertical travel (fraction of the trackpad height) before a
     /// workspace swipe or the overview fires.
     public var swipeDistance: Double
-    /// TG-10: a three-finger tap arms two-finger steps (window left/right,
-    /// workspace up/down) for `TapToSwipe.armedWindow`.
+    /// TG-10: a three-finger tap arms two-finger strokes for
+    /// `TapToSwipe.armedWindow`: TG-12 left/right scroll the strip with the
+    /// fingers, up/down switch workspace once per stroke.
     public var tapToSwipe: Bool
-    /// TG-11: stroke travel (fraction of the trackpad, on the stroke's axis)
-    /// before a tap-to-swipe step fires.
+    /// TG-11/TG-12: up/down travel (fraction of the trackpad height) before
+    /// a tap-to-swipe workspace step fires.
     public var tapToSwipeDistance: Double
 
     public init(
