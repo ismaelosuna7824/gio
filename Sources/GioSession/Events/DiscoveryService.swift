@@ -91,6 +91,10 @@ public final class DiscoveryService: @unchecked Sendable {
         public var windowFrame: (WindowID) -> CGRect?
         /// `[layout] new-window-position`, read at each live arrival.
         public var newWindowPosition: () -> NewWindowPosition
+        /// FI-15: the window-server number recorded for a registered window.
+        public var windowNumber: (WindowID) -> UInt32?
+        /// FI-15: every window number the window server lists (one query).
+        public var liveWindowNumbers: () -> Set<UInt32>
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -123,8 +127,12 @@ public final class DiscoveryService: @unchecked Sendable {
             allowsWindowWork: @escaping () -> Bool = { true },
             listedWindows: @escaping (pid_t) -> [AXUIElement]? = { _ in nil },
             windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil },
-            newWindowPosition: @escaping () -> NewWindowPosition = { .end }
+            newWindowPosition: @escaping () -> NewWindowPosition = { .end },
+            windowNumber: @escaping (WindowID) -> UInt32? = { _ in nil },
+            liveWindowNumbers: @escaping () -> Set<UInt32> = { [] }
         ) {
+            self.windowNumber = windowNumber
+            self.liveWindowNumbers = liveWindowNumbers
             self.allowsWindowWork = allowsWindowWork
             self.listedWindows = listedWindows
             self.windowFrame = windowFrame
@@ -189,6 +197,9 @@ public final class DiscoveryService: @unchecked Sendable {
     private var vanishScanned: Set<WindowID> = []
     /// SM-31: pids whose proof scan waits for the next turn of the queue.
     private var vanishScanPIDs: Set<pid_t> = []
+    /// FI-15: windows the window server reported destroyed, until a scan
+    /// purges them or still lists them (the notice is proof on its own).
+    private var destroyedNotices: Set<WindowID> = []
     /// WC-11: native tab groups (one slot each, held by the front tab).
     private var tabs = TabGroupBook()
 
@@ -298,13 +309,48 @@ public final class DiscoveryService: @unchecked Sendable {
             reapDeadPids(live: liveIDs)
         }
         // Fallback for destroyed events whose element match failed: windows
-        // of a fully-read pid that the scan no longer lists are gone. WC-11:
-        // background tabs of a listed front tab are never listed.
-        purge(vanishedWindowIDs(
-            registered: registry.managedWindows(),
-            scannedPIDs: found.completePIDs,
-            present: liveIDs.union(tabs.membersKept(present: liveIDs))
-        ))
+        // of a fully-read pid that the scan no longer lists are gone, once
+        // the window server agrees (FI-15). WC-11: background tabs of a
+        // listed front tab are never listed.
+        let present = liveIDs.union(tabs.membersKept(present: liveIDs))
+        destroyedNotices.subtract(present)
+        purge(confirmedAbsent(vanishedWindowIDs(
+            registered: registry.managedWindows(), scannedPIDs: found.completePIDs, present: present
+        )))
+    }
+
+    /// FI-15: the absent windows the window server does not still list.
+    /// Kept ones stay registered (their vanish stays scanned until they
+    /// settle again); the next scan, a wake or unlock one included, asks
+    /// again.
+    private func confirmedAbsent(_ candidates: [WindowID]) -> [WindowID] {
+        let numbers = candidates.reduce(into: [WindowID: UInt32]()) { numbers, id in
+            numbers[id] = context.windowNumber(id)
+        }
+        guard vanishNeedsWindowServer(candidates: candidates, numbers: numbers, destroyed: destroyedNotices) else {
+            return candidates
+        }
+        let verdict = confirmedVanished(
+            candidates: candidates, numbers: numbers, liveNumbers: context.liveWindowNumbers(),
+            destroyed: destroyedNotices
+        )
+        for id in verdict.kept {
+            context.log(.info, "window kept id=\(id.pid):\(id.elementID) reason=window-server-alive")
+        }
+        return verdict.purge
+    }
+
+    /// WS-02: the window server reported the window destroyed. The proof
+    /// scan of its app still decides (the app may list it: a tab), but the
+    /// window server is not asked again, and a vanish already scanned (a
+    /// window kept during a lock) is scanned anew.
+    public func noteDestroyed(_ id: WindowID) {
+        guard context.registry().find(id) != nil else {
+            return
+        }
+        destroyedNotices.insert(id)
+        vanishScanned.remove(id)
+        noteSettled(vanished: [id], alive: [])
     }
 
     /// A launched app's observer attached: register its windows, reflow.
@@ -318,8 +364,9 @@ public final class DiscoveryService: @unchecked Sendable {
 
     /// SM-31: the reconciler found `vanished` windows' AX elements invalid
     /// and `alive` windows where it wrote or read them. Absence is not
-    /// death: a vanished window is purged only by a complete scan
-    /// of its pid that no longer lists it. Each vanished, registered window
+    /// death: a vanished window is purged only by a complete scan of its
+    /// pid that no longer lists it, and only once the window server no
+    /// longer lists its number either (FI-15). Each vanished, registered window
     /// asks for that scan once (a window that settles again may ask again);
     /// the pids of one turn share one scan each, run on the next turn of the
     /// session queue (never inside the pass that reported them). The scan
@@ -915,6 +962,7 @@ public final class DiscoveryService: @unchecked Sendable {
             pendingFollows.forget(id)
             titleRechecks.forget(id)
             vanishScanned.remove(id)
+            destroyedNotices.remove(id)
             context.forgetWindow(id)
         }
         context.updateManager { manager in

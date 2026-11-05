@@ -100,4 +100,15 @@ final class WindowServerSnapshotTests: XCTestCase {
         let noNumber = entry(pid: 9, layer: 0, x: 0, y: 0, w: 100, h: 100)
         XCTAssertEqual(parseWindowServerWindowIDs([ring, main, other, noNumber], pid: 9), [70, 71])
     }
+
+    /// FI-15: every listed window number, whatever its owner, layer or
+    /// screen (the absence purge asks whether a recorded one still exists).
+    func testListedNumbersKeepEveryNumberedEntry() {
+        var main = entry(pid: 9, layer: 0, x: 0, y: 0, w: 100, h: 20)
+        main[kCGWindowNumber as String] = 71
+        var menu = entry(pid: 6, layer: 101, x: 0, y: 0, w: 100, h: 100)
+        menu[kCGWindowNumber as String] = 43
+        let noNumber = entry(pid: 9, layer: 0, x: 0, y: 0, w: 100, h: 100)
+        XCTAssertEqual(parseWindowServerNumbers([main, menu, noNumber]), [71, 43])
+    }
 }

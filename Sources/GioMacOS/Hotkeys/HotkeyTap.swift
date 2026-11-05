@@ -160,21 +160,27 @@ final class TapBox: @unchecked Sendable {
 /// PF-AB: the tap's own thread and run loop. On the main run loop every
 /// keystroke and click of every app waited for Gio's main thread (overlay
 /// frames, AX callbacks, SwiftUI): any hitch there was felt system-wide as
-/// input lag. The thread owns the box's retain and releases it after its
-/// run loop stopped, so no callback can outlive it.
-private final class TapThread: Thread, @unchecked Sendable {
+/// input lag. The thread owns the box's retain and releases it (`release`)
+/// after its run loop stopped, so no callback can outlive it. TG-12: the
+/// scroll-suppression tap runs on one too.
+final class TapThread: Thread, @unchecked Sendable {
     private let source: CFRunLoopSource
     private let boxRefcon: UnsafeMutableRawPointer
+    private let release: @Sendable (UnsafeMutableRawPointer) -> Void
     private let ready = DispatchSemaphore(value: 0)
     /// Guards `runLoop`.
     private let lock = NSLock()
     private var runLoop: CFRunLoop?
 
-    init(source: CFRunLoopSource, boxRefcon: UnsafeMutableRawPointer) {
+    init(
+        source: CFRunLoopSource, boxRefcon: UnsafeMutableRawPointer, name: String,
+        release: @escaping @Sendable (UnsafeMutableRawPointer) -> Void
+    ) {
         self.source = source
         self.boxRefcon = boxRefcon
+        self.release = release
         super.init()
-        name = "gio.hotkey-tap"
+        self.name = name
         qualityOfService = .userInteractive
     }
 
@@ -187,7 +193,7 @@ private final class TapThread: Thread, @unchecked Sendable {
         ready.signal()
         CFRunLoopRun()
         CFRunLoopRemoveSource(current, source, .commonModes)
-        Unmanaged<TapBox>.fromOpaque(boxRefcon).release()
+        release(boxRefcon)
     }
 
     /// Starts the thread and returns once its run loop has the source.
@@ -272,7 +278,9 @@ public final class HotkeyTap {
         self.port = port
         self.box = box
         box.attach(port)
-        let thread = TapThread(source: source, boxRefcon: boxRefcon)
+        let thread = TapThread(source: source, boxRefcon: boxRefcon, name: "gio.hotkey-tap") {
+            Unmanaged<TapBox>.fromOpaque($0).release()
+        }
         thread.startAndWait()
         self.thread = thread
         CGEvent.tapEnable(tap: port, enable: true)

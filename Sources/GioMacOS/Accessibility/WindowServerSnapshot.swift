@@ -172,6 +172,22 @@ func parseWindowServerWindowIDs(_ entries: [[String: Any]], pid: pid_t) -> Set<U
     })
 }
 
+/// FI-15: every window number the window server lists, on screen or not
+/// (other Spaces, minimized, behind the lock screen), whatever its layer.
+/// One query; empty when it fails. Public API, no titles read.
+public func windowServerListedNumbers() -> Set<UInt32> {
+    guard let raw = CGWindowListCopyWindowInfo(.optionAll, kCGNullWindowID) as? [[String: Any]] else {
+        return []
+    }
+    return parseWindowServerNumbers(raw)
+}
+
+func parseWindowServerNumbers(_ entries: [[String: Any]]) -> Set<UInt32> {
+    Set(entries.compactMap { entry in
+        (entry[kCGWindowNumber as String] as? Int).map { UInt32(truncatingIfNeeded: $0) }
+    })
+}
+
 /// Diagnostics: the size the WindowServer currently draws for one window
 /// (`CGWindowID`), or nil when it is not listed. Public API, no titles read.
 public func windowServerSize(windowID: UInt32) -> CGSize? {

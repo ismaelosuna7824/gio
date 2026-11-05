@@ -131,4 +131,19 @@ final class PerAnimationPlanningTests: XCTestCase {
             )
         }
     }
+
+    /// TG-13: with the Fast preset the swiped windows still spring from the
+    /// release velocity; a flight of another kind in that pass jumps.
+    func testAGestureSettleSpringsWithTheFingersVelocityInTheFastPreset() {
+        let settings = gestureSettleAnimations(AnimationsSectionConfig())
+        let springs = ReflowPlanner.applyingAnimationSettings(
+            flights(), settings: settings, kinds: [c: .workspaceSwitch], fallback: .horizontalViewMovement
+        )
+        let handed = handingOffGestureVelocity(springs, windows: [a, b], velocity: -2000)
+        XCTAssertEqual(handed[0].spring, SpringParameters.niri)
+        XCTAssertEqual(handed[0].velocity.x, -2000)
+        XCTAssertNotNil(handed[1].spring)
+        XCTAssertNil(handed[2].spring, "the other kind stays instant")
+        XCTAssertLessThanOrEqual(handed[2].duration, 0.001)
+    }
 }
