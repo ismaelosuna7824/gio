@@ -26,7 +26,7 @@ final class TouchFrameMailboxTests: XCTestCase {
         let scheduler = ManualScheduler()
         let received = Received()
         let mailbox = TouchFrameMailbox(scheduler: scheduler) { received.append($0) }
-        mailbox.setMinimumFingers(3)
+        mailbox.configure(minimumFingers: 3, tapToSwipe: false)
         mailbox.post(frame(0, fingers: 3))
         mailbox.post(frame(0.01, fingers: 3))
         mailbox.post(frame(0.02, fingers: 0))
@@ -48,18 +48,39 @@ final class TouchFrameMailboxTests: XCTestCase {
         let mailbox = TouchFrameMailbox(scheduler: scheduler) { received.append($0) }
         mailbox.post(frame(0, fingers: 3))
         XCTAssertEqual(scheduler.pendingCount, 0, "no gesture enabled yet")
-        mailbox.setMinimumFingers(3)
+        mailbox.configure(minimumFingers: 3, tapToSwipe: false)
         for step in 0..<50 {
             mailbox.post(frame(Double(step) * 0.01, fingers: 1))
         }
         XCTAssertEqual(scheduler.pendingCount, 0)
     }
 
+    /// TG-10: two-finger frames (scrolling) cross only while tap-to-swipe is
+    /// armed, up to the deadline the session set in the frames' clock.
+    func testTwoFingerFramesCrossOnlyWhileArmed() {
+        let scheduler = ManualScheduler()
+        let received = Received()
+        let mailbox = TouchFrameMailbox(scheduler: scheduler) { received.append($0) }
+        mailbox.configure(minimumFingers: 3, tapToSwipe: true)
+        mailbox.post(frame(0, fingers: 2))
+        XCTAssertEqual(scheduler.pendingCount, 0, "not armed: two-finger scrolling stays on the callback thread")
+        mailbox.setArmedUntil(2)
+        mailbox.post(frame(1, fingers: 2))
+        mailbox.post(frame(1.01, fingers: 0))
+        scheduler.runPending()
+        XCTAssertEqual(received.batches.map { $0.map(\.timestamp) }, [[1, 1.01]])
+        mailbox.post(frame(3, fingers: 2))
+        mailbox.setArmedUntil(5)
+        mailbox.setArmedUntil(nil)
+        mailbox.post(frame(3.1, fingers: 2))
+        XCTAssertEqual(scheduler.pendingCount, 0, "past the deadline and disarmed")
+    }
+
     func testAFullMailboxDropsTheOldestFrames() {
         let scheduler = ManualScheduler()
         let received = Received()
         let mailbox = TouchFrameMailbox(scheduler: scheduler) { received.append($0) }
-        mailbox.setMinimumFingers(3)
+        mailbox.configure(minimumFingers: 3, tapToSwipe: false)
         for step in 0..<(TouchFrameMailbox.capacity + 10) {
             mailbox.post(frame(Double(step), fingers: 3))
         }
@@ -72,7 +93,7 @@ final class TouchFrameMailboxTests: XCTestCase {
         let scheduler = ManualScheduler()
         let received = Received()
         let mailbox = TouchFrameMailbox(scheduler: scheduler) { received.append($0) }
-        mailbox.setMinimumFingers(3)
+        mailbox.configure(minimumFingers: 3, tapToSwipe: false)
         DispatchQueue.concurrentPerform(iterations: 4) { poster in
             for step in 0..<50 {
                 mailbox.post(TouchFrame(

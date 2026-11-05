@@ -44,6 +44,12 @@ final class GestureControllerTests: XCTestCase {
         var now: TimeInterval = 0
         var drawn: [WindowID: CGRect] = [:]
         let sink = Sink()
+        /// TG-10: the mailbox's armed deadline (frame clock), the tap's
+        /// scroll suppression deadline (session clock), the notices shown.
+        var gateDeadlines: [TimeInterval?] = []
+        var scrollDeadlines: [TimeInterval?] = []
+        var notices: [Bool] = []
+        let scheduler = ManualScheduler()
     }
 
     private let display = DisplayID(1)
@@ -94,6 +100,10 @@ final class GestureControllerTests: XCTestCase {
             abandon: { world.abandons.append($0) },
             perform: { world.actions.append($0) },
             toggleOverview: { world.overviews += 1 },
+            armTouchGate: { world.gateDeadlines.append($0) },
+            suppressScroll: { world.scrollDeadlines.append($0) },
+            announceTapToSwipe: { world.notices.append($0) },
+            after: { delay, work in world.scheduler.asyncAfter(delay, work) },
             log: { _, line in world.logs.append(line) },
             now: { world.now }
         ))
@@ -327,5 +337,131 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(world.tracks.count, tracked + 1)
         XCTAssertEqual(world.tracks.last, [:], "an empty update only re-arms the overlay's watchdog")
         XCTAssertTrue(controller.isTracking)
+    }
+
+    // MARK: TG-10 tap to swipe
+
+    /// Three still fingers for 0.1 s from `t`, then lifted.
+    private func tap(at t: TimeInterval) -> [TouchFrame] {
+        [frame(t, fingers: 3, x: 0.5), frame(t + 0.05, fingers: 3, x: 0.5), frame(t + 0.1, fingers: 3, x: 0.5), frame(t + 0.11, fingers: 0, x: 0)]
+    }
+
+    /// Two fingers by (dx, dy) from the middle in four frames, then lifted.
+    private func stroke(at t: TimeInterval, dx: Double, dy: Double) -> [TouchFrame] {
+        var frames: [TouchFrame] = []
+        for step in 0...4 {
+            let progress = Double(step) / 4
+            frames.append(frame(t + Double(step) * 0.01, fingers: 2, x: 0.5 + dx * progress, y: 0.5 + dy * progress))
+        }
+        frames.append(frame(t + 0.05, fingers: 0, x: 0))
+        return frames
+    }
+
+    private func advance(_ delta: TimeInterval) {
+        world.now += delta
+        world.scheduler.advance(by: delta)
+    }
+
+    func testATapArmsWithANoticeTheGateAndTheScrollSuppression() throws {
+        world.settings.tapToSwipe = true
+        world.now = 100
+        controller.deliver(tap(at: 0))
+        XCTAssertEqual(world.notices, [true])
+        XCTAssertEqual(try XCTUnwrap(world.gateDeadlines.last ?? nil), 0.11 + TapToSwipe.armedWindow, accuracy: 1e-9, "frame clock")
+        XCTAssertEqual(try XCTUnwrap(world.scrollDeadlines.last ?? nil), 100 + TapToSwipe.armedWindow, accuracy: 1e-9, "session clock")
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe armed"))
+        XCTAssertEqual(world.calls, [], "a tap is no scroll")
+        XCTAssertEqual(world.actions, [])
+    }
+
+    func testArmedStrokesStepThroughTheKeyboardPath() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.deliver(stroke(at: 0.5, dx: -0.3, dy: 0))
+        controller.deliver(stroke(at: 1, dx: 0, dy: 0.3))
+        XCTAssertEqual(world.actions, [.focusRight, .focusWorkspaceDown], "natural: content follows the fingers")
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe step direction=left action=focusRight"))
+        world.settings.natural = false
+        controller.deliver(stroke(at: 1.5, dx: -0.3, dy: 0))
+        XCTAssertEqual(world.actions.last, .focusLeft)
+        XCTAssertEqual(world.calls, [], "two fingers never scroll the strip")
+    }
+
+    func testTwoFingerStrokesDoNothingUnlessArmed() {
+        world.settings.tapToSwipe = true
+        controller.deliver(stroke(at: 0, dx: -0.3, dy: 0))
+        world.settings.tapToSwipe = false
+        controller.deliver(tap(at: 1) + stroke(at: 1.5, dx: -0.3, dy: 0))
+        XCTAssertEqual(world.actions, [])
+        XCTAssertEqual(world.notices, [], "tap-to-swipe off: a tap arms nothing")
+    }
+
+    func testExpiryDisarmsQuietlyAndClearsTheGateAndTheSuppression() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        advance(TapToSwipe.armedWindow - 0.1)
+        XCTAssertFalse(world.logs.contains { $0.hasPrefix("gesture tap-to-swipe disarmed") })
+        advance(0.2)
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=expired"))
+        XCTAssertEqual(world.gateDeadlines.last, .some(nil))
+        XCTAssertEqual(world.scrollDeadlines.last, .some(nil))
+        XCTAssertEqual(world.notices, [true], "no notice on expiry")
+        controller.deliver(stroke(at: 3, dx: -0.3, dy: 0))
+        XCTAssertEqual(world.actions, [])
+    }
+
+    func testFingersOnTheTrackpadPostponeTheExpiry() throws {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        advance(2)
+        controller.deliver(stroke(at: 2, dx: -0.3, dy: 0))
+        XCTAssertEqual(try XCTUnwrap(world.scrollDeadlines.last ?? nil), 2 + TapToSwipe.armedWindow, accuracy: 1e-9)
+        advance(0.6)
+        XCTAssertFalse(world.logs.contains { $0.hasPrefix("gesture tap-to-swipe disarmed") }, "renewed by the stroke")
+        controller.deliver(stroke(at: 2.6, dx: 0.3, dy: 0))
+        XCTAssertEqual(world.actions, [.focusRight, .focusLeft])
+        advance(TapToSwipe.armedWindow)
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=expired"))
+        XCTAssertEqual(world.logs.filter { $0.hasPrefix("gesture tap-to-swipe disarmed") }.count, 1)
+    }
+
+    func testASecondTapDisarmsWithANotice() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.deliver(tap(at: 1))
+        XCTAssertEqual(world.notices, [true, false])
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=tap"))
+        XCTAssertEqual(world.gateDeadlines.last, .some(nil))
+        XCTAssertEqual(world.scrollDeadlines.last, .some(nil))
+        advance(TapToSwipe.armedWindow * 2)
+        XCTAssertEqual(world.logs.filter { $0.hasPrefix("gesture tap-to-swipe disarmed") }.count, 1, "the stale expiry does nothing")
+    }
+
+    func testAMouseButtonDisarms() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        controller.mouseDown()
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=mouse"))
+        XCTAssertEqual(world.scrollDeadlines.last, .some(nil))
+        XCTAssertEqual(world.notices, [true])
+        controller.mouseDown()
+        XCTAssertEqual(world.logs.filter { $0.hasPrefix("gesture tap-to-swipe disarmed") }.count, 1)
+
+        // A button held while the frames arrive disarms too.
+        controller.deliver(tap(at: 1))
+        world.mouseDown = true
+        controller.deliver(stroke(at: 1.5, dx: -0.3, dy: 0))
+        XCTAssertEqual(world.actions, [])
+        XCTAssertEqual(world.logs.filter { $0 == "gesture tap-to-swipe disarmed reason=mouse" }.count, 2)
+    }
+
+    func testTurningTheSettingOffWhileArmedDisarms() {
+        world.settings.tapToSwipe = true
+        controller.deliver(tap(at: 0))
+        world.settings.tapToSwipe = false
+        controller.deliver(stroke(at: 0.5, dx: -0.3, dy: 0))
+        XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=disabled"))
+        XCTAssertEqual(world.actions, [])
+        XCTAssertEqual(world.gateDeadlines.last, .some(nil))
     }
 }

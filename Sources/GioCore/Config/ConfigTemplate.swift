@@ -185,6 +185,11 @@ public func defaultConfigTemplate() -> String {
     # How far a vertical swipe travels before it fires, as a fraction of the
     # trackpad height (0.05-0.5). It must be a clear up or down stroke.
     swipe-distance = 0.15
+    # Tap three fingers (quick, without moving), then swipe with two: left or
+    # right changes window, up or down changes workspace, one step per swipe
+    # (lift between steps). Two-finger scrolling is paused while it is on
+    # (2.5 s after the fingers last touched; a click or another tap ends it).
+    tap-to-swipe = false
 
     [keybindings]
     "Alt+H" = "focus-left"

@@ -24,4 +24,19 @@ final class NoticePanelTests: XCTestCase {
         let frame = noticeFrame(size: CGSize(width: 500, height: 64), in: narrow)
         XCTAssertTrue(narrow.contains(frame))
     }
+
+    /// TG-10: arming tap-to-swipe says what the fingers do now; a second
+    /// tap says scrolling is back.
+    func testTapToSwipeNotices() {
+        XCTAssertEqual(tapToSwipeNotice(armed: true), GioNotice(
+            symbol: "hand.draw",
+            title: "Gestures on: swipe with two fingers",
+            detail: "Left or right changes window, up or down changes workspace. Tap three fingers again to stop."
+        ))
+        XCTAssertEqual(tapToSwipeNotice(armed: false), GioNotice(
+            symbol: "hand.draw",
+            title: "Gestures off",
+            detail: "Two fingers scroll again."
+        ))
+    }
 }

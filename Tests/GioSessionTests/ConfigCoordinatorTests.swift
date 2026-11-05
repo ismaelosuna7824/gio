@@ -1,5 +1,6 @@
 import Foundation
 import GioCore
+import GioMacOS
 import XCTest
 @testable import GioSession
 
@@ -9,8 +10,8 @@ final class ConfigCoordinatorTests: XCTestCase {
         var session = CommandSession()
         var calls: [String] = []
         var logLevels: [LogLevel] = []
-        var focusFollowsMouse: [Bool] = []
-        var tapObserving: Bool?
+        var wanted: [TapSubscriptions] = []
+        var tapSubscriptions: TapSubscriptions?
         var tapRestarts = 0
         var logs: [String] = []
     }
@@ -53,11 +54,11 @@ final class ConfigCoordinatorTests: XCTestCase {
                     world.logLevels.append($0)
                 },
                 invalidateConfigCaches: { world.calls.append("invalidate") },
-                setFocusFollowsMouse: {
-                    world.calls.append("focusFollowsMouse")
-                    world.focusFollowsMouse.append($0)
+                setTapSubscriptions: {
+                    world.calls.append("tapSubscriptions")
+                    world.wanted.append($0)
                 },
-                tapObservesMouseMoved: { world.tapObserving },
+                tapSubscriptions: { world.tapSubscriptions },
                 requestTapRestart: { world.tapRestarts += 1 },
                 reapplyRules: { world.calls.append("reapplyRules") },
                 reflow: { world.calls.append("reflow") },
@@ -90,7 +91,7 @@ final class ConfigCoordinatorTests: XCTestCase {
         XCTAssertEqual(
             world.calls,
             [
-                "reloadSession", "logLevel", "invalidate", "focusFollowsMouse",
+                "reloadSession", "logLevel", "invalidate", "tapSubscriptions",
                 "loadStatus", "reapplyRules", "reflow", "publishSnapshot", "publishFocusRing",
             ]
         )
@@ -153,20 +154,20 @@ final class ConfigCoordinatorTests: XCTestCase {
         XCTAssertTrue(world.calls.isEmpty, "the live reload waits for the session queue")
         scheduler.runPending()
         XCTAssertEqual(world.calls.first, "reloadSession")
-        XCTAssertEqual(world.focusFollowsMouse, [true])
+        XCTAssertEqual(world.wanted, [TapSubscriptions(mouseMoved: true)])
         XCTAssertEqual(world.logs, ["config edited from the app and reloaded"])
     }
 
     func testFocusFollowsMouseChangeRequestsATapRestart() {
         let coordinator = makeCoordinator()
-        world.tapObserving = false
+        world.tapSubscriptions = TapSubscriptions()
         world.session.config.behavior.focusFollowsMouse = true
         coordinator.refreshDispatcher()
         XCTAssertEqual(world.tapRestarts, 1)
-        XCTAssertEqual(world.focusFollowsMouse, [true])
+        XCTAssertEqual(world.wanted, [TapSubscriptions(mouseMoved: true)])
 
         // The tap already observes moves: nothing to rebuild.
-        world.tapObserving = true
+        world.tapSubscriptions = TapSubscriptions(mouseMoved: true)
         coordinator.refreshDispatcher()
         XCTAssertEqual(world.tapRestarts, 1)
 
@@ -176,13 +177,32 @@ final class ConfigCoordinatorTests: XCTestCase {
         XCTAssertEqual(world.tapRestarts, 2)
     }
 
+    /// TG-10: tap-to-swipe needs the tap's scroll-wheel subscription (to
+    /// swallow scrolling while armed); turning it on or off rebuilds the tap.
+    func testTapToSwipeChangeRequestsATapRestart() {
+        let coordinator = makeCoordinator()
+        world.tapSubscriptions = TapSubscriptions()
+        world.session.config.gestures.tapToSwipe = true
+        coordinator.refreshDispatcher()
+        XCTAssertEqual(world.tapRestarts, 1)
+        XCTAssertEqual(world.wanted, [TapSubscriptions(scrollWheel: true)])
+
+        world.tapSubscriptions = TapSubscriptions(scrollWheel: true)
+        coordinator.refreshDispatcher()
+        XCTAssertEqual(world.tapRestarts, 1, "already subscribed")
+
+        world.session.config.gestures.tapToSwipe = false
+        coordinator.refreshDispatcher()
+        XCTAssertEqual(world.tapRestarts, 2)
+    }
+
     func testNoTapMeansNoRestart() {
         let coordinator = makeCoordinator()
-        world.tapObserving = nil
+        world.tapSubscriptions = nil
         world.session.config.behavior.focusFollowsMouse = true
         coordinator.refreshDispatcher()
         XCTAssertEqual(world.tapRestarts, 0)
-        XCTAssertEqual(world.focusFollowsMouse, [true])
+        XCTAssertEqual(world.wanted, [TapSubscriptions(mouseMoved: true)])
     }
 
     func testDispatcherIsReadableFromAnotherThread() throws {

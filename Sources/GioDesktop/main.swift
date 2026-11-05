@@ -158,6 +158,9 @@ final class GioDesktopDelegate: NSObject, NSApplicationDelegate {
         host.onDwindleRefused = { [weak self] refusal, frame in
             self?.notices.show(dwindleRefusalNotice(refusal), on: frame)
         }
+        host.onTapToSwipe = { [weak self] armed, frame in
+            self?.notices.show(tapToSwipeNotice(armed: armed), on: frame)
+        }
         host.onRestart = { [weak self] in self?.restartSession() }
         mainWindow.installMainMenu()
         // The window opens on launch (Dock icon while visible); closing it

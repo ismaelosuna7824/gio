@@ -325,6 +325,42 @@ read for the snap and focus rules.
   Settings: "Swipe distance" slider (percent) in the Trackpad Gestures card, finger rows
   labelled per gesture ("Fingers to scroll", "Fingers to switch workspaces", "Fingers for the
   overview").
+- TG-10 tap to swipe (user decision, 2026-11-04: change window or workspace with gestures
+  without losing native two-finger scrolling and without macOS's three-finger Space
+  switching). Decision: a three-finger tap arms a mode in which two-finger strokes step.
+  `TapToSwipe` (`GioCore/Gestures/TapToSwipe.swift`, pure, frame clock): a tap is a touch with
+  exactly 3 contacts at its peak, lifted (below 3) within `maxTapDuration` 0.3 s of its first
+  three-finger frame, its centroid never more than `maxTapTravel` 0.02 from where it landed;
+  it arms when off and disarms (`tap`) when on. Armed, `armedUntil` is `armedWindow` 2.5 s
+  after the last frame seen (the arming tap, every frame of a stroke, its lift), so the mode
+  never expires under the fingers and each step renews it; a frame past it disarms
+  (`expired`) first. A stroke starts at the first two-finger frame after a lift; at
+  `stepDistance` 0.1 of travel on the dominant axis, at least `verticalDominance` (2.0) times
+  the other, it fires one `step(left|right|up|down)`; a diagonal, a third finger or any other
+  count consumes it; either way the fingers must lift below two before the next stroke. The
+  arming tap's own lifting fingers never start a stroke. `tapSwipeAction`: natural swipe left
+  shows the window on the right (`focus-right`), vertical steps use `workspaceSwipeAction`;
+  `GestureController` performs them through `Context.perform` (the keyboard path, focus
+  intent). Gate: `TouchFrameGate.tapToSwipe` follows an admitted touch down to its lift below
+  two fingers (otherwise the tap's lift could be lost while the gate is not yet armed), and
+  `armedUntil` (frame clock, `TouchFrameMailbox.setArmedUntil` under the mailbox's lock) lets
+  two-finger frames cross; a stroke begun while armed crosses to its lift. Plain two-finger
+  scrolling never crosses otherwise. Scroll swallowing: the hotkey tap subscribes to
+  `scrollWheel` only while `tap-to-swipe` is on (`TapSubscriptions`, generalizing the
+  focus-follows-mouse restart: `tapNeedsRestart(current:wanted:)`, ConfigCoordinator
+  `setTapSubscriptions`/`tapSubscriptions`; a scroll event costs a tap callback, so always
+  subscribing was rejected) and returns nil for it while `TapScrollSuppression` (lock-guarded
+  system-uptime deadline set from the session queue) says armed. The session deadline is
+  `now + (armedUntil - last frame)`; one expiry timer at a time re-arms itself while the
+  deadline is renewed. Disarm: expiry, a second tap, a mouse button (`recordClick` hops to
+  `GestureController.mouseDown()` only while a deadline is set; a button held during a drain
+  also disarms), the setting turned off. Notices: "Gestures on: swipe with two fingers" on arm
+  and "Gestures off" when a tap disarms; expiry and clicks stay quiet (the click already ends
+  it visibly, and expiry after 2.5 s needs no banner). Conflict: `TrackpadThreeFingerTapGesture`
+  2 is macOS Look up & data detectors on a three-finger tap (default 0: Force Touch trackpads
+  look up with a force click) → `tap-to-swipe-3:look-up`, System Settings > Trackpad > Point &
+  Click > Look up & data detectors. Config `[gestures] tap-to-swipe = false` (TG-09: off),
+  counted by `anyEnabled` and `recognizerSettings.minimumFingers` (`tapFingers`).
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -366,6 +402,10 @@ read for the snap and focus rules.
   fixtures that exercise gestures now turn them on explicitly (GestureControllerTests,
   GestureConflictTests, GesturesConfigTests, SettingsPresentationTests). GREEN: Core 2025,
   Session 516, UI 313 (53 skipped), MacOS 91, Mac 19, POC 7, 0 failures.
+- [x] TG-10 — Tap to swipe: a three-finger tap arms two-finger steps (window left/right,
+  workspace up/down), the gate lets two-finger frames cross only while armed, the tap swallows
+  scrolling while armed, notice, `tap-to-swipe` key, Settings toggle, Look up conflict.
+  NOT verified live (TESTING.md 15l).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -457,6 +497,27 @@ read for the snap and focus rules.
   (53 skipped), GioMacOSTests 91, GioMacTests 19, GioPOCTests 7, 0 failures. Signed
   `xcodebuild` (`Gio` scheme, Release, arm64): BUILD SUCCEEDED. LIVE PENDING: the user tries
   three-finger scrolls (no workspace change) and deliberate three-finger swipes up and down.
+- TG-10: RED `swift build --build-tests` failed (`cannot find 'TapToSwipe' in scope`,
+  `cannot find 'TapSubscriptions' in scope`, `cannot find 'TapScrollSuppression' in scope`,
+  `cannot find 'tapSwallowsScroll' in scope`, `cannot find 'tapToSwipeNotice' in scope`,
+  `value of type 'GesturesSectionConfig' has no member 'tapToSwipe'`, `type
+  'GioTrackpadGesture' has no member 'tapToSwipe'`, `type 'SystemTrackpadGesture' has no member
+  'lookUp'`, `type 'TapEventAction' has no member 'scrollWheel'`, `incorrect argument label in
+  call (have 'current:wanted:', expected 'observingMouseMoved:wanted:')`, `extra argument
+  'tapToSwipe' in call`). The first run after the implementation failed every new
+  `GestureControllerTests` case (`XCTUnwrap failed: expected non-nil value`, notices `[true,
+  true]` instead of `[true, false]`): arming did not set `armedUntil`; fixed in `TapToSwipe.feed`.
+  GREEN: TapToSwipeTests 18 (new), GestureRecognizerTests 23 (+2 gate), GesturesConfigTests 12
+  (+1), GestureConflictTests 10 (+1), TapResilienceTests 9 (+2), TouchFrameMailboxTests 5 (+1),
+  TapScrollSuppressionTests 3 (new), ConfigCoordinatorTests 9 (+1), GestureControllerTests 26
+  (+8), NoticePanelTests 4 (+1), 0 failures. Full `swift test`: GioCoreTests 2286,
+  GioSessionTests 613, GioUITests 391 (54 skipped), GioMacOSTests 123, GioMacTests 19,
+  GioPOCTests 7, 0 failures. Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD
+  SUCCEEDED (the built app was unregistered with `lsregister -u` and deleted). `git diff
+  --check` clean. NOT verified live: no trackpad session was possible here (TESTING.md 15l);
+  unproven live: that swallowing `scrollWheel` in the session tap also stops browser
+  swipe-back, how MultitouchSupport reports a real tap's staggered lift, and the 0.3 s / 0.02
+  / 0.1 thresholds on real hands [INFERENCE].
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,

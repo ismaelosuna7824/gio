@@ -221,6 +221,14 @@ struct FocusSettingsView: View {
                     SegmentedRow("Fingers for the overview", selection: current.gestures.overviewFingers, options: Self.fingerOptions, width: 150)
                 }
             }
+            // TG-10: two-finger steps, only after a three-finger tap.
+            CardRow {
+                ToggleRow(
+                    "Tap to swipe",
+                    caption: "Tap three fingers, then swipe with two: left or right changes window, up or down changes workspace, one per swipe. Two-finger scrolling pauses until 2.5 s after your fingers leave the trackpad, a click, or another three-finger tap.",
+                    isOn: current.gestures.tapToSwipe
+                )
+            }
             // TG-08: a vertical swipe fires only after this much travel.
             CardRow(divider: false) {
                 SliderRow(

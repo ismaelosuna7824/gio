@@ -2,9 +2,10 @@ import AppKit
 import GioCore
 import SwiftUI
 
-// FX-06: a short on-screen notice for an action Gio refused (today: a switch
-// to dwindle with more windows than `[dwindle] max-windows`), so a key that
-// changes nothing is not mistaken for a dead shortcut. Main thread only. One
+// FX-06: a short on-screen notice for an action Gio refused (a switch to
+// dwindle with more windows than `[dwindle] max-windows`), so a key that
+// changes nothing is not mistaken for a dead shortcut, and TG-10's
+// tap-to-swipe turning on or off. Main thread only. One
 // small click-through, non-activating panel, made on first use and reused;
 // it fades in, stays `holdSeconds`, fades out and leaves the screen. Nothing
 // runs while no notice is up.
@@ -30,6 +31,18 @@ public func dwindleRefusalNotice(_ refusal: DwindleRefusal) -> GioNotice {
         detail: "This workspace has \(refusal.windows); dwindle holds up to \(refusal.maximum). "
             + "Change it in Settings > Layout."
     )
+}
+
+/// TG-10: tap-to-swipe was armed by a three-finger tap, or a second tap
+/// turned it off (expiry and clicks show nothing).
+public func tapToSwipeNotice(armed: Bool) -> GioNotice {
+    armed
+        ? GioNotice(
+            symbol: "hand.draw",
+            title: "Gestures on: swipe with two fingers",
+            detail: "Left or right changes window, up or down changes workspace. Tap three fingers again to stop."
+        )
+        : GioNotice(symbol: "hand.draw", title: "Gestures off", detail: "Two fingers scroll again.")
 }
 
 /// Where the notice sits: centred, 14% up the display's visible frame (like

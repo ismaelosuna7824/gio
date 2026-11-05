@@ -2,10 +2,11 @@ import Foundation
 
 /// TG-02 `[gestures]`: trackpad swipes read from MultitouchSupport. Consumed
 /// by `GestureController` (`GioSession`) and the touch source in the host.
-/// Two fingers are not offered: that is the system's own scrolling, which
-/// Gio would have to swallow from the event stream (Input Monitoring, tap
-/// timeouts); three to five fingers reach macOS's own swipes instead, which
-/// `detectGestureConflicts` reports.
+/// Two-finger swipes are not offered as such: that is the system's own
+/// scrolling; three to five fingers reach macOS's own swipes instead, which
+/// `detectGestureConflicts` reports. TG-10 `tap-to-swipe` is the one way
+/// two fingers act: only after a three-finger tap armed it, while the hotkey
+/// tap swallows the scroll events.
 public struct GesturesSectionConfig: Equatable, Sendable {
     public static let fingerRange = 3...5
     public static let sensitivityRange = 0.1...5.0
@@ -29,11 +30,14 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     /// TG-08: vertical travel (fraction of the trackpad height) before a
     /// workspace swipe or the overview fires.
     public var swipeDistance: Double
+    /// TG-10: a three-finger tap arms two-finger steps (window left/right,
+    /// workspace up/down) for `TapToSwipe.armedWindow`.
+    public var tapToSwipe: Bool
 
     public init(
         scroll: Bool = false, scrollFingers: Int = 3, scrollSensitivity: Double = 1.0, natural: Bool = true,
         workspaceSwipe: Bool = false, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4,
-        swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance
+        swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance, tapToSwipe: Bool = false
     ) {
         self.scroll = scroll
         self.scrollFingers = scrollFingers
@@ -44,10 +48,11 @@ public struct GesturesSectionConfig: Equatable, Sendable {
         self.overview = overview
         self.overviewFingers = overviewFingers
         self.swipeDistance = swipeDistance
+        self.tapToSwipe = tapToSwipe
     }
 
     public var anyEnabled: Bool {
-        scroll || workspaceSwipe || overview
+        scroll || workspaceSwipe || overview || tapToSwipe
     }
 
     /// The workspace swipe and the overview both swipe vertically.
@@ -64,7 +69,8 @@ public struct GesturesSectionConfig: Equatable, Sendable {
             vertical.insert(overviewFingers)
         }
         return GestureRecognizerSettings(
-            horizontalFingers: scroll ? scrollFingers : nil, verticalFingers: vertical, swipeDistance: swipeDistance
+            horizontalFingers: scroll ? scrollFingers : nil, verticalFingers: vertical, swipeDistance: swipeDistance,
+            tapFingers: tapToSwipe ? TapToSwipe.tapFingers : nil
         )
     }
 }
@@ -126,6 +132,8 @@ func applyGesturesKey(
         flag(defaults.overview) { config.gestures.overview = $0 }
     case "overview-fingers":
         fingers(defaults.overviewFingers) { config.gestures.overviewFingers = $0 }
+    case "tap-to-swipe":
+        flag(defaults.tapToSwipe) { config.gestures.tapToSwipe = $0 }
     default:
         warnings.append("line \(line): unknown gestures key '\(key)', ignored")
     }
@@ -155,6 +163,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
     public var overview: Bool
     public var overviewFingers: Int
     public var swipeDistance: Double
+    public var tapToSwipe: Bool
 
     public init(config: GesturesSectionConfig) {
         scroll = config.scroll
@@ -166,13 +175,14 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         overview = config.overview
         overviewFingers = config.overviewFingers
         swipeDistance = config.swipeDistance
+        tapToSwipe = config.tapToSwipe
     }
 
     var section: GesturesSectionConfig {
         GesturesSectionConfig(
             scroll: scroll, scrollFingers: scrollFingers, scrollSensitivity: scrollSensitivity, natural: natural,
             workspaceSwipe: workspaceSwipe, workspaceFingers: workspaceFingers,
-            overview: overview, overviewFingers: overviewFingers, swipeDistance: swipeDistance
+            overview: overview, overviewFingers: overviewFingers, swipeDistance: swipeDistance, tapToSwipe: tapToSwipe
         )
     }
 
@@ -209,6 +219,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
             .set(table: "gestures", key: "overview", value: .bool(overview)),
             .set(table: "gestures", key: "overview-fingers", value: .int(overviewFingers)),
             .set(table: "gestures", key: "swipe-distance", value: .number(distance)),
+            .set(table: "gestures", key: "tap-to-swipe", value: .bool(tapToSwipe)),
         ]
     }
 }

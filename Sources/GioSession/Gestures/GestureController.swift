@@ -43,6 +43,12 @@ public enum GestureAbandon: String, Equatable, Sendable {
 ///   untouched and the session lays the strip out as State says.
 /// - Vertical swipes switch workspace (`focus-workspace-up/down`) or toggle
 ///   the overview.
+/// - TG-10 tap to swipe (`TapToSwipe`): a three-finger tap arms it (notice,
+///   the mailbox lets two-finger frames cross, the tap swallows scrolling,
+///   all until the armed deadline, renewed while fingers touch); each
+///   two-finger stroke then performs one `focus-left/right` or
+///   `focus-workspace-*` like a key. Expiry (a session timer), a second tap
+///   (notice), a mouse button or the setting turned off disarm it.
 public final class GestureController: @unchecked Sendable {
     public struct Context {
         public var settings: () -> GesturesSectionConfig
@@ -70,6 +76,14 @@ public final class GestureController: @unchecked Sendable {
         public var abandon: (GestureAbandon) -> Void
         public var perform: (HotkeyAction) -> Void
         public var toggleOverview: () -> Void
+        /// TG-10: the mailbox's armed deadline (the frames' clock); nil disarms.
+        public var armTouchGate: (TimeInterval?) -> Void
+        /// TG-10: the tap swallows scroll events until this (`now`'s clock); nil stops.
+        public var suppressScroll: (TimeInterval?) -> Void
+        /// TG-10: the on-screen notice (true: armed; false: a tap disarmed it).
+        public var announceTapToSwipe: (Bool) -> Void
+        /// Session queue work after a delay (the armed window's expiry).
+        public var after: (TimeInterval, @escaping @Sendable () -> Void) -> Void
         public var log: (LogLevel, String) -> Void
         public var now: () -> TimeInterval
 
@@ -86,7 +100,11 @@ public final class GestureController: @unchecked Sendable {
             markUnverified: @escaping (WindowID) -> Void, focusedWindow: @escaping () -> WindowID?,
             publishFocusRing: @escaping () -> Void, settle: @escaping (GestureRelease) -> Void,
             abandon: @escaping (GestureAbandon) -> Void, perform: @escaping (HotkeyAction) -> Void,
-            toggleOverview: @escaping () -> Void, log: @escaping (LogLevel, String) -> Void,
+            toggleOverview: @escaping () -> Void,
+            armTouchGate: @escaping (TimeInterval?) -> Void, suppressScroll: @escaping (TimeInterval?) -> Void,
+            announceTapToSwipe: @escaping (Bool) -> Void,
+            after: @escaping (TimeInterval, @escaping @Sendable () -> Void) -> Void,
+            log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
         ) {
             self.settings = settings
@@ -107,6 +125,10 @@ public final class GestureController: @unchecked Sendable {
             self.abandon = abandon
             self.perform = perform
             self.toggleOverview = toggleOverview
+            self.armTouchGate = armTouchGate
+            self.suppressScroll = suppressScroll
+            self.announceTapToSwipe = announceTapToSwipe
+            self.after = after
             self.log = log
             self.now = now
         }
@@ -137,6 +159,13 @@ public final class GestureController: @unchecked Sendable {
     private var recognizer = GestureRecognizer(settings: GesturesSectionConfig().recognizerSettings)
     private var scroll: Scroll?
     private var sawFrames = false
+    /// TG-10: the mode, the deadline last handed to the mailbox (frame
+    /// clock) and to the tap (session clock), and whether the expiry timer
+    /// is pending (one at a time; it re-arms itself while renewed).
+    private var tapToSwipe = TapToSwipe()
+    private var gateDeadline: TimeInterval?
+    private var scrollDeadline: TimeInterval?
+    private var expiryPending = false
 
     public init(context: Context) {
         self.context = context
@@ -163,12 +192,93 @@ public final class GestureController: @unchecked Sendable {
         if scroll != nil, context.isMouseDown() {
             abandon(.mouse)
         }
+        if tapToSwipe.isArmed, !settings.tapToSwipe || context.isMouseDown() {
+            handleTap(tapToSwipe.disarm(settings.tapToSwipe ? .mouse : .disabled), settings: settings)
+        }
         for frame in frames {
             for event in recognizer.feed(frame) {
                 handle(event, settings: settings)
             }
+            if settings.tapToSwipe {
+                handleTap(tapToSwipe.feed(frame), settings: settings)
+            }
         }
+        syncArming(lastFrame: frames.last?.timestamp)
         render()
+    }
+
+    /// TG-10, session queue: a mouse button went down.
+    public func mouseDown() {
+        guard tapToSwipe.isArmed else {
+            return
+        }
+        handleTap(tapToSwipe.disarm(.mouse), settings: context.settings())
+        syncArming(lastFrame: nil)
+    }
+
+    private func handleTap(_ events: [TapToSwipeEvent], settings: GesturesSectionConfig) {
+        for event in events {
+            switch event {
+            case .armed:
+                context.log(.info, "gesture tap-to-swipe armed")
+                context.announceTapToSwipe(true)
+            case .step(let direction):
+                let action = tapSwipeAction(direction, natural: settings.natural)
+                context.log(.info, "gesture tap-to-swipe step direction=\(direction.rawValue) action=\(action)")
+                context.perform(action)
+            case .disarmed(let reason):
+                context.log(.info, "gesture tap-to-swipe disarmed reason=\(reason.rawValue)")
+                // Only the deliberate tap says so; expiry and clicks stay quiet.
+                if reason == .tap {
+                    context.announceTapToSwipe(false)
+                }
+            }
+        }
+    }
+
+    /// Hands a changed armed deadline to the mailbox (frame clock) and the
+    /// tap (session clock: now plus what is left after the last frame).
+    private func syncArming(lastFrame: TimeInterval?) {
+        let until = tapToSwipe.armedUntil
+        guard until != gateDeadline else {
+            return
+        }
+        gateDeadline = until
+        context.armTouchGate(until)
+        guard let until, let lastFrame else {
+            scrollDeadline = nil
+            context.suppressScroll(nil)
+            return
+        }
+        let deadline = context.now() + max(0, until - lastFrame)
+        scrollDeadline = deadline
+        context.suppressScroll(deadline)
+        scheduleExpiry()
+    }
+
+    private func scheduleExpiry() {
+        guard !expiryPending, let deadline = scrollDeadline else {
+            return
+        }
+        expiryPending = true
+        context.after(max(0, deadline - context.now())) { [weak self] in
+            self?.expiryFired()
+        }
+    }
+
+    /// No frame came before the deadline: disarm. A deadline renewed since
+    /// the timer was set waits for its own end.
+    private func expiryFired() {
+        expiryPending = false
+        guard let deadline = scrollDeadline else {
+            return
+        }
+        if context.now() + 0.001 < deadline {
+            scheduleExpiry()
+            return
+        }
+        handleTap(tapToSwipe.expire(), settings: context.settings())
+        syncArming(lastFrame: nil)
     }
 
     private func handle(_ event: TrackpadGestureEvent, settings: GesturesSectionConfig) {

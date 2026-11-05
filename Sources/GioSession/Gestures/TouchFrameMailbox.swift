@@ -6,9 +6,9 @@ import GioCore
 /// frame into a locked buffer (never session state); the first frame of a
 /// burst schedules one drain on the session queue, which delivers every
 /// frame posted until then, in order. `TouchFrameGate` keeps pointer
-/// movement and two-finger scrolling on the callback thread. A drain that
-/// falls behind loses the oldest frames past `capacity`, never blocks the
-/// callback.
+/// movement and two-finger scrolling on the callback thread (TG-10: except
+/// while tap-to-swipe is armed). A drain that falls behind loses the oldest
+/// frames past `capacity`, never blocks the callback.
 public final class TouchFrameMailbox: @unchecked Sendable {
     /// About two seconds of frames at the trackpad's rate.
     public static let capacity = 256
@@ -29,17 +29,26 @@ public final class TouchFrameMailbox: @unchecked Sendable {
     }
 
     /// Session queue (config applied): the fewest fingers any enabled
-    /// gesture needs; 0 lets nothing through.
-    public func setMinimumFingers(_ fingers: Int) {
+    /// gesture needs (0 lets nothing through) and whether tap-to-swipe is on.
+    public func configure(minimumFingers: Int, tapToSwipe: Bool) {
         lock.lock()
-        gate.minimumFingers = fingers
+        gate.minimumFingers = minimumFingers
+        gate.tapToSwipe = tapToSwipe
+        lock.unlock()
+    }
+
+    /// TG-10, session queue: two-finger frames cross until `deadline` (the
+    /// frames' own clock); nil when tap-to-swipe is not armed.
+    public func setArmedUntil(_ deadline: TimeInterval?) {
+        lock.lock()
+        gate.armedUntil = deadline
         lock.unlock()
     }
 
     /// Any thread (MultitouchSupport's callback).
     public func post(_ frame: TouchFrame) {
         lock.lock()
-        guard gate.admits(frame.contacts.count) else {
+        guard gate.admits(frame.contacts.count, at: frame.timestamp) else {
             lock.unlock()
             return
         }

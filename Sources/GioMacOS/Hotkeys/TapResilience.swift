@@ -15,6 +15,8 @@ enum TapEventAction: Equatable {
     case mouseDown
     case mouseMoved
     case keyDown
+    /// TG-10: swallowed while tap-to-swipe is armed.
+    case scrollWheel
     case passThrough
 }
 
@@ -28,24 +30,48 @@ func tapEventAction(for type: CGEventType) -> TapEventAction {
     case .leftMouseDown, .rightMouseDown, .otherMouseDown: return .mouseDown
     case .mouseMoved: return .mouseMoved
     case .keyDown: return .keyDown
+    case .scrollWheel: return .scrollWheel
     default: return .passThrough
     }
 }
 
-/// Keys and clicks always; pointer moves only for focus-follows-mouse, so an
-/// idle setting costs no main-thread callbacks per mouse move.
-func tapEventMask(observingMouseMoved: Bool) -> CGEventMask {
+/// The tap's optional event types: each costs a tap callback per event, so
+/// each is subscribed only while a setting needs it.
+public struct TapSubscriptions: Equatable, Sendable {
+    /// Pointer moves: focus-follows-mouse.
+    public var mouseMoved: Bool
+    /// TG-10: scroll events, swallowed while tap-to-swipe is armed.
+    public var scrollWheel: Bool
+
+    public init(mouseMoved: Bool = false, scrollWheel: Bool = false) {
+        self.mouseMoved = mouseMoved
+        self.scrollWheel = scrollWheel
+    }
+}
+
+/// Keys and clicks always; pointer moves and scroll events only while
+/// subscribed, so an idle setting costs no callbacks per move or scroll.
+func tapEventMask(_ subscriptions: TapSubscriptions) -> CGEventMask {
     var types: [CGEventType] = [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]
-    if observingMouseMoved {
+    if subscriptions.mouseMoved {
         types.append(.mouseMoved)
+    }
+    if subscriptions.scrollWheel {
+        types.append(.scrollWheel)
     }
     return types.reduce(CGEventMask(0)) { $0 | (CGEventMask(1) << $1.rawValue) }
 }
 
-/// A live tap only needs rebuilding when the mouse-move subscription differs
+/// A live tap only needs rebuilding when its optional subscriptions differ
 /// from what the config wants now.
-public func tapNeedsRestart(observingMouseMoved: Bool, wanted: Bool) -> Bool {
-    observingMouseMoved != wanted
+public func tapNeedsRestart(current: TapSubscriptions, wanted: TapSubscriptions) -> Bool {
+    current != wanted
+}
+
+/// TG-10: a scroll event is swallowed only when the handler (an armed
+/// tap-to-swipe) says so.
+func tapSwallowsScroll(handler: (() -> Bool)?) -> Bool {
+    handler?() ?? false
 }
 
 enum TapWatchdogAction: Equatable {

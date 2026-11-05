@@ -46,20 +46,32 @@ public struct TouchFrame: Equatable, Sendable {
 /// movement, two-finger scrolling); only frames with enough fingers for a
 /// gesture, plus the one frame that drops below that, are delivered.
 /// `minimumFingers` 0 means no gesture is enabled: nothing crosses.
+///
+/// TG-10: with `tapToSwipe` a touch that crossed is followed down to its
+/// lift below `TapToSwipe.strokeFingers` (the tap's fingers lift one by
+/// one), and while `armedUntil` (the frames' clock, set by the session) is
+/// ahead two-finger frames cross too; a stroke begun then crosses to its
+/// lift. Two-finger scrolling otherwise stays on the callback thread.
 public struct TouchFrameGate: Sendable {
     public var minimumFingers: Int
+    public var tapToSwipe: Bool
+    public var armedUntil: TimeInterval?
     private var lastAdmitted = 0
 
-    public init(minimumFingers: Int) {
+    public init(minimumFingers: Int, tapToSwipe: Bool = false) {
         self.minimumFingers = minimumFingers
+        self.tapToSwipe = tapToSwipe
     }
 
-    public mutating func admits(_ count: Int) -> Bool {
+    public mutating func admits(_ count: Int, at timestamp: TimeInterval) -> Bool {
         guard minimumFingers > 0 else {
             lastAdmitted = 0
             return false
         }
-        let admit = count >= minimumFingers || lastAdmitted >= minimumFingers
+        let armed = tapToSwipe && (armedUntil.map { timestamp <= $0 } ?? false)
+        let floor = armed ? min(TapToSwipe.strokeFingers, minimumFingers) : minimumFingers
+        let trail = tapToSwipe ? min(TapToSwipe.strokeFingers, minimumFingers) : minimumFingers
+        let admit = count >= floor || lastAdmitted >= trail
         if admit {
             lastAdmitted = count
         }
@@ -133,20 +145,32 @@ public struct GestureRecognizerSettings: Equatable, Sendable {
     public var verticalFingers: Set<Int>
     public var commitDistance: Double
     public var swipeDistance: Double
+    /// TG-10: the tap-to-swipe tap's fingers. `TapToSwipe` recognizes it,
+    /// not this recognizer; it counts here so its frames cross the gate.
+    public var tapFingers: Int?
 
     public init(
         horizontalFingers: Int?, verticalFingers: Set<Int>,
-        commitDistance: Double = defaultCommitDistance, swipeDistance: Double = defaultSwipeDistance
+        commitDistance: Double = defaultCommitDistance, swipeDistance: Double = defaultSwipeDistance,
+        tapFingers: Int? = nil
     ) {
         self.horizontalFingers = horizontalFingers
         self.verticalFingers = verticalFingers
         self.commitDistance = commitDistance
         self.swipeDistance = swipeDistance
+        self.tapFingers = tapFingers
     }
 
     /// The fewest fingers any gesture needs (0: none enabled).
     public var minimumFingers: Int {
-        (verticalFingers.union(horizontalFingers.map { [$0] } ?? [])).min() ?? 0
+        var fewest = verticalFingers.min() ?? .max
+        if let horizontalFingers {
+            fewest = min(fewest, horizontalFingers)
+        }
+        if let tapFingers {
+            fewest = min(fewest, tapFingers)
+        }
+        return fewest == .max ? 0 : fewest
     }
 
     func wants(_ count: Int) -> Bool {

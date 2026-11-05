@@ -25,6 +25,7 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertFalse(gestures.overview, "macOS uses four-finger swipe up for Mission Control by default")
         XCTAssertEqual(gestures.overviewFingers, 4)
         XCTAssertEqual(gestures.swipeDistance, 0.15)
+        XCTAssertFalse(gestures.tapToSwipe, "TG-10: off like every gesture")
         XCTAssertFalse(gestures.anyEnabled, "the trackpad is not even opened")
     }
 
@@ -40,11 +41,13 @@ final class GesturesConfigTests: XCTestCase {
         overview = true
         overview-fingers = 5
         swipe-distance = 0.25
+        tap-to-swipe = true
         """)
         XCTAssertEqual(warnings, [])
         XCTAssertEqual(config.gestures, GesturesSectionConfig(
             scroll: false, scrollFingers: 4, scrollSensitivity: 1.5, natural: false,
-            workspaceSwipe: false, workspaceFingers: 4, overview: true, overviewFingers: 5, swipeDistance: 0.25
+            workspaceSwipe: false, workspaceFingers: 4, overview: true, overviewFingers: 5, swipeDistance: 0.25,
+            tapToSwipe: true
         ))
     }
 
@@ -60,6 +63,7 @@ final class GesturesConfigTests: XCTestCase {
         scroll-sensitivity = "fast"
         natural = 1
         swipe-to-close = true
+        tap-to-swipe = "on"
         """)
         XCTAssertEqual(config.layout.gaps, 12, "the rest of the file still applies")
         XCTAssertEqual(config.gestures, GesturesSectionConfig())
@@ -71,6 +75,7 @@ final class GesturesConfigTests: XCTestCase {
             "line 8: gestures.scroll-sensitivity expects a number from 0.1 to 5.0, using 1.0",
             "line 9: gestures.natural expects true or false, using true",
             "line 10: unknown gestures key 'swipe-to-close', ignored",
+            "line 11: gestures.tap-to-swipe expects true or false, using false",
         ])
     }
 
@@ -78,6 +83,21 @@ final class GesturesConfigTests: XCTestCase {
         let (config, warnings) = try parse("[gestures]\nscroll-sensitivity = 9\n")
         XCTAssertEqual(config.gestures.scrollSensitivity, 5.0)
         XCTAssertEqual(warnings, ["line 2: gestures.scroll-sensitivity clamped to 5.0 (valid 0.1-5.0)"])
+    }
+
+    /// TG-10: tap-to-swipe alone opens the trackpad and lets three-finger
+    /// frames (the arming tap) cross the gate.
+    func testTapToSwipeAloneOpensTheTrackpadForThreeFingers() {
+        var gestures = GesturesSectionConfig(tapToSwipe: true)
+        XCTAssertTrue(gestures.anyEnabled)
+        XCTAssertEqual(gestures.recognizerSettings.tapFingers, TapToSwipe.tapFingers)
+        XCTAssertEqual(gestures.recognizerSettings.minimumFingers, 3)
+        gestures.overview = true
+        gestures.overviewFingers = 5
+        XCTAssertEqual(gestures.recognizerSettings.minimumFingers, 3, "the tap still needs three")
+        gestures.tapToSwipe = false
+        XCTAssertNil(gestures.recognizerSettings.tapFingers)
+        XCTAssertEqual(gestures.recognizerSettings.minimumFingers, 5)
     }
 
     /// TG-08: how far a vertical swipe travels before it fires.
@@ -154,6 +174,7 @@ final class GesturesConfigTests: XCTestCase {
         form.overview = true
         form.overviewFingers = 5
         form.swipeDistance = 0.2
+        form.tapToSwipe = true
         XCTAssertEqual(form.problems, [])
         let patched = try patchGioConfig(original, edits: form.edits).get()
         XCTAssertTrue(patched.text.contains("# mine"))
@@ -161,9 +182,11 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertTrue(patched.text.contains("scroll = false  # inline"))
         XCTAssertEqual(patched.config.gestures, GesturesSectionConfig(
             scroll: false, scrollFingers: 4, scrollSensitivity: 1.25, natural: false,
-            workspaceSwipe: true, workspaceFingers: 3, overview: true, overviewFingers: 5, swipeDistance: 0.2
+            workspaceSwipe: true, workspaceFingers: 3, overview: true, overviewFingers: 5, swipeDistance: 0.2,
+            tapToSwipe: true
         ))
         XCTAssertTrue(patched.text.contains("swipe-distance = 0.2"))
+        XCTAssertTrue(patched.text.contains("tap-to-swipe = true"))
         XCTAssertEqual(GesturesSettingsForm(config: patched.config.gestures), form)
     }
 

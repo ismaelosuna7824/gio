@@ -85,6 +85,10 @@ private func tapCallback(
     case .mouseMoved:
         box.onMouseMoved?(tapCocoaLocation(of: event))
         return Unmanaged.passUnretained(event)
+    case .scrollWheel:
+        // TG-10: returning nil swallows the scroll (no app scroll, no swipe
+        // back) while tap-to-swipe is armed; one lock and a compare.
+        return tapSwallowsScroll(handler: box.onScrollWheel) ? nil : Unmanaged.passUnretained(event)
     case .passThrough:
         return Unmanaged.passUnretained(event)
     case .keyDown:
@@ -109,6 +113,7 @@ final class TapBox: @unchecked Sendable {
     let onMouseDown: (@Sendable (CGPoint) -> Void)?
     let onMouseMoved: (@Sendable (CGPoint) -> Void)?
     let onKeyDown: (@Sendable () -> Void)?
+    let onScrollWheel: (@Sendable () -> Bool)?
     /// The callback (tap thread) and the watchdog (main) both use these; the
     /// lock keeps `stop()` from racing them. Never held across a call out.
     private let lock = NSLock()
@@ -119,12 +124,14 @@ final class TapBox: @unchecked Sendable {
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool,
         onMouseDown: (@Sendable (CGPoint) -> Void)?,
         onMouseMoved: (@Sendable (CGPoint) -> Void)?,
-        onKeyDown: (@Sendable () -> Void)? = nil
+        onKeyDown: (@Sendable () -> Void)? = nil,
+        onScrollWheel: (@Sendable () -> Bool)? = nil
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
         self.onKeyDown = onKeyDown
+        self.onScrollWheel = onScrollWheel
     }
 
     func attach(_ port: CFMachPort?) {
@@ -223,27 +230,32 @@ public final class HotkeyTap {
     private let onMouseDown: (@Sendable (CGPoint) -> Void)?
     private let onMouseMoved: (@Sendable (CGPoint) -> Void)?
     private let onKeyDown: (@Sendable () -> Void)?
+    private let onScrollWheel: (@Sendable () -> Bool)?
 
-    /// Whether this tap subscribes to pointer moves (only when a handler was
-    /// given; the host passes one only for focus-follows-mouse).
-    public var observesMouseMoved: Bool {
-        onMouseMoved != nil
+    /// The optional event types this tap subscribes to: pointer moves and
+    /// scroll events only when a handler was given (the host passes one only
+    /// for focus-follows-mouse and TG-10 tap-to-swipe).
+    public var subscriptions: TapSubscriptions {
+        TapSubscriptions(mouseMoved: onMouseMoved != nil, scrollWheel: onScrollWheel != nil)
     }
 
     /// `onMouseDown` observes clicks and `onMouseMoved` pointer moves (Cocoa
     /// global location) without swallowing either. `onKeyDown` observes
     /// every key-down that reaches an app (not the swallowed WM combos).
-    /// All four run on the tap thread (SM-09, PF-AB).
+    /// `onScrollWheel` answers whether to swallow a scroll event (TG-10).
+    /// All five run on the tap thread (SM-09, PF-AB).
     public init(
         onMouseDown: (@Sendable (CGPoint) -> Void)? = nil,
         onMouseMoved: (@Sendable (CGPoint) -> Void)? = nil,
         onKeyDown: (@Sendable () -> Void)? = nil,
+        onScrollWheel: (@Sendable () -> Bool)? = nil,
         onCombo: @Sendable @escaping (HotkeyCombo) -> Bool
     ) {
         self.onCombo = onCombo
         self.onMouseDown = onMouseDown
         self.onMouseMoved = onMouseMoved
         self.onKeyDown = onKeyDown
+        self.onScrollWheel = onScrollWheel
     }
 
     @discardableResult
@@ -251,13 +263,16 @@ public final class HotkeyTap {
         guard port == nil else {
             return true
         }
-        let box = TapBox(onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onKeyDown: onKeyDown)
+        let box = TapBox(
+            onCombo: onCombo, onMouseDown: onMouseDown, onMouseMoved: onMouseMoved, onKeyDown: onKeyDown,
+            onScrollWheel: onScrollWheel
+        )
         let boxRefcon = Unmanaged.passRetained(box).toOpaque()
         guard let port = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .defaultTap,
-            eventsOfInterest: tapEventMask(observingMouseMoved: onMouseMoved != nil),
+            eventsOfInterest: tapEventMask(subscriptions),
             callback: tapCallback,
             userInfo: boxRefcon
         ) else {
