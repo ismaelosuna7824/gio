@@ -6,6 +6,8 @@ import Foundation
 /// its consumer named in comments.
 public struct LayoutSectionConfig: Equatable, Sendable {
     public static let fullscreenGapRange = 0...64
+    /// SB-01 `reserved-top`: points, clamped on parse.
+    public static let reservedTopRange = 0...200
 
     public var gaps: CGFloat
     public var padding: CGFloat
@@ -39,6 +41,11 @@ public struct LayoutSectionConfig: Equatable, Sendable {
     /// `new-window-position`: where a live arrival's column lands in a
     /// scrolling strip; consumed by `placeArrival` through `DiscoveryService`.
     public var newWindowPosition: NewWindowPosition
+    /// SB-01 `reserved-top`: points kept free at the top of every display's
+    /// usable area for a custom bar (SketchyBar), below the macOS menu bar
+    /// when it shows; applied by the host to the visible frames
+    /// (`usableFrame(visible:reservedTop:)`). Fullscreen windows still cover it.
+    public var reservedTop: CGFloat
 
     public init(
         gaps: CGFloat = 8,
@@ -53,7 +60,8 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         alwaysCenterSingleColumn: Bool = false,
         fillEmptySpace: Bool = true,
         defaultLayout: WorkspaceLayoutKind = .scrolling,
-        newWindowPosition: NewWindowPosition = .end
+        newWindowPosition: NewWindowPosition = .end,
+        reservedTop: CGFloat = 0
     ) {
         self.fullscreenGap = fullscreenGap
         self.gaps = gaps
@@ -68,6 +76,7 @@ public struct LayoutSectionConfig: Equatable, Sendable {
         self.fillEmptySpace = fillEmptySpace
         self.defaultLayout = defaultLayout
         self.newWindowPosition = newWindowPosition
+        self.reservedTop = reservedTop
     }
 }
 
@@ -230,6 +239,8 @@ public struct GioConfig: Sendable {
     public var dwindle: DwindleSectionConfig
     /// TG-02: trackpad gestures.
     public var gestures: GesturesSectionConfig
+    /// SB-01 `[hooks]`.
+    public var hooks: HooksSectionConfig
 
     public init(
         layout: LayoutSectionConfig = LayoutSectionConfig(),
@@ -243,9 +254,11 @@ public struct GioConfig: Sendable {
         rules: [WindowRule] = [],
         workspaces: [WorkspaceDefinition] = [],
         dwindle: DwindleSectionConfig = DwindleSectionConfig(),
-        gestures: GesturesSectionConfig = GesturesSectionConfig()
+        gestures: GesturesSectionConfig = GesturesSectionConfig(),
+        hooks: HooksSectionConfig = HooksSectionConfig()
     ) {
         self.gestures = gestures
+        self.hooks = hooks
         self.workspaces = workspaces
         self.layout = layout
         self.behavior = behavior
@@ -282,7 +295,8 @@ public struct GioConfig: Sendable {
             dwindle: DwindleSettings(
                 splitRatio: dwindle.defaultSplitRatio, splitWidthMultiplier: dwindle.splitWidthMultiplier
             ),
-            centerFocusedColumn: layout.centerFocusedColumn
+            centerFocusedColumn: layout.centerFocusedColumn,
+            reservedTop: layout.reservedTop
         )
     }
 
@@ -308,7 +322,7 @@ extension GioConfig: Equatable {
         guard lhs.layout == rhs.layout, lhs.behavior == rhs.behavior, lhs.animations == rhs.animations,
               lhs.focusRing == rhs.focusRing, lhs.focus == rhs.focus, lhs.logging == rhs.logging,
               lhs.unboundKeys == rhs.unboundKeys, lhs.rules == rhs.rules, lhs.workspaces == rhs.workspaces,
-              lhs.dwindle == rhs.dwindle, lhs.gestures == rhs.gestures
+              lhs.dwindle == rhs.dwindle, lhs.gestures == rhs.gestures, lhs.hooks == rhs.hooks
         else {
             return false
         }

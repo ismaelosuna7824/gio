@@ -120,6 +120,8 @@ public func dispatch(_ command: CLICommand, session: inout CommandSession) -> St
             }
         }
         return lines.joined(separator: "\n")
+    case .listWorkspacesJSON:
+        return encodeWorkspaceBarJSON(workspaceBarState(manager: session.manager, registry: session.registry))
     case .focus(let direction):
         let before = session.manager.currentWorkspace()
         let after = focusNeighbour(in: before, direction: direction, geometry: session.dwindleGeometry)

@@ -19,6 +19,8 @@ Gio needs a Mac with **Apple silicon** and **macOS 13 or later**. The smooth-mot
 
 Then read [First steps](docs/USER_GUIDE.md#first-steps) and, on a non-US keyboard, [Keyboard layouts](docs/USER_GUIDE.md#keyboard-layouts): Gio's default shortcuts take `Option` combos that type characters such as `@`, `#`, `|`, `[` and `]` on many layouts.
 
+The `gio` command line client ships in the app: **Diagnostics > Command Line > Install Command Line Tool** links `~/.local/bin/gio` to it (see [Command line](docs/USER_GUIDE.md#command-line-gio)). To show Gio's workspaces in [SketchyBar](https://github.com/FelixKratz/SketchyBar), see [SKETCHYBAR](docs/SKETCHYBAR.md).
+
 ## Uninstall
 
 1. **Quit Gio** (menu bar item > **Quit Gio**). Quitting brings every window Gio parked back on screen.
@@ -31,6 +33,7 @@ Then read [First steps](docs/USER_GUIDE.md#first-steps) and, on a non-US keyboar
    rm -rf ~/Library/Logs/Gio                             # the updater's log
    rm -rf ~/Library/Caches/dev.gio.windowmanager         # caches: app icons, apps' minimum window sizes
    defaults delete dev.gio.windowmanager                 # first-run guide and update settings
+   rm -f ~/.local/bin/gio                                # the command line link, if you installed it
    ```
 
 4. Remove the permissions:
@@ -117,7 +120,7 @@ xcodebuild -project Gio.xcodeproj -scheme Gio -configuration Debug \
 
 A command-line `DEVELOPMENT_TEAM=<YOUR_TEAM_ID>` argument still overrides the xcconfig files.
 
-Swift Package Manager (libraries, tests and the helper executables, among them the `gio` client, target `GioCLI`, and `gio-poc`; they are not part of the DMG):
+Swift Package Manager (libraries, tests and the helper executables, among them `GioCLI`, the same `gio` client the app binary runs when started as `gio`, and `gio-poc`, which is not part of the DMG):
 
 ```sh
 swift build

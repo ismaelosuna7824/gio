@@ -71,6 +71,8 @@ final class SessionHost: @unchecked Sendable {
     /// PA-02: menu bar state, pushed (deduplicated) after reflows and IPC
     /// commands instead of being polled over IPC.
     private var barPublisher: GatedStatePublisher<BarStateGate>!
+    /// SB-01: `[hooks]` after the same publications (runs off the queue).
+    private var barHooks: BarHookNotifier!
     /// Overview facts (windows, displays, permissions) for the snapshot.
     private var factsBuilder: SessionFactsBuilder!
     /// Menu bar hook, always invoked on the main thread.
@@ -103,7 +105,11 @@ final class SessionHost: @unchecked Sendable {
     /// PA-06: which apps take size writes during motion (keyed by app name).
     private var resizeCapability = ResizeCapability()
     private var fullscreen = FullscreenBook()
+    /// Every display's usable frame for layout: macOS's visible frame
+    /// (`systemVisibleFrames`) less `[layout] reserved-top` (SB-01,
+    /// `refreshUsableFrames`).
     private var visibleFrames: [DisplayID: CGRect] = [:]
+    private var systemVisibleFrames: [DisplayID: CGRect] = [:]
     /// Config reload and edits, the hotkey table (its own lock) and the
     /// config messages for the Overview.
     private var configCoordinator: ConfigCoordinator!
@@ -361,6 +367,16 @@ final class SessionHost: @unchecked Sendable {
             mainHop: mainQueueHop,
             deliver: { [unowned self] in onBarState?($0) }
         ))
+        barHooks = BarHookNotifier(
+            context: .init(
+                hooks: { [unowned self] in session.config.hooks },
+                state: { [unowned self] in workspaceBarState(manager: session.manager, registry: session.registry) },
+                environment: { ProcessInfo.processInfo.environment },
+                home: NSHomeDirectory(),
+                log: { GioLog.record($0, $1) }
+            ),
+            runner: ShellHookRunner(), scheduler: scheduler
+        )
         factsBuilder = SessionFactsBuilder(context: .init(
             session: { [unowned self] in session },
             displays: { [unowned self] in displays.allDisplays() },
@@ -698,12 +714,16 @@ final class SessionHost: @unchecked Sendable {
                 displaySnapshots: { snapshotDisplayList() },
                 knownDisplayIDs: { [unowned self] in displays.allDisplays().map(\.id) },
                 connectDisplay: { [unowned self] display, workspace in
-                    visibleFrames[display.id] = display.visibleFrame
+                    systemVisibleFrames[display.id] = display.visibleFrame
+                    visibleFrames[display.id] = usableFrame(
+                        visible: display.visibleFrame, reservedTop: session.config.layout.reservedTop
+                    )
                     displays.connect(display.id, frame: display.frame, workspace: workspace)
                 },
                 disconnectDisplay: { [unowned self] id in
                     displays.disconnect(id)
                     visibleFrames.removeValue(forKey: id)
+                    systemVisibleFrames.removeValue(forKey: id)
                 },
                 displayFrames: { [unowned self] in
                     displays.allDisplays().reduce(into: [:]) { $0[$1.id] = visibleFrames[$1.id] ?? $1.frame }
@@ -863,6 +883,7 @@ final class SessionHost: @unchecked Sendable {
                     reflowPlanner.invalidateParking()
                     focusRing.resetGate()
                     applyGestureConfig()
+                    refreshUsableFrames()
                 },
                 setFocusFollowsMouse: { [unowned self] in focus.focusFollowsMouse = $0 },
                 tapObservesMouseMoved: { [unowned self] in hotkeyTap?.observesMouseMoved },
@@ -896,7 +917,10 @@ final class SessionHost: @unchecked Sendable {
             applyReloadedConfig: { [unowned self] in configCoordinator.applyReloadedConfig() },
             requestFocusIntent: { [unowned self] in focus.requestIntent(if: $0, previous: $1) },
             reflow: { [unowned self] in reflowAll() },
-            publishBar: { [unowned self] in barPublisher.publish() },
+            publishBar: { [unowned self] in
+                barPublisher.publish()
+                barHooks.update()
+            },
             mainAfter: { delay, block in DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: block) },
             restart: { [weak self] in self?.onRestart?() },
             toggleOverview: { [weak self] in
@@ -1490,6 +1514,14 @@ final class SessionHost: @unchecked Sendable {
         }
     }
 
+    /// SB-01, session queue, on every config change: re-take `[layout]
+    /// reserved-top` off every display's visible frame (the reflow after the
+    /// change lays out in the new frames).
+    private func refreshUsableFrames() {
+        let reserved = session.config.layout.reservedTop
+        visibleFrames = systemVisibleFrames.mapValues { usableFrame(visible: $0, reservedTop: reserved) }
+    }
+
     /// Session queue, at start and on every config change: the mailbox lets
     /// through only what the enabled gestures can use, and the devices run
     /// only while a gesture is on.
@@ -1976,6 +2008,7 @@ final class SessionHost: @unchecked Sendable {
         defer {
             publishFocusRing()
             barPublisher.publish()
+            barHooks.update()
         }
         // A new pass invalidates any pending render check (FI-05).
         renderVerifier.cancel()

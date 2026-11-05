@@ -546,7 +546,7 @@ public enum ActionApplier {
         }
         let frame = fullscreenFrame(
             display: display.frame, usable: context.visibleFrames[display.id] ?? display.frame,
-            gap: context.layout.resolvedFullscreenGap
+            gap: context.layout.resolvedFullscreenGap, reservedTop: context.layout.reservedTop
         )
         return .init(id: id, frame: frame)
     }
