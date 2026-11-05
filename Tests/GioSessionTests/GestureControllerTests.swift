@@ -387,6 +387,17 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(world.calls, [], "two fingers never scroll the strip")
     }
 
+    /// TG-11: the configured `tap-to-swipe-distance` decides when a stroke steps.
+    func testStepsUseTheConfiguredDistance() {
+        world.settings.tapToSwipe = true
+        world.settings.tapToSwipeDistance = 0.4
+        controller.deliver(tap(at: 0))
+        controller.deliver(stroke(at: 0.5, dx: -0.3, dy: 0))
+        XCTAssertEqual(world.actions, [], "under the configured distance")
+        controller.deliver(stroke(at: 1, dx: -0.5, dy: 0))
+        XCTAssertEqual(world.actions, [.focusRight])
+    }
+
     func testTwoFingerStrokesDoNothingUnlessArmed() {
         world.settings.tapToSwipe = true
         controller.deliver(stroke(at: 0, dx: -0.3, dy: 0))

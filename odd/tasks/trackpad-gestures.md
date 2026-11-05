@@ -361,6 +361,16 @@ read for the snap and focus rules.
   look up with a force click) → `tap-to-swipe-3:look-up`, System Settings > Trackpad > Point &
   Click > Look up & data detectors. Config `[gestures] tap-to-swipe = false` (TG-09: off),
   counted by `anyEnabled` and `recognizerSettings.minimumFingers` (`tapFingers`).
+- TG-11 tap-to-swipe distance (user live feedback, 2026-11-05, real trackpad: tap-to-swipe
+  works, the log shows armed/step/disarmed as designed, but "se siente un poco duro ... tal vez
+  sensibilidad muy alta": steps fired too early at 0.1 of travel). Decision: the fixed
+  `TapToSwipe.stepDistance = 0.1` becomes an instance value, `TapToSwipe.defaultStepDistance`
+  0.2 (a fifth of the trackpad), configured by `[gestures] tap-to-swipe-distance` (fraction of
+  the trackpad on the stroke's axis, `tapToSwipeDistanceRange` 0.05-0.5, clamped with a
+  warning like `swipe-distance`, a non-number keeps 0.2). `GestureController` sets it on every
+  drain like the recognizer settings, so a reload applies from the next frame. Settings: a
+  "Swipe distance for Tap to swipe" slider (percent, step 0.01), shown only while Tap to swipe
+  is on; the form validates the range and writes two decimals.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -406,6 +416,8 @@ read for the snap and focus rules.
   workspace up/down), the gate lets two-finger frames cross only while armed, the tap swallows
   scrolling while armed, notice, `tap-to-swipe` key, Settings toggle, Look up conflict.
   Commit `a8f84c5`. NOT verified live (TESTING.md 15l).
+- [x] TG-11 — `tap-to-swipe-distance` (default 0.2, was a fixed 0.1), template, Settings slider,
+  form round-trip. NOT verified live (TESTING.md 15l (j)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -518,6 +530,16 @@ read for the snap and focus rules.
   unproven live: that swallowing `scrollWheel` in the session tap also stops browser
   swipe-back, how MultitouchSupport reports a real tap's staggered lift, and the 0.3 s / 0.02
   / 0.1 thresholds on real hands [INFERENCE].
+- TG-11: RED `swift build --build-tests` failed (`type 'TapToSwipe' has no member
+  'defaultStepDistance'`, `value of type 'GesturesSectionConfig' has no member
+  'tapToSwipeDistance'`, `value of type 'GesturesSettingsForm' has no member
+  'tapToSwipeDistance'`, `extra argument 'tapToSwipeDistance' in call`). The TG-10 diagonal
+  test was widened (0.4 by 0.3) so it is decided before the extra frame at the 0.2 default.
+  GREEN: TapToSwipeTests 19 (+1), GesturesConfigTests 13 (+1, plus edits/problems in two
+  more), GestureControllerTests 27 (+1), 0 failures. Full `swift test`: GioCoreTests 2288,
+  GioSessionTests 614, GioUITests 391 (54 skipped), GioMacOSTests 123, GioMacTests 19,
+  GioPOCTests 7, 0 failures. `git diff --check` clean. Signed `xcodebuild` not run here (a dev
+  Gio runs from `.build/GioAutoTeam`; the coordinator builds and relaunches). NOT verified live.
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,

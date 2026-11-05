@@ -185,6 +185,7 @@ public final class GestureController: @unchecked Sendable {
     public func deliver(_ frames: [TouchFrame]) {
         let settings = context.settings()
         recognizer.settings = settings.recognizerSettings
+        tapToSwipe.stepDistance = settings.tapToSwipeDistance
         if !sawFrames, let first = frames.first {
             sawFrames = true
             context.log(.info, "gestures first contact frame fingers=\(first.contacts.count)")

@@ -12,6 +12,8 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     public static let sensitivityRange = 0.1...5.0
     /// TG-08: `swipe-distance`, a fraction of the trackpad height.
     public static let swipeDistanceRange = 0.05...0.5
+    /// TG-11: `tap-to-swipe-distance`, a fraction of the trackpad.
+    public static let tapToSwipeDistanceRange = 0.05...0.5
 
     /// Horizontal swipe scrolls the strip, following the fingers.
     public var scroll: Bool
@@ -33,11 +35,15 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     /// TG-10: a three-finger tap arms two-finger steps (window left/right,
     /// workspace up/down) for `TapToSwipe.armedWindow`.
     public var tapToSwipe: Bool
+    /// TG-11: stroke travel (fraction of the trackpad, on the stroke's axis)
+    /// before a tap-to-swipe step fires.
+    public var tapToSwipeDistance: Double
 
     public init(
         scroll: Bool = false, scrollFingers: Int = 3, scrollSensitivity: Double = 1.0, natural: Bool = true,
         workspaceSwipe: Bool = false, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4,
-        swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance, tapToSwipe: Bool = false
+        swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance, tapToSwipe: Bool = false,
+        tapToSwipeDistance: Double = TapToSwipe.defaultStepDistance
     ) {
         self.scroll = scroll
         self.scrollFingers = scrollFingers
@@ -49,6 +55,7 @@ public struct GesturesSectionConfig: Equatable, Sendable {
         self.overviewFingers = overviewFingers
         self.swipeDistance = swipeDistance
         self.tapToSwipe = tapToSwipe
+        self.tapToSwipeDistance = tapToSwipeDistance
     }
 
     public var anyEnabled: Bool {
@@ -134,6 +141,10 @@ func applyGesturesKey(
         fingers(defaults.overviewFingers) { config.gestures.overviewFingers = $0 }
     case "tap-to-swipe":
         flag(defaults.tapToSwipe) { config.gestures.tapToSwipe = $0 }
+    case "tap-to-swipe-distance":
+        number(GesturesSectionConfig.tapToSwipeDistanceRange, defaults.tapToSwipeDistance) {
+            config.gestures.tapToSwipeDistance = $0
+        }
     default:
         warnings.append("line \(line): unknown gestures key '\(key)', ignored")
     }
@@ -164,6 +175,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
     public var overviewFingers: Int
     public var swipeDistance: Double
     public var tapToSwipe: Bool
+    public var tapToSwipeDistance: Double
 
     public init(config: GesturesSectionConfig) {
         scroll = config.scroll
@@ -176,13 +188,15 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         overviewFingers = config.overviewFingers
         swipeDistance = config.swipeDistance
         tapToSwipe = config.tapToSwipe
+        tapToSwipeDistance = config.tapToSwipeDistance
     }
 
     var section: GesturesSectionConfig {
         GesturesSectionConfig(
             scroll: scroll, scrollFingers: scrollFingers, scrollSensitivity: scrollSensitivity, natural: natural,
             workspaceSwipe: workspaceSwipe, workspaceFingers: workspaceFingers,
-            overview: overview, overviewFingers: overviewFingers, swipeDistance: swipeDistance, tapToSwipe: tapToSwipe
+            overview: overview, overviewFingers: overviewFingers, swipeDistance: swipeDistance, tapToSwipe: tapToSwipe,
+            tapToSwipeDistance: tapToSwipeDistance
         )
     }
 
@@ -194,6 +208,10 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         }
         if !(swipeDistance.isFinite && GesturesSectionConfig.swipeDistanceRange.contains(swipeDistance)) {
             found.append("Swipe distance must be 5% to 50% of the trackpad height.")
+        }
+        let tapRange = GesturesSectionConfig.tapToSwipeDistanceRange
+        if !(tapToSwipeDistance.isFinite && tapRange.contains(tapToSwipeDistance)) {
+            found.append("Tap to swipe distance must be 5% to 50% of the trackpad.")
         }
         let fingers = GesturesSectionConfig.fingerRange
         if ![scrollFingers, workspaceFingers, overviewFingers].allSatisfy(fingers.contains) {
@@ -209,6 +227,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         // Two decimals keep the slider's value readable in config.toml.
         let sensitivity = (scrollSensitivity * 100).rounded() / 100
         let distance = (swipeDistance * 100).rounded() / 100
+        let tapDistance = (tapToSwipeDistance * 100).rounded() / 100
         return [
             .set(table: "gestures", key: "scroll", value: .bool(scroll)),
             .set(table: "gestures", key: "scroll-fingers", value: .int(scrollFingers)),
@@ -220,6 +239,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
             .set(table: "gestures", key: "overview-fingers", value: .int(overviewFingers)),
             .set(table: "gestures", key: "swipe-distance", value: .number(distance)),
             .set(table: "gestures", key: "tap-to-swipe", value: .bool(tapToSwipe)),
+            .set(table: "gestures", key: "tap-to-swipe-distance", value: .number(tapDistance)),
         ]
     }
 }

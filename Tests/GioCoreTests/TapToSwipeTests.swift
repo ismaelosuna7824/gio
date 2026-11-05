@@ -31,8 +31,8 @@ final class TapToSwipeTests: XCTestCase {
         return frames
     }
 
-    private func armed() -> TapToSwipe {
-        var machine = TapToSwipe()
+    private func armed(stepDistance: Double = TapToSwipe.defaultStepDistance) -> TapToSwipe {
+        var machine = TapToSwipe(stepDistance: stepDistance)
         _ = feed(&machine, tap(at: 0))
         return machine
     }
@@ -81,13 +81,26 @@ final class TapToSwipeTests: XCTestCase {
 
     func testAnArmedStrokeStepsOnceAtTheStepDistance() {
         var machine = armed()
-        let short = stroke(at: 0.5, dx: -(TapToSwipe.stepDistance - 0.01), dy: 0)
+        let short = stroke(at: 0.5, dx: -(TapToSwipe.defaultStepDistance - 0.01), dy: 0)
         XCTAssertEqual(feed(&machine, short), [], "short of the step distance")
         XCTAssertEqual(feed(&machine, stroke(at: 1, dx: -0.3, dy: 0)), [.step(.left)], "one step per stroke")
         XCTAssertEqual(feed(&machine, stroke(at: 1.5, dx: 0.3, dy: 0)), [.step(.right)])
         XCTAssertEqual(feed(&machine, stroke(at: 2, dx: 0, dy: 0.3)), [.step(.up)])
         XCTAssertEqual(feed(&machine, stroke(at: 2.5, dx: 0, dy: -0.3)), [.step(.down)])
         XCTAssertTrue(machine.isArmed)
+    }
+
+    /// TG-11 (user, 2026-11-05: steps at 0.1 of travel felt "un poco duro"):
+    /// the distance is configurable (`[gestures] tap-to-swipe-distance`),
+    /// 0.2 of the trackpad by default.
+    func testTheStepDistanceIsConfigurable() {
+        XCTAssertEqual(TapToSwipe.defaultStepDistance, 0.2)
+        XCTAssertEqual(TapToSwipe().stepDistance, TapToSwipe.defaultStepDistance)
+        var machine = armed(stepDistance: 0.35)
+        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: -0.3, dy: 0)), [], "under the configured distance")
+        XCTAssertEqual(feed(&machine, stroke(at: 1, dx: 0, dy: 0.4)), [.step(.up)], "over it: one step")
+        machine.stepDistance = 0.1
+        XCTAssertEqual(feed(&machine, stroke(at: 1.5, dx: 0.15, dy: 0)), [.step(.right)], "a new distance applies to the next stroke")
     }
 
     func testTheFingersMustLiftBeforeTheNextStep() {
@@ -100,8 +113,8 @@ final class TapToSwipeTests: XCTestCase {
 
     func testADiagonalStrokeIsIgnoredUntilTheLift() {
         var machine = armed()
-        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: -0.2, dy: 0.15, lift: false)), [], "not twice as horizontal as vertical")
-        XCTAssertEqual(feed(&machine, [frame(0.6, fingers: 2, x: 0.1, y: 0.65)]), [], "consumed until the fingers lift")
+        XCTAssertEqual(feed(&machine, stroke(at: 0.5, dx: -0.4, dy: 0.3, lift: false)), [], "not twice as horizontal as vertical")
+        XCTAssertEqual(feed(&machine, [frame(0.6, fingers: 2, x: 0.05, y: 0.85)]), [], "consumed until the fingers lift")
         XCTAssertEqual(feed(&machine, [frame(0.7, fingers: 0)] + stroke(at: 0.8, dx: 0, dy: -0.3)), [.step(.down)])
     }
 

@@ -190,6 +190,9 @@ public func defaultConfigTemplate() -> String {
     # (lift between steps). Two-finger scrolling is paused while it is on
     # (2.5 s after the fingers last touched; a click or another tap ends it).
     tap-to-swipe = false
+    # How far a two-finger stroke travels before tap-to-swipe steps, as a
+    # fraction of the trackpad (0.05-0.5). Larger is calmer.
+    tap-to-swipe-distance = 0.2
 
     [keybindings]
     "Alt+H" = "focus-left"

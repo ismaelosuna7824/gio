@@ -229,6 +229,17 @@ struct FocusSettingsView: View {
                     isOn: current.gestures.tapToSwipe
                 )
             }
+            // TG-11: how far a two-finger stroke travels before it steps.
+            if draft.current.gestures.tapToSwipe {
+                CardRow {
+                    SliderRow(
+                        "Swipe distance for Tap to swipe",
+                        caption: "How far two fingers must travel before Gio changes window or workspace. Longer feels calmer; shorter is quicker.",
+                        value: current.gestures.tapToSwipeDistance, in: GesturesSectionConfig.tapToSwipeDistanceRange,
+                        step: 0.01, format: { String(format: "%.0f%%", $0 * 100) }
+                    )
+                }
+            }
             // TG-08: a vertical swipe fires only after this much travel.
             CardRow(divider: false) {
                 SliderRow(

@@ -55,8 +55,13 @@ public struct TapToSwipe: Sendable {
     public static let maxTapTravel = 0.02
     /// How long the mode stays on after the fingers last touched.
     public static let armedWindow: TimeInterval = 2.5
-    /// Travel (normalized units, about 10% of the trackpad) before a stroke steps.
-    public static let stepDistance = 0.1
+    /// TG-11: default travel (normalized units, a fifth of the trackpad)
+    /// before a stroke steps; 0.1 fired too early on a real trackpad.
+    public static let defaultStepDistance = 0.2
+
+    /// Travel before a stroke steps (`[gestures] tap-to-swipe-distance`);
+    /// a change applies from the next frame.
+    public var stepDistance: Double
 
     private enum Tap: Sendable {
         case none
@@ -76,7 +81,9 @@ public struct TapToSwipe: Sendable {
     private var tap = Tap.none
     private var stroke = Stroke.lifting
 
-    public init() {}
+    public init(stepDistance: Double = defaultStepDistance) {
+        self.stepDistance = stepDistance
+    }
 
     public var isArmed: Bool {
         armedUntil != nil
@@ -169,7 +176,7 @@ public struct TapToSwipe: Sendable {
             let dx = Double(frame.centroid.x - origin.x)
             let dy = Double(frame.centroid.y - origin.y)
             let major = max(abs(dx), abs(dy))
-            guard major >= Self.stepDistance else {
+            guard major >= stepDistance else {
                 return nil
             }
             stroke = .lifting
