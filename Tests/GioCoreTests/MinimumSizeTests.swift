@@ -131,6 +131,27 @@ final class MinimumSizeTests: XCTestCase {
         ))
     }
 
+    /// FI-17 (live 2026-11-06): Zen, back from a fullscreen Space, was
+    /// asked for 744 pt and stayed at the 1496 pt it had before the write.
+    /// A size the window already had says nothing about a minimum; a clamp
+    /// from another size still does, per axis.
+    func testAWriteTheAppDidNotApplyIsNoEvidence() {
+        let requested = CGRect(x: 760, y: 8, width: 744, height: 934)
+        let actual = CGRect(x: 760, y: 8, width: 1496, height: 934)
+        XCTAssertNil(learnedMinimum(requested: requested, actual: actual, before: CGRect(x: 8, y: 8, width: 1496, height: 934)))
+        XCTAssertEqual(learnedMinimum(requested: requested, actual: actual)?.width, 1496, "no pre-write frame: unchanged rule")
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 888, height: 784),
+            actual: CGRect(x: 8, y: 8, width: 970, height: 784),
+            before: CGRect(x: 8, y: 8, width: 1100, height: 784)
+        ), CGSize(width: 970, height: 0))
+        XCTAssertEqual(learnedMinimum(
+            requested: CGRect(x: 8, y: 8, width: 888, height: 200),
+            actual: CGRect(x: 8, y: 8, width: 970, height: 300),
+            before: CGRect(x: 40, y: 8, width: 1100, height: 300)
+        ), CGSize(width: 970, height: 0), "the height did not change: only the width is evidence")
+    }
+
     // MARK: Book
 
     func testBookKeepsMaximumAndReportsChange() {
@@ -162,9 +183,124 @@ final class MinimumSizeTests: XCTestCase {
                 id(2): ReconcileFailure(kind: "timeout", requested: requested, actual: actual),
             ]
         )
-        let changed = book.learn(from: report, placement: .animate)
+        let changed = book.learn(from: report, placement: .animate, now: 0, strips: []).learned
         XCTAssertEqual(changed, [id(1): CGSize(width: 500, height: 0)])
         XCTAssertNil(book.size(of: id(2)))
+    }
+
+    /// FI-17: the reconciler hands the frame it read before the write to the
+    /// failure. A size the window kept teaches nothing by itself (Zen had
+    /// not applied the resize yet) and asks for another look at once; the
+    /// same refusal on the next write is the app enforcing it, while a
+    /// write that landed in between starts over (the app was only late).
+    func testAMismatchCarriesTheFrameBeforeTheWriteAndAKeptSizeCountsOnlyWhenRefusedTwice() throws {
+        let actuator = ClampingActuator()
+        actuator.minimums = [id(1): CGSize(width: 1496, height: 0)]
+        let before = CGRect(x: 8, y: 8, width: 1496, height: 934)
+        actuator.frames = [id(1): before]
+        let reconciler = WindowReconciler(actuator: actuator, concurrency: .serial)
+        let target = [id(1): CGRect(x: 760, y: 8, width: 744, height: 934)]
+        let report = reconciler.reconcile(frames: target, focused: nil, currentlyFocused: nil)
+        let failure = try XCTUnwrap(report.failures[id(1)])
+        XCTAssertEqual(failure.kind, ReconcileFailure.frameMismatchKind)
+        XCTAssertEqual(failure.before, before)
+        XCTAssertEqual(failure.actual, CGRect(x: 760, y: 8, width: 1496, height: 934))
+        let kept = MinimumLearning(
+            ignored: [id(1): IgnoredMinimum(size: CGSize(width: 1496, height: 0), reason: "unchanged")], recheckAt: 5
+        )
+        var book = MinimumSizeBook()
+        XCTAssertEqual(book.learn(from: report, placement: .animate, now: 5, strips: []), kept)
+        XCTAssertNil(book.size(of: id(1)))
+
+        var late = book
+        let again = reconciler.reconcile(frames: target, focused: nil, currentlyFocused: nil)
+        XCTAssertEqual(again.failures[id(1)]?.before, CGRect(x: 760, y: 8, width: 1496, height: 934))
+        XCTAssertEqual(book.learn(from: again, placement: .animate, now: 6, strips: []).learned, [id(1): CGSize(width: 1496, height: 0)])
+
+        XCTAssertEqual(late.learn(from: ReconcileReport(applied: [id(1)]), placement: .animate, now: 6, strips: []), MinimumLearning())
+        XCTAssertEqual(late.learn(from: report, placement: .animate, now: 7, strips: []).recheckAt, 7, "the app was only late: start over")
+        XCTAssertNil(late.size(of: id(1)))
+    }
+
+    /// FI-17: a window that just registered, or every window right after
+    /// the managed Space came back, may still be animating to its old size:
+    /// its clamps teach nothing until `settleDuration` passed, and the
+    /// result names when the settle ends so the host can look again. That
+    /// write finds the window already at the clamp (it kept its size), and
+    /// the same clamp twice is learned.
+    func testNoMinimumIsLearnedWhileAWindowSettles() {
+        let report = ReconcileReport(
+            failed: [id(1)],
+            failures: [
+                id(1): ReconcileFailure(
+                    kind: "frameMismatch", requested: CGRect(x: 8, y: 8, width: 888, height: 784),
+                    actual: CGRect(x: 8, y: 8, width: 970, height: 784)
+                ),
+            ]
+        )
+        var kept = report
+        kept.failures[id(1)]?.before = CGRect(x: 8, y: 8, width: 970, height: 784)
+        var book = MinimumSizeBook()
+        book.noteRegistered(id(1), at: 10)
+        let settling = book.learn(from: report, placement: .animate, now: 10.5, strips: [])
+        XCTAssertEqual(settling.learned, [:])
+        XCTAssertEqual(settling.ignored[id(1)], IgnoredMinimum(size: CGSize(width: 970, height: 0), reason: "settling"))
+        XCTAssertEqual(settling.recheckAt, 10 + MinimumSizeBook.settleDuration)
+        XCTAssertNil(book.size(of: id(1)))
+        XCTAssertEqual(
+            book.learn(from: kept, placement: .animate, now: 10 + MinimumSizeBook.settleDuration, strips: []).learned,
+            [id(1): CGSize(width: 970, height: 0)]
+        )
+
+        var returned = MinimumSizeBook()
+        returned.noteSpaceReturned(at: 20)
+        XCTAssertEqual(returned.learn(from: report, placement: .animate, now: 21, strips: []).recheckAt, 20 + MinimumSizeBook.settleDuration)
+        XCTAssertNil(
+            returned.learnLate(id(1), requested: CGRect(x: 8, y: 8, width: 888, height: 784),
+                               actual: CGRect(x: 8, y: 8, width: 970, height: 784), now: 21, strips: []).learned[id(1)],
+            "the late re-check waits for the settle too"
+        )
+        XCTAssertEqual(returned.learn(from: report, placement: .animate, now: 22, strips: []).learned.keys.sorted(), [id(1)])
+    }
+
+    /// FI-17: a minimum as wide (or tall) as the strip a tiled window gets
+    /// on its display is the window not resized yet, never a clamp: Zen and
+    /// Tern were learned 1496 pt wide on a 1496 pt strip. The strip is the
+    /// one holding the requested frame; the other axis still counts.
+    func testAMinimumAsLargeAsTheStripIsIgnored() {
+        let laptop = CGRect(x: 8, y: 8, width: 1496, height: 934)
+        let external = CGRect(x: 1528, y: 8, width: 2544, height: 1400)
+        func failure(_ requested: CGRect, _ actual: CGRect) -> ReconcileFailure {
+            ReconcileFailure(kind: "frameMismatch", requested: requested, actual: actual)
+        }
+        let report = ReconcileReport(
+            failed: [id(1), id(2), id(3), id(4)],
+            failures: [
+                id(1): failure(CGRect(x: 760, y: 8, width: 744, height: 934), CGRect(x: 760, y: 8, width: 1496, height: 934)),
+                id(2): failure(CGRect(x: 8, y: 8, width: 888, height: 400), CGRect(x: 8, y: 8, width: 970, height: 934)),
+                id(3): failure(CGRect(x: 1536, y: 8, width: 744, height: 1400), CGRect(x: 1536, y: 8, width: 1496, height: 1400)),
+                id(4): failure(CGRect(x: 8, y: 8, width: 888, height: 784), CGRect(x: 8, y: 8, width: 970, height: 784)),
+            ]
+        )
+        var book = MinimumSizeBook()
+        let result = book.learn(from: report, placement: .animate, now: 0, strips: [laptop, external])
+        XCTAssertEqual(result.learned, [
+            id(2): CGSize(width: 970, height: 0),
+            id(3): CGSize(width: 1496, height: 0),
+            id(4): CGSize(width: 970, height: 0),
+        ])
+        XCTAssertEqual(result.ignored, [
+            id(1): IgnoredMinimum(size: CGSize(width: 1496, height: 0), reason: "full-width"),
+            id(2): IgnoredMinimum(size: CGSize(width: 970, height: 934), reason: "full-height"),
+        ])
+        XCTAssertNil(result.recheckAt)
+        XCTAssertNil(book.size(of: id(1)))
+        let late = book.learnLate(
+            id(5), requested: CGRect(x: 760, y: 8, width: 744, height: 934),
+            actual: CGRect(x: 760, y: 8, width: 1496, height: 934), now: 0, strips: [laptop]
+        )
+        XCTAssertEqual(late.learned, [:])
+        XCTAssertEqual(late.ignored[id(5)]?.reason, "full-width")
     }
 
     /// Live (2026-10-09): Slack and OrbStack were written from 1068 to 888
@@ -182,12 +318,15 @@ final class MinimumSizeTests: XCTestCase {
             ]
         )
         var book = MinimumSizeBook()
-        XCTAssertTrue(book.learn(from: report, placement: .instant(.displays)).isEmpty)
+        XCTAssertEqual(book.learn(from: report, placement: .instant(.displays), now: 0, strips: []), MinimumLearning())
         XCTAssertNil(book.size(of: id(1)))
         // The same clamp in any other pass is still evidence.
         for placement in [InstantPlacementDecision.animate, .instant(nil), .instant(.startup), .instant(.mouse)] {
             var other = MinimumSizeBook()
-            XCTAssertEqual(other.learn(from: report, placement: placement), [id(1): CGSize(width: 1068, height: 0)])
+            XCTAssertEqual(
+                other.learn(from: report, placement: placement, now: 0, strips: []).learned,
+                [id(1): CGSize(width: 1068, height: 0)]
+            )
         }
     }
 
@@ -199,18 +338,18 @@ final class MinimumSizeTests: XCTestCase {
         let requested = CGRect(x: 8, y: 8, width: 888, height: 1114)
         let actual = CGRect(x: 8, y: 8, width: 1068, height: 1114)
         var book = MinimumSizeBook()
+        func late(_ window: WindowID, _ actual: CGRect) -> CGSize? {
+            book.learnLate(window, requested: requested, actual: actual, now: 0, strips: []).learned[window]
+        }
         book.notePlaced([id(1)], placement: .instant(.displays))
-        XCTAssertNil(book.learnLate(id(1), requested: requested, actual: actual))
+        XCTAssertNil(late(id(1), actual))
         book.notePlaced([id(1)], placement: .animate)
-        XCTAssertEqual(book.learnLate(id(1), requested: requested, actual: actual), CGSize(width: 1068, height: 0))
-        XCTAssertNil(book.learnLate(id(1), requested: requested, actual: actual), "nothing new")
-        XCTAssertNil(
-            book.learnLate(id(2), requested: requested, actual: actual.offsetBy(dx: 40, dy: 0).insetBy(dx: -20, dy: 0)),
-            "pushed, not clamped"
-        )
+        XCTAssertEqual(late(id(1), actual), CGSize(width: 1068, height: 0))
+        XCTAssertNil(late(id(1), actual), "nothing new")
+        XCTAssertNil(late(id(2), actual.offsetBy(dx: 40, dy: 0).insetBy(dx: -20, dy: 0)), "pushed, not clamped")
         book.notePlaced([id(3)], placement: .instant(.displays))
         book.forget(id(3))
-        XCTAssertNotNil(book.learnLate(id(3), requested: requested, actual: actual), "forgotten with the window")
+        XCTAssertNotNil(late(id(3), actual), "forgotten with the window")
     }
 
     /// BUG-3 (live 2026-10-21, dwindle with nine windows): a late clamp to a
@@ -353,7 +492,7 @@ final class MinimumSizeTests: XCTestCase {
 
         let first = try pass()
         XCTAssertEqual(first.failed, [id(1)])
-        XCTAssertEqual(book.learn(from: first, placement: .instant(nil)).keys.sorted(), [id(1)])
+        XCTAssertEqual(book.learn(from: first, placement: .instant(nil), now: 0, strips: []).learned.keys.sorted(), [id(1)])
 
         let second = try pass()
         XCTAssertTrue(second.failed.isEmpty)
@@ -367,7 +506,7 @@ final class MinimumSizeTests: XCTestCase {
         XCTAssertTrue(third.failed.isEmpty)
         XCTAssertEqual(third.alreadyCorrect.count, 2)
         XCTAssertEqual(actuator.sets, writesBefore)
-        XCTAssertTrue(book.learn(from: third, placement: .instant(nil)).isEmpty)
+        XCTAssertEqual(book.learn(from: third, placement: .instant(nil), now: 0, strips: []), MinimumLearning())
     }
 
     /// WC-14: live (2026-10-15, startup): WhatsApp refuses to be narrower than

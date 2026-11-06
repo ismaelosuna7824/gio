@@ -91,6 +91,7 @@ Locking the screen or putting the Mac to sleep does not make Gio drop your windo
 - **The dwindle layout is experimental:** covered by automated tests, not yet validated on a real desktop.
 - **Not notarized yet:** the first launch needs **Open Anyway** (see [Install](#install)).
 - **Option shortcuts take characters** on some keyboard layouts (see [Keyboard layouts](#keyboard-layouts)).
+- **Apps that refuse to get narrower.** Gio learns an app's minimum width or height when a window keeps coming back larger than its column, and remembers it across launches (`min size learned` in the log). A window that just opened, or that comes back from a native fullscreen Space, is given about 1.5 seconds first, and a size as large as the whole strip is never taken for a minimum (`min size ignored ... reason=full-width`); one remembered that way by an older version is dropped at launch (`min size purged`). If a window still will not shrink, quit Gio, delete `~/Library/Caches/dev.gio.windowmanager/app-minimum-sizes.json` and open Gio again: every learned minimum is forgotten.
 
 ## Concepts
 

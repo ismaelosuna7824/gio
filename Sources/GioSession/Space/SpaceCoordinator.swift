@@ -15,6 +15,9 @@ public final class SpaceCoordinator: @unchecked Sendable {
         /// WC-22: bring every parked window back on screen (the quit path's
         /// restore) when another window manager takes over.
         public var restoreWindows: () -> Void
+        /// FI-17: window work resumes (the managed Space came back, or the
+        /// other window manager quit), before the scan and the reflow.
+        public var resumed: () -> Void
         public var log: (LogLevel, String) -> Void
 
         public init(
@@ -23,6 +26,7 @@ public final class SpaceCoordinator: @unchecked Sendable {
             rescan: @escaping () -> Void,
             adoptFrontmostFocus: @escaping () -> Void,
             restoreWindows: @escaping () -> Void = {},
+            resumed: @escaping () -> Void = {},
             log: @escaping (LogLevel, String) -> Void
         ) {
             self.reflowAll = reflowAll
@@ -30,6 +34,7 @@ public final class SpaceCoordinator: @unchecked Sendable {
             self.rescan = rescan
             self.adoptFrontmostFocus = adoptFrontmostFocus
             self.restoreWindows = restoreWindows
+            self.resumed = resumed
             self.log = log
         }
     }
@@ -84,6 +89,7 @@ public final class SpaceCoordinator: @unchecked Sendable {
     }
 
     private func resume() {
+        context.resumed()
         context.rescan()
         context.adoptFrontmostFocus()
         context.reflowAll()
