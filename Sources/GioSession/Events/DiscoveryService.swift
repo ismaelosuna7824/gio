@@ -95,6 +95,8 @@ public final class DiscoveryService: @unchecked Sendable {
         public var windowNumber: (WindowID) -> UInt32?
         /// FI-15: every window number the window server lists (one query).
         public var liveWindowNumbers: () -> Set<UInt32>
+        /// FI-16: every scan (full, per pid, proof) that ran, once it ended.
+        public var scanFinished: (DiscoveryScanSummary) -> Void
 
         public init(
             ownPID: pid_t = ProcessInfo.processInfo.processIdentifier,
@@ -129,10 +131,12 @@ public final class DiscoveryService: @unchecked Sendable {
             windowFrame: @escaping (WindowID) -> CGRect? = { _ in nil },
             newWindowPosition: @escaping () -> NewWindowPosition = { .end },
             windowNumber: @escaping (WindowID) -> UInt32? = { _ in nil },
-            liveWindowNumbers: @escaping () -> Set<UInt32> = { [] }
+            liveWindowNumbers: @escaping () -> Set<UInt32> = { [] },
+            scanFinished: @escaping (DiscoveryScanSummary) -> Void = { _ in }
         ) {
             self.windowNumber = windowNumber
             self.liveWindowNumbers = liveWindowNumbers
+            self.scanFinished = scanFinished
             self.allowsWindowWork = allowsWindowWork
             self.listedWindows = listedWindows
             self.windowFrame = windowFrame
@@ -317,6 +321,9 @@ public final class DiscoveryService: @unchecked Sendable {
         purge(confirmedAbsent(vanishedWindowIDs(
             registered: registry.managedWindows(), scannedPIDs: found.completePIDs, present: present
         )))
+        context.scanFinished(DiscoveryScanSummary(
+            scope: onlyPID, completePIDs: found.completePIDs, skippedPIDs: found.skippedPIDs
+        ))
     }
 
     /// FI-15: the absent windows the window server does not still list.
@@ -1048,5 +1055,19 @@ public final class DiscoveryService: @unchecked Sendable {
         if let primary {
             context.log(.debug, displayFlipLogLine(primaryHeight: primary.frame.height, primary: primary.id))
         }
+    }
+}
+
+/// FI-16: what one scan read. `scope` nil for a full scan; `completePIDs`
+/// read fully, `skippedPIDs` with windows whose attributes did not answer.
+public struct DiscoveryScanSummary: Equatable, Sendable {
+    public let scope: pid_t?
+    public let completePIDs: Set<pid_t>
+    public let skippedPIDs: Set<pid_t>
+
+    public init(scope: pid_t?, completePIDs: Set<pid_t>, skippedPIDs: Set<pid_t>) {
+        self.scope = scope
+        self.completePIDs = completePIDs
+        self.skippedPIDs = skippedPIDs
     }
 }

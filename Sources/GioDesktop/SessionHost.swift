@@ -92,6 +92,9 @@ final class SessionHost: @unchecked Sendable {
     private var tileability = TileabilityCache()
     /// FI-02: minimum sizes learned from clamped writes (session queue only).
     private var minimumSizes = MinimumSizeBook()
+    /// FI-17: a reflow is scheduled to look again at clamps the book held
+    /// back (session queue only).
+    private var minimumRecheckPending = false
     /// PA-24: minimums apps showed in earlier launches, per app (session
     /// queue only); loaded before the first layout, saved when one grows.
     private var appMinimums = AppMinimumSizes()
@@ -237,6 +240,9 @@ final class SessionHost: @unchecked Sendable {
     /// WS-02: window-server created/destroyed notifications backing up the
     /// Accessibility observers (session queue; `post` from main).
     private var windowServer: WindowServerWatcher!
+    /// FI-16: retries for windows on screen that no scan registered, and
+    /// the rescans after a wake or unlock.
+    private var strandedRescue: StrandedWindowRescue!
     /// WS-01: kept alive for the app's life (its context is unretained).
     private var windowServerSource: WindowServerEventSource?
     /// WC-22: main thread; kept for the app's life.
@@ -325,6 +331,10 @@ final class SessionHost: @unchecked Sendable {
                 let ids = session.registry.managedWindows().filter { !$0.isMinimized }.map(\.id)
                 let moved = restoreOffscreenWindows(ids)?.applied.count ?? 0
                 GioLog.record(.info, "restore for another window manager moved=\(moved)")
+            },
+            resumed: { [unowned self] in
+                // FI-17: windows back from a fullscreen Space still sit at their old size.
+                minimumSizes.noteSpaceReturned(at: ProcessInfo.processInfo.systemUptime)
             },
             log: { GioLog.record($0, $1) }
         ))
@@ -686,6 +696,8 @@ final class SessionHost: @unchecked Sendable {
                 resetWindowState: { [unowned self] id in
                     tileability.invalidate(id)
                     minimumSizes.forget(id)
+                    // FI-17: a window that just opened may still be animating.
+                    minimumSizes.noteRegistered(id, at: ProcessInfo.processInfo.systemUptime)
                     trustedFrames.invalidate(id)
                     events.forgetSnapBacks(id)
                 },
@@ -771,7 +783,8 @@ final class SessionHost: @unchecked Sendable {
                 windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
                 newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition },
                 windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) },
-                liveWindowNumbers: { windowServerListedNumbers() }
+                liveWindowNumbers: { windowServerListedNumbers() },
+                scanFinished: { [unowned self] in strandedRescue.noteScan($0) }
             ),
             scheduler: scheduler
         )
@@ -780,7 +793,7 @@ final class SessionHost: @unchecked Sendable {
                 windowOwner: { windowServerOwner(number: $0) },
                 ownPID: ProcessInfo.processInfo.processIdentifier,
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
-                scanApp: { [unowned self] in discovery.appAttached($0) },
+                scanApp: { [unowned self] in strandedRescue.rescue($0) },
                 proveVanished: { [unowned self] in discovery.noteDestroyed($0) },
                 frameChanged: { [unowned self] id, resized, at in
                     events.windowServerFrameChanged(id, resized: resized, noticeAt: at)
@@ -794,6 +807,25 @@ final class SessionHost: @unchecked Sendable {
                         return
                     }
                     DispatchQueue.main.async { [weak self] in self?.onFocusedWindowReordered?() }
+                },
+                now: { ProcessInfo.processInfo.systemUptime },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
+        strandedRescue = StrandedWindowRescue(
+            context: .init(
+                ownPID: ProcessInfo.processInfo.processIdentifier,
+                allowsWindowWork: { [unowned self] in !isShuttingDown && space.allowsWindowWork },
+                isRunning: { [unowned self] in probe.isRunning($0) },
+                regularPIDs: { [unowned self] in probe.runningRegularPIDs() },
+                serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
+                registeredNumbers: { [unowned self] in windowServer.registeredNumbers },
+                scanApp: { [unowned self] in discovery.appAttached($0) },
+                rescanAll: { [unowned self] in
+                    if !isShuttingDown {
+                        scheduleReflow(full: true)
+                    }
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
                 log: { GioLog.record($0, $1) }
@@ -1094,6 +1126,7 @@ final class SessionHost: @unchecked Sendable {
                 return
             }
             self.events.rebuild()
+            self.strandedRescue.start()
             self.publishSnapshot()
             GioLog.record(.info, "session ready")
             DispatchQueue.main.async {
@@ -1700,6 +1733,7 @@ final class SessionHost: @unchecked Sendable {
         // MM-01: displays first, so every startup window lands in the stack
         // of the display it sits on (not all in the first one).
         discovery.syncDisplays()
+        purgeImplausibleAppMinimums()
         discovery.enumerateAndPlace()
         // The first layout is instant (`instantPlacement` starts armed for
         // `.startup`): windows land on their tiles instead of flying there.
@@ -1796,12 +1830,14 @@ final class SessionHost: @unchecked Sendable {
     /// window's minimum; relayout once so neighbours make room instead of
     /// being overlapped. Bounded: only a strictly larger minimum triggers it.
     private func learnMinimumSizes(from report: ReconcileReport, placement: InstantPlacementDecision) {
-        let changed = minimumSizes.learn(from: report, placement: placement)
-        guard !changed.isEmpty else {
+        let now = ProcessInfo.processInfo.systemUptime
+        let outcome = minimumSizes.learn(from: report, placement: placement, now: now, strips: tilingStrips())
+        noteHeldBackMinimums(outcome, now: now)
+        guard !outcome.learned.isEmpty else {
             return
         }
-        for id in changed.keys.sorted() {
-            logLearnedMinimum(id, size: changed[id]!, late: false)
+        for id in outcome.learned.keys.sorted() {
+            logLearnedMinimum(id, size: outcome.learned[id]!, late: false)
         }
         scheduleReflow(full: false)
     }
@@ -1813,7 +1849,10 @@ final class SessionHost: @unchecked Sendable {
     /// snap-back count and no relayout, so a crowded dwindle tree does not
     /// loop or make the app yield.
     private func learnLateClamp(_ id: WindowID, written: CGRect, observed: CGRect) -> Bool {
-        guard let size = minimumSizes.learnLate(id, requested: written, actual: observed) else {
+        let now = ProcessInfo.processInfo.systemUptime
+        let outcome = minimumSizes.learnLate(id, requested: written, actual: observed, now: now, strips: tilingStrips())
+        noteHeldBackMinimums(outcome, now: now)
+        guard let size = outcome.learned[id] else {
             guard minimumSizes.explains(id, requested: written, actual: observed) else {
                 return false
             }
@@ -1825,6 +1864,59 @@ final class SessionHost: @unchecked Sendable {
         logLearnedMinimum(id, size: size, late: true)
         scheduleReflow(full: false)
         return true
+    }
+
+    /// FI-17: each display's strip, its usable frame without the layout
+    /// padding: the most a tiled window gets there.
+    private func tilingStrips() -> [CGRect] {
+        let padding = session.config.makeLayoutConfig().padding
+        return displays.allDisplays().map { (visibleFrames[$0.id] ?? $0.frame).insetBy(dx: padding, dy: padding) }
+    }
+
+    /// FI-17: clamps the book did not learn are logged (as large as the
+    /// strip at info, settling or a first kept size at debug); when another
+    /// write would be evidence one light reflow looks again.
+    private func noteHeldBackMinimums(_ outcome: MinimumLearning, now: TimeInterval) {
+        for id in outcome.ignored.keys.sorted() {
+            let ignored = outcome.ignored[id]!
+            GioLog.record(
+                ignored.reason.hasPrefix("full-") ? .info : .debug,
+                "min size ignored id=\(id.pid):\(id.elementID) "
+                    + "app=\(session.registry.find(id)?.application ?? "pid\(id.pid)") "
+                    + "w=\(Int(ignored.size.width.rounded())) h=\(Int(ignored.size.height.rounded())) "
+                    + "reason=\(ignored.reason)"
+            )
+        }
+        guard let recheckAt = outcome.recheckAt, !minimumRecheckPending else {
+            return
+        }
+        minimumRecheckPending = true
+        queue.asyncAfter(deadline: .now() + max(0, recheckAt - now)) { [weak self] in
+            guard let self, !self.isShuttingDown else {
+                return
+            }
+            self.minimumRecheckPending = false
+            self.scheduleReflow(full: false)
+        }
+    }
+
+    /// FI-17: PA-24 entries as large as the largest strip were learned from
+    /// windows not resized yet; dropped (and the file rewritten) once the
+    /// first display sync made the strips known.
+    private func purgeImplausibleAppMinimums() {
+        let purged = appMinimums.purgeImplausible(strips: tilingStrips())
+        guard !purged.isEmpty else {
+            return
+        }
+        for key in purged.keys.sorted() {
+            let entry = purged[key]!
+            GioLog.record(
+                .info,
+                "min size purged app=\(key) w=\(Int((entry.width?.value ?? 0).rounded())) "
+                    + "h=\(Int((entry.height?.value ?? 0).rounded())) reason=full-strip"
+            )
+        }
+        appMinimumStore?.save(appMinimums)
     }
 
     private func logLearnedMinimum(_ id: WindowID, size: CGSize, late: Bool) {
@@ -2632,7 +2724,8 @@ final class SessionHost: @unchecked Sendable {
 
     /// FI-15: while the screen locks the apps' Accessibility answers go
     /// blank; windows the window server kept alive meanwhile are re-read by
-    /// one full rescan after a wake or an unlock (the debounced resync).
+    /// a full rescan after a wake or an unlock (the debounced resync), and
+    /// FI-16 again once the screen settled (`StrandedWindowRescue.noteWake`).
     private func watchWake() {
         func handler(_ reason: String) -> (Notification) -> Void {
             { [weak self] _ in
@@ -2640,8 +2733,7 @@ final class SessionHost: @unchecked Sendable {
                     guard let self, !self.isShuttingDown else {
                         return
                     }
-                    GioLog.record(.info, "session rescan reason=\(reason)")
-                    self.scheduleReflow(full: true)
+                    self.strandedRescue.noteWake(reason: reason)
                 }
             }
         }

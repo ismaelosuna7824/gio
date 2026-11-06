@@ -30,13 +30,19 @@ public struct ReconcileFailure: Equatable, Sendable {
     public var kind: String
     public var requested: CGRect?
     public var actual: CGRect?
+    /// FI-17: the frame read just before the write (nil when unknown), so a
+    /// size the window kept is not taken for a minimum it enforced.
+    public var before: CGRect?
     /// Free-form error text, kept only for kinds the reconciler cannot name.
     public var detail: String?
 
-    public init(kind: String, requested: CGRect? = nil, actual: CGRect? = nil, detail: String? = nil) {
+    public init(
+        kind: String, requested: CGRect? = nil, actual: CGRect? = nil, before: CGRect? = nil, detail: String? = nil
+    ) {
         self.kind = kind
         self.requested = requested
         self.actual = actual
+        self.before = before
         self.detail = detail
     }
 

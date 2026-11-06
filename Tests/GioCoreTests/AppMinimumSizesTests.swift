@@ -119,4 +119,32 @@ final class AppMinimumSizesTests: XCTestCase {
         XCTAssertNil(loaded.size(for: window(1, app: "Tern", bundle: "so.stencil.tern")))
         XCTAssertEqual(loaded.size(for: window(2, app: "Xcode", bundle: "com.apple.dt.Xcode")), CGSize(width: 400, height: 350))
     }
+
+    /// FI-17 (live 2026-11-06): the store held Zen and Tern 1496 pt wide,
+    /// the whole 1496 pt strip, learned while the windows were still at
+    /// their old full width. A minimum at least as wide (or tall) as the
+    /// largest display's strip is dropped with its entry; nothing is
+    /// dropped while no display is known.
+    func testAMinimumAsLargeAsTheLargestStripIsPurged() {
+        typealias Axis = AppMinimumSizes.Axis
+        let zen = AppMinimumSizes.Entry(width: Axis(value: 1496, seen: 2), height: Axis(value: 495, seen: 2))
+        let tern = AppMinimumSizes.Entry(width: Axis(value: 1496, seen: 1))
+        let tall = AppMinimumSizes.Entry(height: Axis(value: 1400, seen: 2))
+        let whatsApp = AppMinimumSizes.Entry(width: Axis(value: 970, seen: 2))
+        var minimums = AppMinimumSizes(entries: [
+            "bundle:app.zen-browser.zen": zen, "bundle:so.stencil.tern": tern,
+            "name:Tall": tall, "bundle:\(whatsapp)": whatsApp,
+        ])
+        XCTAssertEqual(minimums.purgeImplausible(strips: []), [:])
+        let laptop = CGRect(x: 8, y: 8, width: 1496, height: 934)
+        let side = CGRect(x: 1528, y: 8, width: 1200, height: 1500)
+        XCTAssertEqual(minimums.purgeImplausible(strips: [laptop]), [
+            "bundle:app.zen-browser.zen": zen, "bundle:so.stencil.tern": tern, "name:Tall": tall,
+        ])
+        XCTAssertEqual(minimums.entries, ["bundle:\(whatsapp)": whatsApp])
+
+        var wider = AppMinimumSizes(entries: ["bundle:app.zen-browser.zen": zen, "name:Tall": tall])
+        XCTAssertEqual(wider.purgeImplausible(strips: [laptop, side]), ["bundle:app.zen-browser.zen": zen])
+        XCTAssertEqual(wider.entries, ["name:Tall": tall], "taller than the laptop, not than the side display")
+    }
 }

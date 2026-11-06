@@ -79,7 +79,8 @@ final class ReconcileFailureTests: XCTestCase {
         XCTAssertEqual(report.failures[id(1)], ReconcileFailure(
             kind: "frameMismatch",
             requested: CGRect(x: 8, y: 8, width: 440, height: 784),
-            actual: CGRect(x: 8, y: 8, width: 500, height: 784)
+            actual: CGRect(x: 8, y: 8, width: 500, height: 784),
+            before: CGRect(x: 0, y: 0, width: 100, height: 100)
         ))
     }
 

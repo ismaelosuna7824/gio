@@ -250,7 +250,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
             do {
                 actual = try actuator.frame(of: id)
             } catch {
-                return failed(error, requested: item.desired, actual: nil)
+                return failed(error, requested: item.desired, actual: nil, before: nil)
             }
             guard let actual else {
                 return .vanished
@@ -283,7 +283,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                         return outcome
                     }
                 }
-                return failed(error, requested: item.desired, actual: actual)
+                return failed(error, requested: item.desired, actual: actual, before: actual)
             }
         }
 
@@ -312,7 +312,8 @@ public final class WindowReconciler<Actuator: WindowActuator> {
         /// The note stays the error's own text; the structured failure adds
         /// the kind and both frames. A mismatch reports where the window
         /// landed; other kinds report the frame read before the write.
-        private func failed(_ error: Error, requested: CGRect, actual: CGRect?) -> WindowOutcome {
+        /// FI-17: `before` is that pre-write frame for every kind.
+        private func failed(_ error: Error, requested: CGRect, actual: CGRect?, before: CGRect?) -> WindowOutcome {
             let reporting = error as? FrameFailureReporting
             return .failed(
                 String(describing: error),
@@ -320,6 +321,7 @@ public final class WindowReconciler<Actuator: WindowActuator> {
                     kind: reporting?.failureKind ?? "other",
                     requested: requested,
                     actual: reporting?.failureActual ?? actual,
+                    before: before,
                     detail: reporting == nil ? String(describing: error) : nil
                 )
             )

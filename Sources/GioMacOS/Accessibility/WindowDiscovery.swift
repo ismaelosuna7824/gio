@@ -46,6 +46,8 @@ public struct SystemWindowDiscoveryResult {
     /// Windows skipped because a required AX attribute was unreadable.
     /// Skips are evidence, never silent: callers must report the count.
     public let skipped: Int
+    /// FI-16: the pids those skipped windows belong to (their rescans).
+    public let skippedPIDs: Set<pid_t>
     /// Pids whose window list was read successfully and whose every element
     /// was classified (none skipped). Only for these is absence from the scan
     /// evidence that a registered window is gone.
@@ -53,12 +55,14 @@ public struct SystemWindowDiscoveryResult {
 
     public init(
         windows: [DiscoveredSystemWindow], floating: [DiscoveredSystemWindow] = [],
-        ignored: [ExcludedSystemWindow] = [], skipped: Int = 0, completePIDs: Set<pid_t>
+        ignored: [ExcludedSystemWindow] = [], skipped: Int = 0, skippedPIDs: Set<pid_t> = [],
+        completePIDs: Set<pid_t>
     ) {
         self.windows = windows
         self.floating = floating
         self.ignored = ignored
         self.skipped = skipped
+        self.skippedPIDs = skippedPIDs
         self.completePIDs = completePIDs
     }
 }
@@ -90,6 +94,7 @@ public func discoverSystemWindows(
     var ignored: [ExcludedSystemWindow] = []
     var skipped = 0
     var completePIDs = Set<pid_t>()
+    var skippedPIDs = Set<pid_t>()
     let ownPID = ProcessInfo.processInfo.processIdentifier
     let apps = NSWorkspace.shared.runningApplications.filter {
         $0.activationPolicy == .regular && isManageableProcess(
@@ -110,6 +115,8 @@ public func discoverSystemWindows(
         defer {
             if skipped == skippedBefore {
                 completePIDs.insert(app.processIdentifier)
+            } else {
+                skippedPIDs.insert(app.processIdentifier)
             }
         }
         for element in elements {
@@ -141,7 +148,7 @@ public func discoverSystemWindows(
         GioLog.record(.debug, "discovery skipped=\(skipped) windows with unreadable attributes")
     }
     return SystemWindowDiscoveryResult(
-        windows: found, floating: floating, ignored: ignored, skipped: skipped,
+        windows: found, floating: floating, ignored: ignored, skipped: skipped, skippedPIDs: skippedPIDs,
         completePIDs: completePIDs
     )
 }
