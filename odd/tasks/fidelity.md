@@ -282,7 +282,7 @@ Review: UNAVAILABLE.
   missing). GREEN: Core 2349, Session 643, UI 391 (54 skipped), POC 7, Mac 19, macOS 131, 0 failures;
   signed Debug build succeeded (app unregistered and deleted after); `git diff --check` clean. NOT
   verified live (needs an app whose Accessibility answers late at launch, and a real lock/unlock).
-- 2026-11-06: FI-17 (`DONE`, `<hash>`) — Zen stuck at full width, `Alt+F` did nothing. Live release
+- 2026-11-06: FI-17 (`DONE`, `9f57802`) — Zen stuck at full width, `Alt+F` did nothing. Live release
   v0.1.11: Zen's window stayed 1496 pt wide (the whole strip); maximize-column toggled its stored width
   (1.0x and back) but the frame never shrank. `~/Library/Caches/dev.gio.windowmanager/
   app-minimum-sizes.json` held `bundle:app.zen-browser.zen: [1496, 2, 495, 2]` (width confirmed twice,
