@@ -247,3 +247,79 @@ Review: UNAVAILABLE.
   `liveWindowNumbers`, `noteDestroyed` missing; `WindowServerSnapshotTests.testListedNumbersKeepEvery...`).
   GREEN: Core 2298, Session 621, UI 391 (54 skipped), POC 7, Mac 19, macOS 127; `git diff --check`
   clean; signed build not run (a dev Gio was running). NOT verified live with a real lock or sleep.
+- 2026-11-06: FI-16 (`DONE`, `fdd83d3`) — a window on screen never managed, across a launch and a
+  sleep/unlock. Live release v0.1.11 (`~/.config/gio/gio.log`, ~5560-5600):
+  ```
+  [2026-11-06T00:47:26.737Z] [INFO] window server scan pid=71363 reason=unregistered   (LoopOps ADE, launched 00:47:23)
+  ... no "window open" for pid 71363 ever ...
+  [2026-11-06T02:59:47.141Z] [INFO] session rescan reason=unlock
+  [2026-11-06T02:59:48.539Z] [INFO] discovery exclude pid=640 app=Finder ignore(notAWindow)
+  [2026-11-06T02:59:49.843Z] SecurityAgent windows (still unlocking)
+  ```
+  Afterwards the window server listed the LoopOps window (number 8530, layer 0, on screen, AXWindow/
+  AXStandardWindow 1440x900) while `gio list-windows` did not; `gio restart` adopted it at once. Cause
+  [INFERENCE, from the log]: both scans ran while the app's Accessibility was not ready (just launched;
+  then mid-unlock), so its window was skipped (FI-14 `discoverySkips`, debug only) or not listed, and
+  nothing asked again: the WS-02 rescue scan runs once, the FI-15 unlock rescan once, right when the
+  screen unlocks. Fix: (1) retries: a scan that skipped windows of a pid
+  (`SystemWindowDiscoveryResult.skippedPIDs`, `DiscoveryService.Context.scanFinished`) or a rescue scan
+  that left the window unregistered starts a per-pid series, scans after 0.5, 1.5, 4, 10 s
+  (`StrandedWindowRetry.delays`, `StrandedWindowRetryBook`, Core), ending once the app is read fully with
+  nothing stranded, the window server drops the window or the app dies (`window retry scan pid=N
+  attempt=N reason=skipped|unregistered`, `... gave up attempts=4 ...`); (2) after a wake or unlock the
+  full rescan runs again at 2 s and 6 s (`wakeSettleDelays`, `session rescan reason=unlock settle=2s`;
+  a later wake replaces pending settles); (3) safety net: after every full scan and at most every 30 s
+  (`auditInterval`), `strandedServerWindows` (Core) diffs the on-screen layer-0 windows of regular apps
+  (never Gio's own) against the registered numbers and starts the same series (`window server stranded
+  pid=N windows=N`). A series that gave up remembers its numbers (`rejected`) until the window server
+  drops them or the Mac wakes, and a skip series that gave up waits for a full read of its pid, so a
+  window admission refuses is not rescanned forever. Component: `StrandedWindowRescue` (GioSession,
+  `SessionScheduler`); `SessionHost` only wires it (watcher `scanApp`, discovery `scanFinished`,
+  `watchWake`, `start`). RED: compile failure (`StrandedWindowRetryTests`: `StrandedWindowRetry`,
+  `StrandedWindowRetryBook`, `WindowRetryStep`, `strandedServerWindows` missing;
+  `StrandedWindowRescueTests`: `StrandedWindowRescue`, `scanFinished`, `skippedPIDs` missing;
+  `WindowServerWatcherTests.testRegisteredNumbersFollowRegistrationAndForget`: `registeredNumbers`
+  missing). GREEN: Core 2349, Session 643, UI 391 (54 skipped), POC 7, Mac 19, macOS 131, 0 failures;
+  signed Debug build succeeded (app unregistered and deleted after); `git diff --check` clean. NOT
+  verified live (needs an app whose Accessibility answers late at launch, and a real lock/unlock).
+- 2026-11-06: FI-17 (`DONE`, `9f57802`) — Zen stuck at full width, `Alt+F` did nothing. Live release
+  v0.1.11: Zen's window stayed 1496 pt wide (the whole strip); maximize-column toggled its stored width
+  (1.0x and back) but the frame never shrank. `~/Library/Caches/dev.gio.windowmanager/
+  app-minimum-sizes.json` held `bundle:app.zen-browser.zen: [1496, 2, 495, 2]` (width confirmed twice,
+  PA-24) and `bundle:so.stencil.tern: [1496, 1, ...]`. Log (`~/.config/gio/gio.log`, ~3905-3926):
+  ```
+  20:41:24.194Z space foreign; pausing layout        (the user was in a native fullscreen Space)
+  20:41:52.460Z space managed; reflow
+  20:41:52.500Z window float id=1021:100 app=Zen reason=notResizable
+  20:41:52.524Z [WARN] reconcile failure id=1021:101 app=Zen kind=frameMismatch requested=(760,8,744,934) actual=(760,8,1496,934)
+  20:41:52.532Z min size learned id=1021:101 app=Zen w=1496 h=0
+  20:41:52.532Z window open id=1021:101 app=Zen ... (registered 2 ms earlier)
+  ```
+  Cause: a false learned minimum. The window had just come back from the fullscreen Space and just
+  registered, still at its old full width; the app had not applied the resize yet, and
+  `learnedMinimum` (FI-02/BUG-2/FX-05/NC-15 rules) read the unchanged size as a clamp. Clearing the two
+  entries and restarting fixed it live (Zen 1496 → 744 on `Alt+F`). Fix (`MinimumSizeBook`,
+  `AppMinimumSizes`, Core): (1) `ReconcileFailure.before`, the frame the lane read before the write;
+  `learnedMinimum(requested:actual:before:)` gives no evidence on an axis whose landed extent equals the
+  pre-write one. Alone that would never learn a window already sitting at its minimum (or one whose
+  first clamp was held back by (2): the next write finds it at the clamp), so the book keeps such a
+  clamp `pending` and counts it when the next write shows the same one (the app refused twice; a
+  landed write clears it); the result's `recheckAt` makes the host run one light reflow (at once for a
+  first kept size); (2) no learning within `MinimumSizeBook.settleDuration` (1.5 s) of a window's
+  registration (`noteRegistered`, `resetWindowState`) or of the managed Space coming back
+  (`noteSpaceReturned`, new `SpaceCoordinator.Context.resumed`, run before the rescan), late re-check
+  included; `recheckAt` = the settle's end; (3) an axis at least as large as the strip holding the
+  requested frame (`tilingStrip(holding:in:)`, each display's usable frame less `padding`) is never
+  learned or confirmed (`min size ignored id=... w=... reason=full-width|full-height|full-size`, info;
+  `settling`/`unchanged` at debug); (4) after the first display sync (`initialSync`),
+  `AppMinimumSizes.purgeImplausible(strips:)` drops PA-24 entries with an axis at least the largest
+  strip's and rewrites the file (`min size purged app=<key> w= h= reason=full-strip`). Trade-off
+  [INFERENCE]: a real minimum on a window that just opened is learned about 1.5-2 s later than before
+  (one more overlap-pass of its neighbour); a window already at its minimum is learned on its second
+  refused write instead of the first. RED: compile failure (`MinimumSizeTests`: `learnedMinimum(before:)`,
+  `MinimumLearning`, `IgnoredMinimum`, `noteRegistered`, `noteSpaceReturned`, `settleDuration`,
+  `learn(from:placement:now:strips:)`, `ReconcileFailure.before` missing; `AppMinimumSizesTests`:
+  `purgeImplausible` missing; `SpaceCoordinatorTests`: context `resumed` missing). GREEN: Core 2354,
+  Session 643, UI 391 (54 skipped), POC 7, Mac 19, macOS 131, 0 failures; signed Debug build succeeded
+  (app unregistered and deleted after); `git diff --check` clean. NOT verified live (needs Zen in a
+  native fullscreen Space and back, and a launch with a stale full-width entry in the store).

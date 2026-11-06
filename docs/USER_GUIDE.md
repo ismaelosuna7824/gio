@@ -77,7 +77,7 @@ Gio hides the columns and workspaces you are not looking at just off the edge of
 2. Or, while Gio runs, use **Diagnostics > Restore All Windows** (every parked window on screen without quitting; the next layout change parks them again).
 3. From a source checkout: `swift run gio-poc restore` (see [gio-poc](#gio-poc)).
 
-Locking the screen or putting the Mac to sleep does not make Gio drop your windows: while the screen is locked apps stop describing their windows, so Gio keeps every window macOS still has (`window kept ... reason=window-server-alive` in the log) and re-reads them all once the Mac wakes or you unlock (`session rescan reason=wake` / `unlock`).
+Locking the screen or putting the Mac to sleep does not make Gio drop your windows: while the screen is locked apps stop describing their windows, so Gio keeps every window macOS still has (`window kept ... reason=window-server-alive` in the log) and re-reads them all once the Mac wakes or you unlock (`session rescan reason=wake` / `unlock`), and again a few seconds later (`settle=2s`, `settle=6s`). A window that shows on screen but that its app does not describe yet (an app still launching) is looked at again a few times over about 15 seconds (`window retry scan` in the log); if it is still not managed after that, `gio restart` picks it up.
 
 ## Known limitations
 
@@ -91,6 +91,7 @@ Locking the screen or putting the Mac to sleep does not make Gio drop your windo
 - **The dwindle layout is experimental:** covered by automated tests, not yet validated on a real desktop.
 - **Not notarized yet:** the first launch needs **Open Anyway** (see [Install](#install)).
 - **Option shortcuts take characters** on some keyboard layouts (see [Keyboard layouts](#keyboard-layouts)).
+- **Apps that refuse to get narrower.** Gio learns an app's minimum width or height when a window keeps coming back larger than its column, and remembers it across launches (`min size learned` in the log). A window that just opened, or that comes back from a native fullscreen Space, is given about 1.5 seconds first, and a size as large as the whole strip is never taken for a minimum (`min size ignored ... reason=full-width`); one remembered that way by an older version is dropped at launch (`min size purged`). If a window still will not shrink, quit Gio, delete `~/Library/Caches/dev.gio.windowmanager/app-minimum-sizes.json` and open Gio again: every learned minimum is forgotten.
 
 ## Concepts
 

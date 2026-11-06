@@ -115,6 +115,27 @@ public struct AppMinimumSizes: Equatable, Sendable {
         }
         return result
     }
+
+    /// FI-17: drops every entry with an axis at least as large as the
+    /// largest of `strips` (each display's viewport without the layout
+    /// padding) on that axis: a tiled window that large was not resized yet
+    /// when it was learned, it never enforced that minimum (live: Zen and
+    /// Tern 1496 pt wide on a 1496 pt strip). Returns the dropped entries
+    /// (the caller logs and saves); nothing while no display is known.
+    @discardableResult
+    public mutating func purgeImplausible(strips: [CGRect], tolerance: CGFloat = 1) -> [String: Entry] {
+        guard let width = strips.map(\.width).max(), let height = strips.map(\.height).max() else {
+            return [:]
+        }
+        let purged = entries.filter { _, entry in
+            (entry.width.map { $0.value >= width - tolerance } ?? false)
+                || (entry.height.map { $0.value >= height - tolerance } ?? false)
+        }
+        for key in purged.keys {
+            entries.removeValue(forKey: key)
+        }
+        return purged
+    }
 }
 
 /// PA-24: `AppMinimumSizes` on disk: `{"version": 3, "apps": {key:

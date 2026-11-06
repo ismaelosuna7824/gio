@@ -29,6 +29,7 @@ final class SpaceCoordinatorTests: XCTestCase {
             rescan: { recorder.events.append("rescan") },
             adoptFrontmostFocus: { recorder.events.append("adopt") },
             restoreWindows: { recorder.events.append("restore") },
+            resumed: { recorder.events.append("resumed") },
             log: { recorder.logs.append(($0, $1)) }
         ))
     }
@@ -64,13 +65,15 @@ final class SpaceCoordinatorTests: XCTestCase {
     /// window that changed Space, so they sat unmanaged behind the strip.
     /// Returning scans for them first, then adopts the frontmost focus (a
     /// window just registered can be the one macOS focused), then reflows.
+    /// FI-17: `resumed` comes first, so the windows' settle starts before
+    /// the scan and the reflow write them.
     func testReturningRescansThenAdoptsTheFrontmostFocusThenReflows() {
         coordinator.managedSpaceActivityChanged(false)
         XCTAssertEqual(recorder.events, [])
 
         coordinator.managedSpaceActivityChanged(true)
 
-        XCTAssertEqual(recorder.events, ["rescan", "adopt", "reflow"])
+        XCTAssertEqual(recorder.events, ["resumed", "rescan", "adopt", "reflow"])
     }
 
     /// WC-22: another window manager pauses Gio and brings every parked
@@ -84,7 +87,7 @@ final class SpaceCoordinatorTests: XCTestCase {
         XCTAssertEqual(recorder.logs.last?.1, "window manager running: yabai; pausing layout")
         coordinator.windowManagersChanged([])
         XCTAssertTrue(coordinator.allowsWindowWork)
-        XCTAssertEqual(recorder.events, ["restore", "rescan", "adopt", "reflow"])
+        XCTAssertEqual(recorder.events, ["restore", "resumed", "rescan", "adopt", "reflow"])
         XCTAssertEqual(recorder.logs.last?.1, "window manager gone; reflow")
     }
 

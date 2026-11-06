@@ -16,13 +16,23 @@ import Foundation
 /// taller display kept its top at the other display's visible top and came
 /// back wider). FX-05: a request below `minimumEvidenceExtent` says nothing
 /// on its axis (a 1 pt dwindle tile came back at the window's column
-/// width). Returns 0 for a dimension without evidence, nil when there
-/// is none at all. Works in either vertical orientation.
-public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat = 1) -> CGSize? {
+/// width). FI-17: neither does an axis that kept its extent from `before`,
+/// the frame read just before the write (the app did not resize at all;
+/// live: Zen back from a fullscreen Space stayed at its old 1496 pt). Nil
+/// `before` is unknown and changes nothing. Returns 0 for a dimension
+/// without evidence, nil when there is none at all. Works in either
+/// vertical orientation.
+public func learnedMinimum(
+    requested: CGRect, actual: CGRect, before: CGRect? = nil, tolerance: CGFloat = 1
+) -> CGSize? {
     func clamped(
-        _ requestedMin: CGFloat, _ requestedMax: CGFloat, _ actualMin: CGFloat, _ actualMax: CGFloat
+        _ requestedMin: CGFloat, _ requestedMax: CGFloat, _ actualMin: CGFloat, _ actualMax: CGFloat,
+        _ beforeExtent: CGFloat?
     ) -> CGFloat {
         guard requestedMax - requestedMin >= minimumEvidenceExtent else {
+            return 0
+        }
+        if let beforeExtent, abs((actualMax - actualMin) - beforeExtent) <= tolerance {
             return 0
         }
         let grew = (actualMax - actualMin) - (requestedMax - requestedMin) > max(tolerance, minimumClampSlack)
@@ -34,8 +44,9 @@ public func learnedMinimum(requested: CGRect, actual: CGRect, tolerance: CGFloat
     else {
         return nil
     }
-    let width = clamped(requested.minX, requested.maxX, actual.minX, actual.maxX)
-    let height = clamped(requested.minY, requested.maxY, actual.minY, actual.maxY)
+    let before = before.flatMap { $0.isFinite ? $0 : nil }
+    let width = clamped(requested.minX, requested.maxX, actual.minX, actual.maxX, before?.width)
+    let height = clamped(requested.minY, requested.maxY, actual.minY, actual.maxY, before?.height)
     return width > 0 || height > 0 ? CGSize(width: width, height: height) : nil
 }
 
@@ -53,18 +64,93 @@ private extension CGRect {
     }
 }
 
+/// FI-17: the strip a frame is tiled in, among `strips` (each display's
+/// viewport without the layout padding): the one it overlaps most, else the
+/// nearest. Nil when no strip is known.
+func tilingStrip(holding frame: CGRect, in strips: [CGRect]) -> CGRect? {
+    func overlap(_ strip: CGRect) -> CGFloat {
+        let common = strip.intersection(frame)
+        return common.isNull ? 0 : common.width * common.height
+    }
+    func distance(_ strip: CGRect) -> CGFloat {
+        hypot(strip.midX - frame.midX, strip.midY - frame.midY)
+    }
+    return strips.max { lhs, rhs in
+        let (left, right) = (overlap(lhs), overlap(rhs))
+        return left != right ? left < right : distance(lhs) > distance(rhs)
+    }
+}
+
+/// FI-17: a clamp the book did not learn, and why: `settling` (the window
+/// had just registered, or the managed Space had just come back),
+/// `unchanged` (the window kept the size it had before the write, seen for
+/// the first time), `full-width`, `full-height` or `full-size` (as large as
+/// the strip the window is tiled in: the window not resized yet, never a
+/// minimum).
+public struct IgnoredMinimum: Equatable, Sendable {
+    public var size: CGSize
+    public var reason: String
+
+    public init(size: CGSize, reason: String) {
+        self.size = size
+        self.reason = reason
+    }
+}
+
+/// What a pass (or a late re-check) taught the book: the windows whose
+/// minimum grew, the clamps it ignored, and when another write of those
+/// windows would be evidence (`recheckAt`: a settle's end, or now for a
+/// size kept for the first time); the host reflows then.
+public struct MinimumLearning: Equatable, Sendable {
+    public var learned: [WindowID: CGSize]
+    public var ignored: [WindowID: IgnoredMinimum]
+    public var recheckAt: TimeInterval?
+
+    public init(
+        learned: [WindowID: CGSize] = [:], ignored: [WindowID: IgnoredMinimum] = [:], recheckAt: TimeInterval? = nil
+    ) {
+        self.learned = learned
+        self.ignored = ignored
+        self.recheckAt = recheckAt
+    }
+}
+
 /// Learned per-window minimum sizes for the session. Values only grow (the
 /// maximum of everything learned); a window that is forgotten (purged or
 /// re-registered) starts over. Pure value type; the host owns one.
 public struct MinimumSizeBook: Equatable, Sendable {
+    /// FI-17: how long a window that just registered, or every window after
+    /// the managed Space came back, may still be animating to an old size.
+    public static let settleDuration: TimeInterval = 1.5
+
     public private(set) var sizes: [WindowID: CGSize] = [:]
     /// FI-11: windows a display-change pass placed last.
     private var displayPlaced: Set<WindowID> = []
+    /// FI-17: settle ends of windows that registered lately, and of all
+    /// windows since the managed Space came back.
+    private var settlingUntil: [WindowID: TimeInterval] = [:]
+    private var spaceSettlingUntil: TimeInterval = -.infinity
+    /// FI-17: the clamp a window's last failed write showed but did not
+    /// teach (settling, or a size it kept); the same size on the next write
+    /// is the app refusing twice, which is evidence. A write that landed
+    /// clears it.
+    private var pending: [WindowID: CGSize] = [:]
 
     public init() {}
 
     public func size(of id: WindowID) -> CGSize? {
         sizes[id]
+    }
+
+    /// FI-17: `id` registered at `now`; its clamps teach nothing until it settled.
+    public mutating func noteRegistered(_ id: WindowID, at now: TimeInterval) {
+        settlingUntil[id] = now + Self.settleDuration
+    }
+
+    /// FI-17: the managed Space came back at `now` (windows return from a
+    /// fullscreen Space still at their old size).
+    public mutating func noteSpaceReturned(at now: TimeInterval) {
+        spaceSettlingUntil = now + Self.settleDuration
     }
 
     /// Learn from one landing. Returns the merged minimum when it grew,
@@ -76,6 +162,10 @@ public struct MinimumSizeBook: Equatable, Sendable {
         guard let learned = learnedMinimum(requested: requested, actual: actual, tolerance: tolerance) else {
             return nil
         }
+        return merge(id, learned, tolerance: tolerance)
+    }
+
+    private mutating func merge(_ id: WindowID, _ learned: CGSize, tolerance: CGFloat) -> CGSize? {
         let known = sizes[id] ?? .zero
         let merged = CGSize(
             width: max(known.width, learned.width), height: max(known.height, learned.height)
@@ -87,8 +177,10 @@ public struct MinimumSizeBook: Equatable, Sendable {
         return merged
     }
 
-    /// Learn from every landing mismatch of a reconcile pass. Returns the
-    /// windows whose minimum grew, so the host can log and relayout.
+    /// Learn from every landing mismatch of a reconcile pass, with the
+    /// FI-17 rules (`judge`). `strips`: each display's viewport without the
+    /// layout padding. The result's `learned` are the windows whose minimum
+    /// grew, so the host can log and relayout.
     /// A pass placed for a display change (`placement` is
     /// `.instant(.displays)`) teaches nothing: macOS and the apps re-place
     /// windows across a reconfiguration themselves, so a size that did not
@@ -96,21 +188,89 @@ public struct MinimumSizeBook: Equatable, Sendable {
     /// their 1068 from the other display and were learned 1068 wide for the
     /// session). A real minimum fails again in the next pass and is learned
     /// there.
-    public mutating func learn(from report: ReconcileReport, placement: InstantPlacementDecision) -> [WindowID: CGSize] {
-        guard placement != .instant(.displays) else {
-            return [:]
+    public mutating func learn(
+        from report: ReconcileReport, placement: InstantPlacementDecision, now: TimeInterval, strips: [CGRect]
+    ) -> MinimumLearning {
+        var result = MinimumLearning()
+        for id in report.applied + report.alreadyCorrect {
+            pending.removeValue(forKey: id)
         }
-        var changed: [WindowID: CGSize] = [:]
+        guard placement != .instant(.displays) else {
+            return result
+        }
         for id in report.failed.sorted() {
             guard let failure = report.failures[id], failure.kind == ReconcileFailure.frameMismatchKind,
-                  let requested = failure.requested, let actual = failure.actual,
-                  let merged = learn(id, requested: requested, actual: actual)
+                  let requested = failure.requested, let actual = failure.actual
             else {
                 continue
             }
-            changed[id] = merged
+            judge(id, requested: requested, actual: actual, before: failure.before, now: now, strips: strips, into: &result)
         }
-        return changed
+        return result
+    }
+
+    /// FI-17: a clamp is not learned while the window settles (it may still
+    /// be animating to an old size); an axis the window kept from before
+    /// the write counts only when the previous write showed the same clamp
+    /// (the app refused twice; a lagging app applies the size meanwhile);
+    /// an axis as large as the strip the window is tiled in never counts.
+    /// The other axis still does. A clamp held back is `pending` for the
+    /// next write: after a settle, or at once for a first kept size, the
+    /// result asks for another look (`recheckAt`).
+    private mutating func judge(
+        _ id: WindowID, requested: CGRect, actual: CGRect, before: CGRect?, now: TimeInterval, strips: [CGRect],
+        tolerance: CGFloat = 1, into result: inout MinimumLearning
+    ) {
+        guard let clamp = learnedMinimum(requested: requested, actual: actual, tolerance: tolerance) else {
+            return
+        }
+        let seen = pending.removeValue(forKey: id)
+        if let end = settleEnd(of: id, now: now) {
+            pending[id] = clamp
+            result.ignored[id] = IgnoredMinimum(size: clamp, reason: "settling")
+            result.recheckAt = max(result.recheckAt ?? end, end)
+            return
+        }
+        let changed = learnedMinimum(requested: requested, actual: actual, before: before, tolerance: tolerance) ?? .zero
+        func counted(_ value: CGFloat, _ changed: CGFloat, _ seen: CGFloat?) -> CGFloat {
+            changed > 0 || seen.map({ $0 > 0 && abs($0 - value) <= tolerance }) == true ? value : 0
+        }
+        var size = CGSize(
+            width: counted(clamp.width, changed.width, seen?.width),
+            height: counted(clamp.height, changed.height, seen?.height)
+        )
+        if size != clamp {
+            pending[id] = clamp
+            result.ignored[id] = IgnoredMinimum(size: clamp, reason: "unchanged")
+            if seen == nil {
+                result.recheckAt = max(result.recheckAt ?? now, now)
+            }
+        }
+        if let strip = tilingStrip(holding: requested, in: strips) {
+            let wide = size.width > 0 && size.width >= strip.width - tolerance
+            let tall = size.height > 0 && size.height >= strip.height - tolerance
+            if wide || tall {
+                result.ignored[id] = IgnoredMinimum(
+                    size: clamp, reason: wide && tall ? "full-size" : wide ? "full-width" : "full-height"
+                )
+                size = CGSize(width: wide ? 0 : size.width, height: tall ? 0 : size.height)
+            }
+        }
+        guard size.width > 0 || size.height > 0, let merged = merge(id, size, tolerance: tolerance) else {
+            return
+        }
+        result.learned[id] = merged
+    }
+
+    /// FI-17: when `id`'s settle ends, nil once it has (an expired own
+    /// entry is dropped).
+    private mutating func settleEnd(of id: WindowID, now: TimeInterval) -> TimeInterval? {
+        let own = settlingUntil[id]
+        if let own, own <= now {
+            settlingUntil.removeValue(forKey: id)
+        }
+        let end = max(own ?? -.infinity, spaceSettlingUntil)
+        return now < end ? end : nil
     }
 
     /// FI-11: the windows a settled pass placed, so a late clamp of a
@@ -125,13 +285,17 @@ public struct MinimumSizeBook: Equatable, Sendable {
 
     /// FI-11: learn from a clamp the app applied after Gio's read-back
     /// (`requested`: Gio's last write; `actual`: the frame read once its
-    /// echo window ended). Nil when nothing new was learned, or when a
+    /// echo window ended), with the FI-17 rules. Nothing is learned when a
     /// display-change pass placed the window last.
-    public mutating func learnLate(_ id: WindowID, requested: CGRect, actual: CGRect) -> CGSize? {
+    public mutating func learnLate(
+        _ id: WindowID, requested: CGRect, actual: CGRect, now: TimeInterval, strips: [CGRect]
+    ) -> MinimumLearning {
+        var result = MinimumLearning()
         guard !displayPlaced.contains(id) else {
-            return nil
+            return result
         }
-        return learn(id, requested: requested, actual: actual)
+        judge(id, requested: requested, actual: actual, before: nil, now: now, strips: strips, into: &result)
+        return result
     }
 
     /// BUG-3: `actual` is a clamp of `requested` that the window's known
@@ -151,6 +315,8 @@ public struct MinimumSizeBook: Equatable, Sendable {
     public mutating func forget(_ id: WindowID) {
         sizes.removeValue(forKey: id)
         displayPlaced.remove(id)
+        settlingUntil.removeValue(forKey: id)
+        pending.removeValue(forKey: id)
     }
 }
 
