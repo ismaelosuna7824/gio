@@ -339,7 +339,7 @@ Window admission, observation and registration only. Out of scope: animation/per
   running: yabai; pausing layout` and `restore for another window manager moved=8`; after killing
   it, `window manager gone; reflow` 25 s later (15 s period, 5 s leeway). Not verified live: the
   Overview banner (not looked at).
-- [ ] WC-23 — Float the system file panels (live 2026-11-06, gentle-shell-gpui's folder picker:
+- [ ] WC-23 (`140f949`) — Float the system file panels (live 2026-11-06, gentle-shell-gpui's folder picker:
   Gio tiled the "Open" panel in the app's slot and parked its main window at X=1511, so the app
   looked closed). Probe via System Events: NSOpenPanel is role `AXWindow`, subrole
   `AXStandardWindow`, `AXModal` false, `AXIdentifier` `open-panel`; NSSavePanel `save-panel`. So
@@ -403,5 +403,5 @@ commit per task on `feat/gio-niri-rewrite`. Push/PR not authorized.
   WC-19 (pin a float's level) tried and reverted: macOS 27.2 refuses `CGSSetWindowLevel` for
   another app's window (`floating level refused`), so floats keep their frame but stay in the
   normal layer.
-- 2026-11-06: WC-23 file panels float as `dialog` (`AXIdentifier` `open-panel`/`save-panel`).
+- 2026-11-06: WC-23 file panels float as `dialog` (`140f949`, `AXIdentifier` `open-panel`/`save-panel`).
   LIVE PENDING.
