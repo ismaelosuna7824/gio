@@ -247,3 +247,38 @@ Review: UNAVAILABLE.
   `liveWindowNumbers`, `noteDestroyed` missing; `WindowServerSnapshotTests.testListedNumbersKeepEvery...`).
   GREEN: Core 2298, Session 621, UI 391 (54 skipped), POC 7, Mac 19, macOS 127; `git diff --check`
   clean; signed build not run (a dev Gio was running). NOT verified live with a real lock or sleep.
+- 2026-11-06: FI-16 (`DONE`, `<hash>`) — a window on screen never managed, across a launch and a
+  sleep/unlock. Live release v0.1.11 (`~/.config/gio/gio.log`, ~5560-5600):
+  ```
+  [2026-11-06T00:47:26.737Z] [INFO] window server scan pid=71363 reason=unregistered   (LoopOps ADE, launched 00:47:23)
+  ... no "window open" for pid 71363 ever ...
+  [2026-11-06T02:59:47.141Z] [INFO] session rescan reason=unlock
+  [2026-11-06T02:59:48.539Z] [INFO] discovery exclude pid=640 app=Finder ignore(notAWindow)
+  [2026-11-06T02:59:49.843Z] SecurityAgent windows (still unlocking)
+  ```
+  Afterwards the window server listed the LoopOps window (number 8530, layer 0, on screen, AXWindow/
+  AXStandardWindow 1440x900) while `gio list-windows` did not; `gio restart` adopted it at once. Cause
+  [INFERENCE, from the log]: both scans ran while the app's Accessibility was not ready (just launched;
+  then mid-unlock), so its window was skipped (FI-14 `discoverySkips`, debug only) or not listed, and
+  nothing asked again: the WS-02 rescue scan runs once, the FI-15 unlock rescan once, right when the
+  screen unlocks. Fix: (1) retries: a scan that skipped windows of a pid
+  (`SystemWindowDiscoveryResult.skippedPIDs`, `DiscoveryService.Context.scanFinished`) or a rescue scan
+  that left the window unregistered starts a per-pid series, scans after 0.5, 1.5, 4, 10 s
+  (`StrandedWindowRetry.delays`, `StrandedWindowRetryBook`, Core), ending once the app is read fully with
+  nothing stranded, the window server drops the window or the app dies (`window retry scan pid=N
+  attempt=N reason=skipped|unregistered`, `... gave up attempts=4 ...`); (2) after a wake or unlock the
+  full rescan runs again at 2 s and 6 s (`wakeSettleDelays`, `session rescan reason=unlock settle=2s`;
+  a later wake replaces pending settles); (3) safety net: after every full scan and at most every 30 s
+  (`auditInterval`), `strandedServerWindows` (Core) diffs the on-screen layer-0 windows of regular apps
+  (never Gio's own) against the registered numbers and starts the same series (`window server stranded
+  pid=N windows=N`). A series that gave up remembers its numbers (`rejected`) until the window server
+  drops them or the Mac wakes, and a skip series that gave up waits for a full read of its pid, so a
+  window admission refuses is not rescanned forever. Component: `StrandedWindowRescue` (GioSession,
+  `SessionScheduler`); `SessionHost` only wires it (watcher `scanApp`, discovery `scanFinished`,
+  `watchWake`, `start`). RED: compile failure (`StrandedWindowRetryTests`: `StrandedWindowRetry`,
+  `StrandedWindowRetryBook`, `WindowRetryStep`, `strandedServerWindows` missing;
+  `StrandedWindowRescueTests`: `StrandedWindowRescue`, `scanFinished`, `skippedPIDs` missing;
+  `WindowServerWatcherTests.testRegisteredNumbersFollowRegistrationAndForget`: `registeredNumbers`
+  missing). GREEN: Core 2349, Session 643, UI 391 (54 skipped), POC 7, Mac 19, macOS 131, 0 failures;
+  signed Debug build succeeded (app unregistered and deleted after); `git diff --check` clean. NOT
+  verified live (needs an app whose Accessibility answers late at launch, and a real lock/unlock).

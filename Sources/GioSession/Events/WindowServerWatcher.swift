@@ -17,7 +17,9 @@ public final class WindowServerWatcher: @unchecked Sendable {
         public var windowOwner: (UInt32) -> WindowServerWindowOwner?
         public var ownPID: pid_t
         public var allowsWindowWork: () -> Bool
-        /// Register the app's windows (a pid-only scan) and reflow.
+        /// Register the app's windows (a pid-only scan) and reflow; FI-16:
+        /// the host retries it while the window stays stranded
+        /// (`StrandedWindowRescue.rescue`).
         public var scanApp: (pid_t) -> Void
         public var proveVanished: (WindowID) -> Void
         /// WS-03: (window, resized, time of the first notice of the burst).
@@ -102,6 +104,11 @@ public final class WindowServerWatcher: @unchecked Sendable {
     public private(set) var rescueScanCount = 0
     public var numberedWindowCount: Int {
         book.numbers.count
+    }
+
+    /// FI-16: the numbers of the registered windows (the window server check).
+    public var registeredNumbers: Set<UInt32> {
+        Set(book.numbers)
     }
 
     /// NF-13: the window-server number of a registered window.

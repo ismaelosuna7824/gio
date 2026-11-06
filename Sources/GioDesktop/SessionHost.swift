@@ -237,6 +237,9 @@ final class SessionHost: @unchecked Sendable {
     /// WS-02: window-server created/destroyed notifications backing up the
     /// Accessibility observers (session queue; `post` from main).
     private var windowServer: WindowServerWatcher!
+    /// FI-16: retries for windows on screen that no scan registered, and
+    /// the rescans after a wake or unlock.
+    private var strandedRescue: StrandedWindowRescue!
     /// WS-01: kept alive for the app's life (its context is unretained).
     private var windowServerSource: WindowServerEventSource?
     /// WC-22: main thread; kept for the app's life.
@@ -771,7 +774,8 @@ final class SessionHost: @unchecked Sendable {
                 windowFrame: { [unowned self] in try? actuator?.frame(of: $0) },
                 newWindowPosition: { [unowned self] in session.config.layout.newWindowPosition },
                 windowNumber: { [unowned self] in windowServer.windowNumber(of: $0) },
-                liveWindowNumbers: { windowServerListedNumbers() }
+                liveWindowNumbers: { windowServerListedNumbers() },
+                scanFinished: { [unowned self] in strandedRescue.noteScan($0) }
             ),
             scheduler: scheduler
         )
@@ -780,7 +784,7 @@ final class SessionHost: @unchecked Sendable {
                 windowOwner: { windowServerOwner(number: $0) },
                 ownPID: ProcessInfo.processInfo.processIdentifier,
                 allowsWindowWork: { [unowned self] in space.allowsWindowWork },
-                scanApp: { [unowned self] in discovery.appAttached($0) },
+                scanApp: { [unowned self] in strandedRescue.rescue($0) },
                 proveVanished: { [unowned self] in discovery.noteDestroyed($0) },
                 frameChanged: { [unowned self] id, resized, at in
                     events.windowServerFrameChanged(id, resized: resized, noticeAt: at)
@@ -794,6 +798,25 @@ final class SessionHost: @unchecked Sendable {
                         return
                     }
                     DispatchQueue.main.async { [weak self] in self?.onFocusedWindowReordered?() }
+                },
+                now: { ProcessInfo.processInfo.systemUptime },
+                log: { GioLog.record($0, $1) }
+            ),
+            scheduler: scheduler
+        )
+        strandedRescue = StrandedWindowRescue(
+            context: .init(
+                ownPID: ProcessInfo.processInfo.processIdentifier,
+                allowsWindowWork: { [unowned self] in !isShuttingDown && space.allowsWindowWork },
+                isRunning: { [unowned self] in probe.isRunning($0) },
+                regularPIDs: { [unowned self] in probe.runningRegularPIDs() },
+                serverWindows: { [unowned self] in probe.windowServerWindows(displayHeight: primaryHeight()) },
+                registeredNumbers: { [unowned self] in windowServer.registeredNumbers },
+                scanApp: { [unowned self] in discovery.appAttached($0) },
+                rescanAll: { [unowned self] in
+                    if !isShuttingDown {
+                        scheduleReflow(full: true)
+                    }
                 },
                 now: { ProcessInfo.processInfo.systemUptime },
                 log: { GioLog.record($0, $1) }
@@ -1094,6 +1117,7 @@ final class SessionHost: @unchecked Sendable {
                 return
             }
             self.events.rebuild()
+            self.strandedRescue.start()
             self.publishSnapshot()
             GioLog.record(.info, "session ready")
             DispatchQueue.main.async {
@@ -2632,7 +2656,8 @@ final class SessionHost: @unchecked Sendable {
 
     /// FI-15: while the screen locks the apps' Accessibility answers go
     /// blank; windows the window server kept alive meanwhile are re-read by
-    /// one full rescan after a wake or an unlock (the debounced resync).
+    /// a full rescan after a wake or an unlock (the debounced resync), and
+    /// FI-16 again once the screen settled (`StrandedWindowRescue.noteWake`).
     private func watchWake() {
         func handler(_ reason: String) -> (Notification) -> Void {
             { [weak self] _ in
@@ -2640,8 +2665,7 @@ final class SessionHost: @unchecked Sendable {
                     guard let self, !self.isShuttingDown else {
                         return
                     }
-                    GioLog.record(.info, "session rescan reason=\(reason)")
-                    self.scheduleReflow(full: true)
+                    self.strandedRescue.noteWake(reason: reason)
                 }
             }
         }

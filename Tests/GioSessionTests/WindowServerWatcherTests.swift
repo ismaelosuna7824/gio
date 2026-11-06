@@ -164,4 +164,13 @@ final class WindowServerWatcherTests: XCTestCase {
         XCTAssertEqual(watcher.rescueScanCount, 1)
         XCTAssertEqual(watcher.numberedWindowCount, 1)
     }
+
+    /// FI-16: the numbers managed windows have, for the window server check.
+    func testRegisteredNumbersFollowRegistrationAndForget() {
+        let id = WindowID(pid: 43, elementID: 1)
+        watcher.noteRegistered(id, number: 9)
+        watcher.noteRegistered(WindowID(pid: 43, elementID: 2), number: 11)
+        watcher.forget(id)
+        XCTAssertEqual(watcher.registeredNumbers, [11])
+    }
 }
