@@ -23,27 +23,38 @@ final class WindowFactsDecodingTests: XCTestCase {
     }
 
     /// Slot order: position, size, minimized, AXFullScreen, AXFullscreen,
-    /// role, subrole, title.
+    /// role, subrole, title, identifier.
     private func slots(
         position: AnyObject? = nil, size extent: AnyObject? = nil,
         minimized: AnyObject = NSNumber(value: false), fullScreen: AnyObject? = nil, fullscreen: AnyObject? = nil,
         role: AnyObject = "AXWindow" as NSString, subrole: AnyObject = "AXStandardWindow" as NSString,
-        title: AnyObject = "secret" as NSString
+        title: AnyObject = "secret" as NSString, identifier: AnyObject? = nil
     ) -> [AnyObject] {
         [
             position ?? point(10, 20), extent ?? size(800, 600), minimized,
             fullScreen ?? error(.attributeUnsupported), fullscreen ?? error(.attributeUnsupported),
-            role, subrole, title,
+            role, subrole, title, identifier ?? error(.noValue),
         ]
     }
 
     func testEverySlotReadable() {
-        let facts = decodeWindowFacts(status: .success, values: slots(fullScreen: NSNumber(value: true)))
+        let facts = decodeWindowFacts(status: .success, values: slots(
+            fullScreen: NSNumber(value: true), identifier: "open-panel" as NSString
+        ))
         XCTAssertEqual(facts, AXWindowFacts(
             frame: CGRect(x: 10, y: 20, width: 800, height: 600), minimized: false, fullscreen: true,
-            role: "AXWindow", subrole: "AXStandardWindow", title: "secret",
+            role: "AXWindow", subrole: "AXStandardWindow", title: "secret", identifier: "open-panel",
             roleReadable: true, elementGone: false
         ))
+    }
+
+    /// Most windows have no AXIdentifier; the slot is unsupported or empty.
+    func testAMissingIdentifierIsNil() {
+        XCTAssertNil(decodeWindowFacts(status: .success, values: slots()).identifier)
+        XCTAssertNil(
+            decodeWindowFacts(status: .success, values: slots(identifier: error(.attributeUnsupported))).identifier
+        )
+        XCTAssertNil(decodeWindowFacts(status: .success, values: slots(identifier: "" as NSString)).identifier)
     }
 
     func testFullscreenFallsBackToTheOtherSpelling() {
