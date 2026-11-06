@@ -247,7 +247,7 @@ Review: UNAVAILABLE.
   `liveWindowNumbers`, `noteDestroyed` missing; `WindowServerSnapshotTests.testListedNumbersKeepEvery...`).
   GREEN: Core 2298, Session 621, UI 391 (54 skipped), POC 7, Mac 19, macOS 127; `git diff --check`
   clean; signed build not run (a dev Gio was running). NOT verified live with a real lock or sleep.
-- 2026-11-06: FI-16 (`DONE`, `<hash>`) — a window on screen never managed, across a launch and a
+- 2026-11-06: FI-16 (`DONE`, `fdd83d3`) — a window on screen never managed, across a launch and a
   sleep/unlock. Live release v0.1.11 (`~/.config/gio/gio.log`, ~5560-5600):
   ```
   [2026-11-06T00:47:26.737Z] [INFO] window server scan pid=71363 reason=unregistered   (LoopOps ADE, launched 00:47:23)
