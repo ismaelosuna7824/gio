@@ -9,10 +9,11 @@ final class WindowAdmissionTests: XCTestCase {
         size: Bool = true,
         fullscreen: Bool = false,
         minimized: Bool = false,
-        validFrame: Bool = true
+        validFrame: Bool = true,
+        identifier: String? = nil
     ) -> WindowAdmissionFacts {
         WindowAdmissionFacts(
-            role: role, subrole: subrole,
+            role: role, subrole: subrole, identifier: identifier,
             isPositionSettable: { position }, isSizeSettable: { size },
             isFullscreen: fullscreen, isMinimized: minimized, hasValidFrame: validFrame
         )
@@ -82,6 +83,32 @@ final class WindowAdmissionTests: XCTestCase {
     func testDialogStaysFloatingEvenWhenMinimized() {
         XCTAssertEqual(
             classifyWindowAdmission(facts(subrole: "AXDialog", minimized: true)), .float(.dialog)
+        )
+    }
+
+    /// NSOpenPanel and NSSavePanel report AXStandardWindow, not AXDialog
+    /// (live, gentle-shell-gpui's folder picker): only their AXIdentifier
+    /// tells them apart. Tiled, they took the app's slot and parked its
+    /// main window off screen.
+    func testSystemFilePanelsFloatAsDialogs() {
+        XCTAssertEqual(classifyWindowAdmission(facts(identifier: "open-panel")), .float(.dialog))
+        XCTAssertEqual(classifyWindowAdmission(facts(identifier: "save-panel")), .float(.dialog))
+        XCTAssertEqual(
+            classifyWindowAdmission(facts(minimized: true, identifier: "open-panel")), .float(.dialog),
+            "identity comes before transient state"
+        )
+    }
+
+    func testOtherIdentifiersDoNotChangeAdmission() {
+        XCTAssertEqual(classifyWindowAdmission(facts(identifier: nil)), .tile)
+        XCTAssertEqual(classifyWindowAdmission(facts(identifier: "")), .tile)
+        XCTAssertEqual(classifyWindowAdmission(facts(identifier: "main-window")), .tile)
+        XCTAssertEqual(classifyWindowAdmission(facts(identifier: "Open-Panel")), .tile)
+        XCTAssertEqual(
+            classifyWindowAdmission(facts(subrole: "AXSheet", identifier: "open-panel")), .ignore(.sheetOrPopover)
+        )
+        XCTAssertEqual(
+            classifyWindowAdmission(facts(role: "AXGroup", identifier: "open-panel")), .ignore(.notAWindow)
         )
     }
 

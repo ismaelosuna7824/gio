@@ -206,6 +206,9 @@ struct AXWindowFacts: Equatable {
     var subrole: String?
     /// Nil when unreadable or empty.
     var title: String?
+    /// `AXIdentifier` (AppKit's `open-panel`/`save-panel`); nil when
+    /// unsupported, unreadable or empty.
+    var identifier: String?
     /// The role answered, whatever its value (PF-E: a readable "not a
     /// window" is final, an unreadable role is worth another try).
     var roleReadable: Bool
@@ -216,7 +219,7 @@ struct AXWindowFacts: Equatable {
 /// The attributes of `AXWindowFacts`, in slot order.
 let windowFactAttributes: [String] = [
     kAXPositionAttribute, kAXSizeAttribute, kAXMinimizedAttribute, "AXFullScreen", "AXFullscreen",
-    kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute,
+    kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXIdentifierAttribute,
 ]
 
 /// PA-18a: every fact in one Accessibility message
@@ -266,6 +269,7 @@ func decodeWindowFacts(status: AXError, values: [AnyObject]?) -> AXWindowFacts {
         frame = nil
     }
     let title = value(7) as? String
+    let identifier = value(8) as? String
     var roleReadable = false
     var elementGone = false
     switch slots[5] {
@@ -281,6 +285,7 @@ func decodeWindowFacts(status: AXError, values: [AnyObject]?) -> AXWindowFacts {
         role: value(5) as? String,
         subrole: value(6) as? String,
         title: title?.isEmpty == false ? title : nil,
+        identifier: identifier?.isEmpty == false ? identifier : nil,
         roleReadable: roleReadable,
         elementGone: elementGone
     )
@@ -360,6 +365,7 @@ private func windowAdmission(
     classifyWindowAdmission(WindowAdmissionFacts(
         role: facts.role,
         subrole: facts.subrole,
+        identifier: facts.identifier,
         isPositionSettable: { !probesSettable || axIsSettable(element, attribute: kAXPositionAttribute as String) },
         isSizeSettable: { !probesSettable || axIsSettable(element, attribute: kAXSizeAttribute as String) },
         isFullscreen: facts.fullscreen ?? false,
