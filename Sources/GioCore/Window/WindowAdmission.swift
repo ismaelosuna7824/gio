@@ -47,6 +47,9 @@ public enum SuspendReason: String, Equatable, Sendable {
 public struct WindowAdmissionFacts {
     public var role: String?
     public var subrole: String?
+    /// `AXIdentifier`: identifies AppKit's file panels, which report
+    /// AXStandardWindow like any document window.
+    public var identifier: String?
     public var isPositionSettable: () -> Bool
     public var isSizeSettable: () -> Bool
     public var isFullscreen: Bool
@@ -56,6 +59,7 @@ public struct WindowAdmissionFacts {
     public init(
         role: String?,
         subrole: String?,
+        identifier: String? = nil,
         isPositionSettable: @escaping () -> Bool,
         isSizeSettable: @escaping () -> Bool,
         isFullscreen: Bool = false,
@@ -64,6 +68,7 @@ public struct WindowAdmissionFacts {
     ) {
         self.role = role
         self.subrole = subrole
+        self.identifier = identifier
         self.isPositionSettable = isPositionSettable
         self.isSizeSettable = isSizeSettable
         self.isFullscreen = isFullscreen
@@ -101,10 +106,14 @@ private enum AXNames {
     static let systemFloating = "AXSystemFloatingWindow"
     static let sheet = "AXSheet"
     static let popover = "AXPopover"
+    /// `AXIdentifier` of a free-standing NSOpenPanel / NSSavePanel (live
+    /// on macOS 27: role AXWindow, subrole AXStandardWindow, not modal).
+    static let filePanels: Set<String> = ["open-panel", "save-panel"]
 }
 
-/// Decides how Gio treats a window. Order matters: identity (role/subrole)
-/// first, then geometry, then transient state, then resizability.
+/// Decides how Gio treats a window. Order matters: identity (role/subrole,
+/// then the file-panel identifiers) first, then geometry, then transient
+/// state, then resizability.
 ///
 /// An empty or unknown subrole is tiled when position and size are settable:
 /// Electron, Java and Qt windows do not report AXStandardWindow but behave
@@ -123,6 +132,9 @@ public func classifyWindowAdmission(_ facts: WindowAdmissionFacts) -> WindowAdmi
         return .float(.floatingSubrole)
     default:
         break
+    }
+    if let identifier = facts.identifier, AXNames.filePanels.contains(identifier) {
+        return .float(.dialog)
     }
     guard facts.hasValidFrame else {
         return .ignore(.invalidFrame)
