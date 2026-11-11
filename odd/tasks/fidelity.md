@@ -323,3 +323,21 @@ Review: UNAVAILABLE.
   Session 643, UI 391 (54 skipped), POC 7, Mac 19, macOS 131, 0 failures; signed Debug build succeeded
   (app unregistered and deleted after); `git diff --check` clean. NOT verified live (needs Zen in a
   native fullscreen Space and back, and a launch with a stale full-width entry in the store).
+- 2026-11-10: FI-18 (`DONE`, `694501d`) — windows animating in the Fast preset after a while. User: "después
+  de una suspensión o un largo periodo de uso, aunque tenga el modo fast, algunas ventanas tienen como la
+  animación entre ventanas ... cuando reinicio todo vuelve normal". Log: no animation outside gesture
+  settles (`anim done` only after `gesture scroll end`), but after each wake Zen started a run of
+  `render mismatch ... app=Zen ax=(8,8,...) ws=(161,8,...)` and a `render nudge ... app=Zen tier=position`
+  on almost every move (44 an hour on 2026-11-10 04:00, 46 at 15:00) that stopped only when Gio
+  restarted. Probe: Zen had `AXEnhancedUserInterface` on; with it on, a 1511 → 8 position write slides
+  over ~120 ms (515, 233, 106, 66, 19, 9, 8 sampled every 20 ms), with it off it lands at once. Zen
+  applies `AXEnhancedUserInterface` writes but answers them with `kAXErrorNotImplemented` (-25208), so
+  PF-K's guard took every restore as refused (`enhanced ui restore failed`), marked Zen owed, and owed
+  apps skipped the switch-off before the next writes: Gio wrote Zen with the attribute on for the rest
+  of the session. Fix (`EnhancedUIGuard`): a restore whose write errs is read back, and a value read as
+  on is a done restore; an owed app is switched off before its next batch anyway. RED:
+  `EnhancedUserInterfaceTests.testARestoreTheAppAppliedButReportedAsFailedIsNotOwed` and
+  `testAnOwedAppIsSwitchedOffBeforeTheNextBatch` (4 failures; the owed test now also expects the
+  read-back and the switch-off). GREEN: Core 2358, Session 643, UI 391 (54 skipped), POC 7, Mac 19,
+  macOS 132; signed build OK; `git diff --check` clean. NOT verified live (needs a release and a few
+  wakes with Zen).
