@@ -69,8 +69,9 @@ public final class EnhancedUIGuard: @unchecked Sendable {
                 return .done
             }
             if owed.contains(pid) {
-                switchedOff.insert(pid)
-                return .done
+                // FI-18: owed means a restore looked refused, not that the
+                // app is still off; switching off again is harmless.
+                return .switchOff
             }
             if let entry = known[pid], now - entry.readAt < Self.stateLifetime {
                 return entry.on ? .switchOff : .done
@@ -116,7 +117,10 @@ public final class EnhancedUIGuard: @unchecked Sendable {
         guard let control else {
             return
         }
+        // FI-18: some apps (live: Zen) apply the write and answer it with an
+        // error; a restore read back as on is done, not owed.
         let restored = control.setEnhancedUserInterface(true, pid: pid)
+            || control.enhancedUserInterface(pid: pid) == true
         let wasOwed: Bool = lock.withLock {
             switchedOff.remove(pid)
             if restored {

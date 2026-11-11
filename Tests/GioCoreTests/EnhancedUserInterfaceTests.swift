@@ -11,6 +11,9 @@ final class EnhancedUserInterfaceTests: XCTestCase {
         private var log: [String] = []
         /// Apps that do not take the restore (`true`), like a hung app.
         var refusingRestore: Set<pid_t> = []
+        /// FI-18: apps that apply every write but answer it with an error
+        /// (live: Zen answers `kAXErrorNotImplemented`, -25208).
+        var misreporting: Set<pid_t> = []
         var unreadable: Set<pid_t> = []
         let journal: Journal?
 
@@ -33,7 +36,7 @@ final class EnhancedUserInterfaceTests: XCTestCase {
             return lock.withLock {
                 guard !(on && refusingRestore.contains(pid)) else { return false }
                 values[pid] = on
-                return true
+                return !misreporting.contains(pid)
             }
         }
 
@@ -124,10 +127,50 @@ final class EnhancedUserInterfaceTests: XCTestCase {
         guardian.willWrite(pid: 10)
         guardian.batchEnded(pid: 10)
         // The app may still be off because of Gio: its value is not re-read
-        // (it would read false and never be put back).
-        XCTAssertEqual(control.calls, ["read 10", "set 10 false", "set 10 true", "set 10 true"])
+        // before the batch (it would read false and never be put back); the
+        // refused restore is checked once by reading it back.
+        XCTAssertEqual(
+            control.calls, ["read 10", "set 10 false", "set 10 true", "read 10", "set 10 false", "set 10 true"]
+        )
         XCTAssertEqual(control.value(10), true)
         XCTAssertTrue(guardian.pendingRestores.isEmpty)
+    }
+
+    /// FI-18 (live 2026-11-10): Zen applies `AXEnhancedUserInterface` but
+    /// answers every write with an error. The restore was taken as refused,
+    /// the app was owed, and every later batch skipped switching it off: Zen
+    /// animated each move (~120 ms) and needed a render nudge, until Gio
+    /// restarted. A restore read back as on is done, and the next batch
+    /// switches the app off again.
+    func testARestoreTheAppAppliedButReportedAsFailedIsNotOwed() {
+        let control = Switch([10: true])
+        control.misreporting = [10]
+        let clock = Clock()
+        let guardian = EnhancedUIGuard(control: control, ownPID: 1, clock: { clock.now })
+        guardian.willWrite(pid: 10)
+        guardian.batchEnded(pid: 10)
+        XCTAssertTrue(guardian.pendingRestores.isEmpty)
+        clock.now += 0.2
+        guardian.willWrite(pid: 10)
+        XCTAssertEqual(control.value(10), false, "switched off for the next batch too")
+        guardian.batchEnded(pid: 10)
+        XCTAssertEqual(control.value(10), true)
+    }
+
+    /// An app owed a restore is switched off before the next batch's writes
+    /// all the same: if something put it back on meanwhile, the writes must
+    /// not run with it on.
+    func testAnOwedAppIsSwitchedOffBeforeTheNextBatch() {
+        let control = Switch([10: true])
+        let guardian = EnhancedUIGuard(control: control, ownPID: 1)
+        control.refusingRestore = [10]
+        guardian.willWrite(pid: 10)
+        guardian.batchEnded(pid: 10)
+        XCTAssertEqual(guardian.pendingRestores, [10])
+        control.refusingRestore = []
+        _ = control.setEnhancedUserInterface(true, pid: 10)
+        guardian.willWrite(pid: 10)
+        XCTAssertEqual(control.value(10), false)
     }
 
     func testAnOwedRestoreIsRetriedOnItsOwnAndForgettingTheAppDropsIt() {
