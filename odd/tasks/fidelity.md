@@ -323,7 +323,7 @@ Review: UNAVAILABLE.
   Session 643, UI 391 (54 skipped), POC 7, Mac 19, macOS 131, 0 failures; signed Debug build succeeded
   (app unregistered and deleted after); `git diff --check` clean. NOT verified live (needs Zen in a
   native fullscreen Space and back, and a launch with a stale full-width entry in the store).
-- 2026-11-10: FI-18 (`DONE`, commit below) — windows animating in the Fast preset after a while. User: "después
+- 2026-11-10: FI-18 (`DONE`, `694501d`) — windows animating in the Fast preset after a while. User: "después
   de una suspensión o un largo periodo de uso, aunque tenga el modo fast, algunas ventanas tienen como la
   animación entre ventanas ... cuando reinicio todo vuelve normal". Log: no animation outside gesture
   settles (`anim done` only after `gesture scroll end`), but after each wake Zen started a run of
