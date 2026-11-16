@@ -27,6 +27,7 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(gestures.swipeDistance, 0.15)
         XCTAssertFalse(gestures.tapToSwipe, "TG-10: off like every gesture")
         XCTAssertEqual(gestures.tapToSwipeDistance, 0.1, "TG-12: the up/down step, 0.1 of the trackpad height")
+        XCTAssertEqual(gestures.tapToSwipeHold, 2.0, "TG-14: hold three fingers 2 s to arm")
         XCTAssertFalse(gestures.anyEnabled, "the trackpad is not even opened")
     }
 
@@ -44,12 +45,13 @@ final class GesturesConfigTests: XCTestCase {
         swipe-distance = 0.25
         tap-to-swipe = true
         tap-to-swipe-distance = 0.3
+        tap-to-swipe-hold = 3.5
         """)
         XCTAssertEqual(warnings, [])
         XCTAssertEqual(config.gestures, GesturesSectionConfig(
             scroll: false, scrollFingers: 4, scrollSensitivity: 1.5, natural: false,
             workspaceSwipe: false, workspaceFingers: 4, overview: true, overviewFingers: 5, swipeDistance: 0.25,
-            tapToSwipe: true, tapToSwipeDistance: 0.3
+            tapToSwipe: true, tapToSwipeDistance: 0.3, tapToSwipeHold: 3.5
         ))
     }
 
@@ -127,6 +129,19 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(badWarnings, ["line 2: gestures.tap-to-swipe-distance expects a number from 0.05 to 0.5, using 0.1"])
     }
 
+    /// TG-14: how long three fingers rest before tap-to-swipe arms.
+    func testTapToSwipeHoldIsClampedAndANonNumberKeepsTheDefault() throws {
+        let (low, lowWarnings) = try parse("[gestures]\ntap-to-swipe-hold = 0.1\n")
+        XCTAssertEqual(low.gestures.tapToSwipeHold, 0.5)
+        XCTAssertEqual(lowWarnings, ["line 2: gestures.tap-to-swipe-hold clamped to 0.5 (valid 0.5-5.0)"])
+        let (high, highWarnings) = try parse("[gestures]\ntap-to-swipe-hold = 9\n")
+        XCTAssertEqual(high.gestures.tapToSwipeHold, 5.0)
+        XCTAssertEqual(highWarnings, ["line 2: gestures.tap-to-swipe-hold clamped to 5.0 (valid 0.5-5.0)"])
+        let (bad, badWarnings) = try parse("[gestures]\ntap-to-swipe-hold = \"long\"\n")
+        XCTAssertEqual(bad.gestures.tapToSwipeHold, 2.0)
+        XCTAssertEqual(badWarnings, ["line 2: gestures.tap-to-swipe-hold expects a number from 0.5 to 5.0, using 2.0"])
+    }
+
     func testWorkspaceSwipeAndOverviewCannotShareTheirFingers() throws {
         let (config, warnings) = try parse("""
         [gestures]
@@ -191,6 +206,7 @@ final class GesturesConfigTests: XCTestCase {
         form.swipeDistance = 0.2
         form.tapToSwipe = true
         form.tapToSwipeDistance = 0.351
+        form.tapToSwipeHold = 2.5
         XCTAssertEqual(form.problems, [])
         let patched = try patchGioConfig(original, edits: form.edits).get()
         XCTAssertTrue(patched.text.contains("# mine"))
@@ -199,11 +215,12 @@ final class GesturesConfigTests: XCTestCase {
         XCTAssertEqual(patched.config.gestures, GesturesSectionConfig(
             scroll: false, scrollFingers: 4, scrollSensitivity: 1.25, natural: false,
             workspaceSwipe: true, workspaceFingers: 3, overview: true, overviewFingers: 5, swipeDistance: 0.2,
-            tapToSwipe: true, tapToSwipeDistance: 0.35
+            tapToSwipe: true, tapToSwipeDistance: 0.35, tapToSwipeHold: 2.5
         ))
         XCTAssertTrue(patched.text.contains("swipe-distance = 0.2"))
         XCTAssertTrue(patched.text.contains("tap-to-swipe = true"))
         XCTAssertTrue(patched.text.contains("tap-to-swipe-distance = 0.35"), "two decimals, like the slider")
+        XCTAssertTrue(patched.text.contains("tap-to-swipe-hold = 2.5"))
         form.tapToSwipeDistance = 0.35
         XCTAssertEqual(GesturesSettingsForm(config: patched.config.gestures), form)
     }
@@ -215,16 +232,19 @@ final class GesturesConfigTests: XCTestCase {
         form.scrollSensitivity = 0
         form.swipeDistance = 0.9
         form.tapToSwipeDistance = 0.01
+        form.tapToSwipeHold = 6
         XCTAssertEqual(form.problems, [
             "Sensitivity must be 0.1 to 5.0.",
             "Swipe distance must be 5% to 50% of the trackpad height.",
             "Tap to swipe distance must be 5% to 50% of the trackpad.",
+            "Hold to activate must be 0.5 to 5 seconds.",
             "Workspace swipe and overview both use 3 fingers; pick different counts.",
         ])
         form.workspaceSwipe = false
         form.scrollSensitivity = 2
         form.swipeDistance = 0.15
         form.tapToSwipeDistance = 0.2
+        form.tapToSwipeHold = 2
         XCTAssertEqual(form.problems, [])
     }
 }

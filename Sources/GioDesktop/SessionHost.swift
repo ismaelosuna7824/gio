@@ -1032,6 +1032,14 @@ final class SessionHost: @unchecked Sendable {
                     self?.onTapToSwipe?(armed, frame)
                 }
             },
+            // TG-14: the trackpad clicks on main (Force Touch only; no-op elsewhere).
+            haptic: { feedback in
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated {
+                        performTrackpadHaptic(feedback)
+                    }
+                }
+            },
             after: { [unowned self] delay, work in scheduler.asyncAfter(delay, work) },
             log: { GioLog.record($0, $1) }
         ))

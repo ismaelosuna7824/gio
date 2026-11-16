@@ -43,7 +43,8 @@ public enum GestureAbandon: String, Equatable, Sendable {
 ///   untouched and the session lays the strip out as State says.
 /// - Vertical swipes switch workspace (`focus-workspace-up/down`) or toggle
 ///   the overview.
-/// - TG-10 tap to swipe (`TapToSwipe`): a three-finger tap arms it (notice,
+/// - TG-10 tap to swipe (`TapToSwipe`): a three-finger hold (TG-14, with a
+///   haptic click) arms it (notice,
 ///   the mailbox lets two-finger frames cross, the scroll tap swallows
 ///   scrolling, all until the armed deadline, renewed while fingers touch).
 ///   TG-12: an armed horizontal two-finger stroke is the scroll above (the
@@ -84,6 +85,8 @@ public final class GestureController: @unchecked Sendable {
         public var suppressScroll: (TimeInterval?) -> Void
         /// TG-10: the on-screen notice (true: armed; false: a tap disarmed it).
         public var announceTapToSwipe: (Bool) -> Void
+        /// TG-14: the trackpad's haptic click (the host performs it on main).
+        public var haptic: (HapticFeedback) -> Void
         /// Session queue work after a delay (the armed window's expiry).
         public var after: (TimeInterval, @escaping @Sendable () -> Void) -> Void
         public var log: (LogLevel, String) -> Void
@@ -105,6 +108,7 @@ public final class GestureController: @unchecked Sendable {
             toggleOverview: @escaping () -> Void,
             armTouchGate: @escaping (TimeInterval?) -> Void, suppressScroll: @escaping (TimeInterval?) -> Void,
             announceTapToSwipe: @escaping (Bool) -> Void,
+            haptic: @escaping (HapticFeedback) -> Void,
             after: @escaping (TimeInterval, @escaping @Sendable () -> Void) -> Void,
             log: @escaping (LogLevel, String) -> Void,
             now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -130,6 +134,7 @@ public final class GestureController: @unchecked Sendable {
             self.armTouchGate = armTouchGate
             self.suppressScroll = suppressScroll
             self.announceTapToSwipe = announceTapToSwipe
+            self.haptic = haptic
             self.after = after
             self.log = log
             self.now = now
@@ -200,6 +205,7 @@ public final class GestureController: @unchecked Sendable {
         let settings = context.settings()
         recognizer.settings = settings.recognizerSettings
         tapToSwipe.stepDistance = settings.tapToSwipeDistance
+        tapToSwipe.holdDuration = settings.tapToSwipeHold
         if !sawFrames, let first = frames.first {
             sawFrames = true
             context.log(.info, "gestures first contact frame fingers=\(first.contacts.count)")
@@ -239,6 +245,8 @@ public final class GestureController: @unchecked Sendable {
             switch event {
             case .armed:
                 context.log(.info, "gesture tap-to-swipe armed")
+                // TG-14: the click tells the hand the hold took, before the notice shows.
+                context.haptic(.levelChange)
                 context.announceTapToSwipe(true)
             // TG-12: the armed horizontal stroke is the TG-03 scroll, driven
             // by two fingers (no `scroll` setting or finger count of its own).
@@ -260,6 +268,7 @@ public final class GestureController: @unchecked Sendable {
                 context.log(.info, "gesture tap-to-swipe disarmed reason=\(reason.rawValue)")
                 // Only the deliberate tap says so; expiry and clicks stay quiet.
                 if reason == .tap {
+                    context.haptic(.alignment)
                     context.announceTapToSwipe(false)
                 }
             }
