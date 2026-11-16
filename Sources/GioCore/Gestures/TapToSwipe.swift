@@ -26,16 +26,30 @@ public enum TapToSwipeEvent: Equatable, Sendable {
     case disarmed(TapToSwipeDisarm)
 }
 
-/// TG-10 "tap to swipe": a quick three-finger tap arms a mode in which
-/// two-finger strokes move windows and workspaces, so neither macOS's
-/// three-finger swipes nor two-finger scrolling outside the mode are lost.
-/// Pure: contact frames in, events out, time from the frames' own clock.
+/// TG-14: the trackpad's haptic click (Force Touch trackpads; nothing
+/// elsewhere). `levelChange` when a hold arms tap-to-swipe, the lighter
+/// `alignment` when a tap turns it off.
+public enum HapticFeedback: Equatable, Sendable {
+    case levelChange
+    case alignment
+}
+
+/// TG-10 "tap to swipe": a three-finger hold (TG-14; a quick tap until
+/// then) arms a mode in which two-finger strokes move windows and
+/// workspaces, so neither macOS's three-finger swipes nor two-finger
+/// scrolling outside the mode are lost. Pure: contact frames in, events
+/// out, time from the frames' own clock.
 ///
-/// - Tap: a touch with exactly `tapFingers` contacts at its peak, lifted
-///   (fewer than three contacts) within `maxTapDuration` of the first
-///   three-finger frame, its centroid never more than `maxTapTravel` from
-///   where it started. Arms when off, disarms when on. While armed a tap can
-///   only start between strokes (a third finger on a moving stroke is no tap).
+/// - Hold (TG-14): exactly `tapFingers` contacts that stay down, their
+///   centroid never more than `maxHoldTravel` from where they landed, arm
+///   the mode at the first frame `holdDuration` after the touch-down, with
+///   the fingers still down. Moving, another finger or a lift before then
+///   cancels it without an event; a quick tap no longer arms.
+/// - Tap: the same touch lifted (fewer than three contacts) within
+///   `maxTapDuration`, never more than `maxTapTravel` from where it
+///   landed. While armed it disarms (`tap`); while off it does nothing. While
+///   armed a touch can only start between strokes (a third finger on a
+///   moving stroke is neither).
 /// - Armed: `armedUntil` is `armedWindow` after the last frame seen while
 ///   armed, so fingers on the trackpad keep it on and every lift renews it;
 ///   a frame past it disarms (`expired`) before it counts, and `expire()` is
@@ -56,6 +70,13 @@ public struct TapToSwipe: Sendable {
     /// Farthest the tap's centroid may wander (normalized trackpad units,
     /// about 2 mm on a laptop trackpad): a three-finger drag is no tap.
     public static let maxTapTravel = 0.02
+    /// TG-14: farthest resting fingers may drift during the hold (about
+    /// 3 mm): a little more than a tap allows, because a two-second rest is
+    /// never perfectly still; a three-finger drag still cancels it.
+    public static let maxHoldTravel = 0.03
+    /// TG-14: default `[gestures] tap-to-swipe-hold` (user, 2026-11-16:
+    /// "unos 2 o 3 seg").
+    public static let defaultHoldDuration: TimeInterval = 2.0
     /// How long the mode stays on after the fingers last touched.
     public static let armedWindow: TimeInterval = 2.5
     /// TG-12: default travel (fraction of the trackpad height) before an
@@ -65,11 +86,23 @@ public struct TapToSwipe: Sendable {
     /// Up/down travel before a stroke steps (`[gestures]
     /// tap-to-swipe-distance`); a change applies from the next frame.
     public var stepDistance: Double
+    /// TG-14: how long three still fingers rest before the mode arms
+    /// (`[gestures] tap-to-swipe-hold`); a change applies from the next frame.
+    public var holdDuration: TimeInterval
 
-    private enum Tap: Sendable {
+    private enum Touch: Sendable {
         case none
-        case candidate(start: TimeInterval, origin: CGPoint)
+        /// Three fingers down since `start`, at most `travel` from `origin`.
+        case candidate(start: TimeInterval, origin: CGPoint, travel: Double)
         case spoiled
+        /// This touch armed the mode; nothing more until it lifts.
+        case held
+    }
+
+    private enum TouchOutcome {
+        case nothing
+        case held
+        case tapped
     }
 
     private enum Stroke: Sendable {
@@ -87,12 +120,13 @@ public struct TapToSwipe: Sendable {
     }
 
     public private(set) var armedUntil: TimeInterval?
-    private var tap = Tap.none
+    private var touch = Touch.none
     private var stroke = Stroke.lifting
     private var velocity = SwipeVelocityTracker()
 
-    public init(stepDistance: Double = defaultStepDistance) {
+    public init(stepDistance: Double = defaultStepDistance, holdDuration: TimeInterval = defaultHoldDuration) {
         self.stepDistance = stepDistance
+        self.holdDuration = holdDuration
     }
 
     public var isArmed: Bool {
@@ -104,16 +138,17 @@ public struct TapToSwipe: Sendable {
         if let until = armedUntil, frame.timestamp > until {
             events += disarm(.expired)
         }
-        let count = frame.contacts.count
-        if trackTap(frame) {
-            if isArmed {
-                events += disarm(.tap)
-                return events
-            }
+        switch trackTouch(frame) {
+        case .tapped:
+            events += disarm(.tap)
+            return events
+        case .held:
             events.append(.armed)
-            stroke = count < Self.strokeFingers ? .ready : .lifting
+            stroke = .lifting
             armedUntil = frame.timestamp + Self.armedWindow
             return events
+        case .nothing:
+            break
         }
         if isArmed {
             events += trackStroke(frame)
@@ -143,8 +178,8 @@ public struct TapToSwipe: Sendable {
         return events
     }
 
-    /// Between strokes (or while off) three fingers may start a tap.
-    private var tapMayStart: Bool {
+    /// Between strokes (or while off) three fingers may start a touch.
+    private var touchMayStart: Bool {
         guard isArmed else {
             return true
         }
@@ -154,31 +189,43 @@ public struct TapToSwipe: Sendable {
         }
     }
 
-    /// True at the lift of a tap.
-    private mutating func trackTap(_ frame: TouchFrame) -> Bool {
+    /// TG-14: `held` at the frame a still three-finger touch reaches
+    /// `holdDuration` (only while off), `tapped` at the lift of a quick
+    /// still one (only while armed).
+    private mutating func trackTouch(_ frame: TouchFrame) -> TouchOutcome {
         let count = frame.contacts.count
         if count < Self.tapFingers {
-            defer { tap = .none }
-            guard case .candidate(let start, _) = tap else {
-                return false
+            defer { touch = .none }
+            guard isArmed, case .candidate(let start, _, let travel) = touch else {
+                return .nothing
             }
-            return frame.timestamp - start <= Self.maxTapDuration
+            return frame.timestamp - start <= Self.maxTapDuration && travel <= Self.maxTapTravel ? .tapped : .nothing
         }
         guard count == Self.tapFingers else {
-            tap = .spoiled
-            return false
-        }
-        switch tap {
-        case .none:
-            tap = tapMayStart ? .candidate(start: frame.timestamp, origin: frame.centroid) : .spoiled
-        case .candidate(let start, let origin):
-            if frame.timestamp - start > Self.maxTapDuration || distance(frame.centroid, origin) > Self.maxTapTravel {
-                tap = .spoiled
+            if case .held = touch {
+                return .nothing
             }
-        case .spoiled:
+            touch = .spoiled
+            return .nothing
+        }
+        switch touch {
+        case .none:
+            touch = touchMayStart ? .candidate(start: frame.timestamp, origin: frame.centroid, travel: 0) : .spoiled
+        case .candidate(let start, let origin, let travel):
+            let moved = max(travel, distance(frame.centroid, origin))
+            guard moved <= Self.maxHoldTravel else {
+                touch = .spoiled
+                return .nothing
+            }
+            touch = .candidate(start: start, origin: origin, travel: moved)
+            if !isArmed, frame.timestamp - start >= holdDuration - 1e-9 {
+                touch = .held
+                return .held
+            }
+        case .spoiled, .held:
             break
         }
-        return false
+        return .nothing
     }
 
     private mutating func trackStroke(_ frame: TouchFrame) -> [TapToSwipeEvent] {

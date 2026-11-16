@@ -225,12 +225,21 @@ struct FocusSettingsView: View {
             CardRow {
                 ToggleRow(
                     "Tap to swipe",
-                    caption: "Tap three fingers, then swipe with two: left or right moves the strip with your fingers and settles on a column, up or down changes workspace, one per swipe. Two-finger scrolling pauses until 2.5 s after your fingers leave the trackpad, a click, or another three-finger tap.",
+                    caption: "Hold three fingers still on the trackpad until it clicks, then swipe with two: left or right moves the strip with your fingers and settles on a column, up or down changes workspace, one per swipe. Two-finger scrolling pauses until 2.5 s after your fingers leave the trackpad, a click, or a quick three-finger tap.",
                     isOn: current.gestures.tapToSwipe
                 )
             }
             // TG-11/TG-12: how far an up/down stroke travels before it steps.
             if draft.current.gestures.tapToSwipe {
+                // TG-14: how long three fingers rest before it turns on.
+                CardRow {
+                    SliderRow(
+                        "Hold to activate",
+                        caption: "How long three fingers must rest before Tap to swipe turns on. Longer avoids turning it on by accident.",
+                        value: current.gestures.tapToSwipeHold, in: GesturesSectionConfig.tapToSwipeHoldRange,
+                        step: 0.5, format: { String(format: "%.1f s", $0) }
+                    )
+                }
                 CardRow {
                     SliderRow(
                         "Up/down distance for Tap to swipe",
