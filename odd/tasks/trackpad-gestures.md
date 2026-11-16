@@ -494,8 +494,8 @@ read for the snap and focus rules.
   armed two-finger stroke pages one column per flick. Commit `c8131b3`. NOT verified live
   (TESTING.md 15i (o), 15l (b)).
 - [x] TG-14 — Tap to swipe arms on a three-finger hold (`tap-to-swipe-hold`, default 2 s) with
-  a haptic click; a quick tap only disarms (lighter click). NOT verified live (TESTING.md 15l
-  (b), (f), (l)).
+  a haptic click; a quick tap only disarms (lighter click). Commit `34b223f`. NOT verified live
+  (TESTING.md 15l (b), (f), (l)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -691,4 +691,5 @@ read for the snap and focus rules.
   scroll tap only while armed). Not pushed; NOT verified live (TESTING.md 15l).
 - 2026-11-05: TG-13 committed `c8131b3` on `dev` (gesture settle always springs, armed stroke
   pages one column). Not pushed; NOT verified live.
-- 2026-11-16: TG-14 on `dev` (hold to arm, haptic). Not pushed; NOT verified live.
+- 2026-11-16: TG-14 committed `34b223f` on `dev` (hold to arm, haptic). Not pushed; NOT
+  verified live.
