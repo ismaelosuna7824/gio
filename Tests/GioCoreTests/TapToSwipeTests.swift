@@ -38,6 +38,15 @@ final class TapToSwipeTests: XCTestCase {
         [frame(t, fingers: 3), frame(t + 0.05, fingers: 3, x: 0.505), frame(t + 0.1, fingers: 3), frame(t + 0.11, fingers: 0)]
     }
 
+    /// TG-14: three still fingers from `t - duration`, a frame every 0.25 s,
+    /// reaching the hold at `t`, resting 0.1 s more, lifted at `t + 0.11`.
+    private func hold(endingAt t: TimeInterval, duration: TimeInterval = TapToSwipe.defaultHoldDuration) -> [TouchFrame] {
+        let start = t - duration
+        let steps = Int((duration / 0.25).rounded())
+        return (0...steps).map { frame(start + Double($0) * 0.25, fingers: 3) }
+            + [frame(t + 0.05, fingers: 3, x: 0.505), frame(t + 0.1, fingers: 3), frame(t + 0.11, fingers: 0)]
+    }
+
     /// Two fingers from the middle by (dx, dy) in four frames 10 ms apart, then lifted.
     private func stroke(at t: TimeInterval, dx: Double, dy: Double, lift: Bool = true) -> [TouchFrame] {
         var frames: [TouchFrame] = []
@@ -53,46 +62,67 @@ final class TapToSwipeTests: XCTestCase {
 
     private func armed(stepDistance: Double = TapToSwipe.defaultStepDistance) -> TapToSwipe {
         var machine = TapToSwipe(stepDistance: stepDistance)
-        _ = feed(&machine, tap(at: 0))
+        _ = feed(&machine, hold(endingAt: 0))
         return machine
     }
 
-    // MARK: Arming
+    // MARK: Arming (TG-14: a three-finger hold)
 
-    func testAQuickStillThreeFingerTapArms() throws {
+    func testAStillThreeFingerHoldArmsAtTheHoldTimeWithTheFingersDown() throws {
+        XCTAssertEqual(TapToSwipe.defaultHoldDuration, 2.0)
         var machine = TapToSwipe()
+        XCTAssertEqual(feed(&machine, [frame(0, fingers: 3), frame(1, fingers: 3), frame(1.99, fingers: 3, x: 0.51)]), [],
+                       "not before the hold time")
         XCTAssertFalse(machine.isArmed)
-        XCTAssertEqual(feed(&machine, tap(at: 0)), [.armed])
+        XCTAssertEqual(feed(&machine, [frame(2.0, fingers: 3)]), [.armed], "at the hold time, fingers still down")
+        XCTAssertEqual(try XCTUnwrap(machine.armedUntil), 2.0 + TapToSwipe.armedWindow, accuracy: 1e-9)
+        XCTAssertEqual(feed(&machine, [frame(3, fingers: 3), frame(3.5, fingers: 0)]), [], "the long touch lifting is no tap")
         XCTAssertTrue(machine.isArmed)
-        XCTAssertEqual(try XCTUnwrap(machine.armedUntil), 0.11 + TapToSwipe.armedWindow, accuracy: 1e-9, "from the lift")
+        XCTAssertEqual(try XCTUnwrap(machine.armedUntil), 3.5 + TapToSwipe.armedWindow, accuracy: 1e-9, "renewed until the lift")
     }
 
-    func testTheLiftFrameMayStillHaveFingersDown() {
-        var machine = TapToSwipe()
-        // The gate delivers the frame that drops below three, often two fingers.
-        let frames = [frame(0, fingers: 3), frame(0.05, fingers: 3), frame(0.08, fingers: 2)]
-        XCTAssertEqual(feed(&machine, frames), [.armed])
+    func testTheHoldTimeIsConfigurable() {
+        var machine = TapToSwipe(holdDuration: 0.5)
+        XCTAssertEqual(feed(&machine, [frame(0, fingers: 3), frame(0.45, fingers: 3)]), [])
+        XCTAssertEqual(feed(&machine, [frame(0.5, fingers: 3)]), [.armed])
+        var later = TapToSwipe()
+        later.holdDuration = 3
+        XCTAssertEqual(feed(&later, [frame(0, fingers: 3), frame(2.5, fingers: 3)]), [])
+        XCTAssertEqual(feed(&later, [frame(3, fingers: 3)]), [.armed])
     }
 
-    func testAThreeFingerDragIsNotATap() {
+    func testAQuickTapNoLongerArms() {
         var machine = TapToSwipe()
-        let drag = (0...5).map { frame(Double($0) * 0.02, fingers: 3, x: 0.5 + Double($0) * 0.01) } + [frame(0.12, fingers: 0)]
-        XCTAssertEqual(feed(&machine, drag), [], "0.05 of travel is a drag, not a tap")
+        XCTAssertEqual(feed(&machine, tap(at: 0)), [])
         XCTAssertFalse(machine.isArmed)
     }
 
-    func testATapThatRestsTooLongIsNotATap() {
+    func testLiftingBeforeTheHoldTimeCancelsSilently() {
         var machine = TapToSwipe()
-        let slow = [frame(0, fingers: 3), frame(0.2, fingers: 3), frame(TapToSwipe.maxTapDuration + 0.05, fingers: 0)]
-        XCTAssertEqual(feed(&machine, slow), [])
+        XCTAssertEqual(feed(&machine, [frame(0, fingers: 3), frame(1.5, fingers: 3), frame(1.6, fingers: 2), frame(2.1, fingers: 3)]), [],
+                       "a finger lifted and put back starts over")
+        XCTAssertFalse(machine.isArmed)
+        XCTAssertEqual(feed(&machine, [frame(4.1, fingers: 3)]), [.armed], "from the new touch-down")
+    }
+
+    func testMovingFingersCancelTheHold() {
+        var machine = TapToSwipe()
+        let drag = (0...20).map { frame(Double($0) * 0.1, fingers: 3, x: 0.5 + Double($0) * 0.01) }
+        XCTAssertEqual(feed(&machine, drag), [], "a three-finger drag never arms")
+        XCTAssertGreaterThan(0.05, TapToSwipe.maxHoldTravel)
+    }
+
+    func testAFourthFingerCancelsTheHold() {
+        var machine = TapToSwipe()
+        let four = [frame(0, fingers: 3), frame(1, fingers: 4), frame(2.5, fingers: 3), frame(3, fingers: 3)]
+        XCTAssertEqual(feed(&machine, four), [], "exactly three contacts the whole time")
         XCTAssertFalse(machine.isArmed)
     }
 
-    func testAFourthFingerSpoilsTheTap() {
+    func testRestingFingersMayDriftALittle() {
         var machine = TapToSwipe()
-        let four = [frame(0, fingers: 3), frame(0.03, fingers: 4), frame(0.06, fingers: 3), frame(0.1, fingers: 0)]
-        XCTAssertEqual(feed(&machine, four), [], "exactly three contacts at the peak")
-        XCTAssertEqual(feed(&machine, tap(at: 1)), [.armed], "the next clean tap still arms")
+        let drift = (0...8).map { frame(Double($0) * 0.25, fingers: 3, x: 0.5 + Double($0) * 0.003) }
+        XCTAssertEqual(feed(&machine, drift), [.armed], "0.024 of drift is still a hold")
     }
 
     func testTwoFingerFramesBeforeArmingAreIgnored() {
@@ -208,11 +238,11 @@ final class TapToSwipeTests: XCTestCase {
         XCTAssertTrue(machine.isArmed)
     }
 
-    func testTheArmingTapsLiftingFingersAreNotAStroke() {
+    func testTheArmingHoldsLiftingFingersAreNotAStroke() {
         var machine = TapToSwipe()
-        let frames = [frame(0, fingers: 3), frame(0.05, fingers: 3), frame(0.08, fingers: 2)]
-            + (1...6).map { frame(0.08 + Double($0) * 0.01, fingers: 2, x: 0.5 - Double($0) * 0.05) }
-        XCTAssertEqual(feed(&machine, frames), [.armed], "the tap's own fingers lift before a stroke counts")
+        let frames = [frame(0, fingers: 3), frame(2, fingers: 3), frame(2.08, fingers: 2)]
+            + (1...6).map { frame(2.08 + Double($0) * 0.01, fingers: 2, x: 0.5 - Double($0) * 0.05) }
+        XCTAssertEqual(feed(&machine, frames), [.armed], "the hold's own fingers lift before a stroke counts")
     }
 
     // MARK: Window
@@ -247,9 +277,16 @@ final class TapToSwipeTests: XCTestCase {
 
     func testASecondTapDisarms() {
         var machine = armed()
-        XCTAssertEqual(feed(&machine, tap(at: 1)), [.disarmed(.tap)])
+        XCTAssertEqual(feed(&machine, tap(at: 1)), [.disarmed(.tap)], "a quick tap still disarms")
         XCTAssertFalse(machine.isArmed)
-        XCTAssertEqual(feed(&machine, tap(at: 2)), [.armed], "and a third arms again")
+        XCTAssertEqual(feed(&machine, tap(at: 2)), [], "and a quick tap never arms")
+        XCTAssertEqual(feed(&machine, hold(endingAt: 5)), [.armed], "a hold arms again")
+    }
+
+    func testAHoldWhileArmedDoesNotDisarm() {
+        var machine = armed()
+        XCTAssertEqual(feed(&machine, hold(endingAt: 3)), [])
+        XCTAssertTrue(machine.isArmed)
     }
 
     func testAMouseButtonDisarms() {

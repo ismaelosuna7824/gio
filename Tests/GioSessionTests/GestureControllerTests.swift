@@ -23,7 +23,8 @@ final class GestureControllerTests: XCTestCase {
 
     private final class World: @unchecked Sendable {
         /// Gestures are off by default (TG-09); these tests exercise them.
-        var settings = GesturesSectionConfig(scroll: true, workspaceSwipe: true)
+        /// TG-14: the shortest hold keeps these tests' timelines short.
+        var settings = GesturesSectionConfig(scroll: true, workspaceSwipe: true, tapToSwipeHold: 0.5)
         var mouseDown = false
         var manager = WorkspaceManager()
         var hasSurface = true
@@ -49,6 +50,7 @@ final class GestureControllerTests: XCTestCase {
         var gateDeadlines: [TimeInterval?] = []
         var scrollDeadlines: [TimeInterval?] = []
         var notices: [Bool] = []
+        var haptics: [HapticFeedback] = []
         let scheduler = ManualScheduler()
     }
 
@@ -103,6 +105,7 @@ final class GestureControllerTests: XCTestCase {
             armTouchGate: { world.gateDeadlines.append($0) },
             suppressScroll: { world.scrollDeadlines.append($0) },
             announceTapToSwipe: { world.notices.append($0) },
+            haptic: { world.haptics.append($0) },
             after: { delay, work in world.scheduler.asyncAfter(delay, work) },
             log: { _, line in world.logs.append(line) },
             now: { world.now }
@@ -346,6 +349,13 @@ final class GestureControllerTests: XCTestCase {
         [frame(t, fingers: 3, x: 0.5), frame(t + 0.05, fingers: 3, x: 0.5), frame(t + 0.1, fingers: 3, x: 0.5), frame(t + 0.11, fingers: 0, x: 0)]
     }
 
+    /// TG-14: three still fingers from `t - 0.5` (the hold), the mode arms
+    /// at `t`; they rest 0.1 s more and lift at `t + 0.11`.
+    private func hold(at t: TimeInterval) -> [TouchFrame] {
+        [frame(t - 0.5, fingers: 3, x: 0.5), frame(t - 0.25, fingers: 3, x: 0.5), frame(t, fingers: 3, x: 0.5)]
+            + [frame(t + 0.05, fingers: 3, x: 0.5), frame(t + 0.1, fingers: 3, x: 0.5), frame(t + 0.11, fingers: 0, x: 0)]
+    }
+
     /// Two fingers by (dx, dy) from the middle in four frames, then lifted.
     private func stroke(at t: TimeInterval, dx: Double, dy: Double) -> [TouchFrame] {
         var frames: [TouchFrame] = []
@@ -365,7 +375,8 @@ final class GestureControllerTests: XCTestCase {
     func testATapArmsWithANoticeTheGateAndTheScrollSuppression() throws {
         world.settings.tapToSwipe = true
         world.now = 100
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
+        XCTAssertEqual(world.haptics, [.levelChange], "the trackpad clicks once when the hold arms")
         XCTAssertEqual(world.notices, [true])
         XCTAssertEqual(try XCTUnwrap(world.gateDeadlines.last ?? nil), 0.11 + TapToSwipe.armedWindow, accuracy: 1e-9, "frame clock")
         XCTAssertEqual(try XCTUnwrap(world.scrollDeadlines.last ?? nil), 100 + TapToSwipe.armedWindow, accuracy: 1e-9, "session clock")
@@ -377,7 +388,7 @@ final class GestureControllerTests: XCTestCase {
     /// Up and down stay one workspace per stroke, through the keyboard path.
     func testArmedVerticalStrokesStepThroughTheKeyboardPath() {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(stroke(at: 0.5, dx: 0, dy: 0.3))
         XCTAssertEqual(world.actions, [.focusWorkspaceDown], "natural: swiping up shows the workspace below")
         XCTAssertTrue(world.logs.contains("gesture tap-to-swipe step direction=up action=focusWorkspaceDown"))
@@ -391,7 +402,7 @@ final class GestureControllerTests: XCTestCase {
     func testStepsUseTheConfiguredDistance() {
         world.settings.tapToSwipe = true
         world.settings.tapToSwipeDistance = 0.4
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(stroke(at: 0.5, dx: 0, dy: 0.3))
         XCTAssertEqual(world.actions, [], "under the configured distance")
         controller.deliver(stroke(at: 1, dx: 0, dy: -0.45))
@@ -408,7 +419,7 @@ final class GestureControllerTests: XCTestCase {
     func testAnArmedHorizontalStrokeMovesTheStripThroughTheSink() {
         world.settings.tapToSwipe = true
         world.settings.scroll = false
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 1))
         XCTAssertEqual(world.calls, ["begin"], "the TG-03 scroll, without its own finger setting")
         XCTAssertTrue(controller.isTracking, "passes wait for the release")
@@ -423,7 +434,7 @@ final class GestureControllerTests: XCTestCase {
     /// speed; the settle keeps the release velocity.
     func testAFlickPagesOneColumnAndFocusesIt() throws {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 6) + [frame(0.57, fingers: 0, x: 0)])
         XCTAssertFalse(controller.isTracking)
         let release = try XCTUnwrap(world.releases.first)
@@ -437,7 +448,7 @@ final class GestureControllerTests: XCTestCase {
 
     func testAShortSlowArmedDragGoesBack() throws {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 1) + [frame(0.7, fingers: 2, x: 0.45), frame(0.71, fingers: 0, x: 0)])
         let release = try XCTUnwrap(world.releases.first)
         XCTAssertFalse(release.focusChanged)
@@ -454,7 +465,7 @@ final class GestureControllerTests: XCTestCase {
 
     func testAnExtraFingerOrAClickAbandonsTheArmedScroll() {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 2) + [frame(0.53, fingers: 3, x: 0.4)])
         XCTAssertEqual(world.abandons, [.cancelled])
         XCTAssertFalse(controller.isTracking)
@@ -471,7 +482,7 @@ final class GestureControllerTests: XCTestCase {
 
     func testExpiryMidScrollAbandonsIt() {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(twoFingerSwipeLeft(at: 0.5, steps: 2))
         XCTAssertTrue(controller.isTracking)
         advance(TapToSwipe.armedWindow + 0.1)
@@ -483,14 +494,14 @@ final class GestureControllerTests: XCTestCase {
         world.settings.tapToSwipe = true
         controller.deliver(stroke(at: 0, dx: -0.3, dy: 0))
         world.settings.tapToSwipe = false
-        controller.deliver(tap(at: 1) + stroke(at: 1.5, dx: -0.3, dy: 0))
+        controller.deliver(hold(at: 1) + stroke(at: 1.5, dx: -0.3, dy: 0))
         XCTAssertEqual(world.actions, [])
         XCTAssertEqual(world.notices, [], "tap-to-swipe off: a tap arms nothing")
     }
 
     func testExpiryDisarmsQuietlyAndClearsTheGateAndTheSuppression() {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         advance(TapToSwipe.armedWindow - 0.1)
         XCTAssertFalse(world.logs.contains { $0.hasPrefix("gesture tap-to-swipe disarmed") })
         advance(0.2)
@@ -504,7 +515,7 @@ final class GestureControllerTests: XCTestCase {
 
     func testFingersOnTheTrackpadPostponeTheExpiry() throws {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         advance(2)
         controller.deliver(stroke(at: 2, dx: 0, dy: 0.3))
         XCTAssertEqual(try XCTUnwrap(world.scrollDeadlines.last ?? nil), 2 + TapToSwipe.armedWindow, accuracy: 1e-9)
@@ -519,9 +530,10 @@ final class GestureControllerTests: XCTestCase {
 
     func testASecondTapDisarmsWithANotice() {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         controller.deliver(tap(at: 1))
         XCTAssertEqual(world.notices, [true, false])
+        XCTAssertEqual(world.haptics, [.levelChange, .alignment], "a lighter click when a tap turns it off")
         XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=tap"))
         XCTAssertEqual(world.gateDeadlines.last, .some(nil))
         XCTAssertEqual(world.scrollDeadlines.last, .some(nil))
@@ -529,18 +541,34 @@ final class GestureControllerTests: XCTestCase {
         XCTAssertEqual(world.logs.filter { $0.hasPrefix("gesture tap-to-swipe disarmed") }.count, 1, "the stale expiry does nothing")
     }
 
-    func testAMouseButtonDisarms() {
+    /// TG-14: a quick three-finger tap no longer arms (no click, no notice);
+    /// the hold comes from `tap-to-swipe-hold`.
+    func testOnlyAHoldOfTheConfiguredLengthArms() {
         world.settings.tapToSwipe = true
         controller.deliver(tap(at: 0))
+        world.settings.tapToSwipeHold = 2
+        controller.deliver(hold(at: 1))
+        XCTAssertEqual(world.notices, [])
+        XCTAssertEqual(world.haptics, [])
+        XCTAssertFalse(world.logs.contains("gesture tap-to-swipe armed"))
+        world.settings.tapToSwipeHold = 0.5
+        controller.deliver(hold(at: 2))
+        XCTAssertEqual(world.haptics, [.levelChange])
+    }
+
+    func testAMouseButtonDisarms() {
+        world.settings.tapToSwipe = true
+        controller.deliver(hold(at: 0))
         controller.mouseDown()
         XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=mouse"))
         XCTAssertEqual(world.scrollDeadlines.last, .some(nil))
         XCTAssertEqual(world.notices, [true])
+        XCTAssertEqual(world.haptics, [.levelChange], "no click on a mouse disarm")
         controller.mouseDown()
         XCTAssertEqual(world.logs.filter { $0.hasPrefix("gesture tap-to-swipe disarmed") }.count, 1)
 
         // A button held while the frames arrive disarms too.
-        controller.deliver(tap(at: 1))
+        controller.deliver(hold(at: 1))
         world.mouseDown = true
         controller.deliver(stroke(at: 1.5, dx: -0.3, dy: 0))
         XCTAssertEqual(world.actions, [])
@@ -549,7 +577,7 @@ final class GestureControllerTests: XCTestCase {
 
     func testTurningTheSettingOffWhileArmedDisarms() {
         world.settings.tapToSwipe = true
-        controller.deliver(tap(at: 0))
+        controller.deliver(hold(at: 0))
         world.settings.tapToSwipe = false
         controller.deliver(stroke(at: 0.5, dx: -0.3, dy: 0))
         XCTAssertTrue(world.logs.contains("gesture tap-to-swipe disarmed reason=disabled"))

@@ -14,6 +14,8 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     public static let swipeDistanceRange = 0.05...0.5
     /// TG-11: `tap-to-swipe-distance`, a fraction of the trackpad.
     public static let tapToSwipeDistanceRange = 0.05...0.5
+    /// TG-14: `tap-to-swipe-hold`, seconds.
+    public static let tapToSwipeHoldRange = 0.5...5.0
 
     /// Horizontal swipe scrolls the strip, following the fingers.
     public var scroll: Bool
@@ -32,19 +34,22 @@ public struct GesturesSectionConfig: Equatable, Sendable {
     /// TG-08: vertical travel (fraction of the trackpad height) before a
     /// workspace swipe or the overview fires.
     public var swipeDistance: Double
-    /// TG-10: a three-finger tap arms two-finger strokes for
+    /// TG-10: a three-finger hold (TG-14) arms two-finger strokes for
     /// `TapToSwipe.armedWindow`: TG-12 left/right scroll the strip with the
     /// fingers, up/down switch workspace once per stroke.
     public var tapToSwipe: Bool
     /// TG-11/TG-12: up/down travel (fraction of the trackpad height) before
     /// a tap-to-swipe workspace step fires.
     public var tapToSwipeDistance: Double
+    /// TG-14: seconds three still fingers rest before tap-to-swipe arms.
+    public var tapToSwipeHold: Double
 
     public init(
         scroll: Bool = false, scrollFingers: Int = 3, scrollSensitivity: Double = 1.0, natural: Bool = true,
         workspaceSwipe: Bool = false, workspaceFingers: Int = 3, overview: Bool = false, overviewFingers: Int = 4,
         swipeDistance: Double = GestureRecognizerSettings.defaultSwipeDistance, tapToSwipe: Bool = false,
-        tapToSwipeDistance: Double = TapToSwipe.defaultStepDistance
+        tapToSwipeDistance: Double = TapToSwipe.defaultStepDistance,
+        tapToSwipeHold: Double = TapToSwipe.defaultHoldDuration
     ) {
         self.scroll = scroll
         self.scrollFingers = scrollFingers
@@ -57,6 +62,7 @@ public struct GesturesSectionConfig: Equatable, Sendable {
         self.swipeDistance = swipeDistance
         self.tapToSwipe = tapToSwipe
         self.tapToSwipeDistance = tapToSwipeDistance
+        self.tapToSwipeHold = tapToSwipeHold
     }
 
     public var anyEnabled: Bool {
@@ -146,6 +152,10 @@ func applyGesturesKey(
         number(GesturesSectionConfig.tapToSwipeDistanceRange, defaults.tapToSwipeDistance) {
             config.gestures.tapToSwipeDistance = $0
         }
+    case "tap-to-swipe-hold":
+        number(GesturesSectionConfig.tapToSwipeHoldRange, defaults.tapToSwipeHold) {
+            config.gestures.tapToSwipeHold = $0
+        }
     default:
         warnings.append("line \(line): unknown gestures key '\(key)', ignored")
     }
@@ -177,6 +187,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
     public var swipeDistance: Double
     public var tapToSwipe: Bool
     public var tapToSwipeDistance: Double
+    public var tapToSwipeHold: Double
 
     public init(config: GesturesSectionConfig) {
         scroll = config.scroll
@@ -190,6 +201,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         swipeDistance = config.swipeDistance
         tapToSwipe = config.tapToSwipe
         tapToSwipeDistance = config.tapToSwipeDistance
+        tapToSwipeHold = config.tapToSwipeHold
     }
 
     var section: GesturesSectionConfig {
@@ -197,7 +209,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
             scroll: scroll, scrollFingers: scrollFingers, scrollSensitivity: scrollSensitivity, natural: natural,
             workspaceSwipe: workspaceSwipe, workspaceFingers: workspaceFingers,
             overview: overview, overviewFingers: overviewFingers, swipeDistance: swipeDistance, tapToSwipe: tapToSwipe,
-            tapToSwipeDistance: tapToSwipeDistance
+            tapToSwipeDistance: tapToSwipeDistance, tapToSwipeHold: tapToSwipeHold
         )
     }
 
@@ -214,6 +226,9 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         if !(tapToSwipeDistance.isFinite && tapRange.contains(tapToSwipeDistance)) {
             found.append("Tap to swipe distance must be 5% to 50% of the trackpad.")
         }
+        if !(tapToSwipeHold.isFinite && GesturesSectionConfig.tapToSwipeHoldRange.contains(tapToSwipeHold)) {
+            found.append("Hold to activate must be 0.5 to 5 seconds.")
+        }
         let fingers = GesturesSectionConfig.fingerRange
         if ![scrollFingers, workspaceFingers, overviewFingers].allSatisfy(fingers.contains) {
             found.append("Gestures use 3 to 5 fingers.")
@@ -229,6 +244,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
         let sensitivity = (scrollSensitivity * 100).rounded() / 100
         let distance = (swipeDistance * 100).rounded() / 100
         let tapDistance = (tapToSwipeDistance * 100).rounded() / 100
+        let hold = (tapToSwipeHold * 100).rounded() / 100
         return [
             .set(table: "gestures", key: "scroll", value: .bool(scroll)),
             .set(table: "gestures", key: "scroll-fingers", value: .int(scrollFingers)),
@@ -241,6 +257,7 @@ public struct GesturesSettingsForm: Equatable, Sendable {
             .set(table: "gestures", key: "swipe-distance", value: .number(distance)),
             .set(table: "gestures", key: "tap-to-swipe", value: .bool(tapToSwipe)),
             .set(table: "gestures", key: "tap-to-swipe-distance", value: .number(tapDistance)),
+            .set(table: "gestures", key: "tap-to-swipe-hold", value: .number(hold)),
         ]
     }
 }

@@ -419,6 +419,25 @@ read for the snap and focus rules.
   pages, else the strip goes back; clamped at the ends; the target is revealed from the
   committed offset like `focus-left/right` (centered with centering). The 3-5 finger scroll
   keeps the projected niri snap. The end log adds `page=<bool>`.
+- TG-14 hold to arm, with a haptic (user, 2026-11-16, on release v0.1.14: "el tap de 3 dedos
+  está bien ... pero es muy sensible ... que tarde un poco más en activarse, unos 2 o 3 seg, y
+  que vibre, porque por accidente a veces pones 3 dedos y no quieres eso"). Decision: arming
+  is a three-finger hold. `TapToSwipe` arms at the first frame `holdDuration`
+  (`[gestures] tap-to-swipe-hold`, default 2.0 s, range 0.5-5.0, clamped with a warning) after
+  a touch-down of exactly three contacts whose centroid stays within `maxHoldTravel` (0.03,
+  a little more than a tap's 0.02 because a 2 s rest drifts), with the fingers still down;
+  resting fingers deliver frames at the trackpad's rate through the gate (the tap's three
+  fingers already cross), so no timer is needed. Moving, a fourth finger or a lift earlier
+  cancels silently; a quick tap no longer arms. Disarm unchanged: expiry, a click, or a quick
+  tap while armed (an accidental disarm is harmless), which keeps the "Gestures off" notice.
+  The arming touch is marked `held` so its own lift is neither a tap nor a stroke; the armed
+  window starts at the hold and is renewed while the fingers stay down. Haptics:
+  `GestureController.Context.haptic(HapticFeedback)` (`HapticFeedback` in GioCore, a pure
+  value): `.levelChange` on arming, before the notice, and the lighter `.alignment` on a
+  disarming tap; the host performs it on main with `performTrackpadHaptic`
+  (`NSHapticFeedbackManager.defaultPerformer.perform(_:performanceTime: .now)`, GioMacOS; a
+  no-op without a Force Touch trackpad). Settings: "Hold to activate" slider (0.5-5 s, step
+  0.5) while Tap to swipe is on; the toggle's caption says to hold until the trackpad clicks.
 
 ## Tasks
 - [x] TG-01 — Swipe recognizer (finger count, centroid, commit threshold, axis lock,
@@ -474,6 +493,9 @@ read for the snap and focus rules.
 - [x] TG-13 — The gesture settle always springs from the release velocity (also in Fast); the
   armed two-finger stroke pages one column per flick. Commit `c8131b3`. NOT verified live
   (TESTING.md 15i (o), 15l (b)).
+- [x] TG-14 — Tap to swipe arms on a three-finger hold (`tap-to-swipe-hold`, default 2 s) with
+  a haptic click; a quick tap only disarms (lighter click). NOT verified live (TESTING.md 15l
+  (b), (f), (l)).
 
 ## Evidence
 - TG-01: RED `swift build --build-tests` failed (`cannot find 'GestureRecognizerSettings' in
@@ -625,6 +647,24 @@ read for the snap and focus rules.
   coordinator builds and relaunches). NOT verified live: whether one page per flick and the
   spring with the release velocity feel like a Space switch, and the 0.2 / 500 pt/s thresholds
   on real hands [INFERENCE].
+- TG-14: RED `swift build --build-tests` failed (`value of type 'GesturesSectionConfig' has
+  no member 'tapToSwipeHold'`, `value of type 'GesturesSettingsForm' has no member
+  'tapToSwipeHold'`, `extra argument 'tapToSwipeHold' in call`; the first errors shown, the new
+  `TapToSwipe(holdDuration:)`, `HapticFeedback`, `Context.haptic` and `hapticPattern(for:)`
+  were missing too). TG-10..TG-13 tests that armed with a quick tap now arm with a hold
+  (Core: `hold(endingAt:)`; controller: a 0.5 s hold ending where the tap ended, so their
+  timelines and deadlines are unchanged). GREEN: TapToSwipeTests 26 (+7: hold arms at the
+  hold time and not before, configurable, quick tap does not arm, lift / move / fourth finger
+  cancel, small drift allowed, a hold while armed does not disarm), GestureControllerTests 34
+  (+1; haptic asserts in three more), GesturesConfigTests 14 (+1, form and problems extended),
+  TrackpadHapticsTests 1 (new), 0 failures. Full `swift test`: GioCoreTests 2362,
+  GioSessionTests 644, GioUITests 391 (54 skipped), GioMacOSTests 133, GioMacTests 19,
+  GioPOCTests 7, 0 failures. Signed `xcodebuild` (`Gio` scheme, Debug, arm64): BUILD
+  SUCCEEDED; the built app was unregistered (`lsregister -u`) and deleted. `git diff --check`
+  clean. NOT verified live (the user runs v0.1.14; nothing was launched): the click's feel,
+  whether a natural 2 s rest stays within 0.03, and that MultitouchSupport keeps delivering
+  frames for perfectly still fingers [INFERENCE: TG-01 observed frames at the trackpad's rate
+  while a finger rests].
 
 ## Progress
 - TG-01..TG-03 rebased by the coordinator onto main with Dwindle (DW-01..DW-04): `1a5935d`,
@@ -651,3 +691,4 @@ read for the snap and focus rules.
   scroll tap only while armed). Not pushed; NOT verified live (TESTING.md 15l).
 - 2026-11-05: TG-13 committed `c8131b3` on `dev` (gesture settle always springs, armed stroke
   pages one column). Not pushed; NOT verified live.
+- 2026-11-16: TG-14 on `dev` (hold to arm, haptic). Not pushed; NOT verified live.
